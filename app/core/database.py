@@ -1,0 +1,40 @@
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
+import asyncio
+from typing import AsyncGenerator
+
+from app.core.config import settings
+
+
+# Convert postgres:// to postgresql:// for SQLAlchemy 2.0+
+database_url = settings.database_url
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# Async engine for FastAPI
+async_database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+async_engine = create_async_engine(async_database_url, echo=settings.debug)
+AsyncSessionLocal = async_sessionmaker(
+    async_engine, class_=AsyncSession, expire_on_commit=False
+)
+
+# Sync engine for Alembic migrations
+sync_engine = create_engine(database_url, echo=settings.debug)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        finally:
+            await session.close()
+
+
+def get_sync_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
