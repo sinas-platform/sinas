@@ -1,5 +1,5 @@
 """Packages API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 from app.core.database import get_db
-from app.core.auth import require_permission, get_current_user, get_current_user_with_permissions
+from app.core.auth import require_permission, get_current_user, get_current_user_with_permissions, set_permission_used
 from app.core.config import settings
 from app.models.package import InstalledPackage
 from app.schemas import PackageInstall, PackageResponse
@@ -71,6 +71,7 @@ async def install_package(
 
 @router.get("", response_model=List[PackageResponse])
 async def list_packages(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
@@ -79,8 +80,10 @@ async def list_packages(
 
     # Build query based on permissions
     if permissions.get("sinas.packages.read:all"):
+        set_permission_used(request, "sinas.packages.read:all")
         query = select(InstalledPackage)
     else:
+        set_permission_used(request, "sinas.packages.read:own")
         query = select(InstalledPackage).where(InstalledPackage.user_id == uuid.UUID(user_id))
 
     result = await db.execute(query)
@@ -91,11 +94,13 @@ async def list_packages(
 
 @router.delete("/{package_id}")
 async def uninstall_package(
+    request: Request,
     package_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.packages.delete:own"))
+    current_user_data = Depends(get_current_user_with_permissions)
 ):
     """Uninstall a Python package."""
+    user_id, permissions = current_user_data
 
     result = await db.execute(
         select(InstalledPackage).where(InstalledPackage.id == package_id)
@@ -106,9 +111,13 @@ async def uninstall_package(
         raise HTTPException(status_code=404, detail="Package not found")
 
     # Check permissions
-    if not permissions.get("sinas.packages.delete:all"):
-        if package.user_id != user_id:
+    if permissions.get("sinas.packages.delete:all"):
+        set_permission_used(request, "sinas.packages.delete:all")
+    else:
+        if str(package.user_id) != user_id:
+            set_permission_used(request, "sinas.packages.delete:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to uninstall this package")
+        set_permission_used(request, "sinas.packages.delete:own")
 
     # Uninstall package
     try:

@@ -24,7 +24,7 @@ class User(Base):
     )
     chats: Mapped[List["Chat"]] = relationship("Chat", back_populates="user")
     assistants: Mapped[List["Assistant"]] = relationship("Assistant", back_populates="user")
-    memories: Mapped[List["Memory"]] = relationship("Memory", back_populates="user")
+    context_stores: Mapped[List["ContextStore"]] = relationship("ContextStore", back_populates="user")
 
 
 class Group(Base):
@@ -49,6 +49,9 @@ class Group(Base):
     )
     concepts: Mapped[List["Concept"]] = relationship(
         "Concept", back_populates="group", cascade="all, delete-orphan"
+    )
+    context_stores: Mapped[List["ContextStore"]] = relationship(
+        "ContextStore", back_populates="group", cascade="all, delete-orphan"
     )
 
 

@@ -1,12 +1,12 @@
 """Functions API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from typing import List, Optional
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission
+from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.models.function import Function, FunctionVersion
 from app.schemas import FunctionCreate, FunctionUpdate, FunctionResponse, FunctionVersionResponse
 
@@ -66,6 +66,7 @@ async def create_function(
 
 @router.get("", response_model=List[FunctionResponse])
 async def list_functions(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     tag: Optional[str] = None,
@@ -77,13 +78,16 @@ async def list_functions(
 
     # Build query based on permissions
     if permissions.get("sinas.functions.read:all"):
+        set_permission_used(request, "sinas.functions.read:all")
         # Admin - see all functions
         query = select(Function)
     elif permissions.get("sinas.functions.read:group"):
+        set_permission_used(request, "sinas.functions.read:group")
         # Can see own and group functions
         # TODO: Get user's groups
         query = select(Function).where(Function.user_id == user_id)
     else:
+        set_permission_used(request, "sinas.functions.read:own")
         # Own functions only
         query = select(Function).where(Function.user_id == user_id)
 
@@ -99,6 +103,7 @@ async def list_functions(
 
 @router.get("/{function_id}", response_model=FunctionResponse)
 async def get_function(
+    request: Request,
     function_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -115,16 +120,21 @@ async def get_function(
         raise HTTPException(status_code=404, detail="Function not found")
 
     # Check permissions
-    if not permissions.get("sinas.functions.read:all"):
+    if permissions.get("sinas.functions.read:all"):
+        set_permission_used(request, "sinas.functions.read:all")
+    else:
         if function.user_id != user_id:
+            set_permission_used(request, "sinas.functions.read:own", has_perm=False)
             # TODO: Check group membership
             raise HTTPException(status_code=403, detail="Not authorized to view this function")
+        set_permission_used(request, "sinas.functions.read:own")
 
     return function
 
 
 @router.patch("/{function_id}", response_model=FunctionResponse)
 async def update_function(
+    request: Request,
     function_id: uuid.UUID,
     function_data: FunctionUpdate,
     db: AsyncSession = Depends(get_db),
@@ -142,9 +152,13 @@ async def update_function(
         raise HTTPException(status_code=404, detail="Function not found")
 
     # Check permissions
-    if not permissions.get("sinas.functions.update:all"):
+    if permissions.get("sinas.functions.update:all"):
+        set_permission_used(request, "sinas.functions.update:all")
+    else:
         if function.user_id != user_id:
+            set_permission_used(request, "sinas.functions.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this function")
+        set_permission_used(request, "sinas.functions.update:own")
 
     # Update fields
     if function_data.description is not None:
@@ -190,6 +204,7 @@ async def update_function(
 
 @router.delete("/{function_id}")
 async def delete_function(
+    request: Request,
     function_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -206,9 +221,13 @@ async def delete_function(
         raise HTTPException(status_code=404, detail="Function not found")
 
     # Check permissions
-    if not permissions.get("sinas.functions.delete:all"):
+    if permissions.get("sinas.functions.delete:all"):
+        set_permission_used(request, "sinas.functions.delete:all")
+    else:
         if function.user_id != user_id:
+            set_permission_used(request, "sinas.functions.delete:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to delete this function")
+        set_permission_used(request, "sinas.functions.delete:own")
 
     await db.delete(function)
     await db.commit()
@@ -218,6 +237,7 @@ async def delete_function(
 
 @router.get("/{function_id}/versions", response_model=List[FunctionVersionResponse])
 async def list_function_versions(
+    request: Request,
     function_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -234,9 +254,13 @@ async def list_function_versions(
     if not function:
         raise HTTPException(status_code=404, detail="Function not found")
 
-    if not permissions.get("sinas.functions.read:all"):
+    if permissions.get("sinas.functions.read:all"):
+        set_permission_used(request, "sinas.functions.read:all")
+    else:
         if function.user_id != user_id:
+            set_permission_used(request, "sinas.functions.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this function")
+        set_permission_used(request, "sinas.functions.read:own")
 
     # Get versions
     result = await db.execute(

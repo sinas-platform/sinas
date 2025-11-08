@@ -40,3 +40,15 @@ class StepExecutionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ContinueExecutionRequest(BaseModel):
+    input: Dict[str, Any]
+
+
+class ContinueExecutionResponse(BaseModel):
+    execution_id: str
+    status: ExecutionStatus
+    output_data: Optional[Any] = None
+    prompt: Optional[str] = None
+    schema: Optional[Dict[str, Any]] = None

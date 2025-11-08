@@ -2,12 +2,13 @@
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query as QueryParam
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.models import ConceptQuery, Concept, DataSource
 from app.schemas.ontology import (
     ConceptQueryCreate,
@@ -24,11 +25,14 @@ router = APIRouter(prefix="/ontology/queries", tags=["Ontology - Queries"])
 
 @router.post("", response_model=ConceptQueryResponse, status_code=status.HTTP_201_CREATED)
 async def create_concept_query(
+    request: Request,
     query_data: ConceptQueryCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.create:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Create a query definition for a concept."""
+    user_id, permissions = current_user_data
+
     # Verify concept exists
     result = await db.execute(
         select(Concept).where(Concept.id == query_data.concept_id)
@@ -39,6 +43,13 @@ async def create_concept_query(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Concept {query_data.concept_id} not found"
         )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.create:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to create query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     # Check if concept already has a query
     result = await db.execute(
@@ -109,12 +120,15 @@ async def create_concept_query(
 
 @router.get("", response_model=List[ConceptQueryResponse])
 async def list_concept_queries(
+    request: Request,
     concept_id: Optional[UUID] = QueryParam(None),
     sync_enabled: Optional[bool] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List all concept queries with optional filters."""
+    user_id, permissions = current_user_data
+
     query = select(ConceptQuery)
 
     if concept_id:
@@ -125,16 +139,35 @@ async def list_concept_queries(
     result = await db.execute(query)
     queries = result.scalars().all()
 
-    return queries
+    # Filter queries based on permissions
+    filtered_queries = []
+    for query_obj in queries:
+        # Load the concept to check permissions
+        concept_result = await db.execute(
+            select(Concept).where(Concept.id == query_obj.concept_id)
+        )
+        concept = concept_result.scalar_one_or_none()
+        if concept:
+            required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.read:group"
+            if check_permission(permissions, required_perm):
+                filtered_queries.append(query_obj)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.queries.*.*.read:group", has_perm=True)
+
+    return filtered_queries
 
 
 @router.get("/{query_id}", response_model=ConceptQueryResponse)
 async def get_concept_query(
+    request: Request,
     query_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Get a specific concept query by ID."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(ConceptQuery).where(ConceptQuery.id == query_id)
     )
@@ -145,18 +178,40 @@ async def get_concept_query(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"ConceptQuery {query_id} not found"
         )
+
+    # Load concept to check permissions
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == query_obj.concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {query_obj.concept_id} not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.read:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to read query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     return query_obj
 
 
 @router.put("/{query_id}", response_model=ConceptQueryResponse)
 async def update_concept_query(
+    request: Request,
     query_id: UUID,
     query_update: ConceptQueryUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Update a concept query."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(ConceptQuery).where(ConceptQuery.id == query_id)
     )
@@ -167,6 +222,25 @@ async def update_concept_query(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"ConceptQuery {query_id} not found"
         )
+
+    # Load concept to check permissions
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == query_obj.concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {query_obj.concept_id} not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     # Verify data source if being updated
     update_data = query_update.model_dump(exclude_unset=True)
@@ -210,11 +284,14 @@ async def update_concept_query(
 
 @router.delete("/{query_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_concept_query(
+    request: Request,
     query_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.delete:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Delete a concept query."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(ConceptQuery).where(ConceptQuery.id == query_id)
     )
@@ -225,6 +302,25 @@ async def delete_concept_query(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"ConceptQuery {query_id} not found"
         )
+
+    # Load concept to check permissions
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == query_obj.concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {query_obj.concept_id} not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.delete:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to delete query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     # Remove scheduled sync job if exists
     await remove_sync_job(query_obj.concept_id)
@@ -249,11 +345,33 @@ async def delete_concept_query(
 
 @router.get("/sync/{concept_id}/status", response_model=SyncStatusResponse)
 async def get_sync_status(
+    request: Request,
     concept_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Get sync status for a concept."""
+    user_id, permissions = current_user_data
+
+    # Load concept to check permissions
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {concept_id} not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.read:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to read query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
+
     result = await db.execute(
         select(ConceptQuery).where(ConceptQuery.concept_id == concept_id)
     )
@@ -280,11 +398,33 @@ async def get_sync_status(
 
 @router.post("/sync/{concept_id}/trigger", response_model=SyncTriggerResponse)
 async def trigger_sync(
+    request: Request,
     concept_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.queries.execute:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Manually trigger a sync for a concept."""
+    user_id, permissions = current_user_data
+
+    # Load concept to check permissions
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Concept {concept_id} not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.queries.{concept.namespace}.{concept.name}.execute:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to execute query for concept {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
+
     result = await db.execute(
         select(ConceptQuery).where(ConceptQuery.concept_id == concept_id)
     )

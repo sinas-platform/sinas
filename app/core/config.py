@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     # Override with REDIS_URL env var if needed
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
+    # ClickHouse
+    clickhouse_host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
+    clickhouse_port: int = int(os.getenv("CLICKHOUSE_PORT", "8123"))  # HTTP port
+    clickhouse_user: str = os.getenv("CLICKHOUSE_USER", "default")
+    clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "")
+    clickhouse_database: str = os.getenv("CLICKHOUSE_DATABASE", "sinas")
+
     # Application
     debug: bool = False
     secret_key: str = "your-secret-key-change-in-production"
@@ -23,12 +30,16 @@ class Settings(BaseSettings):
     # OTP Configuration
     otp_expire_minutes: int = 10
 
-    # SMTP Configuration (for OTP emails)
+    # SMTP Configuration (for sending emails)
     smtp_host: Optional[str] = None
     smtp_port: int = 587
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
     smtp_domain: Optional[str] = None  # Used for "from" email: login@{smtp_domain}
+
+    # SMTP Server Configuration (for receiving emails)
+    smtp_server_host: str = "0.0.0.0"
+    smtp_server_port: int = 2525  # Port for incoming email SMTP server
 
     # LLM Provider Configuration
     openai_api_key: Optional[str] = None

@@ -8,7 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 import json
 
 from app.core.database import get_db
-from app.core.auth import get_current_user, require_permission, verify_jwt_or_api_key
+from app.core.auth import get_current_user, require_permission, verify_jwt_or_api_key, set_permission_used
 from app.models import Chat, Message
 from app.schemas.chat import (
     ChatCreate,
@@ -48,10 +48,13 @@ async def create_chat(
 
 @router.get("", response_model=List[ChatResponse])
 async def list_chats(
+    request: Request,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all chats for the current user."""
+    set_permission_used(request, "sinas.chats.read:own")
+
     result = await db.execute(
         select(Chat).where(Chat.user_id == user_id).order_by(Chat.updated_at.desc())
     )
@@ -62,11 +65,14 @@ async def list_chats(
 
 @router.get("/{chat_id}", response_model=ChatWithMessages)
 async def get_chat(
+    request: Request,
     chat_id: str,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a chat with all messages."""
+    set_permission_used(request, "sinas.chats.read:own")
+
     result = await db.execute(
         select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id)
     )
@@ -148,14 +154,15 @@ async def delete_chat(
 
 @router.post("/{chat_id}/messages", response_model=MessageResponse)
 async def send_message(
+    http_request: Request,
     chat_id: str,
     request: MessageSendRequest,
     auth_data: tuple = Depends(verify_jwt_or_api_key),
-    db: AsyncSession = Depends(get_db),
-    http_request: Request = None
+    db: AsyncSession = Depends(get_db)
 ):
     """Send a message and get LLM response."""
     user_id, email, permissions = auth_data
+    set_permission_used(http_request, "sinas.chats.messages.create:own")
 
     # Extract token from Authorization header
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
@@ -172,11 +179,13 @@ async def send_message(
             model=request.model,
             temperature=request.temperature,
             max_tokens=request.max_tokens,
-            inject_memories=request.inject_memories,
             enabled_webhooks=request.enabled_webhooks,
             disabled_webhooks=request.disabled_webhooks,
             enabled_mcp_tools=request.enabled_mcp_tools,
-            disabled_mcp_tools=request.disabled_mcp_tools
+            disabled_mcp_tools=request.disabled_mcp_tools,
+            inject_context=request.inject_context,
+            context_namespaces=request.context_namespaces,
+            context_limit=request.context_limit
         )
 
         return MessageResponse.model_validate(response_message)
@@ -190,14 +199,15 @@ async def send_message(
 
 @router.post("/{chat_id}/messages/stream")
 async def stream_message(
+    http_request: Request,
     chat_id: str,
     request: MessageSendRequest,
     auth_data: tuple = Depends(verify_jwt_or_api_key),
-    db: AsyncSession = Depends(get_db),
-    http_request: Request = None
+    db: AsyncSession = Depends(get_db)
 ):
     """Send a message and stream LLM response via SSE."""
     user_id, email, permissions = auth_data
+    set_permission_used(http_request, "sinas.chats.messages.create:own")
 
     # Extract token from Authorization header
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
@@ -215,11 +225,13 @@ async def stream_message(
                 model=request.model,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-                inject_memories=request.inject_memories,
                 enabled_webhooks=request.enabled_webhooks,
                 disabled_webhooks=request.disabled_webhooks,
                 enabled_mcp_tools=request.enabled_mcp_tools,
-                disabled_mcp_tools=request.disabled_mcp_tools
+                disabled_mcp_tools=request.disabled_mcp_tools,
+                inject_context=request.inject_context,
+                context_namespaces=request.context_namespaces,
+                context_limit=request.context_limit
             ):
                 yield {
                     "event": "message",
@@ -242,11 +254,14 @@ async def stream_message(
 
 @router.get("/{chat_id}/messages", response_model=List[MessageResponse])
 async def list_messages(
+    request: Request,
     chat_id: str,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all messages in a chat."""
+    set_permission_used(request, "sinas.chats.messages.read:own")
+
     # Verify user owns the chat
     result = await db.execute(
         select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id)

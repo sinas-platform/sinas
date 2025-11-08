@@ -23,21 +23,3 @@ class MCPServer(Base):
     updated_at: Mapped[updated_at]
 
 
-class RequestLog(Base):
-    __tablename__ = "request_logs"
-
-    id: Mapped[uuid_pk]
-    user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    chat_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    message_id: Mapped[Optional[str]] = mapped_column(String(255), index=True)
-    provider: Mapped[str] = mapped_column(String(50), nullable=False)
-    model: Mapped[str] = mapped_column(String(100), nullable=False)
-    request_data: Mapped[Dict[str, Any]] = mapped_column(JSON)
-    response_data: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
-    tokens_prompt: Mapped[Optional[int]] = mapped_column()
-    tokens_completion: Mapped[Optional[int]] = mapped_column()
-    tokens_total: Mapped[Optional[int]] = mapped_column()
-    latency_ms: Mapped[Optional[int]] = mapped_column()
-    status_code: Mapped[Optional[int]] = mapped_column()
-    error: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[created_at]

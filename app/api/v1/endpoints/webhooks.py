@@ -1,12 +1,12 @@
 """Webhooks API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission
+from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.models.webhook import Webhook
 from app.schemas import WebhookCreate, WebhookUpdate, WebhookResponse
 
@@ -67,6 +67,7 @@ async def create_webhook(
 
 @router.get("", response_model=List[WebhookResponse])
 async def list_webhooks(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
@@ -77,8 +78,10 @@ async def list_webhooks(
 
     # Build query based on permissions
     if permissions.get("sinas.webhooks.read:all"):
+        set_permission_used(request, "sinas.webhooks.read:all")
         query = select(Webhook)
     else:
+        set_permission_used(request, "sinas.webhooks.read:own")
         query = select(Webhook).where(Webhook.user_id == user_id)
 
     query = query.offset(skip).limit(limit)
@@ -90,6 +93,7 @@ async def list_webhooks(
 
 @router.get("/{webhook_id}", response_model=WebhookResponse)
 async def get_webhook(
+    request: Request,
     webhook_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -106,15 +110,20 @@ async def get_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
 
     # Check permissions
-    if not permissions.get("sinas.webhooks.read:all"):
+    if permissions.get("sinas.webhooks.read:all"):
+        set_permission_used(request, "sinas.webhooks.read:all")
+    else:
         if webhook.user_id != user_id:
+            set_permission_used(request, "sinas.webhooks.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this webhook")
+        set_permission_used(request, "sinas.webhooks.read:own")
 
     return webhook
 
 
 @router.patch("/{webhook_id}", response_model=WebhookResponse)
 async def update_webhook(
+    request: Request,
     webhook_id: uuid.UUID,
     webhook_data: WebhookUpdate,
     db: AsyncSession = Depends(get_db),
@@ -132,9 +141,13 @@ async def update_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
 
     # Check permissions
-    if not permissions.get("sinas.webhooks.update:all"):
+    if permissions.get("sinas.webhooks.update:all"):
+        set_permission_used(request, "sinas.webhooks.update:all")
+    else:
         if webhook.user_id != user_id:
+            set_permission_used(request, "sinas.webhooks.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this webhook")
+        set_permission_used(request, "sinas.webhooks.update:own")
 
     # Update fields
     if webhook_data.function_name is not None:
@@ -171,6 +184,7 @@ async def update_webhook(
 
 @router.delete("/{webhook_id}")
 async def delete_webhook(
+    request: Request,
     webhook_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -187,9 +201,13 @@ async def delete_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found")
 
     # Check permissions
-    if not permissions.get("sinas.webhooks.delete:all"):
+    if permissions.get("sinas.webhooks.delete:all"):
+        set_permission_used(request, "sinas.webhooks.delete:all")
+    else:
         if webhook.user_id != user_id:
+            set_permission_used(request, "sinas.webhooks.delete:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to delete this webhook")
+        set_permission_used(request, "sinas.webhooks.delete:own")
 
     await db.delete(webhook)
     await db.commit()

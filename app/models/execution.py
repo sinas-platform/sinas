@@ -1,4 +1,4 @@
-from sqlalchemy import String, Text, Integer, JSON, DateTime, Enum, ForeignKey
+from sqlalchemy import String, Text, Integer, JSON, DateTime, Enum, ForeignKey, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -14,10 +14,11 @@ class TriggerType(str, enum.Enum):
 
 
 class ExecutionStatus(str, enum.Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    AWAITING_INPUT = "AWAITING_INPUT"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 
 class Execution(Base):
@@ -29,6 +30,7 @@ class Execution(Base):
     function_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     trigger_type: Mapped[TriggerType] = mapped_column(Enum(TriggerType), nullable=False)
     trigger_id: Mapped[uuid_lib.UUID] = mapped_column(String(255), nullable=False)
+    chat_id: Mapped[Optional[uuid_lib.UUID]] = mapped_column(ForeignKey("chats.id"), index=True)
     status: Mapped[ExecutionStatus] = mapped_column(
         Enum(ExecutionStatus), default=ExecutionStatus.PENDING, nullable=False
     )
@@ -39,6 +41,11 @@ class Execution(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Stateful execution fields
+    generator_state: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
+    input_prompt: Mapped[Optional[str]] = mapped_column(Text)
+    input_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
 
     # Relationships
     user: Mapped["User"] = relationship("User")

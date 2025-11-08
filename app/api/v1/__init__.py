@@ -13,6 +13,8 @@ from .endpoints import (
     executions,
     packages,
     schedules,
+    request_logs,
+    contexts,
     ontology_datasources,
     ontology_concepts,
     ontology_properties,
@@ -20,6 +22,10 @@ from .endpoints import (
     ontology_endpoints,
     ontology_execute,
     ontology_data,
+    ontology_records,
+    email_templates,
+    emails,
+    email_inboxes,
 )
 
 router = APIRouter()
@@ -40,6 +46,12 @@ router.include_router(executions.router)
 router.include_router(packages.router)
 router.include_router(schedules.router)
 
+# Logging routes
+router.include_router(request_logs.router)
+
+# Context Store routes
+router.include_router(contexts.router)
+
 # Ontology routes
 router.include_router(ontology_datasources.router)
 router.include_router(ontology_concepts.router)
@@ -49,3 +61,9 @@ router.include_router(ontology_queries.router)
 router.include_router(ontology_endpoints.router)
 router.include_router(ontology_execute.router)
 router.include_router(ontology_data.router)
+router.include_router(ontology_records.router)
+
+# Email routes
+router.include_router(email_templates.router)
+router.include_router(emails.router)
+router.include_router(email_inboxes.router)

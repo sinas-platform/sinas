@@ -1,12 +1,12 @@
 """Schedules API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission
+from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobUpdate, ScheduledJobResponse
 
@@ -69,6 +69,7 @@ async def create_schedule(
 
 @router.get("", response_model=List[ScheduledJobResponse])
 async def list_schedules(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
@@ -79,8 +80,10 @@ async def list_schedules(
 
     # Build query based on permissions
     if permissions.get("sinas.schedules.read:all"):
+        set_permission_used(request, "sinas.schedules.read:all")
         query = select(ScheduledJob)
     else:
+        set_permission_used(request, "sinas.schedules.read:own")
         query = select(ScheduledJob).where(ScheduledJob.user_id == user_id)
 
     query = query.offset(skip).limit(limit)
@@ -92,6 +95,7 @@ async def list_schedules(
 
 @router.get("/{schedule_id}", response_model=ScheduledJobResponse)
 async def get_schedule(
+    request: Request,
     schedule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -108,15 +112,20 @@ async def get_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     # Check permissions
-    if not permissions.get("sinas.schedules.read:all"):
+    if permissions.get("sinas.schedules.read:all"):
+        set_permission_used(request, "sinas.schedules.read:all")
+    else:
         if schedule.user_id != user_id:
+            set_permission_used(request, "sinas.schedules.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this schedule")
+        set_permission_used(request, "sinas.schedules.read:own")
 
     return schedule
 
 
 @router.patch("/{schedule_id}", response_model=ScheduledJobResponse)
 async def update_schedule(
+    request: Request,
     schedule_id: uuid.UUID,
     schedule_data: ScheduledJobUpdate,
     db: AsyncSession = Depends(get_db),
@@ -134,9 +143,13 @@ async def update_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     # Check permissions
-    if not permissions.get("sinas.schedules.update:all"):
+    if permissions.get("sinas.schedules.update:all"):
+        set_permission_used(request, "sinas.schedules.update:all")
+    else:
         if schedule.user_id != user_id:
+            set_permission_used(request, "sinas.schedules.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this schedule")
+        set_permission_used(request, "sinas.schedules.update:own")
 
     # Update fields
     if schedule_data.function_name is not None:
@@ -175,6 +188,7 @@ async def update_schedule(
 
 @router.delete("/{schedule_id}")
 async def delete_schedule(
+    request: Request,
     schedule_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -191,9 +205,13 @@ async def delete_schedule(
         raise HTTPException(status_code=404, detail="Schedule not found")
 
     # Check permissions
-    if not permissions.get("sinas.schedules.delete:all"):
+    if permissions.get("sinas.schedules.delete:all"):
+        set_permission_used(request, "sinas.schedules.delete:all")
+    else:
         if schedule.user_id != user_id:
+            set_permission_used(request, "sinas.schedules.delete:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to delete this schedule")
+        set_permission_used(request, "sinas.schedules.delete:own")
 
     # TODO: Remove job from scheduler
 

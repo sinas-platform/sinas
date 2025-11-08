@@ -61,7 +61,7 @@ class Concept(Base):
     name = Column(Text, nullable=False)
     display_name = Column(Text)
     description = Column(Text)
-    is_self_managed = Column(Boolean, default=False, nullable=False)  # Option 3: self-managed in SINAS DB
+    is_self_managed = Column(Boolean, default=False, nullable=False)  # self-managed in SINAS DB
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

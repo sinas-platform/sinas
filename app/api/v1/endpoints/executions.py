@@ -1,20 +1,22 @@
 """Executions API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from typing import List, Optional
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission
+from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.models.execution import Execution, StepExecution, ExecutionStatus
-from app.schemas import ExecutionResponse, StepExecutionResponse
+from app.schemas import ExecutionResponse, StepExecutionResponse, ContinueExecutionRequest, ContinueExecutionResponse
+from app.services.execution_engine import executor
 
 router = APIRouter(prefix="/executions", tags=["executions"])
 
 
 @router.get("", response_model=List[ExecutionResponse])
 async def list_executions(
+    request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     function_name: Optional[str] = None,
@@ -27,8 +29,10 @@ async def list_executions(
 
     # Build query based on permissions
     if permissions.get("sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
         query = select(Execution)
     else:
+        set_permission_used(request, "sinas.executions.read:own")
         query = select(Execution).where(Execution.user_id == user_id)
 
     if function_name:
@@ -45,6 +49,7 @@ async def list_executions(
 
 @router.get("/{execution_id}", response_model=ExecutionResponse)
 async def get_execution(
+    request: Request,
     execution_id: str,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -61,15 +66,20 @@ async def get_execution(
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Check permissions
-    if not permissions.get("sinas.executions.read:all"):
+    if permissions.get("sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
+    else:
         if execution.user_id != user_id:
+            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this execution")
+        set_permission_used(request, "sinas.executions.read:own")
 
     return execution
 
 
 @router.get("/{execution_id}/steps", response_model=List[StepExecutionResponse])
 async def get_execution_steps(
+    request: Request,
     execution_id: str,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
@@ -86,9 +96,13 @@ async def get_execution_steps(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
 
-    if not permissions.get("sinas.executions.read:all"):
+    if permissions.get("sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
+    else:
         if execution.user_id != user_id:
+            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this execution")
+        set_permission_used(request, "sinas.executions.read:own")
 
     # Get steps
     result = await db.execute(
@@ -99,3 +113,63 @@ async def get_execution_steps(
     steps = result.scalars().all()
 
     return steps
+
+
+@router.post("/{execution_id}/continue", response_model=ContinueExecutionResponse)
+async def continue_execution(
+    http_request: Request,
+    execution_id: str,
+    request: ContinueExecutionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user_data = Depends(get_current_user_with_permissions)
+):
+    """Continue a paused execution with user input."""
+    user_id, permissions = current_user_data
+
+    # Get execution
+    result = await db.execute(
+        select(Execution).where(Execution.execution_id == execution_id)
+    )
+    execution = result.scalar_one_or_none()
+
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # Check permissions
+    if permissions.get("sinas.executions.update:all"):
+        set_permission_used(http_request, "sinas.executions.update:all")
+    else:
+        if execution.user_id != user_id:
+            set_permission_used(http_request, "sinas.executions.update:own", has_perm=False)
+            raise HTTPException(status_code=403, detail="Not authorized to continue this execution")
+        set_permission_used(http_request, "sinas.executions.update:own")
+
+    # Check if execution is awaiting input
+    if execution.status != ExecutionStatus.AWAITING_INPUT:
+        raise HTTPException(status_code=400, detail="Execution is not awaiting input")
+
+    # Continue execution
+    try:
+        result = await executor.execute_function(
+            function_name=execution.function_name,
+            input_data=request.input,
+            execution_id=execution_id,
+            trigger_type=execution.trigger_type,
+            trigger_id=str(execution.trigger_id),
+            user_id=str(execution.user_id),
+            resume_data=request.input
+        )
+
+        # Refresh execution from DB to get updated status
+        await db.refresh(execution)
+
+        return ContinueExecutionResponse(
+            execution_id=execution_id,
+            status=execution.status,
+            output_data=result.get("output_data") if execution.status == ExecutionStatus.COMPLETED else None,
+            prompt=result.get("prompt") if execution.status == ExecutionStatus.AWAITING_INPUT else None,
+            schema=result.get("schema") if execution.status == ExecutionStatus.AWAITING_INPUT else None
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to continue execution: {str(e)}")

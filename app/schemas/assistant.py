@@ -1,4 +1,4 @@
-"""Assistant and memory schemas."""
+"""Assistant schemas."""
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import datetime
@@ -14,6 +14,9 @@ class AssistantCreate(BaseModel):
     enabled_mcp_tools: Optional[List[str]] = None
     webhook_parameters: Optional[Dict[str, Any]] = None
     mcp_tool_parameters: Optional[Dict[str, Any]] = None
+    context_namespaces: Optional[List[str]] = None  # None = all namespaces
+    ontology_namespaces: Optional[List[str]] = None  # None = all namespaces
+    ontology_concepts: Optional[List[str]] = None  # None = all concepts (format: namespace.concept)
 
 
 class AssistantUpdate(BaseModel):
@@ -24,6 +27,9 @@ class AssistantUpdate(BaseModel):
     enabled_mcp_tools: Optional[List[str]] = None
     webhook_parameters: Optional[Dict[str, Any]] = None
     mcp_tool_parameters: Optional[Dict[str, Any]] = None
+    context_namespaces: Optional[List[str]] = None
+    ontology_namespaces: Optional[List[str]] = None
+    ontology_concepts: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
 
@@ -38,30 +44,10 @@ class AssistantResponse(BaseModel):
     enabled_mcp_tools: List[str]
     webhook_parameters: Dict[str, Any]
     mcp_tool_parameters: Dict[str, Any]
+    context_namespaces: Optional[List[str]]
+    ontology_namespaces: Optional[List[str]]
+    ontology_concepts: Optional[List[str]]
     is_active: bool
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class MemoryCreate(BaseModel):
-    key: str
-    value: str
-    group_id: Optional[uuid.UUID] = None
-
-
-class MemoryUpdate(BaseModel):
-    value: str
-
-
-class MemoryResponse(BaseModel):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    group_id: Optional[uuid.UUID]
-    key: str
-    value: str
     created_at: datetime
     updated_at: datetime
 

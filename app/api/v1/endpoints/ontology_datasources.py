@@ -2,11 +2,11 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission, get_current_user_with_permissions
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.core.encryption import encryption_service
@@ -22,11 +22,21 @@ router = APIRouter(prefix="/ontology/datasources", tags=["Ontology - DataSources
 
 @router.post("", response_model=DataSourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_datasource(
+    request: Request,
     datasource: DataSourceCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.datasources.create:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Create a new data source."""
+    user_id, permissions = current_user_data
+
+    # Check permissions
+    required_perm = "sinas.ontology.datasources.*.create:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create datasources")
+    set_permission_used(request, required_perm, has_perm=True)
+
     # Verify group exists
     result = await db.execute(select(Group).where(Group.id == datasource.group_id))
     group = result.scalar_one_or_none()
@@ -57,11 +67,21 @@ async def create_datasource(
 
 @router.get("", response_model=List[DataSourceResponse])
 async def list_datasources(
+    request: Request,
     group_id: UUID = None,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.datasources.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List all data sources, optionally filtered by group."""
+    user_id, permissions = current_user_data
+
+    # Check permissions
+    required_perm = "sinas.ontology.datasources.*.read:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to read datasources")
+    set_permission_used(request, required_perm, has_perm=True)
+
     query = select(DataSource)
 
     if group_id:
@@ -75,11 +95,21 @@ async def list_datasources(
 
 @router.get("/{datasource_id}", response_model=DataSourceResponse)
 async def get_datasource(
+    request: Request,
     datasource_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.datasources.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Get a specific data source by ID."""
+    user_id, permissions = current_user_data
+
+    # Check permissions
+    required_perm = "sinas.ontology.datasources.*.read:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to read datasources")
+    set_permission_used(request, required_perm, has_perm=True)
+
     result = await db.execute(
         select(DataSource).where(DataSource.id == datasource_id)
     )
@@ -96,12 +126,22 @@ async def get_datasource(
 
 @router.put("/{datasource_id}", response_model=DataSourceResponse)
 async def update_datasource(
+    request: Request,
     datasource_id: UUID,
     datasource_update: DataSourceUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.datasources.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Update a data source."""
+    user_id, permissions = current_user_data
+
+    # Check permissions
+    required_perm = "sinas.ontology.datasources.*.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to update datasources")
+    set_permission_used(request, required_perm, has_perm=True)
+
     result = await db.execute(
         select(DataSource).where(DataSource.id == datasource_id)
     )
@@ -131,11 +171,21 @@ async def update_datasource(
 
 @router.delete("/{datasource_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_datasource(
+    request: Request,
     datasource_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.datasources.delete:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Delete a data source."""
+    user_id, permissions = current_user_data
+
+    # Check permissions
+    required_perm = "sinas.ontology.datasources.*.delete:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to delete datasources")
+    set_permission_used(request, required_perm, has_perm=True)
+
     result = await db.execute(
         select(DataSource).where(DataSource.id == datasource_id)
     )

@@ -5,6 +5,8 @@ import json
 import time
 import traceback
 import uuid
+import inspect
+import dill
 from datetime import datetime
 from typing import Any, Dict, Optional, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -183,35 +185,52 @@ class FunctionExecutor:
         execution_id: str,
         trigger_type: str,
         trigger_id: str,
-        user_id: str
+        user_id: str,
+        resume_data: Optional[Dict[str, Any]] = None,
+        chat_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Execute a function with input validation and tracking."""
         async with AsyncSessionLocal() as db:
-            # Create execution record
-            execution = Execution(
-                user_id=user_id,
-                execution_id=execution_id,
-                function_name=function_name,
-                trigger_type=trigger_type,
-                trigger_id=trigger_id,
-                status=ExecutionStatus.RUNNING,
-                input_data=input_data,
-                started_at=datetime.utcnow()
+            # Check if resuming existing execution
+            result = await db.execute(
+                select(Execution).where(Execution.execution_id == execution_id)
             )
-            db.add(execution)
-            await db.commit()
+            execution = result.scalar_one_or_none()
 
-            # Log execution start to Redis
-            await redis_logger.log_execution_start(
-                execution_id, function_name, input_data
-            )
+            if not execution:
+                # Create new execution record
+                execution = Execution(
+                    user_id=user_id,
+                    execution_id=execution_id,
+                    function_name=function_name,
+                    trigger_type=trigger_type,
+                    trigger_id=trigger_id,
+                    chat_id=chat_id,
+                    status=ExecutionStatus.RUNNING,
+                    input_data=input_data,
+                    started_at=datetime.utcnow()
+                )
+                db.add(execution)
+                await db.commit()
+
+                # Log execution start to Redis
+                await redis_logger.log_execution_start(
+                    execution_id, function_name, input_data
+                )
+            elif resume_data is not None:
+                # Resuming paused execution
+                if execution.status != ExecutionStatus.AWAITING_INPUT:
+                    raise FunctionExecutionError(f"Execution {execution_id} is not awaiting input")
+
+                execution.status = ExecutionStatus.RUNNING
+                await db.commit()
 
             try:
                 # Load function definition
                 function = await self.load_function(db, function_name, user_id)
 
-                # Validate input
-                if function.input_schema:
+                # Validate input (only for new executions)
+                if not resume_data and function.input_schema:
                     await self.validate_schema(input_data, function.input_schema)
 
                 # Build execution namespace
@@ -222,7 +241,13 @@ class FunctionExecutor:
 
                 if function_name in namespace:
                     func = namespace[function_name]
-                    if asyncio.iscoroutinefunction(func):
+
+                    # Check if function is a generator (stateful)
+                    if inspect.isgeneratorfunction(func):
+                        return await self._execute_generator(
+                            execution, func, input_data, resume_data, db
+                        )
+                    elif asyncio.iscoroutinefunction(func):
                         result = await func(input_data)
                     else:
                         result = func(input_data)
@@ -266,6 +291,78 @@ class FunctionExecutor:
                 )
 
                 raise FunctionExecutionError(f"Function execution failed: {e}")
+
+    async def _execute_generator(
+        self,
+        execution: Execution,
+        func: Callable,
+        input_data: Dict[str, Any],
+        resume_data: Optional[Dict[str, Any]],
+        db: AsyncSession
+    ) -> Dict[str, Any]:
+        """Execute a generator function with pause/resume support."""
+
+        # Resume existing generator or create new one
+        if execution.generator_state and resume_data is not None:
+            # Unpickle the generator
+            gen = dill.loads(execution.generator_state)
+            # Send user input to resume
+            try:
+                yielded_value = gen.send(resume_data)
+            except StopIteration as e:
+                # Generator completed (returned)
+                result = e.value if e.value is not None else {}
+
+                execution.status = ExecutionStatus.COMPLETED
+                execution.output_data = result
+                execution.completed_at = datetime.utcnow()
+                execution.generator_state = None
+                execution.input_prompt = None
+                execution.input_schema = None
+
+                await db.commit()
+
+                await redis_logger.log_execution_end(
+                    execution.execution_id, "completed", result, None, None
+                )
+
+                return result
+        else:
+            # Start new generator
+            gen = func(input_data)
+            try:
+                yielded_value = next(gen)
+            except StopIteration as e:
+                # Generator completed without yielding
+                result = e.value if e.value is not None else {}
+
+                execution.status = ExecutionStatus.COMPLETED
+                execution.output_data = result
+                execution.completed_at = datetime.utcnow()
+
+                await db.commit()
+
+                await redis_logger.log_execution_end(
+                    execution.execution_id, "completed", result, None, None
+                )
+
+                return result
+
+        # Generator yielded (paused for user input)
+        execution.status = ExecutionStatus.AWAITING_INPUT
+        execution.input_prompt = yielded_value.get('prompt')
+        execution.input_schema = yielded_value.get('schema')
+        execution.generator_state = dill.dumps(gen)
+
+        await db.commit()
+
+        # Return awaiting input status
+        return {
+            "status": "awaiting_input",
+            "execution_id": execution.execution_id,
+            "prompt": execution.input_prompt,
+            "schema": execution.input_schema
+        }
 
     def clear_cache(self):
         """Clear function and namespace caches."""

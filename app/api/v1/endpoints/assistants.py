@@ -1,19 +1,17 @@
-"""Assistant and memory endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, status
+"""Assistant endpoints."""
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 
 from app.core.database import get_db
-from app.core.auth import get_current_user, require_permission
-from app.models import Assistant, Memory
+from app.core.auth import get_current_user, get_current_user_with_permissions, require_permission, set_permission_used
+from app.core.permissions import check_permission
+from app.models import Assistant
 from app.schemas.assistant import (
     AssistantCreate,
     AssistantUpdate,
     AssistantResponse,
-    MemoryCreate,
-    MemoryUpdate,
-    MemoryResponse,
 )
 
 router = APIRouter()
@@ -38,6 +36,9 @@ async def create_assistant(
         enabled_mcp_tools=request.enabled_mcp_tools or [],
         webhook_parameters=request.webhook_parameters or {},
         mcp_tool_parameters=request.mcp_tool_parameters or {},
+        context_namespaces=request.context_namespaces,
+        ontology_namespaces=request.ontology_namespaces,
+        ontology_concepts=request.ontology_concepts,
         is_active=True
     )
 
@@ -50,28 +51,46 @@ async def create_assistant(
 
 @router.get("", response_model=List[AssistantResponse])
 async def list_assistants(
-    user_id: str = Depends(get_current_user),
+    request: Request,
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all assistants for the current user."""
-    result = await db.execute(
-        select(Assistant).where(
-            Assistant.user_id == user_id,
-            Assistant.is_active == True
-        ).order_by(Assistant.created_at.desc())
-    )
-    assistants = result.scalars().all()
+    """List all assistants for the current user, or all assistants if user has read:all permission."""
+    user_id, permissions = current_user_data
 
+    # Check if user has read:all permission (e.g., admin)
+    if check_permission(permissions, "sinas.assistants.read:all"):
+        set_permission_used(request, "sinas.assistants.read:all", has_perm=True)
+        # Return all assistants
+        result = await db.execute(
+            select(Assistant).where(
+                Assistant.is_active == True
+            ).order_by(Assistant.created_at.desc())
+        )
+    else:
+        set_permission_used(request, "sinas.assistants.read:own", has_perm=True)
+        # Return only user's own assistants
+        result = await db.execute(
+            select(Assistant).where(
+                Assistant.user_id == user_id,
+                Assistant.is_active == True
+            ).order_by(Assistant.created_at.desc())
+        )
+
+    assistants = result.scalars().all()
     return [AssistantResponse.model_validate(asst) for asst in assistants]
 
 
 @router.get("/{assistant_id}", response_model=AssistantResponse)
 async def get_assistant(
+    request: Request,
     assistant_id: str,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get an assistant."""
+    set_permission_used(request, "sinas.assistants.read:own")
+
     result = await db.execute(
         select(Assistant).where(
             Assistant.id == assistant_id,
@@ -125,6 +144,12 @@ async def update_assistant(
         assistant.webhook_parameters = request.webhook_parameters
     if request.mcp_tool_parameters is not None:
         assistant.mcp_tool_parameters = request.mcp_tool_parameters
+    if request.context_namespaces is not None:
+        assistant.context_namespaces = request.context_namespaces
+    if request.ontology_namespaces is not None:
+        assistant.ontology_namespaces = request.ontology_namespaces
+    if request.ontology_concepts is not None:
+        assistant.ontology_concepts = request.ontology_concepts
     if request.is_active is not None:
         assistant.is_active = request.is_active
 
@@ -156,114 +181,6 @@ async def delete_assistant(
         )
 
     assistant.is_active = False
-    await db.commit()
-
-    return None
-
-
-# Memory endpoints
-
-@router.post("/memories", response_model=MemoryResponse, status_code=status.HTTP_201_CREATED)
-async def create_memory(
-    request: MemoryCreate,
-    user_id: str = Depends(require_permission("sinas.memories.create:own")),
-    db: AsyncSession = Depends(get_db)
-):
-    """Create a new memory."""
-    memory = Memory(
-        user_id=user_id,
-        group_id=request.group_id,
-        key=request.key,
-        value=request.value
-    )
-
-    db.add(memory)
-    await db.commit()
-    await db.refresh(memory)
-
-    return MemoryResponse.model_validate(memory)
-
-
-@router.get("/memories", response_model=List[MemoryResponse])
-async def list_memories(
-    user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """List all memories for the current user."""
-    result = await db.execute(
-        select(Memory).where(Memory.user_id == user_id).order_by(Memory.created_at.desc())
-    )
-    memories = result.scalars().all()
-
-    return [MemoryResponse.model_validate(mem) for mem in memories]
-
-
-@router.get("/memories/{key}", response_model=MemoryResponse)
-async def get_memory(
-    key: str,
-    user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get a specific memory by key."""
-    result = await db.execute(
-        select(Memory).where(Memory.user_id == user_id, Memory.key == key)
-    )
-    memory = result.scalar_one_or_none()
-
-    if not memory:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Memory not found"
-        )
-
-    return MemoryResponse.model_validate(memory)
-
-
-@router.put("/memories/{key}", response_model=MemoryResponse)
-async def update_memory(
-    key: str,
-    request: MemoryUpdate,
-    user_id: str = Depends(require_permission("sinas.memories.update:own")),
-    db: AsyncSession = Depends(get_db)
-):
-    """Update a memory."""
-    result = await db.execute(
-        select(Memory).where(Memory.user_id == user_id, Memory.key == key)
-    )
-    memory = result.scalar_one_or_none()
-
-    if not memory:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Memory not found"
-        )
-
-    memory.value = request.value
-    await db.commit()
-    await db.refresh(memory)
-
-    return MemoryResponse.model_validate(memory)
-
-
-@router.delete("/memories/{key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_memory(
-    key: str,
-    user_id: str = Depends(require_permission("sinas.memories.delete:own")),
-    db: AsyncSession = Depends(get_db)
-):
-    """Delete a memory."""
-    result = await db.execute(
-        select(Memory).where(Memory.user_id == user_id, Memory.key == key)
-    )
-    memory = result.scalar_one_or_none()
-
-    if not memory:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Memory not found"
-        )
-
-    await db.delete(memory)
     await db.commit()
 
     return None

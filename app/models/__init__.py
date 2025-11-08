@@ -6,8 +6,9 @@ from .execution import Execution, StepExecution
 from .package import InstalledPackage
 from .user import User, Group, GroupMember, GroupPermission, OTPSession, APIKey
 from .chat import Chat, Message
-from .assistant import Assistant, Memory
-from .mcp import MCPServer, RequestLog
+from .assistant import Assistant
+from .mcp import MCPServer
+from .context_store import ContextStore
 from .ontology import (
     DataSource,
     Concept,
@@ -26,6 +27,7 @@ from .ontology import (
     SortDirection,
     FilterOperator,
 )
+from .email import EmailTemplate, Email, EmailInbox, EmailInboxRule, EmailStatus
 
 __all__ = [
     "Base",
@@ -45,9 +47,8 @@ __all__ = [
     "Chat",
     "Message",
     "Assistant",
-    "Memory",
     "MCPServer",
-    "RequestLog",
+    "ContextStore",
     "DataSource",
     "Concept",
     "Property",
@@ -64,4 +65,9 @@ __all__ = [
     "JoinType",
     "SortDirection",
     "FilterOperator",
+    "EmailTemplate",
+    "Email",
+    "EmailInbox",
+    "EmailInboxRule",
+    "EmailStatus",
 ]

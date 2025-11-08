@@ -6,7 +6,7 @@ import string
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Tuple
 
-from fastapi import HTTPException, Depends, Header, status
+from fastapi import HTTPException, Depends, Header, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.email import send_otp_email
+from app.core.email import send_otp_email_async
 from app.core.permissions import (
     check_permission,
     expand_permission_dict,
@@ -76,7 +76,7 @@ async def create_otp_session(db: AsyncSession, email: str) -> OTPSession:
     await db.refresh(otp_session)
 
     # Send OTP email
-    send_otp_email(email, otp_code)
+    await send_otp_email_async(db, email, otp_code)
 
     return otp_session
 
@@ -456,11 +456,19 @@ def require_permission(required_permission: str):
         Dependency function that returns user_id if authorized
     """
     async def permission_checker(
+        request: Request,
         auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
     ) -> str:
         user_id, email, permissions = auth_data
+        has_perm = check_permission(permissions, required_permission)
 
-        if not check_permission(permissions, required_permission):
+        # Store permission info in request state for logging
+        request.state.user_id = user_id
+        request.state.user_email = email
+        request.state.permission_used = required_permission
+        request.state.has_permission = has_perm
+
+        if not has_perm:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied: {required_permission}"
@@ -472,6 +480,7 @@ def require_permission(required_permission: str):
 
 
 async def get_current_user(
+    request: Request,
     auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
 ) -> str:
     """
@@ -480,21 +489,57 @@ async def get_current_user(
     Returns:
         user_id
     """
-    user_id, _, _ = auth_data
+    user_id, email, _ = auth_data
+
+    # Store user info in request state for logging
+    request.state.user_id = user_id
+    request.state.user_email = email
+
     return user_id
 
 
 async def get_current_user_with_permissions(
+    request: Request,
     auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
 ) -> Tuple[str, Dict[str, bool]]:
     """
     Get current authenticated user ID and their permissions.
 
+    IMPORTANT: Endpoints using this dependency MUST call
+    set_permission_used(request, "permission.key") to log
+    the permission for compliance tracking.
+
     Returns:
         Tuple of (user_id, permissions)
     """
-    user_id, _, permissions = auth_data
+    user_id, email, permissions = auth_data
+
+    # Store user info in request state for logging
+    request.state.user_id = user_id
+    request.state.user_email = email
+
     return user_id, permissions
+
+
+def set_permission_used(request: Request, permission: str, has_perm: bool = True):
+    """
+    Store permission decision in request state for compliance logging.
+
+    Call this after manual permission checks in endpoint code.
+
+    Example:
+        if permissions.get("sinas.functions.read:all"):
+            set_permission_used(request, "sinas.functions.read:all")
+        elif permissions.get("sinas.functions.read:own"):
+            set_permission_used(request, "sinas.functions.read:own")
+
+    Args:
+        request: FastAPI Request object
+        permission: Permission key that was checked (e.g. "sinas.functions.read:all")
+        has_perm: Whether user has the permission (default True)
+    """
+    request.state.permission_used = permission
+    request.state.has_permission = has_perm
 
 
 # Group initialization helper

@@ -27,16 +27,6 @@ sinas.assistants.update:all
 sinas.assistants.delete:own
 sinas.assistants.delete:all
 
-# Memories - Context Memory Storage
-sinas.memories.create:own
-sinas.memories.read:own
-sinas.memories.read:group
-sinas.memories.read:all
-sinas.memories.update:own
-sinas.memories.update:all
-sinas.memories.delete:own
-sinas.memories.delete:all
-
 # Functions - Python Function Management
 sinas.functions.create:own
 sinas.functions.read:own
@@ -108,46 +98,162 @@ sinas.groups.manage_members:all
 sinas.groups.manage_permissions:all
 
 # Ontology - Data Sources
-sinas.ontology.datasources.create:all
-sinas.ontology.datasources.read:all
-sinas.ontology.datasources.update:all
-sinas.ontology.datasources.delete:all
+# Format: sinas.ontology.datasources.{namespace}.{action}:scope
+# Examples:
+#   sinas.ontology.datasources.*.create:all (all namespaces)
+#   sinas.ontology.datasources.commerce.create:group (specific namespace)
+sinas.ontology.datasources.*.create:group
+sinas.ontology.datasources.*.create:all
+sinas.ontology.datasources.*.read:group
+sinas.ontology.datasources.*.read:all
+sinas.ontology.datasources.*.update:group
+sinas.ontology.datasources.*.update:all
+sinas.ontology.datasources.*.delete:group
+sinas.ontology.datasources.*.delete:all
 
 # Ontology - Concepts
-sinas.ontology.concepts.create:all
-sinas.ontology.concepts.read:all
-sinas.ontology.concepts.update:all
-sinas.ontology.concepts.delete:all
+# Format: sinas.ontology.concepts.{namespace}.{action}:scope or sinas.ontology.concepts.{namespace}.{concept}.{action}:scope
+# Examples:
+#   sinas.ontology.concepts.*.create:all (create concepts in any namespace)
+#   sinas.ontology.concepts.commerce.create:group (create concepts in commerce namespace)
+#   sinas.ontology.concepts.commerce.customer.read:group (read specific concept)
+sinas.ontology.concepts.*.create:group
+sinas.ontology.concepts.*.create:all
+sinas.ontology.concepts.*.read:group
+sinas.ontology.concepts.*.read:all
+sinas.ontology.concepts.*.*.read:group
+sinas.ontology.concepts.*.*.read:all
+sinas.ontology.concepts.*.update:group
+sinas.ontology.concepts.*.update:all
+sinas.ontology.concepts.*.*.update:group
+sinas.ontology.concepts.*.*.update:all
+sinas.ontology.concepts.*.delete:group
+sinas.ontology.concepts.*.delete:all
+sinas.ontology.concepts.*.*.delete:group
+sinas.ontology.concepts.*.*.delete:all
 
 # Ontology - Properties
-sinas.ontology.properties.create:all
-sinas.ontology.properties.read:all
-sinas.ontology.properties.update:all
-sinas.ontology.properties.delete:all
+# Format: sinas.ontology.properties.{namespace}.{concept}.{action}:scope
+# Examples:
+#   sinas.ontology.properties.*.*.create:all (create properties in any concept)
+#   sinas.ontology.properties.commerce.*.create:group (create properties in commerce namespace)
+#   sinas.ontology.properties.commerce.customer.create:group (create properties in specific concept)
+sinas.ontology.properties.*.*.create:group
+sinas.ontology.properties.*.*.create:all
+sinas.ontology.properties.*.*.read:group
+sinas.ontology.properties.*.*.read:all
+sinas.ontology.properties.*.*.update:group
+sinas.ontology.properties.*.*.update:all
+sinas.ontology.properties.*.*.delete:group
+sinas.ontology.properties.*.*.delete:all
 
 # Ontology - Relationships
-sinas.ontology.relationships.create:all
-sinas.ontology.relationships.read:all
-sinas.ontology.relationships.update:all
-sinas.ontology.relationships.delete:all
+# Format: sinas.ontology.relationships.{namespace}.{action}:scope (relationships span concepts)
+# Examples:
+#   sinas.ontology.relationships.*.create:all (create relationships in any namespace)
+#   sinas.ontology.relationships.commerce.create:group (create relationships in commerce namespace)
+sinas.ontology.relationships.*.create:group
+sinas.ontology.relationships.*.create:all
+sinas.ontology.relationships.*.read:group
+sinas.ontology.relationships.*.read:all
+sinas.ontology.relationships.*.update:group
+sinas.ontology.relationships.*.update:all
+sinas.ontology.relationships.*.delete:group
+sinas.ontology.relationships.*.delete:all
 
 # Ontology - Queries
-sinas.ontology.queries.create:all
-sinas.ontology.queries.read:all
-sinas.ontology.queries.update:all
-sinas.ontology.queries.delete:all
-sinas.ontology.queries.execute:all
+# Format: sinas.ontology.queries.{namespace}.{concept}.{action}:scope
+# Examples:
+#   sinas.ontology.queries.*.*.create:all (create queries for any concept)
+#   sinas.ontology.queries.commerce.customer.update:group (update query for specific concept)
+sinas.ontology.queries.*.*.create:group
+sinas.ontology.queries.*.*.create:all
+sinas.ontology.queries.*.*.read:group
+sinas.ontology.queries.*.*.read:all
+sinas.ontology.queries.*.*.update:group
+sinas.ontology.queries.*.*.update:all
+sinas.ontology.queries.*.*.delete:group
+sinas.ontology.queries.*.*.delete:all
+sinas.ontology.queries.*.*.execute:group
+sinas.ontology.queries.*.*.execute:all
 
 # Ontology - Endpoints
-sinas.ontology.endpoints.create:all
-sinas.ontology.endpoints.read:all
-sinas.ontology.endpoints.update:all
-sinas.ontology.endpoints.delete:all
+# Format: sinas.ontology.endpoints.{namespace}.{concept}.{action}:scope
+# Examples:
+#   sinas.ontology.endpoints.*.*.create:all (create endpoints for any concept)
+#   sinas.ontology.endpoints.commerce.*.create:group (create endpoints in commerce namespace)
+sinas.ontology.endpoints.*.*.create:group
+sinas.ontology.endpoints.*.*.create:all
+sinas.ontology.endpoints.*.*.read:group
+sinas.ontology.endpoints.*.*.read:all
+sinas.ontology.endpoints.*.*.update:group
+sinas.ontology.endpoints.*.*.update:all
+sinas.ontology.endpoints.*.*.delete:group
+sinas.ontology.endpoints.*.*.delete:all
 
-# Ontology - Data (Dynamic per concept)
-# Format: sinas.ontology.data.{namespace}.{concept}.{action}:scope
-# Example: sinas.ontology.data.commerce.customer.create:all
-sinas.ontology.data.*.create:all
-sinas.ontology.data.*.read:all
-sinas.ontology.data.*.update:all
-sinas.ontology.data.*.delete:all
+# Ontology - Records (CUD operations for self-managed concepts)
+# Format: sinas.ontology.records.{namespace}.{concept}.{action}:scope
+# Examples:
+#   sinas.ontology.records.*.*.create:group (all concepts in all namespaces)
+#   sinas.ontology.records.commerce.*.create:group (all concepts in commerce namespace)
+#   sinas.ontology.records.commerce.customer.create:group (specific concept)
+sinas.ontology.records.*.*.create:group
+sinas.ontology.records.*.*.create:all
+sinas.ontology.records.*.*.read:group
+sinas.ontology.records.*.*.read:all
+sinas.ontology.records.*.*.update:group
+sinas.ontology.records.*.*.update:all
+sinas.ontology.records.*.*.delete:group
+sinas.ontology.records.*.*.delete:all
+
+# Context Store - User/Assistant Context Management
+sinas.contexts.create:own
+sinas.contexts.create:group
+sinas.contexts.create:all
+sinas.contexts.read:own
+sinas.contexts.read:group
+sinas.contexts.read:all
+sinas.contexts.update:own
+sinas.contexts.update:group
+sinas.contexts.update:all
+sinas.contexts.delete:own
+sinas.contexts.delete:group
+sinas.contexts.delete:all
+
+# Request Logs - Compliance Logging
+sinas.logs.read:own
+sinas.logs.read:all
+
+# Email - Email Template Management
+sinas.email.templates.create:own
+sinas.email.templates.read:own
+sinas.email.templates.read:all
+sinas.email.templates.update:own
+sinas.email.templates.update:all
+sinas.email.templates.delete:own
+sinas.email.templates.delete:all
+
+# Email - Sending and Reading Emails
+sinas.email.send:own
+sinas.email.read:own
+sinas.email.read:all
+sinas.email.delete:own
+sinas.email.delete:all
+
+# Email - Inbox Management
+sinas.email.inboxes.create:own
+sinas.email.inboxes.read:own
+sinas.email.inboxes.read:all
+sinas.email.inboxes.update:own
+sinas.email.inboxes.update:all
+sinas.email.inboxes.delete:own
+sinas.email.inboxes.delete:all
+
+# Email - Inbox Rule Management
+sinas.email.inboxes.rules.create:own
+sinas.email.inboxes.rules.read:own
+sinas.email.inboxes.rules.read:all
+sinas.email.inboxes.rules.update:own
+sinas.email.inboxes.rules.update:all
+sinas.email.inboxes.rules.delete:own
+sinas.email.inboxes.rules.delete:all

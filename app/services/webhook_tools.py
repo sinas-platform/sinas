@@ -110,7 +110,8 @@ class WebhookToolConverter:
         db: AsyncSession,
         tool_name: str,
         arguments: Dict[str, Any],
-        user_token: str
+        user_token: str,
+        chat_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a webhook as a tool call.
@@ -149,6 +150,10 @@ class WebhookToolConverter:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {user_token}"
             }
+
+            # Add chat_id header if provided
+            if chat_id:
+                headers["X-Chat-ID"] = chat_id
 
             # Merge default values with arguments
             payload = {**(webhook.default_values or {}), **arguments}

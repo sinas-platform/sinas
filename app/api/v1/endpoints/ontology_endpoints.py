@@ -2,12 +2,13 @@
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query as QueryParam
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.models import (
     Endpoint,
     EndpointProperty,
@@ -41,11 +42,14 @@ router = APIRouter(prefix="/ontology/endpoints", tags=["Ontology - Endpoints"])
 
 @router.post("", response_model=EndpointResponse, status_code=status.HTTP_201_CREATED)
 async def create_endpoint(
+    request: Request,
     endpoint: EndpointCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.create:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Create a new API endpoint configuration."""
+    user_id, permissions = current_user_data
+
     # Verify concept exists
     result = await db.execute(
         select(Concept).where(Concept.id == endpoint.subject_concept_id)
@@ -56,6 +60,13 @@ async def create_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Concept {endpoint.subject_concept_id} not found"
         )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.create:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to create endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     # Check route uniqueness
     result = await db.execute(
@@ -87,13 +98,16 @@ async def create_endpoint(
 
 @router.get("", response_model=List[EndpointResponse])
 async def list_endpoints(
+    request: Request,
     enabled: Optional[bool] = QueryParam(None),
     concept_id: Optional[UUID] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List all endpoints with optional filters."""
-    query = select(Endpoint)
+    user_id, permissions = current_user_data
+
+    query = select(Endpoint).join(Concept, Endpoint.subject_concept_id == Concept.id)
 
     if enabled is not None:
         query = query.where(Endpoint.enabled == enabled)
@@ -103,16 +117,35 @@ async def list_endpoints(
     result = await db.execute(query.order_by(Endpoint.name))
     endpoints = result.scalars().all()
 
-    return endpoints
+    # Filter endpoints based on permissions
+    filtered_endpoints = []
+    for endpoint in endpoints:
+        # Fetch the concept to get namespace and name
+        concept_result = await db.execute(
+            select(Concept).where(Concept.id == endpoint.subject_concept_id)
+        )
+        concept = concept_result.scalar_one_or_none()
+        if concept:
+            required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+            if check_permission(permissions, required_perm):
+                filtered_endpoints.append(endpoint)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.endpoints.*.*.read:group", has_perm=True)
+
+    return filtered_endpoints
 
 
 @router.get("/{endpoint_id}", response_model=EndpointResponse)
 async def get_endpoint(
+    request: Request,
     endpoint_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Get a specific endpoint by ID."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == endpoint_id)
     )
@@ -123,18 +156,40 @@ async def get_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Endpoint {endpoint_id} not found"
         )
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to read endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     return endpoint
 
 
 @router.put("/{endpoint_id}", response_model=EndpointResponse)
 async def update_endpoint(
+    request: Request,
     endpoint_id: UUID,
     endpoint_update: EndpointUpdate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Update an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == endpoint_id)
     )
@@ -145,6 +200,25 @@ async def update_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Endpoint {endpoint_id} not found"
         )
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     # Check route uniqueness if being updated
     update_data = endpoint_update.model_dump(exclude_unset=True)
@@ -174,11 +248,14 @@ async def update_endpoint(
 
 @router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint(
+    request: Request,
     endpoint_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.delete:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Delete an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == endpoint_id)
     )
@@ -190,6 +267,25 @@ async def delete_endpoint(
             detail=f"Endpoint {endpoint_id} not found"
         )
 
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.delete:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to delete endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
+
     await db.delete(endpoint)
     await db.commit()
 
@@ -200,17 +296,40 @@ async def delete_endpoint(
 
 @router.post("/properties", response_model=EndpointPropertyResponse, status_code=status.HTTP_201_CREATED)
 async def add_endpoint_property(
+    request: Request,
     prop: EndpointPropertyCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Add a property to an endpoint."""
+    user_id, permissions = current_user_data
+
     # Verify endpoint, concept, and property exist
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == prop.endpoint_id)
     )
-    if not result.scalar_one_or_none():
+    endpoint = result.scalar_one_or_none()
+    if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     result = await db.execute(
         select(Property).where(Property.id == prop.property_id)
@@ -236,11 +355,14 @@ async def add_endpoint_property(
 
 @router.get("/properties", response_model=List[EndpointPropertyResponse])
 async def list_endpoint_properties(
+    request: Request,
     endpoint_id: Optional[UUID] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List endpoint properties."""
+    user_id, permissions = current_user_data
+
     query = select(EndpointProperty)
 
     if endpoint_id:
@@ -249,16 +371,40 @@ async def list_endpoint_properties(
     result = await db.execute(query)
     properties = result.scalars().all()
 
-    return properties
+    # Filter properties based on permissions
+    filtered_properties = []
+    for prop in properties:
+        # Fetch the endpoint and concept to get namespace and name
+        endpoint_result = await db.execute(
+            select(Endpoint).where(Endpoint.id == prop.endpoint_id)
+        )
+        endpoint = endpoint_result.scalar_one_or_none()
+        if endpoint:
+            concept_result = await db.execute(
+                select(Concept).where(Concept.id == endpoint.subject_concept_id)
+            )
+            concept = concept_result.scalar_one_or_none()
+            if concept:
+                required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+                if check_permission(permissions, required_perm):
+                    filtered_properties.append(prop)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.endpoints.*.*.read:group", has_perm=True)
+
+    return filtered_properties
 
 
 @router.delete("/properties/{property_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint_property(
+    request: Request,
     property_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Remove a property from an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(EndpointProperty).where(EndpointProperty.id == property_id)
     )
@@ -266,6 +412,36 @@ async def delete_endpoint_property(
 
     if not prop:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint property not found")
+
+    # Fetch the endpoint and concept to get namespace and name
+    endpoint_result = await db.execute(
+        select(Endpoint).where(Endpoint.id == prop.endpoint_id)
+    )
+    endpoint = endpoint_result.scalar_one_or_none()
+
+    if not endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated endpoint not found"
+        )
+
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     await db.delete(prop)
     await db.commit()
@@ -277,17 +453,40 @@ async def delete_endpoint_property(
 
 @router.post("/filters", response_model=EndpointFilterResponse, status_code=status.HTTP_201_CREATED)
 async def add_endpoint_filter(
+    request: Request,
     filter_data: EndpointFilterCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Add a filter to an endpoint."""
+    user_id, permissions = current_user_data
+
     # Verify endpoint and property exist
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == filter_data.endpoint_id)
     )
-    if not result.scalar_one_or_none():
+    endpoint = result.scalar_one_or_none()
+    if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     result = await db.execute(
         select(Property).where(Property.id == filter_data.property_id)
@@ -313,11 +512,14 @@ async def add_endpoint_filter(
 
 @router.get("/filters", response_model=List[EndpointFilterResponse])
 async def list_endpoint_filters(
+    request: Request,
     endpoint_id: Optional[UUID] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List endpoint filters."""
+    user_id, permissions = current_user_data
+
     query = select(EndpointFilter)
 
     if endpoint_id:
@@ -326,16 +528,40 @@ async def list_endpoint_filters(
     result = await db.execute(query)
     filters = result.scalars().all()
 
-    return filters
+    # Filter based on permissions
+    filtered_filters = []
+    for filter_obj in filters:
+        # Fetch the endpoint and concept to get namespace and name
+        endpoint_result = await db.execute(
+            select(Endpoint).where(Endpoint.id == filter_obj.endpoint_id)
+        )
+        endpoint = endpoint_result.scalar_one_or_none()
+        if endpoint:
+            concept_result = await db.execute(
+                select(Concept).where(Concept.id == endpoint.subject_concept_id)
+            )
+            concept = concept_result.scalar_one_or_none()
+            if concept:
+                required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+                if check_permission(permissions, required_perm):
+                    filtered_filters.append(filter_obj)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.endpoints.*.*.read:group", has_perm=True)
+
+    return filtered_filters
 
 
 @router.delete("/filters/{filter_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint_filter(
+    request: Request,
     filter_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Remove a filter from an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(EndpointFilter).where(EndpointFilter.id == filter_id)
     )
@@ -343,6 +569,36 @@ async def delete_endpoint_filter(
 
     if not filter_obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint filter not found")
+
+    # Fetch the endpoint and concept to get namespace and name
+    endpoint_result = await db.execute(
+        select(Endpoint).where(Endpoint.id == filter_obj.endpoint_id)
+    )
+    endpoint = endpoint_result.scalar_one_or_none()
+
+    if not endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated endpoint not found"
+        )
+
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     await db.delete(filter_obj)
     await db.commit()
@@ -354,17 +610,40 @@ async def delete_endpoint_filter(
 
 @router.post("/orders", response_model=EndpointOrderResponse, status_code=status.HTTP_201_CREATED)
 async def add_endpoint_order(
+    request: Request,
     order_data: EndpointOrderCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Add an order/sort to an endpoint."""
+    user_id, permissions = current_user_data
+
     # Verify endpoint and property exist
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == order_data.endpoint_id)
     )
-    if not result.scalar_one_or_none():
+    endpoint = result.scalar_one_or_none()
+    if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     result = await db.execute(
         select(Property).where(Property.id == order_data.property_id)
@@ -388,11 +667,14 @@ async def add_endpoint_order(
 
 @router.get("/orders", response_model=List[EndpointOrderResponse])
 async def list_endpoint_orders(
+    request: Request,
     endpoint_id: Optional[UUID] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List endpoint orders."""
+    user_id, permissions = current_user_data
+
     query = select(EndpointOrder)
 
     if endpoint_id:
@@ -401,16 +683,40 @@ async def list_endpoint_orders(
     result = await db.execute(query.order_by(EndpointOrder.priority))
     orders = result.scalars().all()
 
-    return orders
+    # Filter based on permissions
+    filtered_orders = []
+    for order in orders:
+        # Fetch the endpoint and concept to get namespace and name
+        endpoint_result = await db.execute(
+            select(Endpoint).where(Endpoint.id == order.endpoint_id)
+        )
+        endpoint = endpoint_result.scalar_one_or_none()
+        if endpoint:
+            concept_result = await db.execute(
+                select(Concept).where(Concept.id == endpoint.subject_concept_id)
+            )
+            concept = concept_result.scalar_one_or_none()
+            if concept:
+                required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+                if check_permission(permissions, required_perm):
+                    filtered_orders.append(order)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.endpoints.*.*.read:group", has_perm=True)
+
+    return filtered_orders
 
 
 @router.delete("/orders/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint_order(
+    request: Request,
     order_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Remove an order from an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(EndpointOrder).where(EndpointOrder.id == order_id)
     )
@@ -418,6 +724,36 @@ async def delete_endpoint_order(
 
     if not order:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint order not found")
+
+    # Fetch the endpoint and concept to get namespace and name
+    endpoint_result = await db.execute(
+        select(Endpoint).where(Endpoint.id == order.endpoint_id)
+    )
+    endpoint = endpoint_result.scalar_one_or_none()
+
+    if not endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated endpoint not found"
+        )
+
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     await db.delete(order)
     await db.commit()
@@ -429,17 +765,40 @@ async def delete_endpoint_order(
 
 @router.post("/joins", response_model=EndpointJoinResponse, status_code=status.HTTP_201_CREATED)
 async def add_endpoint_join(
+    request: Request,
     join_data: EndpointJoinCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Add a join to an endpoint."""
+    user_id, permissions = current_user_data
+
     # Verify endpoint and relationship exist
     result = await db.execute(
         select(Endpoint).where(Endpoint.id == join_data.endpoint_id)
     )
-    if not result.scalar_one_or_none():
+    endpoint = result.scalar_one_or_none()
+    if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint not found")
+
+    # Fetch the concept to get namespace and name
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     result = await db.execute(
         select(Relationship).where(Relationship.id == join_data.relationship_id)
@@ -462,11 +821,14 @@ async def add_endpoint_join(
 
 @router.get("/joins", response_model=List[EndpointJoinResponse])
 async def list_endpoint_joins(
+    request: Request,
     endpoint_id: Optional[UUID] = QueryParam(None),
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.read:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """List endpoint joins."""
+    user_id, permissions = current_user_data
+
     query = select(EndpointJoin)
 
     if endpoint_id:
@@ -475,16 +837,40 @@ async def list_endpoint_joins(
     result = await db.execute(query)
     joins = result.scalars().all()
 
-    return joins
+    # Filter based on permissions
+    filtered_joins = []
+    for join in joins:
+        # Fetch the endpoint and concept to get namespace and name
+        endpoint_result = await db.execute(
+            select(Endpoint).where(Endpoint.id == join.endpoint_id)
+        )
+        endpoint = endpoint_result.scalar_one_or_none()
+        if endpoint:
+            concept_result = await db.execute(
+                select(Concept).where(Concept.id == endpoint.subject_concept_id)
+            )
+            concept = concept_result.scalar_one_or_none()
+            if concept:
+                required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.read:group"
+                if check_permission(permissions, required_perm):
+                    filtered_joins.append(join)
+
+    # Set permission used for tracking (use wildcard pattern)
+    set_permission_used(request, "sinas.ontology.endpoints.*.*.read:group", has_perm=True)
+
+    return filtered_joins
 
 
 @router.delete("/joins/{join_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_endpoint_join(
+    request: Request,
     join_id: UUID,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.ontology.endpoints.update:all")),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Remove a join from an endpoint."""
+    user_id, permissions = current_user_data
+
     result = await db.execute(
         select(EndpointJoin).where(EndpointJoin.id == join_id)
     )
@@ -492,6 +878,36 @@ async def delete_endpoint_join(
 
     if not join:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Endpoint join not found")
+
+    # Fetch the endpoint and concept to get namespace and name
+    endpoint_result = await db.execute(
+        select(Endpoint).where(Endpoint.id == join.endpoint_id)
+    )
+    endpoint = endpoint_result.scalar_one_or_none()
+
+    if not endpoint:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated endpoint not found"
+        )
+
+    concept_result = await db.execute(
+        select(Concept).where(Concept.id == endpoint.subject_concept_id)
+    )
+    concept = concept_result.scalar_one_or_none()
+
+    if not concept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Associated concept not found"
+        )
+
+    # Check permissions - namespace.concept specific (update because we're modifying endpoint configuration)
+    required_perm = f"sinas.ontology.endpoints.{concept.namespace}.{concept.name}.update:group"
+    if not check_permission(permissions, required_perm):
+        set_permission_used(request, required_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to update endpoints for {concept.namespace}.{concept.name}")
+    set_permission_used(request, required_perm, has_perm=True)
 
     await db.delete(join)
     await db.commit()

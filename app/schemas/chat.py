@@ -54,11 +54,13 @@ class MessageSendRequest(BaseModel):
     model: Optional[str] = None
     temperature: float = 0.7
     max_tokens: Optional[int] = None
-    inject_memories: bool = False
     enabled_webhooks: Optional[List[str]] = None
     disabled_webhooks: Optional[List[str]] = None
     enabled_mcp_tools: Optional[List[str]] = None
     disabled_mcp_tools: Optional[List[str]] = None
+    inject_context: bool = True  # Auto-inject relevant context into prompts
+    context_namespaces: Optional[List[str]] = None  # Filter which namespaces to inject
+    context_limit: int = 5  # Max number of context entries to inject
 
 
 class ChatWithMessages(ChatResponse):

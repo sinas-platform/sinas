@@ -7,10 +7,14 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Chat, Message, Assistant, Memory, RequestLog
+from app.models import Chat, Message, Assistant
+from app.models.execution import Execution, ExecutionStatus
 from app.providers import create_provider
 from app.services.webhook_tools import WebhookToolConverter
+from app.services.context_tools import ContextTools
+from app.services.ontology_tools import OntologyTools
 from app.services.mcp import mcp_client
+from app.services.execution_engine import executor
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -22,6 +26,8 @@ class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.webhook_converter = WebhookToolConverter()
+        self.context_tools = ContextTools()
+        self.ontology_tools = OntologyTools()
 
     async def send_message(
         self,
@@ -33,11 +39,13 @@ class MessageService:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        inject_memories: bool = False,
         enabled_webhooks: Optional[List[str]] = None,
         disabled_webhooks: Optional[List[str]] = None,
         enabled_mcp_tools: Optional[List[str]] = None,
         disabled_mcp_tools: Optional[List[str]] = None,
+        inject_context: bool = True,
+        context_namespaces: Optional[List[str]] = None,
+        context_limit: int = 5,
     ) -> Message:
         """
         Send a message and get LLM response (non-streaming).
@@ -51,7 +59,6 @@ class MessageService:
             model: Model name
             temperature: Sampling temperature
             max_tokens: Max tokens to generate
-            inject_memories: Whether to inject memories into context
             enabled_webhooks: Override enabled webhooks
             disabled_webhooks: Disabled webhooks
             enabled_mcp_tools: Override enabled MCP tools
@@ -82,7 +89,11 @@ class MessageService:
 
         # Build conversation history
         messages = await self._build_conversation_history(
-            chat, inject_memories, user_id
+            chat=chat,
+            inject_context=inject_context,
+            user_id=user_id,
+            context_namespaces=context_namespaces,
+            context_limit=context_limit
         )
 
         # Get available tools
@@ -160,11 +171,13 @@ class MessageService:
         model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        inject_memories: bool = False,
         enabled_webhooks: Optional[List[str]] = None,
         disabled_webhooks: Optional[List[str]] = None,
         enabled_mcp_tools: Optional[List[str]] = None,
         disabled_mcp_tools: Optional[List[str]] = None,
+        inject_context: bool = True,
+        context_namespaces: Optional[List[str]] = None,
+        context_limit: int = 5,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Send a message and stream LLM response.
@@ -194,7 +207,11 @@ class MessageService:
 
         # Build conversation history
         messages = await self._build_conversation_history(
-            chat, inject_memories, user_id
+            chat=chat,
+            inject_context=inject_context,
+            user_id=user_id,
+            context_namespaces=context_namespaces,
+            context_limit=context_limit
         )
 
         # Get available tools
@@ -260,38 +277,69 @@ class MessageService:
     async def _build_conversation_history(
         self,
         chat: Chat,
-        inject_memories: bool,
-        user_id: str
+        inject_context: bool = False,
+        user_id: Optional[str] = None,
+        context_namespaces: Optional[List[str]] = None,
+        context_limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """Build conversation history for LLM."""
+        """Build conversation history for LLM with optional context injection."""
         messages = []
 
         # Add system prompt from assistant if exists
+        system_content = ""
         if chat.assistant_id:
             result = await self.db.execute(
                 select(Assistant).where(Assistant.id == chat.assistant_id)
             )
             assistant = result.scalar_one_or_none()
             if assistant and assistant.system_prompt:
-                messages.append({
-                    "role": "system",
-                    "content": assistant.system_prompt
-                })
+                system_content = assistant.system_prompt
 
-        # Inject memories if requested
-        if inject_memories:
-            result = await self.db.execute(
-                select(Memory).where(Memory.user_id == user_id)
+        # Inject relevant context if enabled
+        if inject_context and user_id:
+            # Determine which namespaces to use:
+            # 1. Message-level context_namespaces (most specific)
+            # 2. Assistant-level context_namespaces (if assistant exists)
+            # 3. None (all namespaces)
+            final_namespaces = context_namespaces
+            if final_namespaces is None and chat.assistant_id:
+                result = await self.db.execute(
+                    select(Assistant).where(Assistant.id == chat.assistant_id)
+                )
+                assistant = result.scalar_one_or_none()
+                if assistant and assistant.context_namespaces is not None:
+                    final_namespaces = assistant.context_namespaces
+
+            relevant_contexts = await ContextTools.get_relevant_contexts(
+                db=self.db,
+                user_id=user_id,
+                assistant_id=str(chat.assistant_id) if chat.assistant_id else None,
+                group_id=str(chat.group_id) if chat.group_id else None,
+                namespaces=final_namespaces,
+                limit=context_limit
             )
-            memories = result.scalars().all()
-            if memories:
-                memory_content = "# Memories\n\n"
-                for memory in memories:
-                    memory_content += f"**{memory.key}**: {memory.value}\n"
-                messages.append({
-                    "role": "system",
-                    "content": memory_content
-                })
+
+            if relevant_contexts:
+                context_section = "\n\n## Stored Context\n"
+                context_section += "The following information has been saved about the user and should inform your responses:\n\n"
+
+                for ctx in relevant_contexts:
+                    context_section += f"**{ctx.namespace}/{ctx.key}**"
+                    if ctx.description:
+                        context_section += f" - {ctx.description}"
+                    context_section += "\n"
+                    context_section += f"```json\n{json.dumps(ctx.value, indent=2)}\n```\n\n"
+
+                if system_content:
+                    system_content += context_section
+                else:
+                    system_content = context_section.strip()
+
+        if system_content:
+            messages.append({
+                "role": "system",
+                "content": system_content
+            })
 
         # Add chat message history
         result = await self.db.execute(
@@ -327,8 +375,16 @@ class MessageService:
         message_enabled_mcp: Optional[List[str]],
         message_disabled_mcp: Optional[List[str]]
     ) -> List[Dict[str, Any]]:
-        """Get all available tools (webhooks + MCP)."""
+        """Get all available tools (webhooks + MCP + context + ontology + execution continuation)."""
         tools = []
+
+        # Add context tools (always available)
+        context_tool_defs = ContextTools.get_tool_definitions()
+        tools.extend(context_tool_defs)
+
+        # Add ontology tools (always available)
+        ontology_tool_defs = OntologyTools.get_tool_definitions()
+        tools.extend(ontology_tool_defs)
 
         # Determine webhook configuration
         webhook_enabled = message_enabled_webhooks or chat.enabled_webhooks or None
@@ -351,6 +407,45 @@ class MessageService:
             enabled_tools=mcp_enabled
         )
         tools.extend(mcp_tools)
+
+        # Check for paused executions belonging to this chat
+        result = await self.db.execute(
+            select(Execution).where(
+                Execution.chat_id == chat.id,
+                Execution.status == ExecutionStatus.AWAITING_INPUT
+            ).limit(10)
+        )
+        paused_executions = result.scalars().all()
+
+        if paused_executions:
+            # Add continue_execution tool with details about paused executions
+            execution_list = "\n".join([
+                f"- {ex.execution_id}: {ex.function_name} - {ex.input_prompt}"
+                for ex in paused_executions
+            ])
+
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": "continue_execution",
+                    "description": f"Continue a paused function execution by providing required input. Currently paused executions:\n{execution_list}",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "execution_id": {
+                                "type": "string",
+                                "description": "The execution ID to continue",
+                                "enum": [ex.execution_id for ex in paused_executions]
+                            },
+                            "input": {
+                                "type": "object",
+                                "description": "Input data to provide to the paused execution"
+                            }
+                        },
+                        "required": ["execution_id", "input"]
+                    }
+                }
+            })
 
         return tools
 
@@ -384,16 +479,55 @@ class MessageService:
             arguments_str = tool_call["function"]["arguments"]
             arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
 
-            # Execute tool (webhook or MCP)
+            # Execute tool (context, webhook, MCP, or execution continuation)
             try:
-                if tool_name in mcp_client.tools:
+                # Get chat for context
+                result_chat = await self.db.execute(
+                    select(Chat).where(Chat.id == chat_id)
+                )
+                chat = result_chat.scalar_one_or_none()
+
+                if tool_name in ["save_context", "retrieve_context", "update_context", "delete_context"]:
+                    # Handle context tools
+                    result = await ContextTools.execute_tool(
+                        db=self.db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        chat_id=str(chat_id),
+                        group_id=str(chat.group_id) if chat and chat.group_id else None,
+                        assistant_id=str(chat.assistant_id) if chat and chat.assistant_id else None
+                    )
+                elif tool_name in ["explore_ontology", "query_business_data", "create_ontology_data_record", "update_ontology_data_record"]:
+                    # Handle ontology tools
+                    result = await OntologyTools.execute_tool(
+                        db=self.db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        group_id=str(chat.group_id) if chat and chat.group_id else None,
+                        assistant_id=str(chat.assistant_id) if chat and chat.assistant_id else None
+                    )
+                elif tool_name == "continue_execution":
+                    # Handle execution continuation
+                    result = await executor.execute_function(
+                        function_name="",  # Not needed for resume
+                        input_data=arguments["input"],
+                        execution_id=arguments["execution_id"],
+                        trigger_type="",  # Not needed for resume
+                        trigger_id="",  # Not needed for resume
+                        user_id=user_id,
+                        resume_data=arguments["input"]
+                    )
+                elif tool_name in mcp_client.tools:
                     result = await mcp_client.execute_tool(tool_name, arguments)
                 else:
                     result = await self.webhook_converter.execute_webhook_tool(
                         db=self.db,
                         tool_name=tool_name,
                         arguments=arguments,
-                        user_token=user_token
+                        user_token=user_token,
+                        chat_id=str(chat_id)
                     )
 
                 result_content = json.dumps(result) if not isinstance(result, str) else result
@@ -441,6 +575,22 @@ class MessageService:
             max_tokens=max_tokens
         )
 
+        # Check if the response has more tool calls (for multi-step tool usage)
+        if final_response.get("tool_calls"):
+            # Recursively handle the next round of tool calls
+            return await self._handle_tool_calls(
+                chat_id=chat_id,
+                user_id=user_id,
+                user_token=user_token,
+                messages=updated_messages,
+                tool_calls=final_response["tool_calls"],
+                provider=provider,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools
+            )
+
         # Save final assistant message
         final_message = Message(
             chat_id=chat_id,
@@ -464,22 +614,13 @@ class MessageService:
         response: Dict[str, Any],
         latency_ms: int
     ):
-        """Log LLM request for analytics."""
-        usage = response.get("usage", {})
+        """
+        Log LLM request for analytics.
 
-        log = RequestLog(
-            user_id=user_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            provider=provider,
-            model=model,
-            request_data={"messages": messages},
-            response_data=response,
-            tokens_prompt=usage.get("prompt_tokens"),
-            tokens_completion=usage.get("completion_tokens"),
-            tokens_total=usage.get("total_tokens"),
-            latency_ms=latency_ms,
-            status_code=200
-        )
-        self.db.add(log)
-        await self.db.commit()
+        Note: This is now handled by the global RequestLoggerMiddleware which logs
+        all requests to ClickHouse. LLM-specific metadata could be added to request.state
+        if needed for more detailed LLM analytics.
+        """
+        # LLM request logging now handled by middleware
+        # Keeping method for backward compatibility but it's a no-op
+        pass

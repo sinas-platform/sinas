@@ -10,7 +10,7 @@ authors = [
     {name = "Pulsr One"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
@@ -34,6 +34,10 @@ dependencies = [
     "sse-starlette>=1.8.0",
     "websockets>=12.0",
     "cryptography (>=46.0.3,<47.0.0)",
+    "dill>=0.3.7",
+    "clickhouse-connect>=0.7.0",
+    "Jinja2>=3.1.0",
+    "aiosmtpd>=1.4.0",
 ]
 
 [project.optional-dependencies]

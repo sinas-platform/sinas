@@ -1,5 +1,5 @@
 """Authentication endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
@@ -14,6 +14,7 @@ from app.core.auth import (
     create_access_token,
     create_api_key,
     get_current_user,
+    set_permission_used,
 )
 from app.core.config import settings
 from app.models import User, APIKey
@@ -90,10 +91,13 @@ async def verify_otp(
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
+    request: Request,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get current authenticated user info."""
+    set_permission_used(request, "sinas.users.read:own")
+
     result = await db.execute(
         select(User).where(User.id == user_id)
     )
@@ -110,7 +114,8 @@ async def get_current_user_info(
 
 @router.post("/api-keys", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
 async def create_user_api_key(
-    request: APIKeyCreate,
+    api_key_request: APIKeyCreate,
+    request: Request,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -119,6 +124,8 @@ async def create_user_api_key(
 
     API key permissions must be a subset of user's group permissions.
     """
+    set_permission_used(request, "sinas.api_keys.create:own")
+
     # Get user
     result = await db.execute(
         select(User).where(User.id == user_id)
@@ -135,9 +142,9 @@ async def create_user_api_key(
     api_key, plain_key = await create_api_key(
         db=db,
         user=user,
-        name=request.name,
-        permissions=request.permissions,
-        expires_at=request.expires_at,
+        name=api_key_request.name,
+        permissions=api_key_request.permissions,
+        expires_at=api_key_request.expires_at,
         created_by=user
     )
 
@@ -156,10 +163,13 @@ async def create_user_api_key(
 
 @router.get("/api-keys", response_model=List[APIKeyResponse])
 async def list_api_keys(
+    request: Request,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List all API keys for the current user."""
+    set_permission_used(request, "sinas.api_keys.read:own")
+
     result = await db.execute(
         select(APIKey).where(APIKey.user_id == user_id).order_by(APIKey.created_at.desc())
     )
@@ -171,10 +181,13 @@ async def list_api_keys(
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: str,
+    request: Request,
     user_id: str = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Revoke (deactivate) an API key."""
+    set_permission_used(request, "sinas.api_keys.delete:own")
+
     result = await db.execute(
         select(APIKey).where(APIKey.id == key_id, APIKey.user_id == user_id)
     )

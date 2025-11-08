@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 import uuid
 
 from app.core.database import get_db
-from app.core.auth import verify_jwt_or_api_key
+from app.core.auth import verify_jwt_or_api_key, set_permission_used
 from app.models.webhook import Webhook
 from app.models.execution import TriggerType
 from app.services.execution_engine import executor
@@ -102,11 +102,13 @@ async def handle_webhook(
 
         try:
             user_id, email, permissions = await verify_jwt_or_api_key(auth_header, db)
+            set_permission_used(request, f"webhook.execute:{webhook.path}")
         except Exception as e:
             raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
     else:
         # Use webhook owner's user_id for unauthenticated webhooks
         user_id = str(webhook.user_id)
+        set_permission_used(request, f"webhook.public:{webhook.path}")
 
     try:
         # Extract request data
@@ -122,6 +124,9 @@ async def handle_webhook(
         # Generate execution ID
         execution_id = str(uuid.uuid4())
 
+        # Extract chat_id from header if provided (for chat-originated calls)
+        chat_id = request.headers.get("x-chat-id")
+
         # Execute the function
         result = await executor.execute_function(
             function_name=webhook.function_name,
@@ -129,7 +134,8 @@ async def handle_webhook(
             execution_id=execution_id,
             trigger_type=TriggerType.WEBHOOK.value,
             trigger_id=str(webhook.id),
-            user_id=user_id
+            user_id=user_id,
+            chat_id=chat_id
         )
 
         return {

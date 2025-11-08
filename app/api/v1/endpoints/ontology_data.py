@@ -2,11 +2,11 @@
 from typing import List, Dict, Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query as QueryParam
 from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission, get_current_user_with_permissions
+from app.core.auth import require_permission, get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Concept, Property
@@ -46,6 +46,7 @@ async def get_concept_by_path(
 
 @router.post("/{namespace}/{concept_name}", status_code=status.HTTP_201_CREATED)
 async def create_concept_data(
+    request: Request,
     namespace: str,
     concept_name: str,
     data: Dict[str, Any],
@@ -59,7 +60,15 @@ async def create_concept_data(
     perm_key = f"sinas.ontology.data.{namespace}.{concept_name}.create"
     wildcard_perm = "sinas.ontology.data.*.create"
 
-    if not check_permission(permissions, perm_key) and not check_permission(permissions, wildcard_perm):
+    has_specific = check_permission(permissions, perm_key)
+    has_wildcard = check_permission(permissions, wildcard_perm)
+
+    if has_specific:
+        set_permission_used(request, perm_key, True)
+    elif has_wildcard:
+        set_permission_used(request, wildcard_perm, True)
+    else:
+        set_permission_used(request, perm_key, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied: {perm_key}"
@@ -103,6 +112,7 @@ async def create_concept_data(
 
 @router.get("/{namespace}/{concept_name}")
 async def list_concept_data(
+    request: Request,
     namespace: str,
     concept_name: str,
     limit: int = QueryParam(100, ge=1, le=1000),
@@ -117,7 +127,15 @@ async def list_concept_data(
     perm_key = f"sinas.ontology.data.{namespace}.{concept_name}.read"
     wildcard_perm = "sinas.ontology.data.*.read"
 
-    if not check_permission(permissions, perm_key) and not check_permission(permissions, wildcard_perm):
+    has_specific = check_permission(permissions, perm_key)
+    has_wildcard = check_permission(permissions, wildcard_perm)
+
+    if has_specific:
+        set_permission_used(request, perm_key, True)
+    elif has_wildcard:
+        set_permission_used(request, wildcard_perm, True)
+    else:
+        set_permission_used(request, perm_key, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied: {perm_key}"
@@ -157,6 +175,7 @@ async def list_concept_data(
 
 @router.get("/{namespace}/{concept_name}/{record_id}")
 async def get_concept_data(
+    request: Request,
     namespace: str,
     concept_name: str,
     record_id: UUID,
@@ -170,7 +189,15 @@ async def get_concept_data(
     perm_key = f"sinas.ontology.data.{namespace}.{concept_name}.read"
     wildcard_perm = "sinas.ontology.data.*.read"
 
-    if not check_permission(permissions, perm_key) and not check_permission(permissions, wildcard_perm):
+    has_specific = check_permission(permissions, perm_key)
+    has_wildcard = check_permission(permissions, wildcard_perm)
+
+    if has_specific:
+        set_permission_used(request, perm_key, True)
+    elif has_wildcard:
+        set_permission_used(request, wildcard_perm, True)
+    else:
+        set_permission_used(request, perm_key, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied: {perm_key}"
@@ -209,6 +236,7 @@ async def get_concept_data(
 
 @router.put("/{namespace}/{concept_name}/{record_id}")
 async def update_concept_data(
+    request: Request,
     namespace: str,
     concept_name: str,
     record_id: UUID,
@@ -223,7 +251,15 @@ async def update_concept_data(
     perm_key = f"sinas.ontology.data.{namespace}.{concept_name}.update"
     wildcard_perm = "sinas.ontology.data.*.update"
 
-    if not check_permission(permissions, perm_key) and not check_permission(permissions, wildcard_perm):
+    has_specific = check_permission(permissions, perm_key)
+    has_wildcard = check_permission(permissions, wildcard_perm)
+
+    if has_specific:
+        set_permission_used(request, perm_key, True)
+    elif has_wildcard:
+        set_permission_used(request, wildcard_perm, True)
+    else:
+        set_permission_used(request, perm_key, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied: {perm_key}"
@@ -272,6 +308,7 @@ async def update_concept_data(
 
 @router.delete("/{namespace}/{concept_name}/{record_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_concept_data(
+    request: Request,
     namespace: str,
     concept_name: str,
     record_id: UUID,
@@ -285,7 +322,15 @@ async def delete_concept_data(
     perm_key = f"sinas.ontology.data.{namespace}.{concept_name}.delete"
     wildcard_perm = "sinas.ontology.data.*.delete"
 
-    if not check_permission(permissions, perm_key) and not check_permission(permissions, wildcard_perm):
+    has_specific = check_permission(permissions, perm_key)
+    has_wildcard = check_permission(permissions, wildcard_perm)
+
+    if has_specific:
+        set_permission_used(request, perm_key, True)
+    elif has_wildcard:
+        set_permission_used(request, wildcard_perm, True)
+    else:
+        set_permission_used(request, perm_key, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Permission denied: {perm_key}"
