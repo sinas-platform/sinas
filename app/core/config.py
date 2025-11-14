@@ -4,10 +4,20 @@ import os
 
 
 class Settings(BaseSettings):
-    # Database
-    # Defaults to localhost for local development
-    # In docker-compose, DATABASE_URL env var will override this
-    database_url: str = "postgresql://postgres:password@localhost:5432/sinas"
+    # Database - can be set as full URL or individual components
+    database_url: Optional[str] = None
+    database_user: str = "postgres"
+    database_password: str = "password"
+    database_host: str = "localhost"
+    database_port: str = "5432"
+    database_name: str = "sinas"
+
+    @property
+    def get_database_url(self) -> str:
+        """Build database URL from components if not explicitly set."""
+        if self.database_url:
+            return self.database_url
+        return f"postgresql://{self.database_user}:{self.database_password}@{self.database_host}:{self.database_port}/{self.database_name}"
 
     # Redis
     # Hardcoded for docker-compose, localhost for local development

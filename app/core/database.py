@@ -7,8 +7,8 @@ from typing import AsyncGenerator
 from app.core.config import settings
 
 
-# Convert postgres:// to postgresql:// for SQLAlchemy 2.0+
-database_url = settings.database_url
+# Get database URL (built from components or explicit URL)
+database_url = settings.get_database_url
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 

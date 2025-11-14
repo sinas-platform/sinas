@@ -87,10 +87,16 @@ services:
       - .:/app
       # Mount Docker socket for container-per-user execution
       - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
     environment:
       # Database configuration
-      # Set DATABASE_URL for external DB, or set DATABASE_PASSWORD to use local postgres
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@${DATABASE_HOST:-postgres}:${DATABASE_PORT:-5432}/${DATABASE_NAME:-sinas}}
+      # Build from components if DATABASE_URL not explicitly set
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: ${DATABASE_HOST:-postgres}
+      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      # DATABASE_PASSWORD comes from .env
 
       # Redis configuration (hardcoded to docker service)
       REDIS_URL: redis://redis:6379/0
