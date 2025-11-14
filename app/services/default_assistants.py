@@ -13,8 +13,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_TAGGER_CONFIG = {
     "name": "DEFAULT_TAGGER",
     "description": "Default assistant for extracting tags from documents and emails",
-    "provider": None,  # Will use system default
-    "model": None,  # Will use system default
     "temperature": 0.1,
     "system_prompt": """You are a tag extraction assistant. You MUST respond ONLY with valid JSON. Do not include any explanatory text, greetings, or conversation.
 
@@ -108,8 +106,6 @@ Do NOT include any text before or after the JSON. Do NOT include markdown code b
 DEFAULT_SUMMARIZER_CONFIG = {
     "name": "DEFAULT_SUMMARIZER",
     "description": "Default assistant for generating summaries and descriptions",
-    "provider": None,  # Will use system default
-    "model": None,  # Will use system default
     "temperature": 0.3,
     "system_prompt": """You are a document summarization assistant. Your job is to create clear, concise, and informative summaries of documents and emails.
 
@@ -220,8 +216,6 @@ async def initialize_default_assistants(db: AsyncSession):
         if existing:
             # Update existing assistant with latest config
             existing.description = config["description"]
-            existing.provider = config["provider"]
-            existing.model = config["model"]
             existing.temperature = config["temperature"]
             existing.system_prompt = config["system_prompt"]
             existing.input_schema = config["input_schema"]
@@ -239,8 +233,6 @@ async def initialize_default_assistants(db: AsyncSession):
                 group_id=users_group.id,
                 name=config["name"],
                 description=config["description"],
-                provider=config["provider"],
-                model=config["model"],
                 temperature=config["temperature"],
                 system_prompt=config["system_prompt"],
                 input_schema=config["input_schema"],
