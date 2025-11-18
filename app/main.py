@@ -42,10 +42,9 @@ async def lifespan(app: FastAPI):
     # Start SMTP server for receiving emails
     smtp_server.start()
 
-    # Start container manager cleanup task if docker mode enabled
-    if settings.function_execution_mode == 'docker':
-        from app.services.user_container_manager import container_manager
-        await container_manager.start_cleanup_task()
+    # Start container manager cleanup task
+    from app.services.user_container_manager import container_manager
+    await container_manager.start_cleanup_task()
 
     yield
     # Shutdown
