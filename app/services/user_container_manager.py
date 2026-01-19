@@ -49,8 +49,9 @@ class UserContainerManager:
                         if info['last_used'] < cutoff_time:
                             try:
                                 container = info['container']
-                                container.stop(timeout=10)
-                                container.remove()
+                                # Run blocking Docker operations in thread pool
+                                await asyncio.to_thread(container.stop, timeout=10)
+                                await asyncio.to_thread(container.remove)
                                 to_remove.append(user_id)
                                 logger.info(f"Cleaned up idle container for user {user_id}")
                             except Exception as e:
@@ -75,7 +76,8 @@ class UserContainerManager:
                 container = container_info['container']
 
                 try:
-                    container.reload()
+                    # Reload container status (run in thread pool)
+                    await asyncio.to_thread(container.reload)
                     if container.status == 'running':
                         # Update last used time
                         container_info['last_used'] = time.time()
@@ -83,7 +85,7 @@ class UserContainerManager:
                     else:
                         # Container stopped, remove and recreate
                         try:
-                            container.remove()
+                            await asyncio.to_thread(container.remove)
                         except:
                             pass
                         del self.user_containers[user_id]
@@ -95,7 +97,8 @@ class UserContainerManager:
             # (can happen after app restart when dict is cleared but containers still running)
             container_name = f'sinas-user-{user_id}'
             try:
-                existing = self.client.containers.get(container_name)
+                # Run blocking Docker call in thread pool
+                existing = await asyncio.to_thread(self.client.containers.get, container_name)
                 if existing.status == 'running':
                     logger.info(f"Found existing running container for user {user_id}, reusing it")
                     # Re-add to tracking dict
@@ -107,7 +110,8 @@ class UserContainerManager:
                 else:
                     # Container exists but not running, remove it
                     logger.info(f"Found stopped container for user {user_id}, removing it")
-                    existing.remove(force=True)
+                    # Run blocking remove in thread pool
+                    await asyncio.to_thread(existing.remove, force=True)
             except NotFound:
                 # No existing container, proceed to create
                 pass
@@ -127,8 +131,9 @@ class UserContainerManager:
         # Get container image from settings (default to sinas-executor - minimal image with executor.py)
         image = getattr(settings, 'function_container_image', 'sinas-executor')
 
-        # Create container with executor as main process
-        container = self.client.containers.run(
+        # Create container with executor as main process (run in thread pool to avoid blocking)
+        container = await asyncio.to_thread(
+            self.client.containers.run,
             image,
             detach=True,
             name=f'sinas-user-{user_id}',
@@ -203,7 +208,9 @@ class UserContainerManager:
 
         # Write to container and trigger the executor to process it
         try:
-            exec_result = container.exec_run(
+            # Run blocking Docker exec in thread pool
+            exec_result = await asyncio.to_thread(
+                container.exec_run,
                 cmd=['python3', '-c', f'''
 import sys
 import json
@@ -291,8 +298,9 @@ sys.exit(1)
         }
 
         try:
-            # Execute via exec_run
-            exec_result = container.exec_run(
+            # Execute via exec_run (run in thread pool to avoid blocking)
+            exec_result = await asyncio.to_thread(
+                container.exec_run,
                 cmd=['python3', '-c', f'''
 import sys
 import json
@@ -374,7 +382,7 @@ sys.exit(1)
             for user_id, info in self.user_containers.items():
                 try:
                     container = info['container']
-                    container.reload()
+                    await asyncio.to_thread(container.reload)
                     stats.append({
                         'user_id': user_id,
                         'container_id': container.id[:12],

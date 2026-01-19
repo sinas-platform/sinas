@@ -45,7 +45,13 @@ async def login(
     Creates user if doesn't exist and assigns to "Users" group.
     """
     # Create OTP session and send email
-    otp_session = await create_otp_session(db, request.email)
+    try:
+        otp_session = await create_otp_session(db, request.email)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to send OTP email: {str(e)}"
+        )
 
     return LoginResponse(
         message="OTP sent to your email",

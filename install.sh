@@ -27,9 +27,26 @@ echo -e "${YELLOW}Checking prerequisites...${NC}"
 if ! command -v docker &> /dev/null; then
     echo -e "${YELLOW}Docker not found. Installing...${NC}"
     curl -fsSL https://get.docker.com | sh
-    echo -e "${GREEN}✓ Docker installed${NC}"
+
+    # Start and enable Docker service
+    systemctl start docker
+    systemctl enable docker
+
+    # Wait for Docker to be ready
+    echo -e "${YELLOW}Waiting for Docker to initialize...${NC}"
+    sleep 3
+
+    echo -e "${GREEN}✓ Docker installed and started${NC}"
 else
     echo -e "${GREEN}✓ Docker found${NC}"
+
+    # Ensure Docker is running
+    if ! systemctl is-active --quiet docker; then
+        echo -e "${YELLOW}Starting Docker service...${NC}"
+        systemctl start docker
+        systemctl enable docker
+        echo -e "${GREEN}✓ Docker service started${NC}"
+    fi
 fi
 
 # Check Docker Compose
@@ -196,6 +213,14 @@ START_SERVICES=${START_SERVICES:-Y}
 
 if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
     echo -e "${YELLOW}Starting services...${NC}"
+
+    # Verify Docker is running before starting services
+    if ! docker info &> /dev/null; then
+        echo -e "${RED}Error: Docker daemon is not running${NC}"
+        echo -e "${YELLOW}Try running: systemctl start docker${NC}"
+        exit 1
+    fi
+
     docker compose up -d
 
     echo ""

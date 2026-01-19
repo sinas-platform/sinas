@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     debug: bool = False
     secret_key: str = "your-secret-key-change-in-production"
     algorithm: str = "HS256"
+    uvicorn_workers: int = 4  # Number of Uvicorn worker processes
     # JWT Token Configuration (Best Practice)
     access_token_expire_minutes: int = 15  # Short-lived access tokens
     refresh_token_expire_days: int = 30  # Long-lived refresh tokens

@@ -30,5 +30,6 @@ RUN mkdir -p /app/logs
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Run database migrations on startup, then start the application
-CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Run database migrations on startup, then start the application with multiple workers
+# UVICORN_WORKERS environment variable can override default of 4
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4}
