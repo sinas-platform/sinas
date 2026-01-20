@@ -106,28 +106,30 @@ class RequestLoggerMiddleware:
         error_message = state.get("error_message")
         error_type = state.get("error_type")
 
-        # Log to ClickHouse (fire-and-forget, don't block response)
-        asyncio.create_task(
-            clickhouse_logger.log_request(
-                request_id=request_id,
-                user_id=user_id,
-                user_email=user_email,
-                permission_used=permission_used,
-                has_permission=has_permission,
-                method=method,
-                path=path,
-                query_params=query_params,
-                request_body=request_body,
-                user_agent=user_agent,
-                referer=referer,
-                ip_address=ip_address,
-                status_code=status_code,
-                response_time_ms=response_time_ms,
-                response_size_bytes=response_size,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                group_id=group_id,
-                error_message=error_message,
-                error_type=error_type
+        # Skip logging health checks to reduce noise
+        if path != "/health":
+            # Log to ClickHouse (fire-and-forget, don't block response)
+            asyncio.create_task(
+                clickhouse_logger.log_request(
+                    request_id=request_id,
+                    user_id=user_id,
+                    user_email=user_email,
+                    permission_used=permission_used,
+                    has_permission=has_permission,
+                    method=method,
+                    path=path,
+                    query_params=query_params,
+                    request_body=request_body,
+                    user_agent=user_agent,
+                    referer=referer,
+                    ip_address=ip_address,
+                    status_code=status_code,
+                    response_time_ms=response_time_ms,
+                    response_size_bytes=response_size,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    group_id=group_id,
+                    error_message=error_message,
+                    error_type=error_type
+                )
             )
-        )

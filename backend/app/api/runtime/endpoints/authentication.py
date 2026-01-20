@@ -15,6 +15,7 @@ from app.core.auth import (
     validate_refresh_token,
     revoke_refresh_token,
     get_current_user,
+    get_current_user_with_permissions,
     set_permission_used,
 )
 from app.core.config import settings
@@ -29,6 +30,9 @@ from app.schemas.auth import (
     RefreshResponse,
     LogoutRequest,
     UserResponse,
+    PermissionCheckRequest,
+    PermissionCheckResponse,
+    PermissionCheckResult,
 )
 
 router = APIRouter()
@@ -280,3 +284,50 @@ async def get_current_user_info(
         )
 
     return UserResponse.model_validate(user)
+
+
+@router.post("/check-permissions", response_model=PermissionCheckResponse)
+async def check_permissions(
+    request: Request,
+    check_request: PermissionCheckRequest,
+    current_user_data = Depends(get_current_user_with_permissions)
+):
+    """
+    Check if the authenticated user has specific permission(s).
+
+    Supports AND/OR logic:
+    - AND: User must have ALL specified permissions
+    - OR: User must have AT LEAST ONE of the specified permissions
+
+    Example request:
+    ```json
+    {
+        "permissions": ["sinas.functions.read:all", "sinas.functions.create:own"],
+        "logic": "OR"
+    }
+    ```
+    """
+    from app.core.permissions import check_permission
+
+    user_id, permissions = current_user_data
+
+    # Check each permission
+    checks = []
+    for perm in check_request.permissions:
+        has_perm = check_permission(permissions, perm)
+        checks.append(PermissionCheckResult(
+            permission=perm,
+            has_permission=has_perm
+        ))
+
+    # Calculate overall result based on logic
+    if check_request.logic == "AND":
+        result = all(check.has_permission for check in checks)
+    else:  # OR
+        result = any(check.has_permission for check in checks)
+
+    return PermissionCheckResponse(
+        result=result,
+        logic=check_request.logic,
+        checks=checks
+    )

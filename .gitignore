@@ -206,3 +206,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .DS_Store
+
+# Frontend (console/)
+console/node_modules/
+console/dist/
+console/.env.local
+console/.env.*.local

@@ -1,5 +1,4 @@
 services:
-  # ClickHouse - for request logging and analytics
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
     container_name: sinas-clickhouse
@@ -10,15 +9,13 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backend/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
-    # Add security options for macOS compatibility
     security_opt:
       - seccomp:unconfined
-    # Add platform specification for better compatibility
     platform: linux/amd64
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
@@ -27,7 +24,6 @@ services:
       retries: 10
       start_period: 30s
 
-  # PostgreSQL - always runs, used if DATABASE_URL not set
   postgres:
     image: postgres:16-alpine
     container_name: sinas-postgres
@@ -43,73 +39,50 @@ services:
       timeout: 3s
       retries: 5
 
-  # SINAS Application
-  app:
+  backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
-    container_name: sinas-app
+    container_name: sinas-backend
     ports:
-      - "${APP_PORT:-51245}:8000"
+      - "8000:8000"
     volumes:
-      # Mount code for development (comment out for production)
-      - .:/app
-      # Mount Docker socket for container-per-user execution
+      - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
-    # Resource limits for the SINAS application container
     deploy:
       resources:
         limits:
-          cpus: '${APP_CPU_LIMIT:-2.0}'      # CPU cores
-          memory: ${APP_MEMORY_LIMIT:-2G}     # RAM
+          cpus: '${APP_CPU_LIMIT:-2.0}'
+          memory: ${APP_MEMORY_LIMIT:-2G}
         reservations:
           cpus: '${APP_CPU_RESERVATION:-0.5}'
           memory: ${APP_MEMORY_RESERVATION:-512M}
     environment:
-      # Database configuration
-      # Build from components if DATABASE_URL not explicitly set
       DATABASE_USER: ${DATABASE_USER:-postgres}
       DATABASE_HOST: ${DATABASE_HOST:-postgres}
       DATABASE_PORT: ${DATABASE_PORT:-5432}
       DATABASE_NAME: ${DATABASE_NAME:-sinas}
-      # DATABASE_PASSWORD comes from .env
-
-      # ClickHouse configuration
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
-
-      # Application configuration
       DEBUG: ${DEBUG:-false}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
       ALGORITHM: ${ALGORITHM:-HS256}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-10080}
-
-      # OTP Configuration
       OTP_EXPIRE_MINUTES: ${OTP_EXPIRE_MINUTES:-10}
-
-      # SMTP Configuration (for sending emails)
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       SMTP_DOMAIN: ${SMTP_DOMAIN}
-
-      # Function Execution Settings
       FUNCTION_TIMEOUT: ${FUNCTION_TIMEOUT:-300}
       MAX_FUNCTION_MEMORY: ${MAX_FUNCTION_MEMORY:-512}
-
-      # Package Management
       ALLOW_PACKAGE_INSTALLATION: ${ALLOW_PACKAGE_INSTALLATION:-true}
-
-      # Encryption
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
-
-      # Admin user
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
     depends_on:
       clickhouse:
@@ -118,15 +91,23 @@ services:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
-  # Caddy - HTTPS reverse proxy
+  console:
+    build:
+      context: ./console
+      dockerfile: Dockerfile
+    container_name: sinas-console
+    restart: unless-stopped
+    ports:
+      - "51245:80"
+
   caddy:
     image: caddy:2-alpine
     container_name: sinas-caddy
     restart: unless-stopped
     ports:
-      - "80:80"      # HTTP (redirects to HTTPS)
-      - "443:443"    # HTTPS
-      - "443:443/udp" # HTTP/3
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -136,7 +117,8 @@ services:
       DOMAIN: ${DOMAIN:-localhost}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-admin@example.com}
     depends_on:
-      - app
+      - backend
+      - console
 
 volumes:
   postgres_data:

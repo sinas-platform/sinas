@@ -1,45 +1,22 @@
-# Caddy configuration for SINAS
-#
-# Set your domain in .env as DOMAIN=yourdomain.com
-# Then Caddy will automatically obtain SSL certificates from Let's Encrypt
-#
-# For multiple instances, create separate Caddyfiles or use this as a template
-
 {$DOMAIN:localhost} {
-    # Automatic HTTPS with Let's Encrypt
-    # Uses SUPERADMIN_EMAIL for certificate notifications
     tls {$SUPERADMIN_EMAIL:admin@example.com}
 
-    # Proxy to FastAPI app
-    reverse_proxy app:8000 {
-        # Health check
+    reverse_proxy backend:8000 {
         health_uri /health
         health_interval 10s
         health_timeout 5s
     }
 
-    # Security headers
     header {
-        # Enable HSTS
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        # Prevent clickjacking
         X-Frame-Options "SAMEORIGIN"
-        # Prevent MIME sniffing
         X-Content-Type-Options "nosniff"
-        # XSS protection
         X-XSS-Protection "1; mode=block"
-        # Referrer policy
         Referrer-Policy "strict-origin-when-cross-origin"
     }
 
-    # Logging
     log {
         output file /var/log/caddy/access.log
         format json
     }
 }
-
-# For local development (no SSL), uncomment this instead:
-# :80 {
-#     reverse_proxy app:8000
-# }

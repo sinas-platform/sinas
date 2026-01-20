@@ -8,6 +8,38 @@ Core capabilities:
 - 🌐 **Webhooks & Scheduling** - HTTP triggers and cron-based automation
 - 💾 **State Store** - Flexible key-value storage for agent/function/workflow state
 - 🔐 **RBAC** - Group-based permissions with hierarchical scopes (:own/:group/:all)
+- 🖥️ **Management Console** - Web UI for managing agents, functions, and system configuration
+
+---
+
+## Repository Structure
+
+This is a **monorepo** containing both backend and frontend:
+
+```
+SINAS/
+├── backend/           # FastAPI backend (Python)
+│   ├── app/          # Application code
+│   ├── alembic/      # Database migrations
+│   └── Dockerfile    # Backend container
+├── console/          # Management console frontend (React/Vue)
+│   ├── src/          # Frontend source (copy from SINAS_CONSOLE)
+│   └── Dockerfile    # Frontend container (Nginx)
+├── docker-compose.yml # Orchestrates all services
+└── Caddyfile         # Reverse proxy configuration
+```
+
+**Services:**
+- `backend` - FastAPI API server (port 8000)
+- `console` - Nginx serving management UI (port 80)
+- `postgres` - PostgreSQL database
+- `clickhouse` - Analytics database (optional)
+- `caddy` - HTTPS reverse proxy
+
+**Routing (via Caddy):**
+- `https://yourdomain.com/console/*` → Console UI
+- `https://yourdomain.com/api/v1/*` → Management API
+- `https://yourdomain.com/*` → Runtime API (webhooks, agents, auth)
 
 ---
 
@@ -55,8 +87,25 @@ SMTP_DOMAIN=yourdomain.com
 SUPERADMIN_EMAIL=admin@yourdomain.com
 ```
 
-**4. Start the application:**
+**4. Setup console (optional but recommended):**
+
+The console frontend is not included by default. To add it:
+
 ```bash
+# Copy SINAS_CONSOLE into console/ directory
+cd console/
+rsync -av --exclude node_modules --exclude dist ../../SINAS_CONSOLE/ ./
+cd ..
+```
+
+See [console/README.md](console/README.md) for details.
+
+**5. Start the application:**
+```bash
+# Without console (backend only)
+docker-compose up backend postgres clickhouse caddy
+
+# With console (full stack)
 docker-compose up
 ```
 

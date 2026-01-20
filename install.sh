@@ -173,10 +173,10 @@ ALLOW_PACKAGE_INSTALLATION=true
 
 # ClickHouse (optional)
 CLICKHOUSE_HOST=clickhouse
-CLICKHOUSE_PORT=9000
+CLICKHOUSE_PORT=8123
 CLICKHOUSE_USER=default
 CLICKHOUSE_PASSWORD=
-CLICKHOUSE_DB=sinas_logs
+CLICKHOUSE_DATABASE=sinas
 EOF
 
 echo -e "${GREEN}✓ .env file created${NC}"
@@ -228,7 +228,7 @@ if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
     sleep 10
 
     # Check if services are running
-    if docker ps | grep -q sinas-app; then
+    if docker ps | grep -q sinas-backend; then
         echo -e "${GREEN}✓ Services started successfully${NC}"
     else
         echo -e "${RED}⚠ Services may have failed to start. Check logs with: docker compose logs${NC}"

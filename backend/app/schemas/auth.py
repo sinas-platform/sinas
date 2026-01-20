@@ -1,6 +1,6 @@
 """Authentication schemas."""
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Literal
 from datetime import datetime
 import uuid
 
@@ -85,3 +85,22 @@ class LogoutRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     email: EmailStr
+
+
+class PermissionCheckRequest(BaseModel):
+    """Request to check if user has permission(s)."""
+    permissions: List[str]
+    logic: Literal["AND", "OR"] = "AND"
+
+
+class PermissionCheckResult(BaseModel):
+    """Individual permission check result."""
+    permission: str
+    has_permission: bool
+
+
+class PermissionCheckResponse(BaseModel):
+    """Response with permission check results."""
+    result: bool  # Overall result based on logic (AND/OR)
+    logic: str
+    checks: List[PermissionCheckResult]
