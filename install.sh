@@ -221,7 +221,14 @@ if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
         exit 1
     fi
 
-    docker compose up -d
+    # Start with or without Caddy based on DOMAIN
+    if [[ -n "$DOMAIN" && "$DOMAIN" != "localhost" ]]; then
+        echo -e "${YELLOW}Starting with Caddy (HTTPS enabled)...${NC}"
+        docker compose --profile production up -d
+    else
+        echo -e "${YELLOW}Starting without Caddy (local development)...${NC}"
+        docker compose up -d
+    fi
 
     echo ""
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"

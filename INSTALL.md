@@ -22,8 +22,8 @@ The script will:
 - ✅ Auto-provision SSL certificates
 
 **That's it!** SINAS will be running at:
-- Backend API: `https://your-domain.com` (port 443, via Caddy HTTPS)
-- Console UI: `http://your-domain.com:51245` (direct access)
+- Backend API: `https://your-domain.com` (via Caddy with auto SSL)
+- Console UI: `https://your-domain.com:51245` (via Caddy with auto SSL)
 
 ---
 
@@ -152,16 +152,17 @@ docker exec sinas-postgres pg_dump -U postgres sinas > backup.sql
 
 ## Local Development
 
-For local development without SSL:
+For local development (no HTTPS):
 
 ```bash
+# Don't set DOMAIN in .env (or set DOMAIN=localhost)
+docker-compose up -d
+
 # Backend: http://localhost:8000
 # Console: http://localhost:51245
-
-docker-compose up -d
 ```
 
-No Caddy needed - services expose ports directly.
+Caddy is automatically disabled for local dev - services expose ports directly.
 
 ---
 

@@ -38,11 +38,12 @@ SINAS/
 
 ## Port Configuration
 
-**Always the same, works automatically:**
-- **Backend API**: Port 8000 (local) / Port 443 (VPS via Caddy HTTPS)
-- **Console UI**: Port 51245 (direct access, both local and VPS)
+| Environment | Backend | Console | Notes |
+|-------------|---------|---------|-------|
+| **Local** | http://localhost:8000 | http://localhost:51245 | Direct access, no Caddy |
+| **VPS** | https://yourdomain.com | https://yourdomain.com:51245 | Via Caddy with auto SSL |
 
-No configuration changes needed between environments.
+**Automatic:** Caddy only starts when `DOMAIN` is set to a real domain (not localhost).
 
 ## Development Workflow
 
@@ -115,7 +116,7 @@ docker-compose build console
    docker-compose up -d
    ```
 
-Caddy will auto-obtain Let's Encrypt certificates for the backend. Console runs on port 51245 (HTTP).
+Caddy will auto-obtain Let's Encrypt certificates for both backend and console.
 
 ### Logs and Monitoring
 
@@ -132,14 +133,17 @@ docker-compose logs -f caddy
 docker-compose ps
 ```
 
-## URL Routing
+## How It Works
 
-| Service | Local | VPS (Production) |
-|---------|-------|------------------|
-| Backend API | http://localhost:8000 | https://yourdomain.com (via Caddy) |
-| Console UI | http://localhost:51245 | http://yourdomain.com:51245 (direct) |
+**Local Development (`DOMAIN` not set or `=localhost`):**
+- Backend and Console expose ports directly (8000, 51245)
+- Caddy service doesn't start (uses docker compose profile)
+- No SSL certificates
 
-Caddy only proxies the backend API. Console is accessed directly on port 51245.
+**VPS Production (`DOMAIN=yourdomain.com`):**
+- Caddy proxies both services with automatic Let's Encrypt SSL
+- Backend: https://yourdomain.com (port 443)
+- Console: https://yourdomain.com:51245
 
 ## Environment Variables
 

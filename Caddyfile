@@ -1,6 +1,4 @@
-{$DOMAIN:localhost} {
-    tls {$SUPERADMIN_EMAIL:admin@example.com}
-
+{$DOMAIN} {
     reverse_proxy backend:8000 {
         health_uri /health
         health_interval 10s
@@ -14,9 +12,16 @@
         X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
+}
 
-    log {
-        output file /var/log/caddy/access.log
-        format json
+{$DOMAIN}:51245 {
+    reverse_proxy console:80
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
     }
 }

@@ -45,7 +45,7 @@ services:
       dockerfile: Dockerfile
     container_name: sinas-backend
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
@@ -98,27 +98,27 @@ services:
     container_name: sinas-console
     restart: unless-stopped
     ports:
-      - "51245:80"
+      - "${CONSOLE_PORT:-51245}:80"
 
   caddy:
     image: caddy:2-alpine
     container_name: sinas-caddy
     restart: unless-stopped
+    profiles:
+      - production
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+      - "51245:51245"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
     environment:
-      DOMAIN: ${DOMAIN:-localhost}
+      DOMAIN: ${DOMAIN}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-admin@example.com}
-    depends_on:
-      - backend
-      - console
 
 volumes:
   postgres_data:
