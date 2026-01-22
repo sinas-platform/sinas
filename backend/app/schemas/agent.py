@@ -6,8 +6,8 @@ import uuid
 
 
 class AgentCreate(BaseModel):
-    namespace: str = Field(default="default", min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-    name: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    namespace: str = Field(default="default", min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
+    name: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9 _-]*$')
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None  # NULL = use default provider
     model: Optional[str] = None  # NULL = use provider's default model
@@ -28,8 +28,8 @@ class AgentCreate(BaseModel):
 
 
 class AgentUpdate(BaseModel):
-    namespace: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    namespace: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
+    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9 _-]*$')
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None
     model: Optional[str] = None

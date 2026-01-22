@@ -152,7 +152,6 @@ class MessageService:
         elif agent and agent.llm_provider_id:
             # Load provider relationship if needed
             if not agent.llm_provider:
-                from app.models import LLMProvider
                 result = await self.db.execute(
                     select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
                 )
@@ -223,7 +222,6 @@ class MessageService:
 
         # If no model specified, use the provider's default model
         if not final_model:
-            from app.models import LLMProvider
             # Get the provider config that was used
             if provider_name:
                 result = await self.db.execute(

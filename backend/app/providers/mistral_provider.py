@@ -58,7 +58,7 @@ class MistralProvider(BaseLLMProvider):
         message = response.choices[0].message
 
         result = {
-            "content": message.content,
+            "content": message.content or "",
             "tool_calls": None,
             "usage": self.extract_usage(response),
             "finish_reason": response.choices[0].finish_reason,
@@ -110,13 +110,10 @@ class MistralProvider(BaseLLMProvider):
             delta = chunk.choices[0].delta
 
             chunk_data = {
-                "delta": "",
+                "content": delta.content if delta.content else None,
                 "tool_calls": None,
                 "finish_reason": chunk.choices[0].finish_reason,
             }
-
-            if delta.content:
-                chunk_data["delta"] = delta.content
 
             if delta.tool_calls:
                 # Buffer tool calls

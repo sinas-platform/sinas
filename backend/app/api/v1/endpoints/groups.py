@@ -301,7 +301,8 @@ async def add_group_member(
     result = await db.execute(
         select(User).where(User.id == member_data.user_id)
     )
-    if not result.scalar_one_or_none():
+    user = result.scalar_one_or_none()
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     # Check if already a member
@@ -324,7 +325,16 @@ async def add_group_member(
         existing.added_by = uuid.UUID(user_id)
         await db.commit()
         await db.refresh(existing)
-        return existing
+
+        return GroupMemberResponse(
+            id=existing.id,
+            group_id=existing.group_id,
+            user_id=existing.user_id,
+            user_email=user.email,
+            role=existing.role,
+            active=existing.active,
+            added_at=existing.added_at
+        )
 
     # Create new membership
     membership = GroupMember(
@@ -339,7 +349,15 @@ async def add_group_member(
     await db.commit()
     await db.refresh(membership)
 
-    return membership
+    return GroupMemberResponse(
+        id=membership.id,
+        group_id=membership.group_id,
+        user_id=membership.user_id,
+        user_email=user.email,
+        role=membership.role,
+        active=membership.active,
+        added_at=membership.added_at
+    )
 
 
 @router.delete("/{name}/members/{user_id}")
