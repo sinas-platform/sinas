@@ -11,6 +11,7 @@ from .llm_provider import LLMProvider
 from .mcp import MCPServer
 from .state import State
 from .pending_approval import PendingToolApproval
+from .template import Template
 
 __all__ = [
     "Base",
@@ -35,4 +36,5 @@ __all__ = [
     "MCPServer",
     "State",
     "PendingToolApproval",
+    "Template",
 ]

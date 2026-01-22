@@ -54,7 +54,7 @@ export function Login() {
             <img src="/sinas-logo.svg" alt="sinas" className="h-16" />
           </div>
           <h1 className="text-xl font-semibold text-gray-900 mb-2">Management Console</h1>
-          <p className="text-gray-600">Semantic Intelligence & Automation System</p>
+          <p className="text-gray-600">Sovereign Infrastructure for Native Agentic Systems</p>
         </div>
 
         {/* Login card */}

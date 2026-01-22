@@ -9,6 +9,7 @@ from app.api.v1 import router as api_v1_router
 from app.api.runtime import runtime_router
 from app.core.config import settings
 from app.core.auth import initialize_default_groups, initialize_superadmin
+from app.core.templates import initialize_default_templates
 from app.core.database import AsyncSessionLocal, get_db
 from app.services.scheduler import scheduler
 from app.services.clickhouse_logger import clickhouse_logger
@@ -30,6 +31,10 @@ async def lifespan(app: FastAPI):
     # Initialize superadmin user
     async with AsyncSessionLocal() as db:
         await initialize_superadmin(db)
+
+    # Initialize default templates
+    async with AsyncSessionLocal() as db:
+        await initialize_default_templates(db)
 
     # Initialize MCP client
     async with AsyncSessionLocal() as db:

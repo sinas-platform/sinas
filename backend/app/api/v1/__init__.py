@@ -15,6 +15,7 @@ from .endpoints import (
     workers,
     config,
     api_keys,
+    templates,
 )
 
 router = APIRouter()
@@ -26,6 +27,7 @@ router.include_router(mcp_servers.router, prefix="/mcp", tags=["mcp"])
 router.include_router(groups.router)
 router.include_router(users.router)
 router.include_router(api_keys.router, tags=["api-keys"])
+router.include_router(templates.router, prefix="/templates", tags=["templates"])
 
 # Function configuration routes
 router.include_router(functions.router)

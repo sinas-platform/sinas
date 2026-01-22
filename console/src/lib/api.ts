@@ -36,6 +36,10 @@ import type {
   LLMProvider,
   LLMProviderCreate,
   LLMProviderUpdate,
+  Template,
+  TemplateCreate,
+  TemplateUpdate,
+  TemplateRenderResponse,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -631,6 +635,41 @@ class APIClient {
 
   async scaleWorkers(targetCount: number): Promise<any> {
     const response = await this.configClient.post('/workers/scale', { target_count: targetCount });
+    return response.data;
+  }
+
+  // Templates
+  async listTemplates(): Promise<Template[]> {
+    const response = await this.configClient.get('/templates');
+    return response.data;
+  }
+
+  async getTemplate(templateId: string): Promise<Template> {
+    const response = await this.configClient.get(`/templates/${templateId}`);
+    return response.data;
+  }
+
+  async getTemplateByName(templateName: string): Promise<Template> {
+    const response = await this.configClient.get(`/templates/by-name/${templateName}`);
+    return response.data;
+  }
+
+  async createTemplate(data: TemplateCreate): Promise<Template> {
+    const response = await this.configClient.post('/templates', data);
+    return response.data;
+  }
+
+  async updateTemplate(templateId: string, data: TemplateUpdate): Promise<Template> {
+    const response = await this.configClient.patch(`/templates/${templateId}`, data);
+    return response.data;
+  }
+
+  async deleteTemplate(templateId: string): Promise<void> {
+    await this.configClient.delete(`/templates/${templateId}`);
+  }
+
+  async renderTemplate(templateId: string, variables: Record<string, any>): Promise<TemplateRenderResponse> {
+    const response = await this.configClient.post(`/templates/${templateId}/render`, { variables });
     return response.data;
   }
 }

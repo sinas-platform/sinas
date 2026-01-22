@@ -468,3 +468,51 @@ export interface LLMProviderUpdate {
   is_default?: boolean;
   is_active?: boolean;
 }
+
+// Templates
+export interface Template {
+  id: string;
+  name: string;
+  description?: string;
+  title?: string;
+  html_content: string;
+  text_content?: string;
+  variable_schema: Record<string, any>;
+  is_active: boolean;
+  created_by?: string;
+  updated_by?: string;
+  created_at: string;
+  updated_at: string;
+  managed_by?: string;
+  config_name?: string;
+  config_checksum?: string;
+}
+
+export interface TemplateCreate {
+  name: string;
+  description?: string;
+  title?: string;
+  html_content: string;
+  text_content?: string;
+  variable_schema?: Record<string, any>;
+}
+
+export interface TemplateUpdate {
+  name?: string;
+  description?: string;
+  title?: string;
+  html_content?: string;
+  text_content?: string;
+  variable_schema?: Record<string, any>;
+  is_active?: boolean;
+}
+
+export interface TemplateRenderRequest {
+  variables: Record<string, any>;
+}
+
+export interface TemplateRenderResponse {
+  title?: string;
+  html_content: string;
+  text_content?: string;
+}

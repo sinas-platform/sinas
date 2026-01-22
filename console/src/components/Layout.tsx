@@ -18,6 +18,7 @@ import {
   Shield,
   Activity,
   Webhook,
+  FileText,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -33,6 +34,7 @@ const navigationSections = [
     items: [
       { name: 'Agents', href: '/agents', icon: Bot },
       { name: 'Functions', href: '/functions', icon: Code },
+      { name: 'Templates', href: '/templates', icon: FileText },
       { name: 'Webhooks', href: '/webhooks', icon: Webhook },
       { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
       { name: 'MCP Servers', href: '/mcp', icon: Server },

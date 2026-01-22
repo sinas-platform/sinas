@@ -25,6 +25,7 @@ import { LLMProviders } from './pages/LLMProviders';
 import { ConfigManager } from './pages/ConfigManager';
 import { Permissions } from './pages/Permissions';
 import { Workers } from './pages/Workers';
+import { Templates } from './pages/Templates';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -108,6 +109,7 @@ function App() {
               <Route path="schedules/:scheduleId" element={<ScheduleEditor />} />
               <Route path="mcp" element={<MCPServers />} />
               <Route path="llm-providers" element={<LLMProviders />} />
+              <Route path="templates" element={<Templates />} />
               <Route path="config" element={<ConfigManager />} />
               <Route path="states" element={<States />} />
               <Route path="logs" element={<RequestLogs />} />
