@@ -10,6 +10,7 @@ export function Chats() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newChatTitle, setNewChatTitle] = useState('');
   const [selectedAssistantId, setSelectedAssistantId] = useState<string>('');
+  const [inputParams, setInputParams] = useState<Record<string, any>>({});
   const [searchQuery, setSearchQuery] = useState('');
 
   const { data: chats, isLoading } = useQuery({
@@ -32,6 +33,7 @@ export function Chats() {
       setShowCreateModal(false);
       setNewChatTitle('');
       setSelectedAssistantId('');
+      setInputParams({});
     },
   });
 
@@ -47,10 +49,15 @@ export function Chats() {
     if (selectedAssistantId && newChatTitle.trim()) {
       const assistant = assistants?.find(a => a.id === selectedAssistantId);
       if (assistant) {
+        const data: ChatCreate = { title: newChatTitle.trim() };
+        // Include input params if any were provided
+        if (Object.keys(inputParams).length > 0) {
+          data.input = inputParams;
+        }
         createMutation.mutate({
           namespace: assistant.namespace,
           name: assistant.name,
-          data: { title: newChatTitle.trim() }
+          data
         });
       }
     }
@@ -218,6 +225,42 @@ export function Chats() {
                 </select>
               </div>
 
+              {/* Input Parameters (if agent has input_schema) */}
+              {selectedAssistantId && (() => {
+                const selectedAgent = assistants?.find(a => a.id === selectedAssistantId);
+                const inputSchema = selectedAgent?.input_schema;
+                const properties = inputSchema?.properties || {};
+                const requiredFields = inputSchema?.required || [];
+
+                if (Object.keys(properties).length === 0) {
+                  return null;
+                }
+
+                return (
+                  <div className="border-t pt-4">
+                    <h3 className="text-sm font-medium text-gray-900 mb-3">Input Parameters</h3>
+                    {Object.entries(properties).map(([key, prop]: [string, any]) => (
+                      <div key={key} className="mb-3">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          {key} {requiredFields.includes(key) && <span className="text-red-500">*</span>}
+                        </label>
+                        {prop.description && (
+                          <p className="text-xs text-gray-500 mb-1">{prop.description}</p>
+                        )}
+                        <input
+                          type={prop.type === 'number' ? 'number' : 'text'}
+                          value={inputParams[key] || ''}
+                          onChange={(e) => setInputParams({ ...inputParams, [key]: e.target.value })}
+                          placeholder={prop.default || ''}
+                          required={requiredFields.includes(key)}
+                          className="input"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
@@ -225,6 +268,7 @@ export function Chats() {
                     setShowCreateModal(false);
                     setNewChatTitle('');
                     setSelectedAssistantId('');
+                    setInputParams({});
                   }}
                   className="btn btn-secondary"
                   disabled={createMutation.isPending}

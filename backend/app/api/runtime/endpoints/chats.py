@@ -79,18 +79,40 @@ async def create_chat_with_agent(
         except jsonschema.ValidationError as e:
             raise HTTPException(400, f"Input validation failed: {e.message}")
 
-    # 4. Create chat
+    # 4. Create chat with input data stored in metadata
     chat = Chat(
         user_id=user_id,
         group_id=agent.group_id,
         agent_id=agent.id,
         agent_namespace=namespace,
         agent_name=agent_name,
-        title=request.title or f"Chat with {namespace}/{agent_name}"
+        title=request.title or f"Chat with {namespace}/{agent_name}",
+        chat_metadata={"agent_input": request.input} if request.input else None
     )
     db.add(chat)
     await db.commit()
     await db.refresh(chat)
+
+    # 5. Pre-populate with initial_messages if present (rendered with input data)
+    if agent.initial_messages:
+        from app.services.template_renderer import render_template
+
+        for msg_data in agent.initial_messages:
+            # Render message content with input_data if it's a string
+            content = msg_data["content"]
+            if isinstance(content, str) and request.input:
+                try:
+                    content = render_template(content, request.input)
+                except Exception as e:
+                    logger.error(f"Failed to render initial message template: {e}")
+
+            message = Message(
+                chat_id=chat.id,
+                role=msg_data["role"],
+                content=content
+            )
+            db.add(message)
+        await db.commit()
 
     # Get user email
     user_result = await db.execute(select(User).where(User.id == user_id))
@@ -349,12 +371,49 @@ async def approve_tool_call(
         # Get LLM response to the rejection
         try:
             from app.providers.factory import create_provider
+            from app.services.template_renderer import render_template
 
             # Rebuild conversation with rejection
+            # First, add system prompt with template variables
+            result_chat = await db.execute(
+                select(Chat).where(Chat.id == chat_id)
+            )
+            chat = result_chat.scalar_one_or_none()
+
+            updated_messages = []
+
+            # Add system prompt from agent if exists
+            if chat and chat.agent_id:
+                result_agent = await db.execute(
+                    select(Agent).where(Agent.id == chat.agent_id)
+                )
+                agent = result_agent.scalar_one_or_none()
+                if agent and agent.system_prompt:
+                    # Render system prompt with template variables from chat metadata
+                    system_content = agent.system_prompt
+                    if chat.chat_metadata and "agent_input" in chat.chat_metadata:
+                        try:
+                            system_content = render_template(
+                                agent.system_prompt,
+                                chat.chat_metadata["agent_input"]
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to render system prompt template: {e}")
+
+                    # Add output schema instruction if agent has one
+                    if agent.output_schema and agent.output_schema.get("properties"):
+                        schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
+                        system_content += schema_instruction
+
+                    updated_messages.append({
+                        "role": "system",
+                        "content": system_content
+                    })
+
+            # Add chat messages
             result = await db.execute(
                 select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
             )
-            updated_messages = []
             for msg in result.scalars().all():
                 message_dict = {"role": msg.role}
                 if msg.content:

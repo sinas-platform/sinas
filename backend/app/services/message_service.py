@@ -89,10 +89,18 @@ class MessageService:
         # Pre-populate with initial_messages if present
         if agent.initial_messages:
             for msg_data in agent.initial_messages:
+                # Render message content with input_data if it's a string
+                content = msg_data["content"]
+                if isinstance(content, str) and input_data:
+                    try:
+                        content = render_template(content, input_data)
+                    except Exception as e:
+                        logger.error(f"Failed to render initial message template: {e}")
+
                 message = Message(
                     chat_id=chat.id,
                     role=msg_data["role"],
-                    content=msg_data["content"]
+                    content=content
                 )
                 self.db.add(message)
             await self.db.commit()
@@ -212,6 +220,11 @@ class MessageService:
         await self.db.commit()
         await self.db.refresh(user_message)
 
+        # Extract template variables from chat metadata if not provided
+        final_template_variables = template_variables
+        if final_template_variables is None and chat.chat_metadata:
+            final_template_variables = chat.chat_metadata.get("agent_input")
+
         # Build conversation history (with content conversion)
         messages = await self._build_conversation_history(
             chat=chat,
@@ -219,7 +232,7 @@ class MessageService:
             user_id=user_id,
             state_namespaces=state_namespaces,
             context_limit=context_limit,
-            template_variables=template_variables,
+            template_variables=final_template_variables,
             provider_type=provider_type
         )
 
@@ -1231,11 +1244,46 @@ class MessageService:
         await self.db.commit()
 
         # Get final response from LLM with tool results
+        # First, rebuild system prompt with template variables
+        result_chat = await self.db.execute(
+            select(Chat).where(Chat.id == chat_id)
+        )
+        chat = result_chat.scalar_one_or_none()
+
+        updated_messages = []
+
+        # Add system prompt from agent if exists
+        if chat and chat.agent_id:
+            result_agent = await self.db.execute(
+                select(Agent).where(Agent.id == chat.agent_id)
+            )
+            agent = result_agent.scalar_one_or_none()
+            if agent and agent.system_prompt:
+                # Render system prompt with template variables from chat metadata
+                system_content = agent.system_prompt
+                if chat.chat_metadata and "agent_input" in chat.chat_metadata:
+                    try:
+                        system_content = render_template(
+                            agent.system_prompt,
+                            chat.chat_metadata["agent_input"]
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to render system prompt template: {e}")
+
+                # Add output schema instruction if agent has one
+                if agent.output_schema and agent.output_schema.get("properties"):
+                    schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
+                    system_content += schema_instruction
+
+                updated_messages.append({
+                    "role": "system",
+                    "content": system_content
+                })
+
         # Rebuild messages with tool results
         result = await self.db.execute(
             select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
         )
-        updated_messages = []
         for msg in result.scalars().all():
             message_dict = {"role": msg.role}
             if msg.content:
