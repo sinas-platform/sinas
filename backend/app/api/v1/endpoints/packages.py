@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 import uuid
+from datetime import datetime, timezone
 
 from app.core.database import get_db
 from app.core.auth import require_permission, get_current_user, set_permission_used
@@ -52,6 +53,7 @@ async def install_package(
     package = InstalledPackage(
         package_name=package_data.package_name,
         version=package_data.version,
+        installed_at=datetime.now(timezone.utc),
         installed_by=uuid.UUID(user_id)
     )
 
