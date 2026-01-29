@@ -11,13 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 docker-compose up
 
 # Run migrations in container
-docker exec -it sinas-app alembic upgrade head
+docker exec -it sinas-backend alembic upgrade head
 
 # Create new migration
-docker exec -it sinas-app alembic revision --autogenerate -m "description"
+docker exec -it sinas-backend alembic revision --autogenerate -m "description"
 
 # Access container shell
-docker exec -it sinas-app sh
+docker exec -it sinas-backend sh
 ```
 
 ### Local Development (Without Docker)
@@ -85,9 +85,9 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/...
 
 SINAS is built around three independent but integrated subsystems:
 
-1. **AI Chat & Assistants** - Multi-provider LLM integration with conversation management
-2. **Ontology System** - Semantic data layer connecting logical concepts to physical database tables
-3. **Function Execution** - Python runtime with webhooks, scheduling, and automatic tracking
+1. **AI Chat & Agents** - Multi-provider LLM integration with agentic workflows
+2. **Function Execution** - Python runtime with webhooks, scheduling, and automatic tracking
+3. **State Management** - Key-value state storage with namespaces for agent persistence
 
 ### Permission System
 
@@ -101,13 +101,13 @@ SINAS is built around three independent but integrated subsystems:
 **Key Implementation Details:**
 - `check_permission()` in `app/core/permissions.py` handles ALL permission checks
 - Scope hierarchy is automatic - never manually check multiple scopes
-- Wildcards supported: `sinas.ontology.*.create:group` matches any ontology resource
+- Wildcards supported: `sinas.functions.*.create:group` matches any function namespace
 - Pattern matching in `matches_permission_pattern()` handles both wildcards and scope hierarchy
 
 **Common Pattern (CORRECT):**
 ```python
 # Only check the requested scope - hierarchy is automatic
-if check_permission(permissions, f"sinas.ontology.concepts.{namespace}.{concept}.read:group"):
+if check_permission(permissions, f"sinas.functions.{namespace}.{name}.read:group"):
     # Users with :all automatically get access
 ```
 
@@ -117,41 +117,43 @@ if check_permission(permissions, f"sinas.ontology.concepts.{namespace}.{concept}
 if check_permission(permissions, perm_group) or check_permission(permissions, perm_all):
 ```
 
-### Ontology System Architecture
+### Agent System Architecture
 
-The ontology system connects logical **Concepts** (e.g., Customer, Order) to physical database tables via **TableMappings**.
+Agents are AI assistants with configurable LLM providers, tools, and behavior.
 
 **Core Components:**
-- **Concept**: Logical entity definition with properties (name, email, etc.)
-- **Property**: Attributes of a concept with data types
-- **TableMapping**: Maps concept to physical table in a DataSource
-  - `table_name`: Physical table/view name
-  - `column_mappings`: JSON mapping property names to column names (empty = exact match)
-  - `user_ownership_column`: Column for row-level :own scope filtering
-  - `group_ownership_column`: Column for row-level :group scope filtering
-- **DataSource**: Database connection (Postgres, Snowflake, BigQuery)
+- **Agent**: Configured AI assistant with system prompt, LLM settings, and tool access
+  - `namespace`/`name`: Unique identifier (e.g., "default/customer-support")
+  - `llm_provider_id`: Optional specific provider (null = use default)
+  - `model`: Optional model override
+  - `system_prompt`: Jinja2-templated instructions
+  - `input_schema`/`output_schema`: JSON Schema for input variables and output validation
+  - `enabled_functions`: List of functions the agent can call
+  - `function_parameters`: Default parameter values per function (supports Jinja2)
+  - `enabled_mcp_tools`: List of MCP tools the agent can use
+  - `enabled_agents`: Other agents this agent can call as tools
+  - `state_namespaces_readonly`/`state_namespaces_readwrite`: State access permissions
 
-**Data Flow:**
-1. LLM queries concept via `query_ontology_records(concept="Customer", filters={...})`
-2. System loads Concept → TableMapping → DataSource
-3. Applies column mappings to translate property names
-4. Builds SQL query with ownership filters
-5. Executes against external datasource
-6. Returns results
+**Agent Features:**
+- **Tool Calling**: Agents can call functions, other agents, and MCP tools
+- **Function Parameter Defaults**: Configure default parameter values per function
+  - Example: `{"email/send_email": {"sender": "{{company_email}}", "priority": "high"}}`
+  - Supports Jinja2 templates that reference agent input variables
+- **Multi-Modal Support**: Images, audio, files in chat messages
+- **Streaming Responses**: SSE (Server-Sent Events) for real-time output
 
 **Key Files:**
-- `app/models/ontology.py` - Core models (Concept, Property, TableMapping, DataSource)
-- `app/services/ontology/query_executor.py` - Executes queries against datasources
-- `app/services/ontology/ownership_filter.py` - Applies row-level security
-- `app/api/v1/endpoints/ontology_records.py` - Query endpoints
-- `app/services/ontology_tools.py` - LLM tools for querying ontology data
+- `app/models/agent.py` - Agent model
+- `app/services/message_service.py` - Chat message handling and LLM orchestration
+- `app/services/function_tools.py` - Function tool conversion and parameter defaults
+- `app/api/runtime/endpoints/chats.py` - Chat endpoints with streaming
 
 ### Function Execution System
 
 **Execution Flow:**
 1. Function code parsed and validated
 2. AST injection adds `@track` decorator to all function definitions
-3. Code executed in isolated namespace with tracking and context
+3. Code executed in isolated Docker container with tracking and context
 4. Functions can call other functions - tracked as step executions
 5. All calls logged to Execution and StepExecution tables
 
@@ -195,13 +197,36 @@ def my_function(input, context):
 - Context object is automatically injected with fresh JWT token on each execution
 - Access token allows functions to make authenticated API calls back to SINAS
 
+### State Management System
+
+**Purpose:** Persistent key-value storage for agents to maintain state across conversations.
+
+**Core Components:**
+- **State**: Key-value pair with namespace organization
+  - `namespace`: Organization level (e.g., "customer-sessions", "user-preferences")
+  - `key`: Unique identifier within namespace
+  - `value`: JSON data
+  - `ttl`: Optional time-to-live in seconds
+  - `user_id`/`group_id`: Ownership for access control
+
+**Access Control:**
+- Agents declare state access via `state_namespaces_readonly` and `state_namespaces_readwrite`
+- Permissions enforced at namespace level
+- Agents can only access states in namespaces they're granted
+
+**Key Files:**
+- `app/models/state.py` - State model
+- `app/api/v1/endpoints/states.py` - State CRUD endpoints
+- `app/services/state_tools.py` - LLM tools for state access
+
 ### Database Architecture
 
 **Primary Database (PostgreSQL):**
 - User accounts, groups, permissions
-- Chat history, messages, assistants
-- Ontology metadata (concepts, properties, table mappings, datasources)
+- Chat history, messages, agents
 - Function definitions and execution history
+- State storage (key-value)
+- LLM provider configurations
 
 **Redis:**
 - Execution logs (before persisting to ClickHouse)
@@ -212,6 +237,7 @@ def my_function(input, context):
 - Request logging and analytics
 - HTTP request/response tracking via `RequestLoggerMiddleware`
 - Table: `request_logs` (auto-created on startup)
+- **Security:** Auth endpoint request bodies are NOT logged (no token/OTP leakage)
 
 ### Startup Sequence (app/main.py)
 
@@ -221,14 +247,14 @@ def my_function(input, context):
 4. Superadmin user created if `SUPERADMIN_EMAIL` set and Admins group empty
 5. Declarative config applied if `CONFIG_FILE` and `AUTO_APPLY_CONFIG=true`
 6. MCP (Model Context Protocol) client initialized
-7. Default assistants created
+7. Default agents created
 
 ### Declarative Configuration (Preferred)
 
 SINAS supports **declarative configuration** via YAML files for GitOps and Infrastructure as Code workflows.
 
 **Configuration Files:**
-- `config/default-data.yaml` - Full demo configuration (CRM ontology, functions, assistants)
+- `config/default-data.yaml` - Full demo configuration
 - `config/example-simple.yaml` - Minimal example for testing
 
 **Auto-Apply on Startup:**
@@ -250,11 +276,16 @@ AUTO_APPLY_CONFIG=true
 
 ### Authentication Flow
 
-1. User requests OTP via `/api/v1/auth/request-otp`
+1. User requests OTP via `/api/auth/login`
 2. System generates 6-digit code, sends via SMTP
-3. User submits OTP via `/api/v1/auth/verify-otp`
-4. System returns JWT token (default expiry: 7 days)
-5. Token used in `Authorization: Bearer {token}` header
+3. User submits OTP via `/api/auth/verify-otp`
+4. System returns access_token and refresh_token (JWT)
+5. Access token used in `Authorization: Bearer {token}` header
+6. Refresh token used to get new access tokens without re-authenticating
+
+**Security:**
+- Request bodies for auth endpoints are NOT logged to ClickHouse
+- Sensitive fields (`password`, `otp`, `token`, `refresh_token`, `api_key`) are redacted in all other logs
 
 ### Database Migrations
 
@@ -271,25 +302,27 @@ alembic upgrade head
 ```
 
 **Migration Strategy:**
-- Ontology table changes (self-managed concepts) handled by SchemaManager at runtime
 - Application model changes require Alembic migrations
 - Always review auto-generated migrations before applying
+- Test migrations in dev environment first
 
 ### Common Gotchas
 
 1. **Permission Checking:** Always use `check_permission()`, never manually check multiple scopes. Scope hierarchy (:all → :group → :own) is automatic.
 
-2. **Ontology Mode Confusion:** Check if concept `is_self_managed` before attempting to query. Self-managed concepts don't have ConceptQuery records.
+2. **Async Context:** Most DB operations are async. Use `AsyncSession`, `await db.execute()`, and `await db.commit()`.
 
-3. **Async Context:** Most DB operations are async. Use `AsyncSession`, `await db.execute()`, and `await db.commit()`.
+3. **Function Execution:** Functions can call other functions. The ExecutionTracker builds a tree of StepExecution records. Parent execution ID must be passed through tracking context.
 
-4. **Encryption:** DataSource connection strings are encrypted with Fernet (ENCRYPTION_KEY env var). Use `EncryptionService` for encrypt/decrypt.
+4. **MCP Tools:** MCP (Model Context Protocol) servers provide tools to agents. Configured per agent. Tools are dynamically loaded from MCP servers on startup.
 
-5. **Function Execution:** Functions can call other functions. The ExecutionTracker builds a tree of StepExecution records. Parent execution ID must be passed through tracking context.
+5. **Agent vs Assistant:** Use "agent" terminology consistently in code and UI. The backend models still use `Agent` but some schemas reference `Assistant` for historical reasons.
 
-6. **MCP Tools:** MCP (Model Context Protocol) servers provide tools to assistants. Configured per assistant. Tools are dynamically loaded from MCP servers on startup.
+6. **Function Parameter Defaults:** When setting default parameters for functions in agents, use Jinja2 templates to reference agent input variables: `{{variable_name}}`.
 
-7. **Query Validation:** External SQL queries are validated to prevent dangerous operations (no DROP, DELETE, INSERT, UPDATE allowed in query mode - only SELECT with JOINs).
+7. **Message Content Format:** Messages support multimodal content stored as JSON arrays: `[{"type": "text", "text": "..."}, {"type": "image", "image": "data:image/..."}]`. Frontend must parse JSON strings from database.
+
+8. **Provider Type Detection:** When agents don't have explicit `llm_provider_id`, the system falls back to default provider. Ensure `provider_type` is determined before building messages for content conversion.
 
 ## Key Integration Points
 
@@ -317,18 +350,13 @@ async def list_resource(
     # ... implementation
 ```
 
-### Adding New Ontology Property Types
-
-1. Add to `PropertyDataType` enum in `app/models/ontology.py`
-2. Update type mapping in `SchemaManager._get_column_type()`
-3. Update validation in `query_validator.py` if needed
-
 ### Adding New LLM Providers
 
-1. Add provider to config in `app/core/config.py`
-2. Implement provider client in `app/services/llm/`
-3. Update provider selection in `app/services/message_service.py`
-4. Add to Assistant model validation
+1. Implement provider client in `app/providers/` (e.g., `mistral_provider.py`)
+2. Inherit from `BaseLLMProvider` and implement `stream()` and `complete()` methods
+3. Add to factory in `app/providers/factory.py`
+4. Ensure response format matches: `{"content": "...", "tool_calls": [...], "finish_reason": "..."}`
+5. Register via admin UI at `/api/v1/llm-providers` (no code changes needed)
 
 ### Adding Scheduled Jobs
 
@@ -358,7 +386,6 @@ await scheduler.schedule_function(
 
 **Required:**
 - `SECRET_KEY` - JWT signing key
-- `ENCRYPTION_KEY` - Fernet key for encrypting datasource credentials
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_DOMAIN` - Email for OTP
 
 **Database:**
@@ -380,3 +407,6 @@ await scheduler.schedule_function(
 - `FUNCTION_TIMEOUT` - Max execution time in seconds (default: 300)
 - `MAX_FUNCTION_MEMORY` - Max memory in MB (default: 512)
 - `ALLOW_PACKAGE_INSTALLATION` - Allow pip install in functions (default: true)
+
+**Security:**
+- `ENCRYPTION_KEY` - Fernet key for encrypting LLM provider API keys

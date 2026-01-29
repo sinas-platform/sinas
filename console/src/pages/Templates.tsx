@@ -4,6 +4,7 @@ import { FileText, Plus, Trash2, Edit2, Eye, Code2 } from 'lucide-react';
 import { useState } from 'react';
 import type { Template, TemplateCreate, TemplateUpdate } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
 export function Templates() {
   const queryClient = useQueryClient();
@@ -15,6 +16,7 @@ export function Templates() {
   const [previewResult, setPreviewResult] = useState<any>(null);
 
   const [createFormData, setCreateFormData] = useState<TemplateCreate>({
+    namespace: 'default',
     name: '',
     html_content: '',
     variable_schema: {},
@@ -64,6 +66,7 @@ export function Templates() {
 
   const resetCreateForm = () => {
     setCreateFormData({
+      namespace: 'default',
       name: '',
       html_content: '',
       variable_schema: {},
@@ -90,6 +93,7 @@ export function Templates() {
   const openEditModal = (template: Template) => {
     setSelectedTemplate(template);
     setEditFormData({
+      namespace: template.namespace,
       name: template.name,
       description: template.description || '',
       title: template.title || '',
@@ -156,7 +160,9 @@ export function Templates() {
                   <FileText className="w-8 h-8 text-primary-600 mr-3 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">{template.name}</h3>
+                      <h3 className="font-semibold text-gray-900">
+                        <span className="text-gray-500">{template.namespace}/</span>{template.name}
+                      </h3>
                       {!template.is_active && (
                         <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-600 rounded">Inactive</span>
                       )}
@@ -232,7 +238,23 @@ export function Templates() {
             <h2 className="text-2xl font-bold mb-6">Create Template</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="label">Template Name (snake_case)</label>
+                <label className="label">Namespace</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={createFormData.namespace || 'default'}
+                  onChange={(e) =>
+                    setCreateFormData({ ...createFormData, namespace: e.target.value })
+                  }
+                  placeholder="default"
+                  pattern="^[a-z][a-z0-9_-]*$"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Use lowercase letters, numbers, underscores, and hyphens</p>
+              </div>
+
+              <div>
+                <label className="label">Template Name</label>
                 <input
                   type="text"
                   className="input"
@@ -241,10 +263,10 @@ export function Templates() {
                     setCreateFormData({ ...createFormData, name: e.target.value })
                   }
                   placeholder="otp_email"
-                  pattern="^[a-z][a-z0-9_]*$"
+                  pattern="^[a-z][a-z0-9_-]*$"
                   required
                 />
-                <p className="text-xs text-gray-500 mt-1">Use lowercase letters, numbers, and underscores</p>
+                <p className="text-xs text-gray-500 mt-1">Use lowercase letters, numbers, underscores, and hyphens</p>
               </div>
 
               <div>
@@ -302,18 +324,11 @@ export function Templates() {
               </div>
 
               <div>
-                <label className="label">Variable Schema (JSON Schema)</label>
-                <textarea
-                  className="input font-mono text-sm"
-                  rows={8}
-                  value={JSON.stringify(createFormData.variable_schema || {}, null, 2)}
-                  onChange={(e) => {
-                    try {
-                      const schema = JSON.parse(e.target.value);
-                      setCreateFormData({ ...createFormData, variable_schema: schema });
-                    } catch {}
-                  }}
-                  placeholder={'{\n  "type": "object",\n  "properties": {\n    "user_name": { "type": "string" }\n  },\n  "required": ["user_name"]\n}'}
+                <JSONSchemaEditor
+                  label="Variable Schema (JSON Schema)"
+                  description="Define template variables that can be used in Jinja2 templates with {{ variable_name }}"
+                  value={createFormData.variable_schema || {}}
+                  onChange={(schema) => setCreateFormData({ ...createFormData, variable_schema: schema })}
                 />
               </div>
 
@@ -345,7 +360,7 @@ export function Templates() {
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div className="bg-white rounded-lg shadow-xl max-w-7xl w-full h-[90vh] overflow-hidden flex flex-col p-6 pointer-events-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold">Edit Template: {selectedTemplate.name}</h2>
+              <h2 className="text-2xl font-bold">Edit Template: <span className="text-gray-500">{selectedTemplate.namespace}/</span>{selectedTemplate.name}</h2>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -368,6 +383,20 @@ export function Templates() {
               {/* Left: Form */}
               <div className="overflow-y-auto pr-4 space-y-4">
                 <div>
+                  <label className="label">Namespace</label>
+                  <input
+                    type="text"
+                    className="input"
+                    value={editFormData.namespace || 'default'}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setEditFormData({ ...editFormData, namespace: e.target.value })
+                    }
+                    pattern="^[a-z][a-z0-9_-]*$"
+                    required
+                  />
+                </div>
+
+                <div>
                   <label className="label">Template Name</label>
                   <input
                     type="text"
@@ -376,7 +405,7 @@ export function Templates() {
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                       setEditFormData({ ...editFormData, name: e.target.value })
                     }
-                    pattern="^[a-z][a-z0-9_]*$"
+                    pattern="^[a-z][a-z0-9_-]*$"
                     required
                   />
                 </div>
@@ -432,17 +461,11 @@ export function Templates() {
                 </div>
 
                 <div>
-                  <label className="label">Variable Schema (JSON Schema)</label>
-                  <textarea
-                    className="input font-mono text-sm"
-                    rows={8}
-                    value={JSON.stringify(editFormData.variable_schema || {}, null, 2)}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
-                      try {
-                        const schema = JSON.parse(e.target.value);
-                        setEditFormData({ ...editFormData, variable_schema: schema });
-                      } catch {}
-                    }}
+                  <JSONSchemaEditor
+                    label="Variable Schema (JSON Schema)"
+                    description="Define template variables that can be used in Jinja2 templates with {{ variable_name }}"
+                    value={editFormData.variable_schema || {}}
+                    onChange={(schema) => setEditFormData({ ...editFormData, variable_schema: schema })}
                   />
                 </div>
 
@@ -494,7 +517,7 @@ export function Templates() {
           <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowPreviewModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-2xl font-bold mb-6">Preview Template: {selectedTemplate.name}</h2>
+            <h2 className="text-2xl font-bold mb-6">Preview Template: <span className="text-gray-500">{selectedTemplate.namespace}/</span>{selectedTemplate.name}</h2>
             <form onSubmit={handlePreview} className="space-y-4">
               <div>
                 <label className="label">Variables (JSON)</label>

@@ -340,6 +340,8 @@ export interface FunctionCreate {
 }
 
 export interface FunctionUpdate {
+  namespace?: string;
+  name?: string;
   description?: string;
   code?: string;
   input_schema?: Record<string, any>;
@@ -426,13 +428,14 @@ export interface Execution {
 // Packages
 export interface Package {
   id: string;
-  name: string;
+  package_name: string;
   version: string;
   installed_at: string;
+  installed_by?: string;
 }
 
 export interface PackageInstall {
-  name: string;
+  package_name: string;
   version?: string;
 }
 
@@ -476,6 +479,7 @@ export interface LLMProviderUpdate {
 // Templates
 export interface Template {
   id: string;
+  namespace: string;
   name: string;
   description?: string;
   title?: string;
@@ -483,6 +487,8 @@ export interface Template {
   text_content?: string;
   variable_schema: Record<string, any>;
   is_active: boolean;
+  user_id?: string;
+  group_id?: string;
   created_by?: string;
   updated_by?: string;
   created_at: string;
@@ -493,15 +499,18 @@ export interface Template {
 }
 
 export interface TemplateCreate {
+  namespace?: string;
   name: string;
   description?: string;
   title?: string;
   html_content: string;
   text_content?: string;
   variable_schema?: Record<string, any>;
+  group_id?: string;
 }
 
 export interface TemplateUpdate {
+  namespace?: string;
   name?: string;
   description?: string;
   title?: string;
@@ -509,6 +518,7 @@ export interface TemplateUpdate {
   text_content?: string;
   variable_schema?: Record<string, any>;
   is_active?: boolean;
+  group_id?: string;
 }
 
 export interface TemplateRenderRequest {

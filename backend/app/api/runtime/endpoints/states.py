@@ -13,7 +13,7 @@ from app.models.state import State
 from app.models.user import GroupMember
 from app.schemas import StateCreate, StateUpdate, StateResponse
 
-router = APIRouter(prefix="/states", tags=["states"])
+router = APIRouter(prefix="/states")
 
 
 async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:

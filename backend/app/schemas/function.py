@@ -43,6 +43,8 @@ class FunctionCreate(BaseModel):
 
 
 class FunctionUpdate(BaseModel):
+    namespace: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
+    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z_][a-zA-Z0-9_]*$')
     description: Optional[str] = None
     code: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None

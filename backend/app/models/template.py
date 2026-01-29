@@ -10,15 +10,20 @@ from .base import Base, uuid_pk, created_at, updated_at
 class Template(Base):
     __tablename__ = "templates"
     __table_args__ = (
-        UniqueConstraint('name', name='uix_template_name'),
+        UniqueConstraint('namespace', 'name', name='uix_template_namespace_name'),
     )
 
     id: Mapped[uuid_pk]
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     # Unique key like "otp_email", "function_failed_email", "sales_report_output"
     # Name indicates purpose - no need for separate type enum
 
     description: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Ownership for permission checks
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"), index=True)
+    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
 
     # Template content
     title: Mapped[Optional[str]] = mapped_column(Text) # subject for email, possibel other use cases
@@ -51,5 +56,7 @@ class Template(Base):
     config_checksum: Mapped[Optional[str]] = mapped_column(Text)  # For change detection
 
     # Relationships
+    owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
+    group: Mapped[Optional["Group"]] = relationship("Group", foreign_keys=[group_id])
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     updater: Mapped[Optional["User"]] = relationship("User", foreign_keys=[updated_by])

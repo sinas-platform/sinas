@@ -6,27 +6,32 @@ import uuid
 
 
 class TemplateCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_]*$')
-    # Use snake_case for template names (e.g., "otp_email", "sales_report_output")
+    namespace: str = Field(default="default", min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_-]*$')
+    name: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_-]*$')
+    # Use snake_case or kebab-case for names (e.g., "otp-email", "sales_report_output")
     description: Optional[str] = None
     title: Optional[str] = None  # For emails (subject line), notifications (title), etc.
     html_content: str = Field(..., min_length=1)  # Jinja2 template
     text_content: Optional[str] = None  # Plain text fallback (for emails)
     variable_schema: Optional[Dict[str, Any]] = None  # JSON schema for variables
+    group_id: Optional[uuid.UUID] = None  # Optional group ownership
 
 
 class TemplateUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_]*$')
+    namespace: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_-]*$')
+    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-z][a-z0-9_-]*$')
     description: Optional[str] = None
     title: Optional[str] = None
     html_content: Optional[str] = Field(None, min_length=1)
     text_content: Optional[str] = None
     variable_schema: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
+    group_id: Optional[uuid.UUID] = None
 
 
 class TemplateResponse(BaseModel):
     id: uuid.UUID
+    namespace: str
     name: str
     description: Optional[str]
     title: Optional[str]
@@ -34,6 +39,8 @@ class TemplateResponse(BaseModel):
     text_content: Optional[str]
     variable_schema: Dict[str, Any]
     is_active: bool
+    user_id: Optional[uuid.UUID]
+    group_id: Optional[uuid.UUID]
     created_by: Optional[uuid.UUID]
     updated_by: Optional[uuid.UUID]
     created_at: datetime

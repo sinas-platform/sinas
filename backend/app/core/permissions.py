@@ -258,6 +258,16 @@ DEFAULT_GROUP_PERMISSIONS = {
         "sinas.states.delete:own": True,
         "sinas.states.search:own": True,
 
+        # Templates (namespace-based)
+        "sinas.templates.*.*.post:own": True,
+        "sinas.templates.*.*.get:own": True,
+        "sinas.templates.*.*.put:own": True,
+        "sinas.templates.*.*.delete:own": True,
+        "sinas.templates.*.*.render:own": True,
+        "sinas.templates.*.*.send:own": True,
+        "sinas.templates.default.*.render:group": True,  # Can render default templates
+        "sinas.templates.default.*.send:group": True,    # Can send emails with default templates
+
         # Request Logs
         "sinas.logs.get:own": True,
     },

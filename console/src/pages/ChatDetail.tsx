@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { useState, useRef, useEffect } from 'react';
-import { ArrowLeft, Send, Loader2, Bot, User, ChevronDown, ChevronRight, Wrench, Paperclip, X, Music, FileText, AlertTriangle, Check } from 'lucide-react';
+import { ArrowLeft, Send, Loader2, Bot, User, ChevronDown, ChevronRight, Wrench, Paperclip, X, Music, FileText, AlertTriangle, Check, Square } from 'lucide-react';
 import type { MessageContent, UniversalContent, ApprovalRequiredEvent } from '../types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -31,6 +31,7 @@ export function ChatDetail() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const [expandedToolCalls, setExpandedToolCalls] = useState<Set<string>>(new Set());
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -149,6 +150,9 @@ export function ChatDetail() {
         throw new Error('No response body');
       }
 
+      // Store reader ref for cancellation
+      streamReaderRef.current = reader;
+
       const decoder = new TextDecoder();
       let buffer = '';
 
@@ -188,12 +192,14 @@ export function ChatDetail() {
                 // Stream complete
                 setIsStreaming(false);
                 setStreamingContent('');
+                streamReaderRef.current = null;
                 queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
                 return;
               } else if (eventType === 'error') {
                 console.error('Streaming error:', parsed.error);
                 setIsStreaming(false);
                 setStreamingContent('');
+                streamReaderRef.current = null;
                 return;
               }
             } catch (e) {
@@ -206,13 +212,28 @@ export function ChatDetail() {
       // Stream ended normally
       setIsStreaming(false);
       setStreamingContent('');
+      streamReaderRef.current = null;
       queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
 
     } catch (error) {
       console.error('Streaming error:', error);
       setIsStreaming(false);
       setStreamingContent('');
+      streamReaderRef.current = null;
       // Refetch to get any partial results
+      queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
+    }
+  };
+
+  const handleStop = () => {
+    if (streamReaderRef.current) {
+      streamReaderRef.current.cancel();
+      streamReaderRef.current = null;
+      setIsStreaming(false);
+      setStreamingContent('');
+      console.log('🛑 Stream manually stopped by user');
+
+      // Refetch chat to show partial message saved by backend
       queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
     }
   };
@@ -684,17 +705,24 @@ export function ChatDetail() {
             >
               <Paperclip className="w-5 h-5" />
             </button>
-            <button
-              type="submit"
-              disabled={(!message.trim() && attachments.length === 0) || isStreaming}
-              className="btn btn-primary px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isStreaming ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
+            {isStreaming ? (
+              <button
+                type="button"
+                onClick={handleStop}
+                className="btn px-4 py-2 bg-red-600 hover:bg-red-700 text-white"
+                title="Stop generation"
+              >
+                <Square className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!message.trim() && attachments.length === 0}
+                className="btn btn-primary px-4 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <Send className="w-5 h-5" />
-              )}
-            </button>
+              </button>
+            )}
           </div>
         </form>
         <p className="text-xs text-gray-500 mt-2">

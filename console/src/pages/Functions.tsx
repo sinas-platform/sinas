@@ -47,7 +47,7 @@ export function Functions() {
   const handleInstallPackage = (e: React.FormEvent) => {
     e.preventDefault();
     if (packageName.trim()) {
-      installPackageMutation.mutate({ name: packageName.trim() });
+      installPackageMutation.mutate({ package_name: packageName.trim() });
     }
   };
 
@@ -80,7 +80,7 @@ export function Functions() {
           <div className="flex flex-wrap gap-2">
             {packages.map((pkg: any) => (
               <div key={pkg.id} className="flex items-center bg-white px-3 py-1 rounded border border-gray-200">
-                <span className="text-sm font-mono">{pkg.name}</span>
+                <span className="text-sm font-mono">{pkg.package_name}</span>
                 <span className="text-xs text-gray-500 ml-2">{pkg.version}</span>
                 <button
                   onClick={() => deletePackageMutation.mutate(pkg.id)}
@@ -109,7 +109,9 @@ export function Functions() {
                   <Code className="w-8 h-8 text-primary-600 mr-3 flex-shrink-0" />
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-semibold text-gray-900">{func.name}</h3>
+                      <h3 className="font-semibold text-gray-900">
+                        <span className="text-gray-500">{func.namespace}/</span>{func.name}
+                      </h3>
                       {func.shared_pool && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
                           Shared Pool
@@ -201,7 +203,7 @@ export function Functions() {
                   {packages.map((pkg: any) => (
                     <div key={pkg.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                       <div>
-                        <span className="font-mono text-sm">{pkg.name}</span>
+                        <span className="font-mono text-sm">{pkg.package_name}</span>
                         <span className="text-xs text-gray-500 ml-2">{pkg.version}</span>
                       </div>
                       <button

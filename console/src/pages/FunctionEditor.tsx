@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { ArrowLeft, Save, Trash2, Package } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
+import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
 export function FunctionEditor() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
@@ -12,6 +13,7 @@ export function FunctionEditor() {
   const isNew = namespace === 'new';
 
   const [formData, setFormData] = useState({
+    namespace: 'default',
     name: '',
     description: '',
     code: `def my_function(input, context):
@@ -38,8 +40,26 @@ export function FunctionEditor() {
 
     # Your code here
     return {"result": "success"}`,
-    input_schema: '{\n  "type": "object",\n  "properties": {\n    "message": {\n      "type": "string",\n      "description": "Input message"\n    }\n  },\n  "required": ["message"]\n}',
-    output_schema: '{\n  "type": "object",\n  "properties": {\n    "result": {\n      "type": "string",\n      "description": "Output result"\n    }\n  },\n  "required": ["result"]\n}',
+    input_schema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "Input message"
+        }
+      },
+      required: ["message"]
+    } as any,
+    output_schema: {
+      type: "object",
+      properties: {
+        result: {
+          type: "string",
+          description: "Output result"
+        }
+      },
+      required: ["result"]
+    } as any,
     requirements: [] as string[],
     enabled_namespaces: [] as string[],
     shared_pool: false,
@@ -65,11 +85,12 @@ export function FunctionEditor() {
   useEffect(() => {
     if (func && !isNew) {
       setFormData({
+        namespace: func.namespace || 'default',
         name: func.name || '',
         description: func.description || '',
         code: func.code || '',
-        input_schema: JSON.stringify(func.input_schema || {}, null, 2),
-        output_schema: JSON.stringify(func.output_schema || {}, null, 2),
+        input_schema: func.input_schema || {},
+        output_schema: func.output_schema || {},
         requirements: func.requirements || [],
         enabled_namespaces: func.enabled_namespaces || [],
         shared_pool: func.shared_pool || false,
@@ -80,14 +101,9 @@ export function FunctionEditor() {
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => {
-      const payload = {
-        ...data,
-        input_schema: JSON.parse(data.input_schema),
-        output_schema: JSON.parse(data.output_schema),
-      };
       return isNew
-        ? apiClient.createFunction(payload)
-        : apiClient.updateFunction(namespace!, name!, payload);
+        ? apiClient.createFunction(data)
+        : apiClient.updateFunction(namespace!, name!, data);
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['functions'] });
@@ -111,22 +127,15 @@ export function FunctionEditor() {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      // Validate JSON schemas
-      JSON.parse(formData.input_schema);
-      JSON.parse(formData.output_schema);
 
-      // Validate that function definition exists (with optional context parameter)
-      const functionDefRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
-      if (!functionDefRegex.test(formData.code)) {
-        alert(`Code must contain a function definition matching the name: def ${formData.name}(input, context):`);
-        return;
-      }
-
-      saveMutation.mutate(formData);
-    } catch (err) {
-      alert('Invalid JSON in input or output schema');
+    // Validate that function definition exists (with optional context parameter)
+    const functionDefRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
+    if (!functionDefRegex.test(formData.code)) {
+      alert(`Code must contain a function definition matching the name: def ${formData.name}(input, context):`);
+      return;
     }
+
+    saveMutation.mutate(formData);
   };
 
   const addRequirement = () => {
@@ -189,7 +198,11 @@ export function FunctionEditor() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              {isNew ? 'New Function' : formData.name || 'Edit Function'}
+              {isNew ? 'New Function' : (
+                <>
+                  <span className="text-gray-500">{formData.namespace}/</span>{formData.name || 'Edit Function'}
+                </>
+              )}
             </h1>
             <p className="text-gray-600 mt-1">
               {isNew ? 'Create a new Python function' : 'Edit function configuration and code'}
@@ -240,6 +253,25 @@ export function FunctionEditor() {
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h2>
           <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Namespace *
+              </label>
+              <input
+                type="text"
+                value={formData.namespace}
+                onChange={(e) => setFormData({ ...formData, namespace: e.target.value })}
+                placeholder="default"
+                pattern="^[a-z][a-z0-9_-]*$"
+                title="Must start with lowercase letter, contain only lowercase letters, numbers, underscores, and hyphens"
+                required
+                className="input"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Use lowercase letters, numbers, underscores, and hyphens
+              </p>
+            </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Function Name *
@@ -379,50 +411,22 @@ export function FunctionEditor() {
 
         {/* Input Schema */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Input Schema (JSON Schema) *</h2>
-          <div className="border border-gray-300 rounded-lg overflow-hidden">
-            <CodeEditor
-              value={formData.input_schema}
-              language="json"
-              placeholder='{"type": "object", "properties": {...}}'
-              onChange={(e) => setFormData({ ...formData, input_schema: e.target.value })}
-              padding={15}
-              style={{
-                fontSize: 14,
-                backgroundColor: '#fafafa',
-                color: '#1f2937',
-                fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
-                minHeight: '200px',
-              }}
-            />
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            JSON Schema defining expected input parameters
-          </p>
+          <JSONSchemaEditor
+            label="Input Schema (JSON Schema) *"
+            description="Define expected input parameters for this function"
+            value={formData.input_schema}
+            onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
+          />
         </div>
 
         {/* Output Schema */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Output Schema (JSON Schema) *</h2>
-          <div className="border border-gray-300 rounded-lg overflow-hidden">
-            <CodeEditor
-              value={formData.output_schema}
-              language="json"
-              placeholder='{"type": "object", "properties": {...}}'
-              onChange={(e) => setFormData({ ...formData, output_schema: e.target.value })}
-              padding={15}
-              style={{
-                fontSize: 14,
-                backgroundColor: '#fafafa',
-                color: '#1f2937',
-                fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
-                minHeight: '200px',
-              }}
-            />
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            JSON Schema defining expected output structure
-          </p>
+          <JSONSchemaEditor
+            label="Output Schema (JSON Schema) *"
+            description="Define expected output structure for this function"
+            value={formData.output_schema}
+            onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
+          />
         </div>
 
         {/* Requirements */}

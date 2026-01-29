@@ -12,7 +12,7 @@ from app.models.execution import Execution, StepExecution, ExecutionStatus
 from app.schemas import ExecutionResponse, StepExecutionResponse, ContinueExecutionRequest, ContinueExecutionResponse
 from app.services.execution_engine import executor
 
-router = APIRouter(prefix="/executions", tags=["executions"])
+router = APIRouter(prefix="/executions")
 
 
 @router.get("", response_model=List[ExecutionResponse])

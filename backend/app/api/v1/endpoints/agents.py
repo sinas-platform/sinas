@@ -123,7 +123,17 @@ async def get_agent(
     """Get a specific agent by namespace and name."""
     user_id, permissions = current_user_data
 
-    agent = await Agent.get_by_name(db, namespace, name, user_id)
+    # Check permissions first to determine query scope
+    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.get:all")
+
+    if has_all_permission:
+        # Admin can see all agents - don't filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=None)
+        set_permission_used(req, f"sinas.agents.{namespace}.get:all")
+    else:
+        # Regular user - filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
+        set_permission_used(req, f"sinas.agents.{namespace}.get:own")
 
     if not agent:
         raise HTTPException(
@@ -131,14 +141,9 @@ async def get_agent(
             detail=f"Agent '{namespace}/{name}' not found"
         )
 
-    # Check permissions
-    if check_permission(permissions, f"sinas.agents.{namespace}.get:all"):
-        set_permission_used(req, f"sinas.agents.{namespace}.get:all")
-    else:
-        if agent.user_id != user_id:
-            set_permission_used(req, f"sinas.agents.{namespace}.get:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to view this agent")
-        set_permission_used(req, f"sinas.agents.{namespace}.get:own")
+    # Additional ownership check for non-admin users
+    if not has_all_permission and agent.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this agent")
 
     return AgentResponse.model_validate(agent)
 
@@ -155,7 +160,17 @@ async def update_agent(
     """Update an agent."""
     user_id, permissions = current_user_data
 
-    agent = await Agent.get_by_name(db, namespace, name, user_id)
+    # Check permissions first to determine query scope
+    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.put:all")
+
+    if has_all_permission:
+        # Admin can update all agents - don't filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=None)
+        set_permission_used(req, f"sinas.agents.{namespace}.put:all")
+    else:
+        # Regular user - filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
+        set_permission_used(req, f"sinas.agents.{namespace}.put:own")
 
     if not agent:
         raise HTTPException(
@@ -163,14 +178,9 @@ async def update_agent(
             detail=f"Agent '{namespace}/{name}' not found"
         )
 
-    # Check permissions
-    if check_permission(permissions, f"sinas.agents.{namespace}.put:all"):
-        set_permission_used(req, f"sinas.agents.{namespace}.put:all")
-    else:
-        if agent.user_id != user_id:
-            set_permission_used(req, f"sinas.agents.{namespace}.put:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to update this agent")
-        set_permission_used(req, f"sinas.agents.{namespace}.put:own")
+    # Additional ownership check for non-admin users
+    if not has_all_permission and agent.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to update this agent")
 
     # Update fields
     if agent_data.namespace is not None:
@@ -223,7 +233,17 @@ async def delete_agent(
     """Delete an agent (soft delete)."""
     user_id, permissions = current_user_data
 
-    agent = await Agent.get_by_name(db, namespace, name, user_id)
+    # Check permissions first to determine query scope
+    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.delete:all")
+
+    if has_all_permission:
+        # Admin can delete all agents - don't filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=None)
+        set_permission_used(req, f"sinas.agents.{namespace}.delete:all")
+    else:
+        # Regular user - filter by user_id
+        agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
+        set_permission_used(req, f"sinas.agents.{namespace}.delete:own")
 
     if not agent:
         raise HTTPException(
@@ -231,14 +251,9 @@ async def delete_agent(
             detail=f"Agent '{namespace}/{name}' not found"
         )
 
-    # Check permissions
-    if check_permission(permissions, f"sinas.agents.{namespace}.delete:all"):
-        set_permission_used(req, f"sinas.agents.{namespace}.delete:all")
-    else:
-        if agent.user_id != user_id:
-            set_permission_used(req, f"sinas.agents.{namespace}.delete:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to delete this agent")
-        set_permission_used(req, f"sinas.agents.{namespace}.delete:own")
+    # Additional ownership check for non-admin users
+    if not has_all_permission and agent.user_id != user_id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this agent")
 
     agent.is_active = False
     await db.commit()

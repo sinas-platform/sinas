@@ -4,6 +4,7 @@ import { apiClient } from '../lib/api';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Save, Trash2, Loader2, Bot } from 'lucide-react';
 import type { AssistantUpdate } from '../types';
+import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
 export function AgentDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
@@ -360,54 +361,20 @@ export function AgentDetail() {
             Define JSON schemas for input variables and expected output structure
           </p>
 
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="input_schema" className="block text-sm font-medium text-gray-700 mb-2">
-                Input Schema (JSON)
-              </label>
-              <textarea
-                id="input_schema"
-                value={JSON.stringify(formData.input_schema ?? agent.input_schema ?? {}, null, 2)}
-                onChange={(e) => {
-                  try {
-                    const parsed = JSON.parse(e.target.value);
-                    setFormData({ ...formData, input_schema: parsed });
-                  } catch {
-                    // Invalid JSON, don't update
-                  }
-                }}
-                placeholder='{"type": "object", "properties": {"variable_name": {"type": "string"}}}'
-                rows={6}
-                className="input resize-none font-mono text-xs"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                JSON Schema defining input variables (for use in system prompt templates)
-              </p>
-            </div>
+          <div className="space-y-6">
+            <JSONSchemaEditor
+              label="Input Schema"
+              description="Define input variables that can be used in system prompt templates (e.g., {{variable_name}})"
+              value={formData.input_schema ?? agent.input_schema ?? {}}
+              onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
+            />
 
-            <div>
-              <label htmlFor="output_schema" className="block text-sm font-medium text-gray-700 mb-2">
-                Output Schema (JSON)
-              </label>
-              <textarea
-                id="output_schema"
-                value={JSON.stringify(formData.output_schema ?? agent.output_schema ?? {}, null, 2)}
-                onChange={(e) => {
-                  try {
-                    const parsed = JSON.parse(e.target.value);
-                    setFormData({ ...formData, output_schema: parsed });
-                  } catch {
-                    // Invalid JSON, don't update
-                  }
-                }}
-                placeholder='{"type": "object", "properties": {"result": {"type": "string"}}}'
-                rows={6}
-                className="input resize-none font-mono text-xs"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                JSON Schema defining expected response structure (empty = no enforcement)
-              </p>
-            </div>
+            <JSONSchemaEditor
+              label="Output Schema"
+              description="Define expected response structure (empty = no enforcement). Agents will be instructed to follow this schema."
+              value={formData.output_schema ?? agent.output_schema ?? {}}
+              onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
+            />
 
             <div>
               <label htmlFor="initial_messages" className="block text-sm font-medium text-gray-700 mb-2">

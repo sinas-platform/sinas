@@ -4,12 +4,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 import uuid
-import subprocess
-import sys
 
 from app.core.database import get_db
-from app.core.auth import require_permission, get_current_user, get_current_user_with_permissions, set_permission_used
-from app.core.permissions import check_permission
+from app.core.auth import require_permission, get_current_user, set_permission_used
 from app.core.config import settings
 from app.models.package import InstalledPackage
 from app.schemas import PackageInstall, PackageResponse
@@ -19,11 +16,17 @@ router = APIRouter(prefix="/packages", tags=["packages"])
 
 @router.post("", response_model=PackageResponse)
 async def install_package(
+    request: Request,
     package_data: PackageInstall,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.packages.install:own"))
+    user_id: str = Depends(require_permission("sinas.packages.install:all"))  # Admin only
 ):
-    """Install a Python package."""
+    """
+    Approve a global package for use in functions (admin only).
+
+    This doesn't install the package immediately - packages are installed
+    on-demand in containers when functions require them.
+    """
     if not settings.allow_package_installation:
         raise HTTPException(status_code=403, detail="Package installation is disabled")
 
@@ -36,39 +39,20 @@ async def install_package(
                 detail=f"Package '{package_data.package_name}' not in whitelist. Allowed packages: {', '.join(sorted(whitelist))}"
             )
 
-    # Check if already installed
+    # Check if already approved
     result = await db.execute(
         select(InstalledPackage).where(
-            InstalledPackage.user_id == user_id,
             InstalledPackage.package_name == package_data.package_name
         )
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Package '{package_data.package_name}' already installed")
+        raise HTTPException(status_code=400, detail=f"Package '{package_data.package_name}' already approved")
 
-    # Install package
-    package_spec = package_data.package_name
-    if package_data.version:
-        package_spec = f"{package_data.package_name}=={package_data.version}"
-
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", package_spec],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE
-        )
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to install package: {e.stderr.decode() if e.stderr else str(e)}"
-        )
-
-    # Record installation
+    # Record package approval (actual installation happens in containers)
     package = InstalledPackage(
-        user_id=user_id,
         package_name=package_data.package_name,
         version=package_data.version,
-        installed_by=current_user.get("email")
+        installed_by=uuid.UUID(user_id)
     )
 
     db.add(package)
@@ -82,35 +66,31 @@ async def install_package(
 async def list_packages(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    user_id: str = Depends(get_current_user)
 ):
-    """List installed packages."""
-    user_id, permissions = current_user_data
+    """List all approved global packages (visible to all authenticated users)."""
+    set_permission_used(request, "sinas.packages.get:own")
 
-    # Build query based on permissions
-    if check_permission(permissions,"sinas.packages.get:all"):
-        set_permission_used(request, "sinas.packages.get:all")
-        query = select(InstalledPackage)
-    else:
-        set_permission_used(request, "sinas.packages.get:own")
-        query = select(InstalledPackage).where(InstalledPackage.user_id == uuid.UUID(user_id))
-
-    result = await db.execute(query)
+    # All packages are global, visible to everyone
+    result = await db.execute(select(InstalledPackage))
     packages = result.scalars().all()
 
     return packages
 
 
 @router.delete("/{package_id}")
-async def uninstall_package(
+async def remove_package(
     request: Request,
     package_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    user_id: str = Depends(require_permission("sinas.packages.delete:all"))  # Admin only
 ):
-    """Uninstall a Python package."""
-    user_id, permissions = current_user_data
+    """
+    Remove package approval (admin only).
 
+    Note: Existing containers with this package will keep it until recreated.
+    New containers won't install it.
+    """
     result = await db.execute(
         select(InstalledPackage).where(InstalledPackage.id == package_id)
     )
@@ -119,27 +99,8 @@ async def uninstall_package(
     if not package:
         raise HTTPException(status_code=404, detail="Package not found")
 
-    # Check permissions
-    if check_permission(permissions,"sinas.packages.delete:all"):
-        set_permission_used(request, "sinas.packages.delete:all")
-    else:
-        if str(package.user_id) != user_id:
-            set_permission_used(request, "sinas.packages.delete:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to uninstall this package")
-        set_permission_used(request, "sinas.packages.delete:own")
-
-    # Uninstall package
-    try:
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "uninstall", "-y", package.package_name],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE
-        )
-    except subprocess.CalledProcessError:
-        # Continue even if uninstall fails (package might already be uninstalled)
-        pass
-
+    package_name = package.package_name
     await db.delete(package)
     await db.commit()
 
-    return {"message": f"Package '{package.package_name}' uninstalled successfully"}
+    return {"message": f"Package '{package_name}' approval removed. Existing containers will keep it until recreated."}

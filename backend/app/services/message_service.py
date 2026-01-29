@@ -325,10 +325,13 @@ class MessageService:
         if prep["response_format"]:
             llm_kwargs["response_format"] = prep["response_format"]
 
+        # Strip _metadata from tools before sending to LLM
+        clean_tools = self._strip_tool_metadata(prep["tools"])
+
         response = await prep["llm_provider"].complete(
             messages=prep["messages"],
             model=prep["final_model"],
-            tools=prep["tools"] if prep["tools"] else None,
+            tools=clean_tools,
             temperature=prep["final_temperature"],
             max_tokens=prep["final_max_tokens"],
             **llm_kwargs
@@ -434,6 +437,31 @@ class MessageService:
         ):
             yield chunk
 
+    def _strip_tool_metadata(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Remove _metadata from tools before sending to LLM provider.
+        LLM providers don't accept extra fields in tool definitions.
+
+        Args:
+            tools: Tools list with optional _metadata fields
+
+        Returns:
+            Clean tools list without _metadata
+        """
+        if not tools:
+            return tools
+
+        clean_tools = []
+        for tool in tools:
+            clean_tool = tool.copy()
+            if "function" in clean_tool and "_metadata" in clean_tool["function"]:
+                clean_tool = {
+                    **clean_tool,
+                    "function": {k: v for k, v in clean_tool["function"].items() if k != "_metadata"}
+                }
+            clean_tools.append(clean_tool)
+        return clean_tools
+
     async def _stream_response(
         self,
         llm_provider,
@@ -457,10 +485,13 @@ class MessageService:
         full_content = ""
         tool_calls_list = []  # Accumulate tool calls by index (OpenAI sends by index)
 
+        # Strip _metadata from tools before sending to LLM (keep original tools for later lookup)
+        clean_tools = self._strip_tool_metadata(tools)
+
         async for chunk in llm_provider.stream(
             messages=messages,
             model=final_model,
-            tools=tools if tools else None,
+            tools=clean_tools,
             temperature=final_temperature,
             max_tokens=max_tokens
         ):
@@ -525,7 +556,8 @@ class MessageService:
                 provider=provider_name,
                 model=final_model,
                 temperature=final_temperature,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                tools=tools  # Pass tools with metadata for later execution
             )
 
             if approval_needed:
@@ -602,7 +634,8 @@ class MessageService:
         provider: Optional[str],
         model: Optional[str],
         temperature: float,
-        max_tokens: Optional[int]
+        max_tokens: Optional[int],
+        tools: Optional[List[Dict[str, Any]]] = None
     ) -> bool:
         """
         Check if any tool calls require user approval before execution.
@@ -647,7 +680,8 @@ class MessageService:
                     "model": model,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
-                    "messages": messages
+                    "messages": messages,
+                    "tools": tools  # Store tools list with metadata for resuming execution
                 }
             )
             self.db.add(pending_approval)
@@ -1069,15 +1103,35 @@ class MessageService:
         if permissions is None:
             from app.core.auth import get_user_permissions
             permissions = await get_user_permissions(self.db, user_id)
-        # Save assistant message with tool calls
-        assistant_message = Message(
-            chat_id=chat_id,
-            role="assistant",
-            content=None,
-            tool_calls=tool_calls
-        )
-        self.db.add(assistant_message)
-        await self.db.commit()
+
+        # Check if assistant message with these tool calls already exists (e.g., from approval flow)
+        # Get the first tool call ID to check
+        first_tool_call_id = tool_calls[0]["id"] if tool_calls else None
+        existing_message = None
+
+        if first_tool_call_id:
+            result = await self.db.execute(
+                select(Message).where(
+                    Message.chat_id == chat_id,
+                    Message.role == "assistant",
+                    Message.tool_calls.isnot(None)
+                ).order_by(Message.created_at.desc()).limit(10)
+            )
+            for msg in result.scalars().all():
+                if msg.tool_calls and any(tc.get("id") == first_tool_call_id for tc in msg.tool_calls):
+                    existing_message = msg
+                    break
+
+        # Only create assistant message if it doesn't already exist
+        if not existing_message:
+            assistant_message = Message(
+                chat_id=chat_id,
+                role="assistant",
+                content=None,
+                tool_calls=tool_calls
+            )
+            self.db.add(assistant_message)
+            await self.db.commit()
 
         # Execute each tool call
         for tool_call in tool_calls:
@@ -1195,10 +1249,14 @@ class MessageService:
             updated_messages.append(message_dict)
 
         llm_provider = await create_provider(provider, model, self.db)
+
+        # Strip _metadata from tools before sending to LLM
+        clean_tools = self._strip_tool_metadata(tools)
+
         final_response = await llm_provider.complete(
             messages=updated_messages,
             model=model,
-            tools=tools,
+            tools=clean_tools,
             temperature=temperature,
             max_tokens=max_tokens
         )

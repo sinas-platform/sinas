@@ -44,15 +44,17 @@ class TemplateService:
         self,
         db: AsyncSession,
         template_name: str,
-        variables: Dict[str, Any]
+        variables: Dict[str, Any],
+        namespace: str = "default"
     ) -> Tuple[Optional[str], str, Optional[str]]:
         """
-        Render a template by name with given variables.
+        Render a template by namespace/name with given variables.
 
         Args:
             db: Database session
             template_name: Template name to render
             variables: Variables to pass to template
+            namespace: Template namespace (default: "default")
 
         Returns:
             Tuple of (title, html_content, text_content)
@@ -63,16 +65,21 @@ class TemplateService:
             TemplateError: If Jinja2 rendering fails
         """
         # Load template from database
+        from sqlalchemy import and_
+
         result = await db.execute(
             select(Template).where(
-                Template.name == template_name,
-                Template.is_active == True
+                and_(
+                    Template.namespace == namespace,
+                    Template.name == template_name,
+                    Template.is_active == True
+                )
             )
         )
         template = result.scalar_one_or_none()
 
         if not template:
-            raise ValueError(f"Template '{template_name}' not found or inactive")
+            raise ValueError(f"Template '{namespace}/{template_name}' not found or inactive")
 
         # Validate variables against schema
         if template.variable_schema:

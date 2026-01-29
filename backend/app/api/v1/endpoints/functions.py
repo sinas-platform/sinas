@@ -9,9 +9,39 @@ from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
 from app.models.function import Function, FunctionVersion
+from app.models.package import InstalledPackage
 from app.schemas import FunctionCreate, FunctionUpdate, FunctionResponse, FunctionVersionResponse
 
 router = APIRouter(prefix="/functions", tags=["functions"])
+
+
+async def validate_requirements(requirements: List[str], db: AsyncSession) -> None:
+    """
+    Validate that all function requirements are admin-approved packages.
+
+    Raises HTTPException if any requirement is not approved.
+    """
+    if not requirements:
+        return
+
+    # Get all approved packages
+    result = await db.execute(select(InstalledPackage.package_name))
+    approved_packages = {row[0] for row in result.all()}
+
+    # Check each requirement
+    unapproved = []
+    for req in requirements:
+        # Extract package name from requirement (e.g., "pandas==2.0.0" -> "pandas")
+        package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0].strip()
+
+        if package_name not in approved_packages:
+            unapproved.append(package_name)
+
+    if unapproved:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unapproved packages in requirements: {', '.join(unapproved)}. Contact admin to approve these packages first."
+        )
 
 
 @router.post("", response_model=FunctionResponse)
@@ -38,6 +68,9 @@ async def create_function(
             set_permission_used(request, shared_pool_permission, has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to create shared pool functions (admin only)")
         set_permission_used(request, shared_pool_permission)
+
+    # Validate requirements against approved packages
+    await validate_requirements(function_data.requirements, db)
 
     # Check if function name already exists in this namespace
     result = await db.execute(
@@ -177,7 +210,34 @@ async def update_function(
             raise HTTPException(status_code=403, detail="Not authorized to enable shared pool (admin only)")
         set_permission_used(request, shared_pool_permission)
 
+    # Validate requirements if being updated
+    if function_data.requirements is not None:
+        await validate_requirements(function_data.requirements, db)
+
+    # Check for namespace/name conflict if renaming
+    new_namespace = function_data.namespace or function.namespace
+    new_name = function_data.name or function.name
+    if (new_namespace != function.namespace or new_name != function.name):
+        result = await db.execute(
+            select(Function).where(
+                and_(
+                    Function.namespace == new_namespace,
+                    Function.name == new_name,
+                    Function.id != function.id
+                )
+            )
+        )
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail=f"Function '{new_namespace}/{new_name}' already exists"
+            )
+
     # Update fields
+    if function_data.namespace is not None:
+        function.namespace = function_data.namespace
+    if function_data.name is not None:
+        function.name = function_data.name
     if function_data.description is not None:
         function.description = function_data.description
     if function_data.code is not None:

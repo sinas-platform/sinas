@@ -161,11 +161,96 @@ class UserContainerManager:
         # Wait for container to be ready
         await asyncio.sleep(1)
 
+        # Install required packages before loading functions
+        await self._install_packages(container, user_id, db)
+
         # Load user's functions into container
         await self._sync_functions(container, user_id, db)
 
         logger.info(f"Container created for user {user_id}: {container.id[:12]}")
         return container
+
+    async def _install_packages(self, container: Container, user_id: str, db: AsyncSession):
+        """
+        Install packages required by user's accessible functions.
+
+        Only installs packages that are:
+        1. Listed in function requirements
+        2. Approved by admins (in InstalledPackage table)
+        """
+        from app.models.user import GroupMember
+        from app.models.package import InstalledPackage
+
+        try:
+            # Get user's groups
+            groups_result = await db.execute(
+                select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+            )
+            group_ids = [row[0] for row in groups_result.all()]
+
+            # Get all functions user has access to
+            functions_result = await db.execute(
+                select(Function).where(
+                    Function.is_active == True,
+                    (Function.user_id == user_id) | (Function.group_id.in_(group_ids))
+                )
+            )
+            functions = functions_result.scalars().all()
+
+            # Collect all requirements from accessible functions
+            all_requirements = set()
+            for func in functions:
+                if func.requirements:
+                    all_requirements.update(func.requirements)
+
+            if not all_requirements:
+                logger.info(f"No package requirements for user {user_id}")
+                return
+
+            # Get approved packages with versions
+            approved_result = await db.execute(select(InstalledPackage))
+            approved_packages = {pkg.package_name: pkg.version for pkg in approved_result.scalars().all()}
+
+            # Filter requirements to only approved packages
+            packages_to_install = []
+            for req in all_requirements:
+                # Extract package name from requirement spec
+                package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0].strip()
+
+                if package_name in approved_packages:
+                    # Use admin-locked version if available, otherwise use requirement as-is
+                    admin_version = approved_packages[package_name]
+                    if admin_version:
+                        packages_to_install.append(f"{package_name}=={admin_version}")
+                    else:
+                        packages_to_install.append(req)
+
+            if not packages_to_install:
+                logger.info(f"No approved packages to install for user {user_id}")
+                return
+
+            logger.info(f"Installing {len(packages_to_install)} packages in container for user {user_id}: {', '.join(packages_to_install)}")
+
+            # Install packages in container
+            install_cmd = ["pip", "install", "--no-cache-dir"] + packages_to_install
+
+            exec_result = await asyncio.to_thread(
+                container.exec_run,
+                cmd=install_cmd,
+                demux=True,
+            )
+
+            stdout, stderr = exec_result.output
+            if exec_result.exit_code == 0:
+                logger.info(f"Successfully installed packages in container for user {user_id}")
+            else:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                logger.warning(f"Package installation had issues for user {user_id}: {error_msg}")
+                # Don't fail container creation - functions will get ImportError at runtime if needed
+
+        except Exception as e:
+            logger.error(f"Error installing packages in container for user {user_id}: {e}")
+            # Don't fail container creation - log and continue
 
     async def _sync_functions(self, container: Container, user_id: str, db: AsyncSession):
         """Load all functions user has access to into container namespace, organized by namespace."""

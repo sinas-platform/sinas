@@ -8,8 +8,11 @@ import jsonschema
 from datetime import datetime
 import uuid
 import json
+import asyncio
+import logging
+import traceback
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.models.agent import Agent
 from app.models.chat import Chat
@@ -20,6 +23,7 @@ from sqlalchemy import func
 from app.services.message_service import MessageService
 from app.schemas.chat import AgentChatCreateRequest, MessageSendRequest, ChatResponse, MessageResponse, ChatUpdate, ChatWithMessages, ToolApprovalRequest, ToolApprovalResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -174,6 +178,9 @@ async def stream_message(
 
     Returns EventSourceResponse with streaming chunks.
     """
+    from fastapi import BackgroundTasks
+    from app.core.database import AsyncSessionLocal
+
     user_id, permissions = current_user_data
 
     # Load chat by UUID
@@ -197,6 +204,9 @@ async def stream_message(
     # Handle Union[str, List[Dict]] content - convert to string if needed
     content_str = request.content if isinstance(request.content, str) else json.dumps(request.content)
 
+    # Track accumulated content for partial save
+    accumulated_content = {"content": ""}
+
     async def event_generator():
         try:
             async for chunk in message_service.send_message_stream(
@@ -205,15 +215,57 @@ async def stream_message(
                 user_token=user_token,
                 content=content_str
             ):
-                yield {
-                    "event": "message",
-                    "data": json.dumps(chunk)
-                }
+                # Accumulate content BEFORE yielding
+                if chunk.get("content"):
+                    accumulated_content["content"] += chunk["content"]
 
+                # Try to yield - this will raise exception if client disconnected
+                try:
+                    yield {
+                        "event": "message",
+                        "data": json.dumps(chunk)
+                    }
+                except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
+                    # Client disconnected while yielding - save partial and exit
+                    if accumulated_content["content"]:
+                        try:
+                            async with AsyncSessionLocal() as new_db:
+                                partial_msg = Message(
+                                    chat_id=str(chat.id),
+                                    role="assistant",
+                                    content=accumulated_content["content"],
+                                    tool_calls=None
+                                )
+                                new_db.add(partial_msg)
+                                await new_db.commit()
+                        except Exception as save_error:
+                            print(f"⚠️  Failed to save partial message: {save_error}")
+                    return
+
+            # Stream completed normally
             yield {
                 "event": "done",
                 "data": json.dumps({"status": "completed"})
             }
+
+        except asyncio.CancelledError:
+            # Request cancelled - save partial message (shielded from cancellation)
+            if accumulated_content["content"]:
+                try:
+                    async def save_partial():
+                        async with AsyncSessionLocal() as new_db:
+                            partial_msg = Message(
+                                chat_id=str(chat.id),
+                                role="assistant",
+                                content=accumulated_content["content"],
+                                tool_calls=None
+                            )
+                            new_db.add(partial_msg)
+                            await new_db.commit()
+
+                    await asyncio.shield(save_partial())
+                except Exception as save_error:
+                    print(f"⚠️  Failed to save partial message: {save_error}")
 
         except Exception as e:
             yield {
@@ -278,12 +330,79 @@ async def approve_tool_call(
     await db.commit()
 
     if not request.approved:
-        # Rejected - don't execute
-        return ToolApprovalResponse(
-            status="rejected",
+        # Rejected - send error as tool result and let LLM respond
+        user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
+        message_service = MessageService(db)
+
+        # Create error tool result
+        error_message = f"Tool call rejected by user: {pending_approval.function_namespace}/{pending_approval.function_name}"
+        tool_message = Message(
+            chat_id=chat_id,
+            role="tool",
+            content=json.dumps({"error": error_message}),
             tool_call_id=tool_call_id,
-            message=f"Tool call {pending_approval.function_namespace}/{pending_approval.function_name} was rejected"
+            name=f"{pending_approval.function_namespace}__{pending_approval.function_name}"
         )
+        db.add(tool_message)
+        await db.commit()
+
+        # Get LLM response to the rejection
+        try:
+            from app.providers.factory import create_provider
+
+            # Rebuild conversation with rejection
+            result = await db.execute(
+                select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
+            )
+            updated_messages = []
+            for msg in result.scalars().all():
+                message_dict = {"role": msg.role}
+                if msg.content:
+                    message_dict["content"] = msg.content
+                if msg.tool_calls:
+                    message_dict["tool_calls"] = msg.tool_calls
+                if msg.tool_call_id:
+                    message_dict["tool_call_id"] = msg.tool_call_id
+                if msg.name:
+                    message_dict["name"] = msg.name
+                updated_messages.append(message_dict)
+
+            llm_provider = await create_provider(
+                pending_approval.conversation_context.get("provider"),
+                pending_approval.conversation_context.get("model"),
+                db
+            )
+
+            # Get response from LLM about the rejection
+            response = await llm_provider.complete(
+                messages=updated_messages,
+                model=pending_approval.conversation_context.get("model"),
+                tools=None,
+                temperature=pending_approval.conversation_context.get("temperature", 0.7),
+                max_tokens=pending_approval.conversation_context.get("max_tokens")
+            )
+
+            # Save assistant's response
+            final_message = Message(
+                chat_id=chat_id,
+                role="assistant",
+                content=response.get("content", "")
+            )
+            db.add(final_message)
+            await db.commit()
+
+            return ToolApprovalResponse(
+                status="rejected",
+                tool_call_id=tool_call_id,
+                message=f"Tool call rejected. LLM responded with message ID: {final_message.id}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to get LLM response after rejection: {e}")
+            return ToolApprovalResponse(
+                status="rejected",
+                tool_call_id=tool_call_id,
+                message=f"Tool call rejected but failed to get LLM response: {str(e)}"
+            )
 
     # Approved - resume execution
     # Extract token for auth
@@ -304,7 +423,7 @@ async def approve_tool_call(
             model=pending_approval.conversation_context.get("model"),
             temperature=pending_approval.conversation_context.get("temperature", 0.7),
             max_tokens=pending_approval.conversation_context.get("max_tokens"),
-            tools=[]  # Tools not needed for execution, only for schema
+            tools=pending_approval.conversation_context.get("tools", [])  # Restore tools with metadata
         )
 
         return ToolApprovalResponse(
@@ -314,6 +433,8 @@ async def approve_tool_call(
         )
 
     except Exception as e:
+        logger.error(f"Failed to execute approved tool call: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(500, f"Failed to execute approved tool call: {str(e)}")
 
 

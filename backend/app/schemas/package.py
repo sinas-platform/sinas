@@ -15,7 +15,7 @@ class PackageResponse(BaseModel):
     package_name: str
     version: Optional[str]
     installed_at: datetime
-    installed_by: Optional[str]
+    installed_by: Optional[uuid.UUID]  # User ID who installed (admin)
 
     class Config:
         from_attributes = True

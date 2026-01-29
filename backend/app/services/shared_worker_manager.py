@@ -223,12 +223,63 @@ class SharedWorkerManager:
             # Wait for container and executor to be ready
             await asyncio.sleep(2)
 
+            # Install all approved packages in worker
+            await self._install_packages(container, db)
+
             print(f"✅ Created worker: {container_name}")
             return worker_id
 
         except Exception as e:
             print(f"❌ Failed to create worker {container_name}: {e}")
             return None
+
+    async def _install_packages(self, container, db: AsyncSession):
+        """
+        Install all approved packages in shared worker.
+
+        Shared workers execute any trusted function, so they need all packages.
+        """
+        from app.models.package import InstalledPackage
+
+        try:
+            # Get all approved packages
+            result = await db.execute(select(InstalledPackage))
+            approved_packages = result.scalars().all()
+
+            if not approved_packages:
+                print(f"📦 No approved packages to install in worker")
+                return
+
+            # Build package specs with admin-locked versions
+            packages_to_install = []
+            for pkg in approved_packages:
+                if pkg.version:
+                    packages_to_install.append(f"{pkg.package_name}=={pkg.version}")
+                else:
+                    packages_to_install.append(pkg.package_name)
+
+            print(f"📦 Installing {len(packages_to_install)} packages in worker: {', '.join(packages_to_install)}")
+
+            # Install packages in container
+            install_cmd = ["pip", "install", "--no-cache-dir"] + packages_to_install
+
+            exec_result = await asyncio.to_thread(
+                container.exec_run,
+                cmd=install_cmd,
+                demux=True,
+            )
+
+            stdout, stderr = exec_result.output
+            if exec_result.exit_code == 0:
+                print(f"✅ Successfully installed packages in worker")
+            else:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                print(f"⚠️  Package installation had issues in worker: {error_msg}")
+                # Don't fail worker creation - log and continue
+
+        except Exception as e:
+            print(f"❌ Error installing packages in worker: {e}")
+            # Don't fail worker creation - log and continue
 
     async def _remove_worker(self, worker_id: str) -> bool:
         """Remove a worker container."""

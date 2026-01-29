@@ -8,18 +8,23 @@ from .base import Base, uuid_pk
 
 
 class InstalledPackage(Base):
+    """
+    Global packages approved by admins for use in functions.
+
+    Packages are installed in containers based on function requirements.
+    - Shared workers: Install all packages
+    - User containers: Install only packages needed by accessible functions
+    """
     __tablename__ = "installed_packages"
     __table_args__ = (
-        UniqueConstraint('user_id', 'package_name', name='uix_package_user_name'),
+        UniqueConstraint('package_name', name='uix_package_name'),
     )
 
     id: Mapped[uuid_pk]
-    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    package_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    version: Mapped[Optional[str]] = mapped_column(String(50))
+    package_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    version: Mapped[Optional[str]] = mapped_column(String(50))  # Locked version for reproducibility
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    installed_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"))
+    installed_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"), nullable=True)  # Audit only
 
-    # Relationships
-    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    # Relationship
     installed_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[installed_by])

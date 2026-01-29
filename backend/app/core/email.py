@@ -95,12 +95,13 @@ async def send_otp_email_async(db: AsyncSession, email: str, otp_code: str) -> N
         subject, html_content, text_content = await template_service.render_template(
             db=db,
             template_name="otp_email",
+            namespace="default",
             variables=variables
         )
-        logger.debug("Using database template 'otp_email' for OTP email")
+        logger.debug("Using database template 'default/otp_email' for OTP email")
     except ValueError:
         # Template not found in database - use fallback
-        logger.debug("Template 'otp_email' not found, using fallback template")
+        logger.debug("Template 'default/otp_email' not found, using fallback template")
         subject = "Your Login Code"
         html_content = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
