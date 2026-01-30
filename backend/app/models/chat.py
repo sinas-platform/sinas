@@ -11,7 +11,6 @@ class Chat(Base):
 
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
 
     # Agent reference (FK can be null if agent deleted, namespace/name preserved for audit trail)
     agent_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("agents.id"), index=True)

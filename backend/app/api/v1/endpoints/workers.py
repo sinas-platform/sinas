@@ -117,3 +117,31 @@ async def get_worker_count(
     count = shared_worker_manager.get_worker_count()
 
     return {"count": count}
+
+
+@router.post("/reload")
+async def reload_worker_packages(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions)
+):
+    """
+    Reload packages in all shared workers.
+    Reinstalls all approved packages in each worker.
+
+    Requires sinas.workers.put:all permission (admin only).
+    """
+    user_id, permissions = current_user_data
+
+    # Check permission
+    permission = "sinas.workers.put:all"
+    if not check_permission(permissions, permission):
+        set_permission_used(request, permission, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to reload workers")
+
+    set_permission_used(request, permission)
+
+    # Reload packages
+    result = await shared_worker_manager.reload_packages(db)
+
+    return result

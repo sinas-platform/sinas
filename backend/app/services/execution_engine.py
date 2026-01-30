@@ -367,8 +367,7 @@ class FunctionExecutor:
 
                 # Route execution based on shared_pool setting
                 if function.shared_pool:
-                    # Execute in shared worker pool (in-process, trusted code)
-                    print(f"⚡ SHARED POOL: Executing {function_namespace}/{function_name} in-process (no container)")
+                    # Execute in shared worker container pool
                     exec_result = await self._execute_in_shared_pool(
                         function=function,
                         input_data=input_data,

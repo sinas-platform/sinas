@@ -23,7 +23,6 @@ class Template(Base):
 
     # Ownership for permission checks
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"), index=True)
-    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
 
     # Template content
     title: Mapped[Optional[str]] = mapped_column(Text) # subject for email, possibel other use cases
@@ -57,6 +56,5 @@ class Template(Base):
 
     # Relationships
     owner: Mapped[Optional["User"]] = relationship("User", foreign_keys=[user_id])
-    group: Mapped[Optional["Group"]] = relationship("Group", foreign_keys=[group_id])
     creator: Mapped[Optional["User"]] = relationship("User", foreign_keys=[created_by])
     updater: Mapped[Optional["User"]] = relationship("User", foreign_keys=[updated_by])

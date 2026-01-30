@@ -17,7 +17,6 @@ class AgentCreate(BaseModel):
     input_schema: Optional[Dict[str, Any]] = None
     output_schema: Optional[Dict[str, Any]] = None
     initial_messages: Optional[List[Dict[str, str]]] = None
-    group_id: Optional[uuid.UUID] = None
     enabled_functions: Optional[List[str]] = None  # List of "namespace/name" strings
     enabled_mcp_tools: Optional[List[str]] = None
     enabled_agents: Optional[List[str]] = None  # List of agent names that can be called as tools
@@ -52,7 +51,6 @@ class AgentUpdate(BaseModel):
 class AgentResponse(BaseModel):
     id: uuid.UUID
     user_id: Optional[uuid.UUID]
-    group_id: Optional[uuid.UUID]
     namespace: str
     name: str
     description: Optional[str]

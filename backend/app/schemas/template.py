@@ -14,7 +14,6 @@ class TemplateCreate(BaseModel):
     html_content: str = Field(..., min_length=1)  # Jinja2 template
     text_content: Optional[str] = None  # Plain text fallback (for emails)
     variable_schema: Optional[Dict[str, Any]] = None  # JSON schema for variables
-    group_id: Optional[uuid.UUID] = None  # Optional group ownership
 
 
 class TemplateUpdate(BaseModel):
@@ -26,7 +25,6 @@ class TemplateUpdate(BaseModel):
     text_content: Optional[str] = None
     variable_schema: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None
-    group_id: Optional[uuid.UUID] = None
 
 
 class TemplateResponse(BaseModel):
@@ -40,7 +38,6 @@ class TemplateResponse(BaseModel):
     variable_schema: Dict[str, Any]
     is_active: bool
     user_id: Optional[uuid.UUID]
-    group_id: Optional[uuid.UUID]
     created_by: Optional[uuid.UUID]
     updated_by: Optional[uuid.UUID]
     created_at: datetime

@@ -4,7 +4,7 @@ from .webhook import Webhook
 from .schedule import ScheduledJob
 from .execution import Execution, StepExecution
 from .package import InstalledPackage
-from .user import User, Group, GroupMember, GroupPermission, OTPSession, APIKey, RefreshToken
+from .user import User, Role, UserRole, RolePermission, OTPSession, APIKey, RefreshToken
 from .chat import Chat, Message
 from .agent import Agent
 from .llm_provider import LLMProvider
@@ -23,9 +23,9 @@ __all__ = [
     "StepExecution",
     "InstalledPackage",
     "User",
-    "Group",
-    "GroupMember",
-    "GroupPermission",
+    "Role",
+    "UserRole",
+    "RolePermission",
     "OTPSession",
     "APIKey",
     "RefreshToken",

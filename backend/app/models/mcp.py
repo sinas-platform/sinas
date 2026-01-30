@@ -11,7 +11,6 @@ class MCPServer(Base):
     __tablename__ = "mcp_servers"
 
     id: Mapped[uuid_pk]
-    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     url: Mapped[str] = mapped_column(String(1000), nullable=False)
     protocol: Mapped[str] = mapped_column(String(20), nullable=False)  # websocket or http

@@ -49,9 +49,22 @@ async def create_webhook(
     if not function:
         raise HTTPException(status_code=404, detail=f"Function '{webhook_data.function_namespace}.{webhook_data.function_name}' not found")
 
+    # Resolve group_name to group_id (group_name takes precedence if both provided)
+    final_group_id = webhook_data.group_id
+    if webhook_data.group_name:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == webhook_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{webhook_data.group_name}' not found")
+        final_group_id = group
+
     # Create webhook
     webhook = Webhook(
         user_id=user_id,
+        group_id=final_group_id,
         path=webhook_data.path,
         function_namespace=webhook_data.function_namespace,
         function_name=webhook_data.function_name,
@@ -65,7 +78,16 @@ async def create_webhook(
     await db.commit()
     await db.refresh(webhook)
 
-    return webhook
+    # Load group name for response
+    response = WebhookResponse.model_validate(webhook)
+    if webhook.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == webhook.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.get("", response_model=List[WebhookResponse])
@@ -91,7 +113,19 @@ async def list_webhooks(
     result = await db.execute(query)
     webhooks = result.scalars().all()
 
-    return webhooks
+    # Load group names for all webhooks
+    from app.models.user import Group
+    responses = []
+    for webhook in webhooks:
+        response = WebhookResponse.model_validate(webhook)
+        if webhook.group_id:
+            group_result = await db.execute(
+                select(Group.name).where(Group.id == webhook.group_id)
+            )
+            response.group_name = group_result.scalar_one_or_none()
+        responses.append(response)
+
+    return responses
 
 
 @router.get("/{path:path}", response_model=WebhookResponse)
@@ -118,7 +152,16 @@ async def get_webhook(
             raise HTTPException(status_code=403, detail="Not authorized to view this webhook")
         set_permission_used(request, "sinas.webhooks.get:own")
 
-    return webhook
+    # Load group name for response
+    response = WebhookResponse.model_validate(webhook)
+    if webhook.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == webhook.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.patch("/{path:path}", response_model=WebhookResponse)
@@ -178,11 +221,32 @@ async def update_webhook(
         webhook.is_active = webhook_data.is_active
     if webhook_data.requires_auth is not None:
         webhook.requires_auth = webhook_data.requires_auth
+    # Resolve group_name to group_id (group_name takes precedence)
+    if webhook_data.group_name is not None:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == webhook_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{webhook_data.group_name}' not found")
+        webhook.group_id = group
+    elif webhook_data.group_id is not None:
+        webhook.group_id = webhook_data.group_id
 
     await db.commit()
     await db.refresh(webhook)
 
-    return webhook
+    # Load group name for response
+    response = WebhookResponse.model_validate(webhook)
+    if webhook.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == webhook.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.delete("/{path:path}")

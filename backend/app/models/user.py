@@ -27,8 +27,8 @@ class User(Base):
     last_external_sync: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
-    group_memberships: Mapped[List["GroupMember"]] = relationship(
-        "GroupMember", back_populates="user", foreign_keys="[GroupMember.user_id]"
+    role_memberships: Mapped[List["UserRole"]] = relationship(
+        "UserRole", back_populates="user", foreign_keys="[UserRole.user_id]"
     )
     api_keys: Mapped[List["APIKey"]] = relationship(
         "APIKey", back_populates="user", foreign_keys="[APIKey.user_id]"
@@ -38,8 +38,8 @@ class User(Base):
     states: Mapped[List["State"]] = relationship("State", back_populates="user")
 
 
-class Group(Base):
-    __tablename__ = "groups"
+class Role(Base):
+    __tablename__ = "roles"
 
     id: Mapped[uuid_pk]
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
@@ -53,34 +53,31 @@ class Group(Base):
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     config_checksum: Mapped[Optional[str]] = mapped_column(Text)
 
-    # External group mapping (1:1)
+    # External role mapping (1:1) - for SSO integration
     external_group_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
 
     # Relationships
-    members: Mapped[List["GroupMember"]] = relationship(
-        "GroupMember", back_populates="group", cascade="all, delete-orphan"
+    members: Mapped[List["UserRole"]] = relationship(
+        "UserRole", back_populates="role", cascade="all, delete-orphan"
     )
-    permissions: Mapped[List["GroupPermission"]] = relationship(
-        "GroupPermission", back_populates="group", cascade="all, delete-orphan"
-    )
-    states: Mapped[List["State"]] = relationship(
-        "State", back_populates="group", cascade="all, delete-orphan"
+    permissions: Mapped[List["RolePermission"]] = relationship(
+        "RolePermission", back_populates="role", cascade="all, delete-orphan"
     )
 
     @classmethod
-    async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["Group"]:
-        """Get group by name."""
+    async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["Role"]:
+        """Get role by name."""
         result = await db.execute(
             select(cls).where(cls.name == name)
         )
         return result.scalar_one_or_none()
 
 
-class GroupMember(Base):
-    __tablename__ = "group_members"
+class UserRole(Base):
+    __tablename__ = "user_roles"
 
     id: Mapped[uuid_pk]
-    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id"), nullable=False, index=True)
+    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id"), nullable=False, index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     role: Mapped[Optional[str]] = mapped_column(String(100))
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -90,25 +87,25 @@ class GroupMember(Base):
     removed_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"))
 
     # Relationships
-    group: Mapped["Group"] = relationship("Group", back_populates="members")
-    user: Mapped["User"] = relationship("User", back_populates="group_memberships", foreign_keys=[user_id])
+    role: Mapped["Role"] = relationship("Role", back_populates="members")
+    user: Mapped["User"] = relationship("User", back_populates="role_memberships", foreign_keys=[user_id])
 
 
-class GroupPermission(Base):
-    __tablename__ = "group_permissions"
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
     __table_args__ = (
-        Index('ix_group_permission_unique', 'group_id', 'permission_key', unique=True),
+        Index('ix_role_permission_unique', 'role_id', 'permission_key', unique=True),
     )
 
     id: Mapped[uuid_pk]
-    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("groups.id"), nullable=False, index=True)
+    role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id"), nullable=False, index=True)
     permission_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     permission_value: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]
 
     # Relationships
-    group: Mapped["Group"] = relationship("Group", back_populates="permissions")
+    role: Mapped["Role"] = relationship("Role", back_populates="permissions")
 
 
 class OTPSession(Base):

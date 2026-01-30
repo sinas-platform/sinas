@@ -16,9 +16,6 @@ class State(Base):
     user_id: Mapped[uuid_lib.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    group_id: Mapped[Optional[uuid_lib.UUID]] = mapped_column(
-        ForeignKey("groups.id", ondelete="CASCADE"), index=True
-    )
 
     # Core key-value structure
     namespace: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
@@ -44,7 +41,6 @@ class State(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="states")
-    group: Mapped[Optional["Group"]] = relationship("Group", back_populates="states")
 
     __table_args__ = (
         # Unique constraint: one key per user/namespace combination

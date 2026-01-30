@@ -15,7 +15,6 @@ class Function(Base):
 
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text)

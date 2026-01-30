@@ -44,6 +44,10 @@ export function Functions() {
     },
   });
 
+  const reloadWorkersMutation = useMutation({
+    mutationFn: () => apiClient.reloadWorkers(),
+  });
+
   const handleInstallPackage = (e: React.FormEvent) => {
     e.preventDefault();
     if (packageName.trim()) {
@@ -76,7 +80,16 @@ export function Functions() {
       {/* Packages Section */}
       {packages && packages.length > 0 && (
         <div className="card bg-gray-50">
-          <h3 className="text-sm font-medium text-gray-700 mb-2">Installed Packages ({packages.length})</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-700">Installed Packages ({packages.length})</h3>
+            <button
+              onClick={() => reloadWorkersMutation.mutate()}
+              disabled={reloadWorkersMutation.isPending}
+              className="btn btn-secondary text-xs py-1 px-3"
+            >
+              {reloadWorkersMutation.isPending ? 'Reloading...' : 'Reload Workers'}
+            </button>
+          </div>
           <div className="flex flex-wrap gap-2">
             {packages.map((pkg: any) => (
               <div key={pkg.id} className="flex items-center bg-white px-3 py-1 rounded border border-gray-200">
@@ -92,6 +105,16 @@ export function Functions() {
               </div>
             ))}
           </div>
+          {reloadWorkersMutation.isSuccess && (
+            <div className="mt-2 text-sm text-green-600">
+              ✓ Workers reloaded successfully
+            </div>
+          )}
+          {reloadWorkersMutation.isError && (
+            <div className="mt-2 text-sm text-red-600">
+              Failed to reload workers
+            </div>
+          )}
         </div>
       )}
 

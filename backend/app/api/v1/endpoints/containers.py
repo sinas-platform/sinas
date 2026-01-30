@@ -24,12 +24,15 @@ async def get_container_stats(
     return stats
 
 
-@router.post("/{user_id}/reload")
-async def reload_user_functions(
-    user_id: str,
+@router.post("/reload")
+async def reload_all_containers(
     current_user_id: str = Depends(require_permission("sinas.containers.put:all"))
 ):
-    """Reload functions in user's container. Admin only."""
+    """
+    Reload all user containers by stopping them.
+    They will be recreated on next execution with fresh packages.
+    Admin only.
+    """
     if settings.function_execution_mode != 'docker':
         raise HTTPException(
             status_code=400,
@@ -37,12 +40,9 @@ async def reload_user_functions(
         )
 
     from app.services.user_container_manager import container_manager
-    from app.core.database import AsyncSessionLocal
+    result = await container_manager.reload_all_containers()
 
-    async with AsyncSessionLocal() as db:
-        await container_manager.reload_functions(user_id, db)
-
-    return {"status": "reloaded", "user_id": user_id}
+    return {"status": "reloaded", **result}
 
 
 @router.delete("/{user_id}")

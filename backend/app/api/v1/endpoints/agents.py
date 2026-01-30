@@ -49,9 +49,21 @@ async def create_agent(
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists")
 
+    # Resolve group_name to group_id (group_name takes precedence if both provided)
+    final_group_id = agent_data.group_id
+    if agent_data.group_name:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == agent_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{agent_data.group_name}' not found")
+        final_group_id = group
+
     agent = Agent(
         user_id=user_id,
-        group_id=agent_data.group_id,
+        group_id=final_group_id,
         namespace=agent_data.namespace,
         name=agent_data.name,
         description=agent_data.description,
@@ -77,7 +89,16 @@ async def create_agent(
     await db.commit()
     await db.refresh(agent)
 
-    return AgentResponse.model_validate(agent)
+    # Load group name for response
+    response = AgentResponse.model_validate(agent)
+    if agent.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == agent.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.get("", response_model=List[AgentResponse])
@@ -109,7 +130,20 @@ async def list_agents(
         )
 
     agents = result.scalars().all()
-    return [AgentResponse.model_validate(agent) for agent in agents]
+
+    # Load group names for all agents
+    from app.models.user import Group
+    responses = []
+    for agent in agents:
+        response = AgentResponse.model_validate(agent)
+        if agent.group_id:
+            group_result = await db.execute(
+                select(Group.name).where(Group.id == agent.group_id)
+            )
+            response.group_name = group_result.scalar_one_or_none()
+        responses.append(response)
+
+    return responses
 
 
 @router.get("/{namespace}/{name}", response_model=AgentResponse)
@@ -145,7 +179,16 @@ async def get_agent(
     if not has_all_permission and agent.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this agent")
 
-    return AgentResponse.model_validate(agent)
+    # Load group name for response
+    response = AgentResponse.model_validate(agent)
+    if agent.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == agent.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.put("/{namespace}/{name}", response_model=AgentResponse)
@@ -221,11 +264,32 @@ async def update_agent(
         agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
     if agent_data.is_active is not None:
         agent.is_active = agent_data.is_active
+    # Resolve group_name to group_id (group_name takes precedence)
+    if agent_data.group_name is not None:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == agent_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{agent_data.group_name}' not found")
+        agent.group_id = group
+    elif agent_data.group_id is not None:
+        agent.group_id = agent_data.group_id
 
     await db.commit()
     await db.refresh(agent)
 
-    return AgentResponse.model_validate(agent)
+    # Load group name for response
+    response = AgentResponse.model_validate(agent)
+    if agent.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == agent.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.delete("/{namespace}/{name}", status_code=status.HTTP_204_NO_CONTENT)

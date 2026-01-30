@@ -585,6 +585,11 @@ class APIClient {
     await this.configClient.delete(`/packages/${packageId}`);
   }
 
+  async reloadWorkers(): Promise<any> {
+    const response = await this.configClient.post('/workers/reload');
+    return response.data;
+  }
+
   // LLM Providers
   async listLLMProviders(): Promise<LLMProvider[]> {
     const response = await this.configClient.get('/llm-providers');

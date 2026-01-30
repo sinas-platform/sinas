@@ -49,9 +49,22 @@ async def create_schedule(
     if not function:
         raise HTTPException(status_code=404, detail=f"Function '{schedule_data.function_namespace}/{schedule_data.function_name}' not found")
 
+    # Resolve group_name to group_id (group_name takes precedence if both provided)
+    final_group_id = schedule_data.group_id
+    if schedule_data.group_name:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == schedule_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{schedule_data.group_name}' not found")
+        final_group_id = group
+
     # Create schedule
     schedule = ScheduledJob(
         user_id=user_id,
+        group_id=final_group_id,
         name=schedule_data.name,
         function_namespace=schedule_data.function_namespace,
         function_name=schedule_data.function_name,
@@ -67,7 +80,16 @@ async def create_schedule(
 
     # TODO: Register job with scheduler
 
-    return schedule
+    # Load group name for response
+    response = ScheduledJobResponse.model_validate(schedule)
+    if schedule.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == schedule.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.get("", response_model=List[ScheduledJobResponse])
@@ -93,7 +115,19 @@ async def list_schedules(
     result = await db.execute(query)
     schedules = result.scalars().all()
 
-    return schedules
+    # Load group names for all schedules
+    from app.models.user import Group
+    responses = []
+    for schedule in schedules:
+        response = ScheduledJobResponse.model_validate(schedule)
+        if schedule.group_id:
+            group_result = await db.execute(
+                select(Group.name).where(Group.id == schedule.group_id)
+            )
+            response.group_name = group_result.scalar_one_or_none()
+        responses.append(response)
+
+    return responses
 
 
 @router.get("/{name}", response_model=ScheduledJobResponse)
@@ -120,7 +154,16 @@ async def get_schedule(
             raise HTTPException(status_code=403, detail="Not authorized to view this schedule")
         set_permission_used(request, "sinas.schedules.get:own")
 
-    return schedule
+    # Load group name for response
+    response = ScheduledJobResponse.model_validate(schedule)
+    if schedule.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == schedule.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.patch("/{name}", response_model=ScheduledJobResponse)
@@ -175,12 +218,34 @@ async def update_schedule(
     if schedule_data.is_active is not None:
         schedule.is_active = schedule_data.is_active
 
+    # Resolve group_name to group_id (group_name takes precedence)
+    if schedule_data.group_name is not None:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.id).where(Group.name == schedule_data.group_name)
+        )
+        group = result.scalar_one_or_none()
+        if not group:
+            raise HTTPException(status_code=400, detail=f"Group '{schedule_data.group_name}' not found")
+        schedule.group_id = group
+    elif schedule_data.group_id is not None:
+        schedule.group_id = schedule_data.group_id
+
     await db.commit()
     await db.refresh(schedule)
 
     # TODO: Update job in scheduler
 
-    return schedule
+    # Load group name for response
+    response = ScheduledJobResponse.model_validate(schedule)
+    if schedule.group_id:
+        from app.models.user import Group
+        result = await db.execute(
+            select(Group.name).where(Group.id == schedule.group_id)
+        )
+        response.group_name = result.scalar_one_or_none()
+
+    return response
 
 
 @router.delete("/{name}")

@@ -8,7 +8,6 @@ import uuid
 class ChatCreate(BaseModel):
     title: str
     agent_id: Optional[uuid.UUID] = None
-    group_id: Optional[uuid.UUID] = None
 
 
 class ChatUpdate(BaseModel):
@@ -19,7 +18,6 @@ class ChatResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     user_email: str  # Creator's email address
-    group_id: Optional[uuid.UUID]
     agent_id: Optional[uuid.UUID]
     agent_namespace: Optional[str]
     agent_name: Optional[str]

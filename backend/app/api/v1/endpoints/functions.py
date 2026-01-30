@@ -114,7 +114,7 @@ async def create_function(
     db.add(version)
     await db.commit()
 
-    return function
+    return FunctionResponse.model_validate(function)
 
 
 @router.get("", response_model=List[FunctionResponse])
@@ -125,7 +125,7 @@ async def list_functions(
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """List functions (own and group-accessible)."""
+    """List functions (own or all based on permissions)."""
     user_id, permissions = current_user_data
 
     # Build query based on permissions
@@ -133,11 +133,6 @@ async def list_functions(
         set_permission_used(request, "sinas.functions.*.get:all")
         # Admin - see all functions
         query = select(Function)
-    elif check_permission(permissions, "sinas.functions.*.get:group"):
-        set_permission_used(request, "sinas.functions.*.get:group")
-        # Can see own and group functions
-        # TODO: Get user's groups
-        query = select(Function).where(Function.user_id == user_id)
     else:
         set_permission_used(request, "sinas.functions.*.get:own")
         # Own functions only
@@ -147,7 +142,7 @@ async def list_functions(
     result = await db.execute(query)
     functions = result.scalars().all()
 
-    return functions
+    return [FunctionResponse.model_validate(f) for f in functions]
 
 
 @router.get("/{namespace}/{name}", response_model=FunctionResponse)
@@ -174,7 +169,7 @@ async def get_function(
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view this function")
 
-    return function
+    return FunctionResponse.model_validate(function)
 
 
 @router.put("/{namespace}/{name}", response_model=FunctionResponse)
@@ -274,11 +269,13 @@ async def update_function(
         function.requires_approval = function_data.requires_approval
     if function_data.is_active is not None:
         function.is_active = function_data.is_active
+    if function_data.enabled_namespaces is not None:
+        function.enabled_namespaces = function_data.enabled_namespaces
 
     await db.commit()
     await db.refresh(function)
 
-    return function
+    return FunctionResponse.model_validate(function)
 
 
 @router.delete("/{namespace}/{name}")

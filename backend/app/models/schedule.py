@@ -16,7 +16,6 @@ class ScheduledJob(Base):
 
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
-    group_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("groups.id"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     function_namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
     function_name: Mapped[str] = mapped_column(String(255), nullable=False)

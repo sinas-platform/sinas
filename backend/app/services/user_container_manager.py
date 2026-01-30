@@ -161,11 +161,9 @@ class UserContainerManager:
         # Wait for container to be ready
         await asyncio.sleep(1)
 
-        # Install required packages before loading functions
+        # Install required packages
+        # Note: Functions are loaded inline at execution time, not pre-loaded
         await self._install_packages(container, user_id, db)
-
-        # Load user's functions into container
-        await self._sync_functions(container, user_id, db)
 
         logger.info(f"Container created for user {user_id}: {container.id[:12]}")
         return container
@@ -368,7 +366,7 @@ sys.exit(1)
         chat_id: Optional[str],
         db: AsyncSession,
     ) -> Dict[str, Any]:
-        """Execute a function in user's container."""
+        """Execute a function in user's container with inline code (no pre-loading needed)."""
         container = await self.get_or_create_container(user_id, db)
 
         # Update last used time
@@ -376,9 +374,27 @@ sys.exit(1)
             if user_id in self.user_containers:
                 self.user_containers[user_id]['last_used'] = time.time()
 
-        # Prepare execution payload with context
+        # Fetch function code from database (fresh every time)
+        from app.models.function import Function
+        result = await db.execute(
+            select(Function).where(
+                Function.namespace == function_namespace,
+                Function.name == function_name,
+                Function.is_active == True
+            )
+        )
+        function = result.scalar_one_or_none()
+
+        if not function:
+            return {
+                "status": "failed",
+                "error": f"Function {function_namespace}/{function_name} not found"
+            }
+
+        # Prepare execution payload with inline code
         payload = {
-            'action': 'execute',
+            'action': 'execute_inline',
+            'function_code': function.code,
             'execution_id': execution_id,
             'function_namespace': function_namespace,
             'function_name': function_name,
@@ -437,7 +453,8 @@ sys.exit(1)
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 raise Exception(f"Execution failed: {error_msg}")
 
-            result = json.loads(stdout.decode())
+            stdout_str = stdout.decode() if stdout else ""
+            result = json.loads(stdout_str)
 
             if 'error' in result:
                 raise Exception(result['error'])
@@ -448,15 +465,25 @@ sys.exit(1)
             logger.error(f"Error executing function in container: {e}")
             raise
 
-    async def reload_functions(self, user_id: str, db: AsyncSession):
-        """Reload functions in user's container after function changes."""
+    async def reload_all_containers(self):
+        """Stop all user containers. They will be recreated on next execution with fresh packages."""
         async with self.container_lock:
-            if user_id in self.user_containers:
-                container = self.user_containers[user_id]['container']
+            user_ids = list(self.user_containers.keys())
+            stopped_count = 0
+
+            for user_id in user_ids:
                 try:
-                    await self._sync_functions(container, user_id, db)
+                    container = self.user_containers[user_id]['container']
+                    await asyncio.to_thread(container.stop, timeout=10)
+                    await asyncio.to_thread(container.remove)
+                    del self.user_containers[user_id]
+                    stopped_count += 1
+                    logger.info(f"Stopped and removed container for user {user_id}")
                 except Exception as e:
-                    logger.error(f"Error reloading functions: {e}")
+                    logger.error(f"Error stopping container for user {user_id}: {e}")
+
+            logger.info(f"Reloaded all containers: stopped {stopped_count} containers")
+            return {"stopped": stopped_count, "total": len(user_ids)}
 
     async def stop_container(self, user_id: str):
         """Stop and remove container for user."""

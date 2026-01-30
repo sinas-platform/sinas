@@ -77,10 +77,11 @@ class SharedWorkerManager:
         print(f"✅ Worker manager initialized with {len(self.workers)} workers")
 
     async def _discover_existing_workers(self):
-        """Discover and re-register existing worker containers."""
+        """Discover and re-register existing worker containers (including stopped ones)."""
         try:
-            # List all containers with sinas-worker-* naming pattern
+            # List all containers (including stopped) with sinas-worker-* naming pattern
             containers = self.client.containers.list(
+                all=True,
                 filters={"name": "sinas-worker-"}
             )
 
@@ -91,6 +92,12 @@ class SharedWorkerManager:
                     try:
                         worker_num = container_name.replace("sinas-worker-", "")
                         worker_id = f"worker-{worker_num}"
+
+                        # Start container if it's stopped
+                        if container.status != "running":
+                            print(f"🔄 Starting stopped worker: {container_name}")
+                            container.start()
+                            container.reload()  # Refresh status
 
                         # Get container creation time
                         container_info = container.attrs
@@ -105,7 +112,7 @@ class SharedWorkerManager:
 
                         print(f"🔍 Rediscovered worker: {container_name} (status: {container.status})")
                     except Exception as e:
-                        print(f"⚠️  Failed to parse worker name {container_name}: {e}")
+                        print(f"⚠️  Failed to process worker {container_name}: {e}")
 
         except Exception as e:
             print(f"⚠️  Failed to discover existing workers: {e}")
@@ -307,6 +314,43 @@ class SharedWorkerManager:
             print(f"❌ Failed to remove worker {container_name}: {e}")
             return False
 
+    async def reload_packages(self, db: AsyncSession) -> Dict[str, Any]:
+        """
+        Reload packages in all shared workers.
+        Reinstalls all approved packages in each worker.
+        """
+        async with self._lock:
+            if not self.workers:
+                return {
+                    "status": "no_workers",
+                    "message": "No workers to reload"
+                }
+
+            success_count = 0
+            failed_count = 0
+            errors = []
+
+            for worker_id, info in self.workers.items():
+                container_name = info["container_name"]
+                try:
+                    container = self.client.containers.get(container_name)
+                    await self._install_packages(container, db)
+                    success_count += 1
+                    print(f"✅ Reloaded packages in worker: {container_name}")
+                except Exception as e:
+                    failed_count += 1
+                    error_msg = f"Worker {container_name}: {str(e)}"
+                    errors.append(error_msg)
+                    print(f"❌ Failed to reload packages in {container_name}: {e}")
+
+            return {
+                "status": "completed",
+                "total_workers": len(self.workers),
+                "success": success_count,
+                "failed": failed_count,
+                "errors": errors if errors else None
+            }
+
     async def execute_function(
         self,
         user_id: str,
@@ -411,13 +455,16 @@ while time.time() - start < max_wait:
         continue
 print(json.dumps({{"error": "Execution timeout"}}))
 sys.exit(1)
-'''])
+'''],
+                demux=True  # Separate stdout and stderr
+            )
 
-            output = exec_result.output.decode()
+            stdout, stderr = exec_result.output
+            stdout_str = stdout.decode() if stdout else ""
 
-            # Parse result
+            # Parse result from stdout only (ignore stderr)
             if exec_result.exit_code == 0:
-                result = json.loads(output)
+                result = json.loads(stdout_str)
 
                 # Track execution count
                 async with self._lock:
@@ -425,9 +472,10 @@ sys.exit(1)
 
                 return result
             else:
+                error_msg = stderr.decode() if stderr else "Unknown error"
                 return {
                     "status": "failed",
-                    "error": output
+                    "error": error_msg
                 }
 
         except Exception as e:
