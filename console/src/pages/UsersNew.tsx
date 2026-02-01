@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus } from 'lucide-react';
 
-type Tab = 'users' | 'groups';
+type Tab = 'users' | 'roles';
 
 export function UsersNew() {
   const [activeTab, setActiveTab] = useState<Tab>('users');
@@ -11,8 +11,8 @@ export function UsersNew() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Users & Groups</h1>
-        <p className="text-gray-600 mt-1">Manage users, groups, and permissions</p>
+        <h1 className="text-3xl font-bold text-gray-900">Users & Roles</h1>
+        <p className="text-gray-600 mt-1">Manage users, roles, and permissions</p>
       </div>
 
       {/* Tabs */}
@@ -30,15 +30,15 @@ export function UsersNew() {
             Users
           </button>
           <button
-            onClick={() => setActiveTab('groups')}
+            onClick={() => setActiveTab('roles')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-              activeTab === 'groups'
+              activeTab === 'roles'
                 ? 'border-primary-600 text-primary-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
             <Shield className="w-5 h-5 inline mr-2" />
-            Groups
+            Roles
           </button>
         </nav>
       </div>
@@ -46,7 +46,7 @@ export function UsersNew() {
       {/* Tab Content */}
       <div>
         {activeTab === 'users' && <UsersTab />}
-        {activeTab === 'groups' && <GroupsTab />}
+        {activeTab === 'roles' && <RolesTab />}
       </div>
     </div>
   );
@@ -86,11 +86,11 @@ function UsersTab() {
                 <UsersIcon className="w-6 h-6 text-primary-600 mr-3" />
                 <div className="flex-1">
                   <h3 className="font-semibold text-gray-900">{user.email}</h3>
-                  {user.groups && user.groups.length > 0 && (
+                  {user.roles && user.roles.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {user.groups.map((group: any) => (
-                        <span key={group.id} className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">
-                          {group.name}
+                      {user.roles.map((role: any) => (
+                        <span key={role.id} className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">
+                          {role.name}
                         </span>
                       ))}
                     </div>
@@ -125,71 +125,71 @@ function UsersTab() {
 }
 
 // Groups Tab
-function GroupsTab() {
+function RolesTab() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [editingGroup, setEditingGroup] = useState<any>(null);
-  const [managingGroup, setManagingGroup] = useState<any>(null);
+  const [editingRole, setEditingRole] = useState<any>(null);
+  const [managingRole, setManagingRole] = useState<any>(null);
 
-  const { data: groups, isLoading } = useQuery({
+  const { data: roles, isLoading } = useQuery({
     queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
+    queryFn: () => apiClient.listRoles(),
     retry: false,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (groupName: string) => apiClient.deleteGroup(groupName),
+    mutationFn: (roleName: string) => apiClient.deleteRole(roleName),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['groups'] }),
   });
 
-  const isAdminGroup = (group: any) => group.name.toLowerCase() === 'admin' || group.name.toLowerCase() === 'admins';
+  const isAdminRole = (role: any) => role.name.toLowerCase() === 'admin' || role.name.toLowerCase() === 'admins';
 
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
-        <button onClick={() => { setEditingGroup(null); setShowCreateModal(true); }} className="btn btn-primary btn-sm">
+        <button onClick={() => { setEditingRole(null); setShowCreateModal(true); }} className="btn btn-primary btn-sm">
           <Plus className="w-4 h-4 mr-2" />
-          Create Group
+          Create Role
         </button>
       </div>
 
       {isLoading ? (
         <div className="text-center py-8"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div></div>
-      ) : groups && groups.length > 0 ? (
+      ) : roles && roles.length > 0 ? (
         <div className="grid gap-4">
-          {groups.map((group: any) => (
-            <div key={group.id} className="card">
+          {roles.map((role: any) => (
+            <div key={role.id} className="card">
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center flex-1">
                   <Shield className="w-6 h-6 text-primary-600 mr-3" />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">{group.name}</h3>
-                      {isAdminGroup(group) && (
+                      <h3 className="font-semibold text-gray-900">{role.name}</h3>
+                      {isAdminRole(role) && (
                         <span className="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">Admin</span>
                       )}
                     </div>
-                    {group.description && <p className="text-sm text-gray-600 mt-1">{group.description}</p>}
-                    {group.email_domain && (
-                      <p className="text-xs text-gray-500 mt-1">Email domain: {group.email_domain}</p>
+                    {role.description && <p className="text-sm text-gray-600 mt-1">{role.description}</p>}
+                    {role.email_domain && (
+                      <p className="text-xs text-gray-500 mt-1">Email domain: {role.email_domain}</p>
                     )}
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => setManagingGroup(group)}
+                    onClick={() => setManagingRole(role)}
                     className="text-blue-600 hover:text-blue-700"
                     title="Manage members"
                   >
                     <UserPlus className="w-4 h-4" />
                   </button>
-                  {!isAdminGroup(group) && (
+                  {!isAdminRole(role) && (
                     <>
-                      <button onClick={() => { setEditingGroup(group); setShowCreateModal(true); }} className="text-primary-600 hover:text-primary-700">
+                      <button onClick={() => { setEditingRole(role); setShowCreateModal(true); }} className="text-primary-600 hover:text-primary-700">
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => confirm('Delete this group?') && deleteMutation.mutate(group.name)}
+                        onClick={() => confirm('Delete this role?') && deleteMutation.mutate(role.name)}
                         className="text-red-600 hover:text-red-700"
                         disabled={deleteMutation.isPending}
                       >
@@ -205,26 +205,26 @@ function GroupsTab() {
       ) : (
         <div className="text-center py-12 card">
           <Shield className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-          <p className="text-gray-600">No groups found</p>
+          <p className="text-gray-600">No roles found</p>
         </div>
       )}
 
-      {showCreateModal && <GroupModal group={editingGroup} onClose={() => { setShowCreateModal(false); setEditingGroup(null); }} />}
-      {managingGroup && <GroupManagementModal group={managingGroup} onClose={() => setManagingGroup(null)} />}
+      {showCreateModal && <RoleModal role={editingRole} onClose={() => { setShowCreateModal(false); setEditingRole(null); }} />}
+      {managingRole && <RoleManagementModal role={managingRole} onClose={() => setManagingRole(null)} />}
     </div>
   );
 }
 
-function GroupModal({ group, onClose }: { group: any; onClose: () => void }) {
+function RoleModal({ role, onClose }: { role: any; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState({
-    name: group?.name || '',
-    description: group?.description || '',
-    email_domain: group?.email_domain || '',
+    name: role?.name || '',
+    description: role?.description || '',
+    email_domain: role?.email_domain || '',
   });
 
   const mutation = useMutation({
-    mutationFn: (data: any) => group ? apiClient.updateGroup(group.name, data) : apiClient.createGroup(data),
+    mutationFn: (data: any) => role ? apiClient.updateRole(role.name, data) : apiClient.createRole(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['groups'] });
       onClose();
@@ -239,7 +239,7 @@ function GroupModal({ group, onClose }: { group: any; onClose: () => void }) {
   return (
     <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">{group ? 'Edit' : 'Create'} Group</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">{role ? 'Edit' : 'Create'} Role</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
@@ -252,7 +252,7 @@ function GroupModal({ group, onClose }: { group: any; onClose: () => void }) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Email Domain</label>
             <input type="text" value={formData.email_domain} onChange={(e) => setFormData({ ...formData, email_domain: e.target.value })} placeholder="example.com" className="input" />
-            <p className="text-xs text-gray-500 mt-1">Users with this email domain will auto-join this group</p>
+            <p className="text-xs text-gray-500 mt-1">Users with this email domain will auto-join this role</p>
           </div>
           <div className="flex justify-end space-x-3 pt-4">
             <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
@@ -266,13 +266,13 @@ function GroupModal({ group, onClose }: { group: any; onClose: () => void }) {
   );
 }
 
-function GroupManagementModal({ group, onClose }: { group: any; onClose: () => void }) {
+function RoleManagementModal({ role, onClose }: { role: any; onClose: () => void }) {
   return (
     <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Manage Members: {group.name}</h2>
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">Manage Members: {role.name}</h2>
 
-        <MembersManagement group={group} />
+        <MembersManagement role={role} />
 
         <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
           <button onClick={onClose} className="btn btn-secondary">Close</button>
@@ -282,25 +282,25 @@ function GroupManagementModal({ group, onClose }: { group: any; onClose: () => v
   );
 }
 
-function MembersManagement({ group }: { group: any }) {
+function MembersManagement({ role }: { role: any }) {
   const queryClient = useQueryClient();
   const [showAddModal, setShowAddModal] = useState(false);
 
   const { data: members } = useQuery({
-    queryKey: ['groupMembers', group.name],
-    queryFn: () => apiClient.listGroupMembers(group.name),
+    queryKey: ['groupMembers', role.name],
+    queryFn: () => apiClient.listRoleMembers(role.name),
     retry: false,
   });
 
   const removeMutation = useMutation({
-    mutationFn: (userId: string) => apiClient.removeGroupMember(group.name, userId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['groupMembers', group.name] }),
+    mutationFn: (userId: string) => apiClient.removeRoleMember(role.name, userId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['groupMembers', role.name] }),
   });
 
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-center">
-        <p className="text-sm text-gray-600">Group members</p>
+        <p className="text-sm text-gray-600">Role members</p>
         <button onClick={() => setShowAddModal(true)} className="btn btn-primary btn-sm">
           <UserPlus className="w-4 h-4 mr-2" />
           Add Member
@@ -326,18 +326,18 @@ function MembersManagement({ group }: { group: any }) {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-gray-500 text-center py-6">No members in this group</p>
+        <p className="text-sm text-gray-500 text-center py-6">No members in this role</p>
       )}
 
-      {showAddModal && <AddMemberModal group={group} onClose={() => setShowAddModal(false)} />}
+      {showAddModal && <AddMemberModal role={role} onClose={() => setShowAddModal(false)} />}
     </div>
   );
 }
 
-function AddMemberModal({ group, onClose }: { group: any; onClose: () => void }) {
+function AddMemberModal({ role, onClose }: { role: any; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [userId, setUserId] = useState('');
-  const [role, setRole] = useState('member');
+  const [memberRole, setMemberRole] = useState('member');
 
   const { data: users } = useQuery({
     queryKey: ['users'],
@@ -346,22 +346,22 @@ function AddMemberModal({ group, onClose }: { group: any; onClose: () => void })
   });
 
   const mutation = useMutation({
-    mutationFn: (data: any) => apiClient.addGroupMember(group.name, data),
+    mutationFn: (data: any) => apiClient.addRoleMember(role.name, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['groupMembers', group.name] });
+      queryClient.invalidateQueries({ queryKey: ['groupMembers', role.name] });
       onClose();
     },
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    mutation.mutate({ user_id: userId, role });
+    mutation.mutate({ user_id: userId, role: memberRole });
   };
 
   return (
     <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">Add Member to {group.name}</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Add Member to {role.name}</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">User *</label>
@@ -372,7 +372,7 @@ function AddMemberModal({ group, onClose }: { group: any; onClose: () => void })
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
-            <input type="text" value={role} onChange={(e) => setRole(e.target.value)} className="input" />
+            <input type="text" value={memberRole} onChange={(e) => setMemberRole(e.target.value)} className="input" />
           </div>
           <div className="flex justify-end space-x-3">
             <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
@@ -420,7 +420,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
               autoFocus
             />
             <p className="text-xs text-gray-500 mt-1">
-              User will be created and assigned to the default group
+              User will be created and assigned to the default role
             </p>
           </div>
           {mutation.isError && (

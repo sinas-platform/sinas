@@ -108,14 +108,14 @@ class ConfigParser:
         db_mcp_server_names: Set[str] = set()
 
         if db:
-            from app.models.user import Group
+            from app.models.user import Role
             from app.models.function import Function
             from app.models.agent import Agent
             from app.models.llm_provider import LLMProvider
             from app.models.mcp import MCPServer
 
             # Load existing resource names from database
-            result = await db.execute(select(Group.name))
+            result = await db.execute(select(Role.name))
             db_group_names = {name for (name,) in result.fetchall()}
 
             # Functions and agents use namespace/name format

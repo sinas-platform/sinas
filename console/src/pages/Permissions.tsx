@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { Shield, Plus, Trash2, Save } from 'lucide-react';
 import { useState, useMemo } from 'react';
-import type { GroupPermission } from '../types';
+import type { RolePermission } from '../types';
 
 export function Permissions() {
   const queryClient = useQueryClient();
@@ -10,50 +10,50 @@ export function Permissions() {
   const [newPermissionKey, setNewPermissionKey] = useState('');
   const [pendingChanges, setPendingChanges] = useState<Map<string, { groupName: string; permissionKey: string; value: boolean }>>(new Map());
 
-  const { data: groups, isLoading: groupsLoading } = useQuery({
+  const { data: roles, isLoading: rolesLoading } = useQuery({
     queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
+    queryFn: () => apiClient.listRoles(),
     retry: false,
   });
 
   // Fetch permissions for all groups
   const permissionQueries = useQuery({
-    queryKey: ['allGroupPermissions', groups?.map(g => g.name)],
+    queryKey: ['allRolePermissions', roles?.map(g => g.name)],
     queryFn: async () => {
-      if (!groups) return {};
-      const permissionsMap: Record<string, GroupPermission[]> = {};
+      if (!roles) return {};
+      const permissionsMap: Record<string, RolePermission[]> = {};
 
       await Promise.all(
-        groups.map(async (group) => {
+        roles.map(async (role) => {
           try {
-            const permissions = await apiClient.listGroupPermissions(group.name);
-            permissionsMap[group.name] = permissions;
+            const permissions = await apiClient.listRolePermissions(role.name);
+            permissionsMap[role.name] = permissions;
           } catch (error) {
-            console.error(`Failed to fetch permissions for group ${group.name}:`, error);
-            permissionsMap[group.name] = [];
+            console.error(`Failed to fetch permissions for role ${role.name}:`, error);
+            permissionsMap[role.name] = [];
           }
         })
       );
 
       return permissionsMap;
     },
-    enabled: !!groups && groups.length > 0,
+    enabled: !!roles && roles.length > 0,
     retry: false,
   });
 
   const setPermissionMutation = useMutation({
     mutationFn: ({ groupName, permissionKey, value }: { groupName: string; permissionKey: string; value: boolean }) =>
-      apiClient.setGroupPermission(groupName, { permission_key: permissionKey, permission_value: value }),
+      apiClient.setRolePermission(groupName, { permission_key: permissionKey, permission_value: value }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['allGroupPermissions'] });
+      queryClient.invalidateQueries({ queryKey: ['allRolePermissions'] });
     },
   });
 
   const deletePermissionMutation = useMutation({
     mutationFn: ({ groupName, permissionKey }: { groupName: string; permissionKey: string }) =>
-      apiClient.deleteGroupPermission(groupName, permissionKey),
+      apiClient.deleteRolePermission(groupName, permissionKey),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['allGroupPermissions'] });
+      queryClient.invalidateQueries({ queryKey: ['allRolePermissions'] });
     },
   });
 
@@ -69,35 +69,35 @@ export function Permissions() {
     return Array.from(keysSet).sort();
   }, [permissionQueries.data]);
 
-  // Check if group is admin
-  const isAdminGroup = (groupName: string): boolean => {
-    return groupName.toLowerCase() === 'admin' || groupName.toLowerCase() === 'admins';
+  // Check if role is admin
+  const isAdminRole = (roleName: string): boolean => {
+    return roleName.toLowerCase() === 'admin' || roleName.toLowerCase() === 'admins';
   };
 
-  // Check if a permission is enabled for a group
-  const isPermissionEnabled = (groupName: string, permissionKey: string): boolean => {
-    const changeKey = `${groupName}:${permissionKey}`;
+  // Check if a permission is enabled for a role
+  const isPermissionEnabled = (roleName: string, permissionKey: string): boolean => {
+    const changeKey = `${roleName}:${permissionKey}`;
     if (pendingChanges.has(changeKey)) {
       return pendingChanges.get(changeKey)!.value;
     }
 
     if (!permissionQueries.data) return false;
-    const groupPerms = permissionQueries.data[groupName] || [];
-    const perm = groupPerms.find((p) => p.permission_key === permissionKey);
+    const rolePerms = permissionQueries.data[roleName] || [];
+    const perm = rolePerms.find((p) => p.permission_key === permissionKey);
     return perm?.permission_value || false;
   };
 
   // Toggle permission (add to pending changes)
-  const togglePermission = (groupName: string, permissionKey: string) => {
-    // Don't allow editing admin group permissions
-    if (isAdminGroup(groupName)) return;
+  const togglePermission = (roleName: string, permissionKey: string) => {
+    // Don't allow editing admin role permissions
+    if (isAdminRole(roleName)) return;
 
-    const currentValue = isPermissionEnabled(groupName, permissionKey);
+    const currentValue = isPermissionEnabled(roleName, permissionKey);
     const newValue = !currentValue;
-    const changeKey = `${groupName}:${permissionKey}`;
+    const changeKey = `${roleName}:${permissionKey}`;
 
     const newChanges = new Map(pendingChanges);
-    newChanges.set(changeKey, { groupName, permissionKey, value: newValue });
+    newChanges.set(changeKey, { groupName: roleName, permissionKey, value: newValue });
     setPendingChanges(newChanges);
   };
 
@@ -107,7 +107,7 @@ export function Permissions() {
       try {
         await setPermissionMutation.mutateAsync(change);
       } catch (error) {
-        console.error(`Failed to update permission ${change.permissionKey} for group ${change.groupName}:`, error);
+        console.error(`Failed to update permission ${change.permissionKey} for role ${change.groupName}:`, error);
       }
     }
     setPendingChanges(new Map());
@@ -123,16 +123,16 @@ export function Permissions() {
     if (!newPermissionKey.trim()) return;
 
     // Add this permission to all groups as false by default
-    if (groups) {
-      for (const group of groups) {
+    if (roles) {
+      for (const role of roles) {
         try {
           await setPermissionMutation.mutateAsync({
-            groupName: group.name,
+            groupName: role.name,
             permissionKey: newPermissionKey.trim(),
             value: false,
           });
         } catch (error) {
-          console.error(`Failed to add permission to group ${group.name}:`, error);
+          console.error(`Failed to add permission to role ${role.name}:`, error);
         }
       }
     }
@@ -143,22 +143,22 @@ export function Permissions() {
 
   // Delete a permission from all groups
   const handleDeletePermission = async (permissionKey: string) => {
-    if (!confirm(`Are you sure you want to delete the permission "${permissionKey}" from all groups?`)) {
+    if (!confirm(`Are you sure you want to delete the permission "${permissionKey}" from all roles?`)) {
       return;
     }
 
-    if (groups) {
-      for (const group of groups) {
+    if (roles) {
+      for (const role of roles) {
         try {
-          await deletePermissionMutation.mutateAsync({ groupName: group.name, permissionKey });
+          await deletePermissionMutation.mutateAsync({ groupName: role.name, permissionKey });
         } catch (error) {
-          console.error(`Failed to delete permission from group ${group.name}:`, error);
+          console.error(`Failed to delete permission from role ${role.name}:`, error);
         }
       }
     }
   };
 
-  const isLoading = groupsLoading || permissionQueries.isLoading;
+  const isLoading = rolesLoading || permissionQueries.isLoading;
 
   return (
     <div className="space-y-6">
@@ -166,7 +166,7 @@ export function Permissions() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Permissions Matrix</h1>
-          <p className="text-gray-600 mt-1">Manage group permissions across your organization</p>
+          <p className="text-gray-600 mt-1">Manage role permissions across your organization</p>
         </div>
         <div className="flex items-center gap-3">
           {pendingChanges.size > 0 && (
@@ -197,11 +197,11 @@ export function Permissions() {
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           <p className="text-gray-600 mt-2">Loading permissions...</p>
         </div>
-      ) : !groups || groups.length === 0 ? (
+      ) : !roles || roles.length === 0 ? (
         <div className="text-center py-12 card">
           <Shield className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No groups yet</h3>
-          <p className="text-gray-600">Create groups to manage permissions</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No roles yet</h3>
+          <p className="text-gray-600">Create roles to manage permissions</p>
         </div>
       ) : allPermissionKeys.length === 0 ? (
         <div className="text-center py-12 card">
@@ -221,18 +221,18 @@ export function Permissions() {
                 <th className="text-left py-3 px-4 font-semibold text-gray-700 bg-gray-50 sticky left-0 z-10 min-w-[250px]">
                   Permission
                 </th>
-                {groups.map((group) => (
-                  <th key={group.id} className="text-center py-3 px-4 font-semibold text-gray-700 bg-gray-50 min-w-[120px]">
+                {roles.map((role) => (
+                  <th key={role.id} className="text-center py-3 px-4 font-semibold text-gray-700 bg-gray-50 min-w-[120px]">
                     <div className="flex flex-col items-center">
                       <div className="flex items-center gap-1">
-                        <span className="truncate max-w-[100px]" title={group.name}>{group.name}</span>
-                        {isAdminGroup(group.name) && (
+                        <span className="truncate max-w-[100px]" title={role.name}>{role.name}</span>
+                        {isAdminRole(role.name) && (
                           <span className="px-1.5 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">Admin</span>
                         )}
                       </div>
-                      {group.description && (
-                        <span className="text-xs text-gray-500 font-normal truncate max-w-[100px]" title={group.description}>
-                          {group.description}
+                      {role.description && (
+                        <span className="text-xs text-gray-500 font-normal truncate max-w-[100px]" title={role.description}>
+                          {role.description}
                         </span>
                       )}
                     </div>
@@ -247,19 +247,19 @@ export function Permissions() {
                   <td className="py-3 px-4 font-mono text-sm text-gray-900 sticky left-0 bg-white z-10">
                     {permissionKey}
                   </td>
-                  {groups.map((group) => {
-                    const enabled = isPermissionEnabled(group.name, permissionKey);
-                    const changeKey = `${group.name}:${permissionKey}`;
+                  {roles.map((role) => {
+                    const enabled = isPermissionEnabled(role.name, permissionKey);
+                    const changeKey = `${role.name}:${permissionKey}`;
                     const hasChange = pendingChanges.has(changeKey);
-                    const isAdmin = isAdminGroup(group.name);
+                    const isAdmin = isAdminRole(role.name);
 
                     return (
-                      <td key={group.id} className="py-3 px-4 text-center">
+                      <td key={role.id} className="py-3 px-4 text-center">
                         <div className="flex items-center justify-center">
                           <input
                             type="checkbox"
                             checked={enabled}
-                            onChange={() => togglePermission(group.name, permissionKey)}
+                            onChange={() => togglePermission(role.name, permissionKey)}
                             disabled={isAdmin}
                             className={`w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${
                               isAdmin ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'

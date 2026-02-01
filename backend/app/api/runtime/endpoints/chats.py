@@ -22,6 +22,14 @@ from app.models.user import User
 from sqlalchemy import func
 from app.services.message_service import MessageService
 from app.schemas.chat import AgentChatCreateRequest, MessageSendRequest, ChatResponse, MessageResponse, ChatUpdate, ChatWithMessages, ToolApprovalRequest, ToolApprovalResponse
+from app.core.permissions import check_permission
+from app.utils.schema import validate_with_coercion
+from app.services.template_renderer import render_template
+
+from fastapi import BackgroundTasks
+from app.core.database import AsyncSessionLocal
+from app.providers.factory import create_provider
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -46,8 +54,6 @@ async def create_chat_with_agent(
 
     Note: This only creates the chat. Use POST /chats/{chat_id}/messages to send messages.
     """
-    from app.core.permissions import check_permission
-
     user_id, permissions = current_user_data
 
     # 1. Load agent by namespace and name
@@ -56,13 +62,11 @@ async def create_chat_with_agent(
         raise HTTPException(404, f"Agent '{namespace}/{agent_name}' not found")
 
     # 2. Check permissions: Need agent read permission
-    agent_perm = f"sinas.agents.{namespace}.{agent_name}.read:own"
-    agent_perm_group = f"sinas.agents.{namespace}.{agent_name}.read:group"
-    agent_perm_all = f"sinas.agents.{namespace}.{agent_name}.read:all"
+    agent_perm = f"sinas.agents/{namespace}/{agent_name}.read:own"
+    agent_perm_all = f"sinas.agents/{namespace}/{agent_name}.read:all"
 
     has_permission = (
         check_permission(permissions, agent_perm_all) or
-        (check_permission(permissions, agent_perm_group) and agent.group_id) or
         (check_permission(permissions, agent_perm) and str(agent.user_id) == user_id)
     )
 
@@ -76,7 +80,6 @@ async def create_chat_with_agent(
     validated_input = request.input
     if request.input and agent.input_schema:
         try:
-            from app.utils.schema import validate_with_coercion
             validated_input = validate_with_coercion(request.input, agent.input_schema)
         except jsonschema.ValidationError as e:
             raise HTTPException(400, f"Input validation failed: {e.message}")
@@ -84,7 +87,6 @@ async def create_chat_with_agent(
     # 4. Create chat with input data stored in metadata
     chat = Chat(
         user_id=user_id,
-        group_id=agent.group_id,
         agent_id=agent.id,
         agent_namespace=namespace,
         agent_name=agent_name,
@@ -97,8 +99,6 @@ async def create_chat_with_agent(
 
     # 5. Pre-populate with initial_messages if present (rendered with input data)
     if agent.initial_messages:
-        from app.services.template_renderer import render_template
-
         for msg_data in agent.initial_messages:
             # Render message content with input_data if it's a string
             content = msg_data["content"]
@@ -124,7 +124,6 @@ async def create_chat_with_agent(
         id=chat.id,
         user_id=chat.user_id,
         user_email=user.email,
-        group_id=chat.group_id,
         agent_id=chat.agent_id,
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,
@@ -202,8 +201,6 @@ async def stream_message(
 
     Returns EventSourceResponse with streaming chunks.
     """
-    from fastapi import BackgroundTasks
-    from app.core.database import AsyncSessionLocal
 
     user_id, permissions = current_user_data
 
@@ -372,8 +369,6 @@ async def approve_tool_call(
 
         # Get LLM response to the rejection
         try:
-            from app.providers.factory import create_provider
-            from app.services.template_renderer import render_template
 
             # Rebuild conversation with rejection
             # First, add system prompt with template variables
@@ -540,7 +535,6 @@ async def list_chats(
             id=chat.id,
             user_id=chat.user_id,
             user_email=email,
-            group_id=chat.group_id,
             agent_id=chat.agent_id,
             agent_namespace=chat.agent_namespace,
             agent_name=chat.agent_name,
@@ -593,7 +587,6 @@ async def get_chat(
         id=chat.id,
         user_id=chat.user_id,
         user_email=user_email,
-        group_id=chat.group_id,
         agent_id=chat.agent_id,
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,
@@ -649,7 +642,6 @@ async def update_chat(
         id=chat.id,
         user_id=chat.user_id,
         user_email=user.email,
-        group_id=chat.group_id,
         agent_id=chat.agent_id,
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,

@@ -27,11 +27,6 @@ class OTPVerifyResponse(BaseModel):
     user: "UserResponse"
 
 
-class ExternalAuthRequest(BaseModel):
-    """Request to exchange external OIDC token for SINAS JWT."""
-    token: str
-
-
 class UserResponse(BaseModel):
     id: uuid.UUID
     email: str

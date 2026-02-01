@@ -21,12 +21,6 @@ export function Agents() {
     retry: false,
   });
 
-  const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
-    retry: false,
-  });
-
   const { data: llmProviders } = useQuery({
     queryKey: ['llmProviders'],
     queryFn: () => apiClient.listLLMProviders(),
@@ -239,28 +233,6 @@ export function Agents() {
                   placeholder="A helpful assistant that..."
                   className="input"
                 />
-              </div>
-
-              <div>
-                <label htmlFor="group_id" className="block text-sm font-medium text-gray-700 mb-2">
-                  Group (Optional)
-                </label>
-                <select
-                  id="group_id"
-                  value={formData.group_id || ''}
-                  onChange={(e) => setFormData({ ...formData, group_id: e.target.value || undefined })}
-                  className="input"
-                >
-                  <option value="">No group (Personal)</option>
-                  {groups?.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Assign to a group to share with team members
-                </p>
               </div>
 
               <div>

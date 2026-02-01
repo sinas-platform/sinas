@@ -38,17 +38,6 @@ class Settings(BaseSettings):
     # OTP Configuration
     otp_expire_minutes: int = 10
 
-    # External Auth (optional - OIDC/OAuth2)
-    external_auth_enabled: bool = False
-    oidc_issuer: Optional[str] = None
-    oidc_audience: Optional[str] = None
-    oidc_groups_claim: str = "groups"
-
-    # Provisioning
-    auto_provision_users: bool = False
-    auto_provision_groups: bool = False
-    default_group_name: str = "Users"
-
     # SMTP Configuration (for sending emails)
     smtp_host: Optional[str] = None
     smtp_port: int = 587

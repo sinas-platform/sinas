@@ -6,13 +6,19 @@ def matches_permission_pattern(pattern: str, concrete: str) -> bool:
     """
     Check if a concrete permission matches a wildcard pattern.
 
-    Uses pattern matching to determine if a user's wildcard permission (e.g., sinas.*:all)
-    grants access to a specific requested permission (e.g., sinas.users.put:own).
+    Uses pattern matching with URL-style paths for namespaced resources.
+
+    Permission Format:
+        <service>.<resource_type>[/<namespace>[/<name>]].<action>:<scope>
+
+    Where:
+        - Dots (.) separate service, resource_type, and action
+        - Slashes (/) separate namespace and name (optional hierarchical path)
+        - Colon (:) separates scope
 
     Scope Hierarchy:
-    - :all grants :group and :own
-    - :group grants :own (future enhancement)
-    - Pattern with :all matches requests for :group or :own
+        - :all grants :own
+        - Pattern with :all matches requests for :own
 
     Args:
         pattern: Permission pattern with potential wildcards
@@ -22,19 +28,21 @@ def matches_permission_pattern(pattern: str, concrete: str) -> bool:
         True if concrete permission matches the pattern
 
     Examples:
-        # Trailing wildcard matches any suffix
-        matches_permission_pattern("sinas.*:all", "sinas.users.put:own") -> True
-        matches_permission_pattern("titan.*:group", "titan.content.get:group") -> True
+        # Service-level wildcard
+        matches_permission_pattern("sinas.*:all", "sinas.chats.read:own") -> True
+        matches_permission_pattern("sinas.*:all", "sinas.functions/marketing/send.execute:own") -> True
 
-        # Mid-pattern wildcards match specific segments
-        matches_permission_pattern("sinas.*.get:own", "sinas.users.get:own") -> True
-        matches_permission_pattern("sinas.*.get:own", "sinas.chats.get:own") -> True
-        matches_permission_pattern("sinas.*.get:own", "sinas.users.post:own") -> False (action mismatch)
+        # Resource type matching
+        matches_permission_pattern("sinas.chats.read:own", "sinas.chats.read:own") -> True
+        matches_permission_pattern("sinas.chats.*:own", "sinas.chats.read:own") -> True
 
-        # Scope hierarchy: :all grants lower scopes
-        matches_permission_pattern("sinas.users.get:all", "sinas.users.get:group") -> True
-        matches_permission_pattern("sinas.users.get:all", "sinas.users.get:own") -> True
-        matches_permission_pattern("sinas.users.get:group", "sinas.users.get:all") -> False (can't elevate)
+        # Path-based matching (namespaced resources)
+        matches_permission_pattern("sinas.functions/*/*.execute:own", "sinas.functions/marketing/send_email.execute:own") -> True
+        matches_permission_pattern("sinas.functions/marketing/*.execute:own", "sinas.functions/marketing/send_email.execute:own") -> True
+        matches_permission_pattern("sinas.functions/marketing/send_email.execute:own", "sinas.functions/marketing/send_email.execute:own") -> True
+
+        # Scope hierarchy: :all grants :own
+        matches_permission_pattern("sinas.chats.read:all", "sinas.chats.read:own") -> True
     """
     # Split by scope separator
     try:
@@ -43,43 +51,102 @@ def matches_permission_pattern(pattern: str, concrete: str) -> bool:
     except ValueError:
         return False
 
-    # Check scope with hierarchy: :all grants :group and :own
-    # Pattern scope '*' or 'all' matches any concrete scope
-    # Pattern scope 'all' also matches requests for 'group' or 'own'
+    # Check scope with hierarchy: :all grants :own
     scope_hierarchy = {
-        'all': ['all', 'group', 'own'],
-        'group': ['group', 'own'],
+        'all': ['all', 'own'],
         'own': ['own'],
-        '*': ['all', 'group', 'own']
+        '*': ['all', 'own']
     }
 
     allowed_scopes = scope_hierarchy.get(pattern_scope, [pattern_scope])
     if concrete_scope not in allowed_scopes:
         return False
 
-    # Split by dots
-    pattern_segments = pattern_parts.split('.')
-    concrete_segments = concrete_parts.split('.')
-
-    # If pattern ends with *, it can match any number of remaining segments
-    if pattern_segments[-1] == '*':
-        # Pattern like "sinas.ontology.*" should match "sinas.ontology.concepts.create"
-        # Check that all non-wildcard prefix parts match
-        prefix_segments = pattern_segments[:-1]
-        if len(concrete_segments) < len(prefix_segments):
-            return False
-
-        for i, pattern_seg in enumerate(prefix_segments):
-            if pattern_seg != '*' and pattern_seg != concrete_segments[i]:
-                return False
-        return True
-
-    # Otherwise, exact length match required
-    if len(pattern_segments) != len(concrete_segments):
+    # Parse pattern: <service>.<resource_type>[/<path>].<action>
+    # Split on last '.' to separate action
+    try:
+        pattern_resource, pattern_action = pattern_parts.rsplit('.', 1)
+        concrete_resource, concrete_action = concrete_parts.rsplit('.', 1)
+    except ValueError:
+        # Invalid format (no action)
         return False
 
-    # Check each segment
-    for i, (pattern_seg, concrete_seg) in enumerate(zip(pattern_segments, concrete_segments)):
+    # Check action match (with wildcard support)
+    if pattern_action != '*' and pattern_action != concrete_action:
+        return False
+
+    # Parse resource identifier: <service>.<resource_type>[/<path>]
+    # Split on first '/' to separate base from path
+    if '/' in pattern_resource:
+        pattern_base, pattern_path = pattern_resource.split('/', 1)
+    else:
+        pattern_base = pattern_resource
+        pattern_path = None
+
+    if '/' in concrete_resource:
+        concrete_base, concrete_path = concrete_resource.split('/', 1)
+    else:
+        concrete_base = concrete_resource
+        concrete_path = None
+
+    # Check base match (<service>.<resource_type>)
+    pattern_base_segments = pattern_base.split('.')
+    concrete_base_segments = concrete_base.split('.')
+
+    # Handle trailing wildcard in base (e.g., "sinas.*")
+    # OR when action is wildcard (e.g., "sinas" with action="*" should match "sinas.mcp_servers")
+    if pattern_base_segments[-1] == '*' or (pattern_action == '*' and len(pattern_base_segments) < len(concrete_base_segments)):
+        # Check prefix matches
+        if pattern_base_segments[-1] == '*':
+            prefix_segments = pattern_base_segments[:-1]
+        else:
+            prefix_segments = pattern_base_segments
+
+        if len(concrete_base_segments) < len(prefix_segments):
+            return False
+        for i, pattern_seg in enumerate(prefix_segments):
+            if pattern_seg != '*' and pattern_seg != concrete_base_segments[i]:
+                return False
+    else:
+        # Exact base match required
+        if len(pattern_base_segments) != len(concrete_base_segments):
+            return False
+        for pattern_seg, concrete_seg in zip(pattern_base_segments, concrete_base_segments):
+            if pattern_seg != '*' and pattern_seg != concrete_seg:
+                return False
+
+    # Check path match (namespace/name hierarchy)
+    if pattern_path is None and concrete_path is None:
+        # Both have no path - match
+        return True
+
+    if pattern_path is None and concrete_path is not None:
+        # Pattern has no path but concrete does
+        # If pattern has wildcards (e.g., "sinas.*:all"), it should match all paths
+        has_wildcards = (
+            pattern_action == '*' or
+            (pattern_base_segments and pattern_base_segments[-1] == '*')
+        )
+        if has_wildcards:
+            # Wildcard patterns match resources with or without paths
+            return True
+        else:
+            # Non-wildcard pattern without path doesn't match concrete with path
+            return False
+
+    if pattern_path is not None and concrete_path is None:
+        # Pattern expects path but concrete has none - no match
+        return False
+
+    # Both have paths - match path segments
+    pattern_path_segments = pattern_path.split('/')
+    concrete_path_segments = concrete_path.split('/')
+
+    # Handle path wildcards
+    if len(pattern_path_segments) != len(concrete_path_segments):
+        return False
+
+    for pattern_seg, concrete_seg in zip(pattern_path_segments, concrete_path_segments):
         if pattern_seg != '*' and pattern_seg != concrete_seg:
             return False
 
@@ -94,7 +161,7 @@ def check_permission(
     Check if user has a permission, supporting wildcard matching and scope hierarchy.
 
     Checks if user has the required permission either directly, via wildcard patterns,
-    or via scope hierarchy (e.g., :all grants :group and :own).
+    or via scope hierarchy (e.g., :all grants :own).
 
     Works for ANY resource type: sinas.*, custom namespaces (custom.*, acme.*), etc.
 
@@ -107,23 +174,24 @@ def check_permission(
 
     Examples:
         # Exact match
-        check_permission({"sinas.users.post:all": True}, "sinas.users.post:all") -> True
+        check_permission({"sinas.chats.read:own": True}, "sinas.chats.read:own") -> True
 
         # Wildcard matching - admin has full access
-        check_permission({"sinas.*:all": True}, "sinas.users.post:own") -> True
-        check_permission({"sinas.*:all": True}, "sinas.chats.get:group") -> True
+        check_permission({"sinas.*:all": True}, "sinas.chats.read:own") -> True
+        check_permission({"sinas.*:all": True}, "sinas.functions/marketing/send.execute:own") -> True
 
-        # Namespace-based wildcards
-        check_permission({"sinas.functions.*.execute:own": True}, "sinas.functions.analytics.run_report.execute:own") -> True
-        check_permission({"custom.*.get:own": True}, "custom.content.get:own") -> True
-        check_permission({"custom.*.get:own": True}, "custom.content.post:own") -> False (action mismatch)
+        # Action wildcards
+        check_permission({"sinas.chats.*:own": True}, "sinas.chats.read:own") -> True
 
-        # Scope hierarchy - :all grants :group and :own
-        check_permission({"sinas.chats.get:all": True}, "sinas.chats.get:group") -> True
-        check_permission({"sinas.chats.get:all": True}, "sinas.chats.get:own") -> True
+        # Path-based wildcards (namespaced resources)
+        check_permission({"sinas.functions/*/*.execute:own": True}, "sinas.functions/marketing/send_email.execute:own") -> True
+        check_permission({"sinas.functions/marketing/*.execute:own": True}, "sinas.functions/marketing/send_email.execute:own") -> True
 
-        # Combined wildcard + scope hierarchy
-        check_permission({"custom.*:all": True}, "custom.analytics.query:own") -> True
+        # Scope hierarchy - :all grants :own
+        check_permission({"sinas.chats.read:all": True}, "sinas.chats.read:own") -> True
+
+        # Custom apps
+        check_permission({"titan.*:all": True}, "titan.student_profile.read:own") -> True
     """
     # First check for exact match
     if permissions.get(required_permission):
@@ -187,91 +255,130 @@ def validate_permission_subset(
     return len(violations) == 0, violations
 
 
-# Default group permissions
-DEFAULT_GROUP_PERMISSIONS = {
+# Default role permissions
+DEFAULT_ROLE_PERMISSIONS = {
     "GuestUsers": {
         "sinas.*:own": False,  # No access by default
-        "sinas.users.get:own": True,
-        "sinas.users.put:own": True,
+        "sinas.users.read:own": True,
+        "sinas.users.update:own": True,
     },
     "Users": {
-        # Chats
-        "sinas.chats.post:own": True,
-        "sinas.chats.get:own": True,
-        "sinas.chats.get:group": True,
-        "sinas.chats.put:own": True,
-        "sinas.chats.delete:own": True,
+        # Agents (namespaced: namespace/name)
+        # Note: Chats are always linked to agents, permissions checked via agents
+        "sinas.agents.create:own": True,
+        "sinas.agents.read:own": True,
+        "sinas.agents.update:own": True,
+        "sinas.agents.delete:own": True,
+        "sinas.agents/*/*.chat:own": True,  # Chat with specific agents
 
-        # Messages
-        "sinas.messages.post:own": True,
-        "sinas.messages.get:own": True,
-        "sinas.messages.get:group": True,
+        # Functions (namespaced: namespace/name)
+        "sinas.functions.create:own": True,
+        "sinas.functions.read:own": True,
+        "sinas.functions.update:own": True,
+        "sinas.functions.delete:own": True,
+        "sinas.functions/*/*.execute:own": True,  # Execute specific functions
 
-        # Agents (namespace-based)
-        "sinas.agents.*.post:own": True,
-        "sinas.agents.*.get:own": True,
-        "sinas.agents.*.put:own": True,
-        "sinas.agents.*.delete:own": True,
-
-        # Functions (namespace-based)
-        "sinas.functions.*.post:own": True,
-        "sinas.functions.*.get:own": True,
-        "sinas.functions.*.put:own": True,
-        "sinas.functions.*.delete:own": True,
-        "sinas.functions.*.execute:own": True,
-
-        # Webhooks
-        "sinas.webhooks.post:own": True,
-        "sinas.webhooks.get:own": True,
-        "sinas.webhooks.put:own": True,
+        # Webhooks (non-namespaced)
+        "sinas.webhooks.create:own": True,
+        "sinas.webhooks.read:own": True,
+        "sinas.webhooks.update:own": True,
         "sinas.webhooks.delete:own": True,
 
-        # Schedules
-        "sinas.schedules.post:own": True,
-        "sinas.schedules.get:own": True,
-        "sinas.schedules.put:own": True,
+        # Schedules (non-namespaced)
+        "sinas.schedules.create:own": True,
+        "sinas.schedules.read:own": True,
+        "sinas.schedules.update:own": True,
         "sinas.schedules.delete:own": True,
 
-        # Executions
-        "sinas.executions.get:own": True,
+        # Executions (runtime - non-namespaced)
+        "sinas.executions.read:own": True,
 
-        # Packages
-        "sinas.packages.post:own": True,
-        "sinas.packages.get:own": True,
-        "sinas.packages.delete:own": True,
+        # Users (non-namespaced)
+        "sinas.users.read:own": True,
+        "sinas.users.update:own": True,
 
-        # Users
-        "sinas.users.get:own": True,
-        "sinas.users.put:own": True,
-        "sinas.users.post:all": False,
-
-        # API Keys
-        "sinas.api_keys.post:own": True,
-        "sinas.api_keys.get:own": True,
+        # API Keys (non-namespaced - no permission checks in code)
+        "sinas.api_keys.create:own": True,
+        "sinas.api_keys.read:own": True,
         "sinas.api_keys.delete:own": True,
 
-        # State Store
-        "sinas.states.post:own": True,
-        "sinas.states.get:own": True,
-        "sinas.states.get:group": True,
-        "sinas.states.put:own": True,
-        "sinas.states.delete:own": True,
-        "sinas.states.search:own": True,
+        # States (namespace-based permissions)
+        # Users can access their own states in any namespace
+        "sinas.states/*.read:own": True,
+        "sinas.states/*.create:own": True,
+        "sinas.states/*.update:own": True,
+        "sinas.states/*.delete:own": True,
+        # Common namespaces: preferences, memory, etc.
 
-        # Templates (namespace-based)
-        "sinas.templates.*.*.post:own": True,
-        "sinas.templates.*.*.get:own": True,
-        "sinas.templates.*.*.put:own": True,
-        "sinas.templates.*.*.delete:own": True,
-        "sinas.templates.*.*.render:own": True,
-        "sinas.templates.*.*.send:own": True,
-        "sinas.templates.default.*.render:group": True,  # Can render default templates
-        "sinas.templates.default.*.send:group": True,    # Can send emails with default templates
+        # Templates (namespaced: namespace/name)
+        "sinas.templates.create:own": True,
+        "sinas.templates.read:own": True,
+        "sinas.templates.update:own": True,
+        "sinas.templates.delete:own": True,
+        "sinas.templates/*/*.render:own": True,  # Render specific templates
+        "sinas.templates/*/*.send:own": True,    # Send with specific templates
 
-        # Request Logs
-        "sinas.logs.get:own": True,
+        # Request Logs (non-namespaced)
+        "sinas.logs.read:own": True,
     },
     "Admins": {
-        "sinas.*:all": True,  # Full access to everything
+        "sinas.*:all": True,  # Full access to everything including:
+
+        # Role Management (admin-only)
+        # "sinas.roles.create:all"
+        # "sinas.roles.read:all"
+        # "sinas.roles.update:all"
+        # "sinas.roles.delete:all"
+        # "sinas.roles.manage_members:all"
+        # "sinas.roles.manage_permissions:all"
+
+        # MCP Servers (admin-only)
+        # "sinas.mcp_servers.create:all"
+        # "sinas.mcp_servers.read:all"
+        # "sinas.mcp_servers.update:all"
+        # "sinas.mcp_servers.delete:all"
+        # "sinas.mcp_tools.read:all"
+        # "sinas.mcp_tools.execute:all"
+
+        # LLM Providers (admin-only)
+        # "sinas.llm_providers.create:all"
+        # "sinas.llm_providers.read:all"
+        # "sinas.llm_providers.update:all"
+        # "sinas.llm_providers.delete:all"
+
+        # Packages (admin-only)
+        # "sinas.packages.install:all"
+        # "sinas.packages.delete:all"
+
+        # Config (admin-only)
+        # "sinas.config.validate:all"
+        # "sinas.config.apply:all"
+        # "sinas.config.export:all"
+
+        # Containers (admin-only)
+        # "sinas.containers.read:all"
+        # "sinas.containers.update:all"
+        # "sinas.containers.delete:all"
+
+        # Workers (admin-only)
+        # "sinas.workers.read:all"
+        # "sinas.workers.create:all"
+        # "sinas.workers.update:all"
+        # "sinas.workers.delete:all"
+
+        # Advanced Executions (admin-only)
+        # "sinas.executions.read:all"
+        # "sinas.executions.update:all"
+
+        # Advanced States (admin-only, namespace-based)
+        # "sinas.states/*.read:all" - Read all states in any namespace
+        # "sinas.states/*.create:all" - Create states in any namespace
+        # "sinas.states/*.update:all" - Update any states
+        # "sinas.states/*.delete:all" - Delete any states
+        #
+        # Shared namespace examples (for team sharing):
+        # "sinas.states/api_keys.read:all" - Read shared API keys
+        # "sinas.states/api_keys.create:all" - Create shared API keys
+        # "sinas.states/configs.read:all" - Read shared configs
     }
 }

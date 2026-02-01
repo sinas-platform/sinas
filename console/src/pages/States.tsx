@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Plus, Search, Tag, Eye, Users, Lock, Trash2, Edit, X } from 'lucide-react';
+import { Plus, Search, Tag, Users, Lock, Trash2, Edit, X } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 
 export function States() {
@@ -23,12 +23,6 @@ export function States() {
       if (filters.search) params.search = filters.search;
       return apiClient.listStates(params);
     },
-    retry: false,
-  });
-
-  const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
     retry: false,
   });
 
@@ -54,9 +48,7 @@ export function States() {
 
   const getVisibilityIcon = (visibility: string) => {
     switch (visibility) {
-      case 'public':
-        return <Eye className="w-4 h-4" />;
-      case 'group':
+      case 'shared':
         return <Users className="w-4 h-4" />;
       case 'private':
         return <Lock className="w-4 h-4" />;
@@ -67,9 +59,7 @@ export function States() {
 
   const getVisibilityColor = (visibility: string) => {
     switch (visibility) {
-      case 'public':
-        return 'text-green-600 bg-green-50';
-      case 'group':
+      case 'shared':
         return 'text-blue-600 bg-blue-50';
       case 'private':
         return 'text-gray-600 bg-gray-50';
@@ -125,8 +115,7 @@ export function States() {
             >
               <option value="">All</option>
               <option value="private">Private</option>
-              <option value="group">Group</option>
-              <option value="public">Public</option>
+              <option value="shared">Shared</option>
             </select>
           </div>
           <div>
@@ -238,7 +227,6 @@ export function States() {
             setShowModal(false);
             setEditingState(null);
           }}
-          groups={groups || []}
         />
       )}
     </div>
@@ -248,11 +236,9 @@ export function States() {
 function StateModal({
   state,
   onClose,
-  groups,
 }: {
   state: any;
   onClose: () => void;
-  groups: any[];
 }) {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState({
@@ -264,7 +250,6 @@ function StateModal({
     tags: state?.tags?.join(', ') || '',
     relevance_score: state?.relevance_score || 1.0,
     expires_at: state?.expires_at ? new Date(state.expires_at).toISOString().slice(0, 16) : '',
-    group_id: state?.group_id || '',
   });
 
   const saveMutation = useMutation({
@@ -275,7 +260,6 @@ function StateModal({
         tags: data.tags ? data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
         relevance_score: parseFloat(data.relevance_score),
         expires_at: data.expires_at || null,
-        group_id: data.group_id || null,
       };
 
       if (state) {
@@ -357,34 +341,19 @@ function StateModal({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Visibility</label>
-              <select
-                value={formData.visibility}
-                onChange={(e) => setFormData({ ...formData, visibility: e.target.value })}
-                className="input"
-              >
-                <option value="private">Private</option>
-                <option value="group">Group</option>
-                <option value="public">Public</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Group</label>
-              <select
-                value={formData.group_id}
-                onChange={(e) => setFormData({ ...formData, group_id: e.target.value })}
-                className="input"
-              >
-                <option value="">None</option>
-                {groups.map((group: any) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          <div>
+            <label className="label">Visibility</label>
+            <select
+              value={formData.visibility}
+              onChange={(e) => setFormData({ ...formData, visibility: e.target.value })}
+              className="input"
+            >
+              <option value="private">Private (only you)</option>
+              <option value="shared">Shared (with namespace permissions)</option>
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              Shared states can be accessed by users with namespace permissions
+            </p>
           </div>
 
           <div>

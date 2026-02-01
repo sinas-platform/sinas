@@ -38,7 +38,6 @@ class MessageService:
         agent_id: str,
         user_id: str,
         input_data: Dict[str, Any],
-        group_id: Optional[str] = None,
         name: Optional[str] = None
     ) -> Chat:
         """
@@ -48,7 +47,6 @@ class MessageService:
             agent_id: Agent to use
             user_id: User ID
             input_data: Input data to validate and use for template rendering
-            group_id: Optional group ID
             name: Optional chat name
 
         Returns:
@@ -78,7 +76,6 @@ class MessageService:
         # Store agent input context in chat_metadata for function parameter templating
         chat = Chat(
             user_id=user_id,
-            group_id=group_id,
             agent_id=agent_id,
             title=name or f"Chat with {agent.name}",
             chat_metadata={"agent_input": input_data} if input_data else None
@@ -779,7 +776,6 @@ class MessageService:
                     db=self.db,
                     user_id=user_id,
                     agent_id=str(chat.agent_id) if chat.agent_id else None,
-                    group_id=str(chat.group_id) if chat.group_id else None,
                     namespaces=final_namespaces,
                     limit=context_limit
                 )
@@ -1073,7 +1069,6 @@ class MessageService:
                 agent_id=str(agent.id),
                 user_id=user_id,
                 input_data=input_data,
-                group_id=str(chat.group_id) if chat.group_id else None,
                 name=f"Sub-chat: {agent.name}"
             )
 
@@ -1169,7 +1164,6 @@ class MessageService:
                         arguments=arguments,
                         user_id=user_id,
                         chat_id=str(chat_id),
-                        group_id=str(chat.group_id) if chat and chat.group_id else None,
                         agent_id=str(chat.agent_id) if chat and chat.agent_id else None
                     )
                 # Ontology tools removed - extracted to sinas-ontology project

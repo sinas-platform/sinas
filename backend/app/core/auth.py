@@ -18,13 +18,13 @@ from app.core.email import send_otp_email_async
 from app.core.permissions import (
     check_permission,
     validate_permission_subset,
-    DEFAULT_GROUP_PERMISSIONS,
+    DEFAULT_ROLE_PERMISSIONS,
 )
 from app.models import (
     User,
-    Group,
-    GroupMember,
-    GroupPermission,
+    Role,
+    UserRole,
+    RolePermission,
     OTPSession,
     APIKey,
 )
@@ -119,69 +119,26 @@ async def verify_otp_code(db: AsyncSession, session_id: str, otp_code: str) -> O
     return otp_session
 
 
-async def get_or_create_user(
+async def get_user_by_email(
     db: AsyncSession,
-    email: str,
-    assign_to_users_group: bool = True
-) -> User:
+    email: str
+) -> User | None:
     """
-    Get existing user or create new one (for authentication flows).
-
-    Used during OTP verification and external auth to auto-provision users.
-    Respects AUTO_PROVISION_USERS setting.
+    Get user by email address.
 
     Args:
         db: Database session
         email: User's email address
-        assign_to_users_group: Whether to assign new users to "Users" group
 
     Returns:
-        User object
-
-    Raises:
-        HTTPException: If user doesn't exist and auto-provisioning is disabled
+        User object or None if not found
     """
     normalized_email = normalize_email(email)
 
-    # Try to get existing user
     result = await db.execute(
         select(User).where(User.email == normalized_email)
     )
-    user = result.scalar_one_or_none()
-
-    if user:
-        return user
-
-    # Check if auto-provisioning is enabled for authentication flows
-    if not settings.auto_provision_users:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not found and auto-provisioning is disabled"
-        )
-
-    # Create new user
-    user = User(email=normalized_email)
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-
-    # Assign to default group if requested
-    if assign_to_users_group:
-        result = await db.execute(
-            select(Group).where(Group.name == "Users")
-        )
-        users_group = result.scalar_one_or_none()
-
-        if users_group:
-            membership = GroupMember(
-                group_id=users_group.id,
-                user_id=user.id,
-                active=True
-            )
-            db.add(membership)
-            await db.commit()
-
-    return user
+    return result.scalar_one_or_none()
 
 
 async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool]:
@@ -197,9 +154,9 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool
     """
     # Get all active group memberships
     result = await db.execute(
-        select(GroupMember).where(
-            GroupMember.user_id == user_id,
-            GroupMember.active == True
+        select(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.active == True
         )
     )
     memberships = result.scalars().all()
@@ -212,8 +169,8 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool
 
     for membership in memberships:
         result = await db.execute(
-            select(GroupPermission).where(
-                GroupPermission.group_id == membership.group_id
+            select(RolePermission).where(
+                RolePermission.role_id == membership.role_id
             )
         )
         group_permissions = result.scalars().all()
@@ -739,22 +696,22 @@ def set_permission_used(request: Request, permission: str, has_perm: bool = True
 
 # Group initialization helper
 
-async def initialize_default_groups(db: AsyncSession):
+async def initialize_default_roles(db: AsyncSession):
     """
     Initialize default groups (GuestUsers, Users, Admins) with permissions.
 
     Should be called during application startup or setup.
     """
-    for group_name, permissions in DEFAULT_GROUP_PERMISSIONS.items():
+    for group_name, permissions in DEFAULT_ROLE_PERMISSIONS.items():
         # Check if group exists
         result = await db.execute(
-            select(Group).where(Group.name == group_name)
+            select(Role).where(Role.name == group_name)
         )
         group = result.scalar_one_or_none()
 
         if not group:
             # Create group
-            group = Group(name=group_name, description=f"Default {group_name} group")
+            group = Role(name=group_name, description=f"Default {group_name} group")
             db.add(group)
             await db.commit()
             await db.refresh(group)
@@ -762,9 +719,9 @@ async def initialize_default_groups(db: AsyncSession):
         # Update permissions
         for perm_key, perm_value in permissions.items():
             result = await db.execute(
-                select(GroupPermission).where(
-                    GroupPermission.group_id == group.id,
-                    GroupPermission.permission_key == perm_key
+                select(RolePermission).where(
+                    RolePermission.role_id == group.id,
+                    RolePermission.permission_key == perm_key
                 )
             )
             existing_perm = result.scalar_one_or_none()
@@ -772,8 +729,8 @@ async def initialize_default_groups(db: AsyncSession):
             if existing_perm:
                 existing_perm.permission_value = perm_value
             else:
-                new_perm = GroupPermission(
-                    group_id=group.id,
+                new_perm = RolePermission(
+                    role_id=group.id,
                     permission_key=perm_key,
                     permission_value=perm_value
                 )
@@ -799,11 +756,11 @@ async def initialize_superadmin(db: AsyncSession):
 
     # Get Admins group (should already exist from initialize_default_groups)
     result = await db.execute(
-        select(Group).where(Group.name == "Admins")
+        select(Role).where(Role.name == "Admins")
     )
-    admins_group = result.scalar_one_or_none()
+    admins_role = result.scalar_one_or_none()
 
-    if not admins_group:
+    if not admins_role:
         import logging
         logger = logging.getLogger(__name__)
         logger.error("Admins group not found. Run initialize_default_groups first.")
@@ -811,33 +768,41 @@ async def initialize_superadmin(db: AsyncSession):
 
     # Check if any user is already in Admins group
     result = await db.execute(
-        select(GroupMember).where(
-            GroupMember.group_id == admins_group.id,
-            GroupMember.active == True
+        select(UserRole).where(
+            UserRole.role_id == admins_role.id,
+            UserRole.active == True
         )
     )
     existing_members = result.scalars().all()
 
     if existing_members:
-        # Admins group already has members, don't auto-create
+        # Admins role already has members, don't auto-create
         return
 
     # Get or create admin user
-    user = await get_or_create_user(db, email, assign_to_users_group=False)
+    user = await get_user_by_email(db, email)
+
+    if not user:
+        # Create superadmin user (only happens on first startup)
+        normalized_email = normalize_email(email)
+        user = User(email=normalized_email)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
     # Check if user is already in Admins group
     result = await db.execute(
-        select(GroupMember).where(
-            GroupMember.group_id == admins_group.id,
-            GroupMember.user_id == user.id
+        select(UserRole).where(
+            UserRole.role_id == admins_role.id,
+            UserRole.user_id == user.id
         )
     )
     existing_membership = result.scalar_one_or_none()
 
     if not existing_membership:
         # Add user to Admins group
-        membership = GroupMember(
-            group_id=admins_group.id,
+        membership = UserRole(
+            role_id=admins_role.id,
             user_id=user.id,
             role="admin",
             active=True

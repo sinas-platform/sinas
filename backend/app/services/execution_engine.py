@@ -204,12 +204,12 @@ class FunctionExecutor:
         if cache_key in self.namespace_cache:
             return self.namespace_cache[cache_key]
 
-        from app.models.user import GroupMember
+        from app.models.user import UserRole
         from types import SimpleNamespace
 
         # Get user's groups
         groups_result = await db.execute(
-            select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+            select(UserRole.role_id).where(UserRole.user_id == user_id)
         )
         group_ids = [row[0] for row in groups_result.all()]
 

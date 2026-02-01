@@ -52,7 +52,7 @@ const navigationSections = [
   {
     name: 'SECURITY',
     items: [
-      { name: 'Users & Groups', href: '/users', icon: Users },
+      { name: 'Users & Roles', href: '/users', icon: Users },
       { name: 'Permissions', href: '/permissions', icon: Shield },
       { name: 'API Keys', href: '/api-keys', icon: Key },
     ],

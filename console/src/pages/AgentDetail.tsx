@@ -29,12 +29,6 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
-    retry: false,
-  });
-
   const { data: agents } = useQuery({
     queryKey: ['agents'],
     queryFn: () => apiClient.listAssistants(),
@@ -206,28 +200,6 @@ export function AgentDetail() {
                 placeholder="A helpful agent that..."
                 className="input"
               />
-            </div>
-
-            <div>
-              <label htmlFor="group_id" className="block text-sm font-medium text-gray-700 mb-2">
-                Group
-              </label>
-              <select
-                id="group_id"
-                value={formData.group_id ?? agent.group_id ?? ''}
-                onChange={(e) => setFormData({ ...formData, group_id: e.target.value || undefined })}
-                className="input"
-              >
-                <option value="">No group (Personal)</option>
-                {groups?.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Assign to a group to share with team members
-              </p>
             </div>
 
             <div>

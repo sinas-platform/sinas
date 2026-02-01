@@ -60,7 +60,6 @@ export interface APIKeyCreatedResponse extends APIKey {
 export interface Chat {
   id: string;
   user_id: string;
-  group_id: string | null;
   agent_id: string | null;
   agent_namespace: string | null;
   agent_name: string | null;
@@ -151,7 +150,6 @@ export interface ApprovalRequiredEvent {
 export interface Assistant {
   id: string;
   user_id: string | null;
-  group_id: string | null;
   namespace: string;
   name: string;
   description: string | null;
@@ -187,7 +185,6 @@ export interface AssistantCreate {
   input_schema?: Record<string, any>;
   output_schema?: Record<string, any>;
   initial_messages?: Array<{role: string; content: string}>;
-  group_id?: string;
   enabled_functions?: string[];
   enabled_mcp_tools?: string[];
   enabled_agents?: string[];
@@ -201,7 +198,6 @@ export interface AssistantUpdate {
   namespace?: string;
   name?: string;
   description?: string;
-  group_id?: string;
   llm_provider_id?: string;
   model?: string;
   temperature?: number;
@@ -224,7 +220,6 @@ export interface AssistantUpdate {
 export interface Memory {
   id: string;
   user_id: string;
-  group_id: string | null;
   key: string;
   value: string;
   created_at: string;
@@ -234,7 +229,6 @@ export interface Memory {
 export interface MemoryCreate {
   key: string;
   value: string;
-  group_id?: string;
 }
 
 export interface MemoryUpdate {
@@ -251,7 +245,6 @@ export interface MCPServer {
   last_connected: string | null;
   connection_status: string;
   error_message: string | null;
-  group_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -261,7 +254,6 @@ export interface MCPServerCreate {
   url: string;
   protocol?: string;
   api_key?: string;
-  group_id?: string;
 }
 
 export interface MCPServerUpdate {
@@ -269,41 +261,41 @@ export interface MCPServerUpdate {
   protocol?: string;
   api_key?: string;
   is_active?: boolean;
-  group_id?: string;
 }
 
-// Groups & Users
-export interface Group {
+// Roles & Users
+export interface Role {
   id: string;
   name: string;
   description: string | null;
   created_at: string;
 }
 
-export interface GroupCreate {
+export interface RoleCreate {
   name: string;
   description?: string;
 }
 
-export interface GroupMember {
+export interface UserRole {
   id: string;
-  group_id: string;
+  role_id: string;
   user_id: string;
+  user_email: string;
   role: string | null;
   active: boolean;
-  created_at: string;
+  added_at: string;
 }
 
-export interface GroupPermission {
+export interface RolePermission {
   id: string;
-  group_id: string;
+  role_id: string;
   permission_key: string;
   permission_value: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export interface GroupPermissionUpdate {
+export interface RolePermissionUpdate {
   permission_key: string;
   permission_value: boolean;
 }
@@ -488,7 +480,6 @@ export interface Template {
   variable_schema: Record<string, any>;
   is_active: boolean;
   user_id?: string;
-  group_id?: string;
   created_by?: string;
   updated_by?: string;
   created_at: string;
@@ -506,7 +497,6 @@ export interface TemplateCreate {
   html_content: string;
   text_content?: string;
   variable_schema?: Record<string, any>;
-  group_id?: string;
 }
 
 export interface TemplateUpdate {
@@ -518,7 +508,6 @@ export interface TemplateUpdate {
   text_content?: string;
   variable_schema?: Record<string, any>;
   is_active?: boolean;
-  group_id?: string;
 }
 
 export interface TemplateRenderRequest {

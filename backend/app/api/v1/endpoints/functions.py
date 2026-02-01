@@ -54,11 +54,11 @@ async def create_function(
     """Create a new function."""
     user_id, permissions = current_user_data
 
-    # Check namespace-based permission
-    permission = f"sinas.functions.{function_data.namespace}.post:own"
+    # Check permission to create functions
+    permission = "sinas.functions.create:own"
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to create functions in this namespace")
+        raise HTTPException(status_code=403, detail="Not authorized to create functions")
     set_permission_used(request, permission)
 
     # Check shared_pool permission (admin-only)
@@ -129,12 +129,12 @@ async def list_functions(
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions, "sinas.functions.*.get:all"):
-        set_permission_used(request, "sinas.functions.*.get:all")
+    if check_permission(permissions, "sinas.functions.read:all"):
+        set_permission_used(request, "sinas.functions.read:all")
         # Admin - see all functions
         query = select(Function)
     else:
-        set_permission_used(request, "sinas.functions.*.get:own")
+        set_permission_used(request, "sinas.functions.read:own")
         # Own functions only
         query = select(Function).where(Function.user_id == user_id)
 
@@ -162,7 +162,7 @@ async def get_function(
         raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
 
     # Check permissions
-    permission = f"sinas.functions.{namespace}.get:own"
+    permission = f"sinas.functions/{namespace}/{name}.read:own"
     if check_permission(permissions, permission):
         set_permission_used(request, permission)
     else:
@@ -190,7 +190,7 @@ async def update_function(
         raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
 
     # Check permissions
-    permission = f"sinas.functions.{namespace}.put:own"
+    permission = f"sinas.functions/{namespace}/{name}.update:own"
     if check_permission(permissions, permission):
         set_permission_used(request, permission)
     else:
@@ -295,7 +295,7 @@ async def delete_function(
         raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
 
     # Check permissions
-    permission = f"sinas.functions.{namespace}.delete:own"
+    permission = f"sinas.functions/{namespace}/{name}.delete:own"
     if check_permission(permissions, permission):
         set_permission_used(request, permission)
     else:
@@ -325,7 +325,7 @@ async def list_function_versions(
     if not function:
         raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
 
-    permission = f"sinas.functions.{namespace}.get:own"
+    permission = f"sinas.functions/{namespace}/{name}.read:own"
     if check_permission(permissions, permission):
         set_permission_used(request, permission)
     else:

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1 import router as api_v1_router
 from app.api.runtime import runtime_router
 from app.core.config import settings
-from app.core.auth import initialize_default_groups, initialize_superadmin
+from app.core.auth import initialize_default_roles, initialize_superadmin
 from app.core.templates import initialize_default_templates
 from app.core.database import AsyncSessionLocal, get_db
 from app.services.scheduler import scheduler
@@ -24,9 +24,9 @@ async def lifespan(app: FastAPI):
     # Startup
     await scheduler.start()
 
-    # Initialize default groups
+    # Initialize default roles
     async with AsyncSessionLocal() as db:
-        await initialize_default_groups(db)
+        await initialize_default_roles(db)
 
     # Initialize superadmin user
     async with AsyncSessionLocal() as db:

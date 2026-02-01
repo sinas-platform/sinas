@@ -176,13 +176,13 @@ class UserContainerManager:
         1. Listed in function requirements
         2. Approved by admins (in InstalledPackage table)
         """
-        from app.models.user import GroupMember
+        from app.models.user import UserRole
         from app.models.package import InstalledPackage
 
         try:
             # Get user's groups
             groups_result = await db.execute(
-                select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+                select(UserRole.role_id).where(UserRole.user_id == user_id)
             )
             group_ids = [row[0] for row in groups_result.all()]
 
@@ -252,11 +252,11 @@ class UserContainerManager:
 
     async def _sync_functions(self, container: Container, user_id: str, db: AsyncSession):
         """Load all functions user has access to into container namespace, organized by namespace."""
-        from app.models.user import GroupMember
+        from app.models.user import UserRole
 
         # Get user's groups
         groups_result = await db.execute(
-            select(GroupMember.group_id).where(GroupMember.user_id == user_id)
+            select(UserRole.role_id).where(UserRole.user_id == user_id)
         )
         group_ids = [row[0] for row in groups_result.all()]
 

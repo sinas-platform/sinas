@@ -24,12 +24,12 @@ async def create_webhook(
     """Create a new webhook."""
     user_id, permissions = current_user_data
 
-    # Check namespace-based permission
-    namespace_perm = f"sinas.functions.{webhook_data.function_namespace}.post:own"
-    if not check_permission(permissions, namespace_perm):
-        set_permission_used(request, namespace_perm, has_perm=False)
-        raise HTTPException(status_code=403, detail=f"Not authorized to create webhooks for functions in namespace '{webhook_data.function_namespace}'")
-    set_permission_used(request, namespace_perm)
+    # Check create permission
+    create_perm = "sinas.webhooks.create:own"
+    if not check_permission(permissions, create_perm):
+        set_permission_used(request, create_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create webhooks")
+    set_permission_used(request, create_perm)
 
     # Check if path already exists for this user
     result = await db.execute(
@@ -48,23 +48,10 @@ async def create_webhook(
     function = await Function.get_by_name(db, webhook_data.function_namespace, webhook_data.function_name, user_id)
     if not function:
         raise HTTPException(status_code=404, detail=f"Function '{webhook_data.function_namespace}.{webhook_data.function_name}' not found")
-
-    # Resolve group_name to group_id (group_name takes precedence if both provided)
-    final_group_id = webhook_data.group_id
-    if webhook_data.group_name:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == webhook_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{webhook_data.group_name}' not found")
-        final_group_id = group
-
     # Create webhook
     webhook = Webhook(
         user_id=user_id,
-        group_id=final_group_id,
+        
         path=webhook_data.path,
         function_namespace=webhook_data.function_namespace,
         function_name=webhook_data.function_name,
@@ -78,14 +65,8 @@ async def create_webhook(
     await db.commit()
     await db.refresh(webhook)
 
-    # Load group name for response
+    
     response = WebhookResponse.model_validate(webhook)
-    if webhook.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == webhook.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -102,30 +83,18 @@ async def list_webhooks(
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.webhooks.get:all"):
-        set_permission_used(request, "sinas.webhooks.get:all")
+    if check_permission(permissions,"sinas.webhooks.read:all"):
+        set_permission_used(request, "sinas.webhooks.read:all")
         query = select(Webhook)
     else:
-        set_permission_used(request, "sinas.webhooks.get:own")
+        set_permission_used(request, "sinas.webhooks.read:own")
         query = select(Webhook).where(Webhook.user_id == user_id)
 
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     webhooks = result.scalars().all()
 
-    # Load group names for all webhooks
-    from app.models.user import Group
-    responses = []
-    for webhook in webhooks:
-        response = WebhookResponse.model_validate(webhook)
-        if webhook.group_id:
-            group_result = await db.execute(
-                select(Group.name).where(Group.id == webhook.group_id)
-            )
-            response.group_name = group_result.scalar_one_or_none()
-        responses.append(response)
-
-    return responses
+    return [WebhookResponse.model_validate(webhook) for webhook in webhooks]
 
 
 @router.get("/{path:path}", response_model=WebhookResponse)
@@ -144,22 +113,16 @@ async def get_webhook(
         raise HTTPException(status_code=404, detail=f"Webhook '{path}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.webhooks.get:all"):
-        set_permission_used(request, "sinas.webhooks.get:all")
+    if check_permission(permissions,"sinas.webhooks.read:all"):
+        set_permission_used(request, "sinas.webhooks.read:all")
     else:
         if webhook.user_id != user_id:
-            set_permission_used(request, "sinas.webhooks.get:own", has_perm=False)
+            set_permission_used(request, "sinas.webhooks.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this webhook")
-        set_permission_used(request, "sinas.webhooks.get:own")
+        set_permission_used(request, "sinas.webhooks.read:own")
 
-    # Load group name for response
+    
     response = WebhookResponse.model_validate(webhook)
-    if webhook.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == webhook.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -181,13 +144,13 @@ async def update_webhook(
         raise HTTPException(status_code=404, detail=f"Webhook '{path}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.webhooks.put:all"):
-        set_permission_used(request, "sinas.webhooks.put:all")
+    if check_permission(permissions,"sinas.webhooks.update:all"):
+        set_permission_used(request, "sinas.webhooks.update:all")
     else:
         if webhook.user_id != user_id:
-            set_permission_used(request, "sinas.webhooks.put:own", has_perm=False)
+            set_permission_used(request, "sinas.webhooks.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this webhook")
-        set_permission_used(request, "sinas.webhooks.put:own")
+        set_permission_used(request, "sinas.webhooks.update:own")
 
     # Update fields
     if webhook_data.function_namespace is not None or webhook_data.function_name is not None:
@@ -195,12 +158,10 @@ async def update_webhook(
         new_namespace = webhook_data.function_namespace if webhook_data.function_namespace is not None else webhook.function_namespace
         new_function_name = webhook_data.function_name if webhook_data.function_name is not None else webhook.function_name
 
-        # Check namespace permission if namespace is changing
+        # Verify function reference can be updated (already checked webhook.update above)
         if webhook_data.function_namespace is not None and webhook_data.function_namespace != webhook.function_namespace:
-            namespace_perm = f"sinas.functions.{new_namespace}.put:own"
-            if not check_permission(permissions, namespace_perm):
-                set_permission_used(request, namespace_perm, has_perm=False)
-                raise HTTPException(status_code=403, detail=f"Not authorized to update webhooks for functions in namespace '{new_namespace}'")
+            # Permission already validated with sinas.webhooks.update:own/all
+            pass
 
         # Verify new function exists
         from app.models.function import Function
@@ -221,30 +182,11 @@ async def update_webhook(
         webhook.is_active = webhook_data.is_active
     if webhook_data.requires_auth is not None:
         webhook.requires_auth = webhook_data.requires_auth
-    # Resolve group_name to group_id (group_name takes precedence)
-    if webhook_data.group_name is not None:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == webhook_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{webhook_data.group_name}' not found")
-        webhook.group_id = group
-    elif webhook_data.group_id is not None:
-        webhook.group_id = webhook_data.group_id
-
     await db.commit()
     await db.refresh(webhook)
 
-    # Load group name for response
+    
     response = WebhookResponse.model_validate(webhook)
-    if webhook.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == webhook.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 

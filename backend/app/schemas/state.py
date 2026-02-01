@@ -9,7 +9,7 @@ class StateCreate(BaseModel):
     namespace: str = Field(..., min_length=1, max_length=100)
     key: str = Field(..., min_length=1, max_length=255)
     value: Dict[str, Any] = Field(...)
-    visibility: str = Field(default="private", pattern=r'^(private|public)$')
+    visibility: str = Field(default="private", pattern=r'^(private|shared)$')
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     relevance_score: float = Field(default=1.0, ge=0.0, le=1.0)
@@ -22,7 +22,7 @@ class StateUpdate(BaseModel):
     tags: Optional[List[str]] = None
     relevance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     expires_at: Optional[datetime] = None
-    visibility: Optional[str] = Field(None, pattern=r'^(private|public)$')
+    visibility: Optional[str] = Field(None, pattern=r'^(private|shared)$')
 
 
 class StateResponse(BaseModel):

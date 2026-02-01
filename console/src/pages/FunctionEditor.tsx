@@ -75,12 +75,6 @@ export function FunctionEditor() {
     enabled: !isNew && !!namespace && !!name,
   });
 
-  const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
-    retry: false,
-  });
-
   // Load function data when available
   useEffect(() => {
     if (func && !isNew) {
@@ -302,28 +296,6 @@ export function FunctionEditor() {
                 placeholder="What does this function do?"
                 className="input"
               />
-            </div>
-
-            <div>
-              <label htmlFor="group_id" className="block text-sm font-medium text-gray-700 mb-2">
-                Group (Optional)
-              </label>
-              <select
-                id="group_id"
-                value={(formData as any).group_id || ''}
-                onChange={(e) => setFormData({ ...formData, group_id: e.target.value || undefined } as any)}
-                className="input"
-              >
-                <option value="">No group (Personal)</option>
-                {groups?.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                  </option>
-                ))}
-              </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Assign to a group to share with team members
-              </p>
             </div>
 
             <div className="space-y-3 pt-2 border-t border-gray-200">

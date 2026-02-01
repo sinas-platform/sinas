@@ -4,7 +4,7 @@ from .endpoints import (
     agents,
     llm_providers,
     mcp_servers,
-    groups,
+    roles,
     users,
     functions,
     webhooks,
@@ -24,7 +24,7 @@ router = APIRouter()
 router.include_router(agents.router, prefix="/agents", tags=["agents"])
 router.include_router(llm_providers.router, prefix="/llm-providers", tags=["llm-providers"])
 router.include_router(mcp_servers.router, prefix="/mcp", tags=["mcp"])
-router.include_router(groups.router)
+router.include_router(roles.router)
 router.include_router(users.router)
 router.include_router(api_keys.router, tags=["api-keys"])
 router.include_router(templates.router, prefix="/templates", tags=["templates"])

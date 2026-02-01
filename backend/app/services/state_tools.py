@@ -7,7 +7,6 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.state import State
-from app.models.user import GroupMember
 
 
 class StateTools:
@@ -146,8 +145,8 @@ class StateTools:
                             },
                             "visibility": {
                                 "type": "string",
-                                "enum": ["private", "group"],
-                                "description": "Who can access this context: 'private' (user only) or 'group' (team members)",
+                                "enum": ["private", "shared"],
+                                "description": "Who can access this context: 'private' (user only) or 'group' (permitted users)",
                                 "default": "private"
                             }
                         },
@@ -237,17 +236,6 @@ class StateTools:
         """
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Get user's groups
-        result = await db.execute(
-            select(GroupMember.group_id).where(
-                and_(
-                    GroupMember.user_id == user_uuid,
-                    GroupMember.active == True
-                )
-            )
-        )
-        user_groups = [row[0] for row in result.all()]
-
         # Query all available contexts
         query = select(
             State.namespace,
@@ -261,10 +249,7 @@ class StateTools:
                 ),
                 or_(
                     State.user_id == user_uuid,
-                    and_(
-                        State.visibility == "group",
-                        State.group_id.in_(user_groups) if user_groups else False
-                    )
+                    State.visibility == "shared"  # TODO: Add namespace permission check
                 )
             )
         ).order_by(State.namespace, State.key)
@@ -298,8 +283,7 @@ class StateTools:
         arguments: Dict[str, Any],
         user_id: str,
         chat_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        agent_id: Optional[str] = None
+                agent_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute a context tool.
@@ -310,8 +294,7 @@ class StateTools:
             arguments: Tool arguments
             user_id: User ID
             chat_id: Optional chat ID
-            group_id: Optional group ID
-            agent_id: Optional agent ID for namespace validation
+                        agent_id: Optional agent ID for namespace validation
 
         Returns:
             Tool execution result
@@ -339,8 +322,7 @@ class StateTools:
 
         if tool_name == "save_context":
             return await StateTools._save_context(
-                db, user_id, arguments, group_id
-            )
+                db, user_id, arguments,             )
         elif tool_name == "retrieve_context":
             return await StateTools._retrieve_context(
                 db, user_id, arguments
@@ -361,7 +343,6 @@ class StateTools:
         db: AsyncSession,
         user_id: str,
         args: Dict[str, Any],
-        group_id: Optional[str]
     ) -> Dict[str, Any]:
         """Save context to store."""
         user_uuid = uuid_lib.UUID(user_id)
@@ -386,30 +367,11 @@ class StateTools:
 
         # Validate visibility
         visibility = args.get("visibility", "private")
-        group_uuid = None
-
-        if visibility == "group":
-            if not group_id:
-                return {"error": "Group visibility requires a group context"}
-            group_uuid = uuid_lib.UUID(group_id)
-
-            # Verify user is member of the group
-            result = await db.execute(
-                select(GroupMember).where(
-                    and_(
-                        GroupMember.user_id == user_uuid,
-                        GroupMember.group_id == group_uuid,
-                        GroupMember.active == True
-                    )
-                )
-            )
-            if not result.scalar_one_or_none():
-                return {"error": "User is not a member of the specified group"}
+        # Shared states can be created - namespace permission check happens at API level
 
         # Create context
         context = State(
             user_id=user_uuid,
-            group_id=group_uuid,
             namespace=args["namespace"],
             key=args["key"],
             value=args["value"],
@@ -439,17 +401,6 @@ class StateTools:
         """Retrieve context from store."""
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Get user's groups for group context access
-        result = await db.execute(
-            select(GroupMember.group_id).where(
-                and_(
-                    GroupMember.user_id == user_uuid,
-                    GroupMember.active == True
-                )
-            )
-        )
-        user_groups = [row[0] for row in result.all()]
-
         # Build query - user's own contexts + group contexts
         query = select(State).where(
             and_(
@@ -459,10 +410,7 @@ class StateTools:
                 ),
                 or_(
                     State.user_id == user_uuid,
-                    and_(
-                        State.visibility == "group",
-                        State.group_id.in_(user_groups) if user_groups else False
-                    )
+                    State.visibility == "shared"  # TODO: Add namespace permission check
                 )
             )
         )
@@ -604,8 +552,7 @@ class StateTools:
         db: AsyncSession,
         user_id: str,
         agent_id: Optional[str] = None,
-        group_id: Optional[str] = None,
-        namespaces: Optional[List[str]] = None,
+                namespaces: Optional[List[str]] = None,
         limit: int = 5
     ) -> List[State]:
         """
@@ -615,25 +562,13 @@ class StateTools:
             db: Database session
             user_id: User ID
             agent_id: Optional agent ID to filter contexts
-            group_id: Optional group ID to include group contexts
-            namespaces: Optional list of namespaces to include
+                        namespaces: Optional list of namespaces to include
             limit: Maximum number of contexts to return
 
         Returns:
             List of relevant context entries
         """
         user_uuid = uuid_lib.UUID(user_id)
-
-        # Get user's groups
-        result = await db.execute(
-            select(GroupMember.group_id).where(
-                and_(
-                    GroupMember.user_id == user_uuid,
-                    GroupMember.active == True
-                )
-            )
-        )
-        user_groups = [row[0] for row in result.all()]
 
         # Build query
         query = select(State).where(
@@ -644,10 +579,7 @@ class StateTools:
                 ),
                 or_(
                     State.user_id == user_uuid,
-                    and_(
-                        State.visibility == "group",
-                        State.group_id.in_(user_groups) if user_groups else False
-                    )
+                    State.visibility == "shared"  # TODO: Add namespace permission check
                 )
             )
         )

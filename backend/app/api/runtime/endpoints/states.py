@@ -10,23 +10,9 @@ from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.permissions import check_permission
 from app.models.state import State
-from app.models.user import GroupMember
 from app.schemas import StateCreate, StateUpdate, StateResponse
 
 router = APIRouter(prefix="/states")
-
-
-async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:
-    """Get all group IDs that the user is a member of."""
-    result = await db.execute(
-        select(GroupMember.group_id).where(
-            and_(
-                GroupMember.user_id == user_id,
-                GroupMember.active == True
-            )
-        )
-    )
-    return [row[0] for row in result.all()]
 
 
 @router.post("", response_model=StateResponse)
@@ -36,40 +22,27 @@ async def create_state(
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """Create a new state entry."""
+    """
+    Create a new state entry.
+
+    Requires namespace-based permission: sinas.states/{namespace}.create:own
+    """
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
-    # Check permissions based on visibility
-    if state_data.visibility == "group":
-        # Users with :all scope automatically get :group access via scope hierarchy
-        if not check_permission(permissions, "sinas.contexts.post:group"):
-            set_permission_used(request, "sinas.contexts.post:group", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to create group contexts")
+    # Check namespace permission
+    namespace_perm = f"sinas.states/{state_data.namespace}.create:own"
+    namespace_perm_all = f"sinas.states/{state_data.namespace}.create:all"
 
-        if state_data.group_id is None:
-            raise HTTPException(status_code=400, detail="group_id is required for group visibility")
-
-        # Verify user is member of the group
-        user_groups = await get_user_group_ids(db, user_uuid)
-        if state_data.group_id not in user_groups:
-            raise HTTPException(status_code=403, detail="Not a member of the specified group")
-
-        if check_permission(permissions,"sinas.contexts.post:all"):
-            set_permission_used(request, "sinas.contexts.post:all")
-        else:
-            set_permission_used(request, "sinas.contexts.post:group")
+    if check_permission(permissions, namespace_perm_all):
+        set_permission_used(request, namespace_perm_all)
+    elif check_permission(permissions, namespace_perm):
+        set_permission_used(request, namespace_perm)
     else:
-        # Private context
-        if check_permission(permissions,"sinas.contexts.post:all"):
-            set_permission_used(request, "sinas.contexts.post:all")
-        elif check_permission(permissions,"sinas.contexts.post:own"):
-            set_permission_used(request, "sinas.contexts.post:own")
-        else:
-            set_permission_used(request, "sinas.contexts.post:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to create contexts")
+        set_permission_used(request, namespace_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail=f"Not authorized to create states in namespace '{state_data.namespace}'")
 
-    # Check if context with same user_id, namespace, and key already exists
+    # Check if state with same user_id, namespace, and key already exists
     result = await db.execute(
         select(State).where(
             and_(
@@ -82,13 +55,12 @@ async def create_state(
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=400,
-            detail=f"Context with namespace '{state_data.namespace}' and key '{state_data.key}' already exists"
+            detail=f"State with namespace '{state_data.namespace}' and key '{state_data.key}' already exists"
         )
 
-    # Create context
-    context = State(
+    # Create state
+    state = State(
         user_id=user_uuid,
-        group_id=state_data.group_id,
         namespace=state_data.namespace,
         key=state_data.key,
         value=state_data.value,
@@ -99,18 +71,18 @@ async def create_state(
         expires_at=state_data.expires_at
     )
 
-    db.add(context)
+    db.add(state)
     await db.commit()
-    await db.refresh(context)
+    await db.refresh(state)
 
-    return context
+    return state
 
 
 @router.get("", response_model=List[StateResponse])
-async def list_contexts(
+async def list_states(
     request: Request,
     namespace: Optional[str] = None,
-    visibility: Optional[str] = Query(None, pattern=r'^(private|group|public)$'),
+    visibility: Optional[str] = Query(None, pattern=r'^(private|shared)$'),
     tags: Optional[str] = Query(None, description="Comma-separated list of tags"),
     search: Optional[str] = Query(None, description="Search in keys and descriptions"),
     skip: int = Query(0, ge=0),
@@ -118,242 +90,202 @@ async def list_contexts(
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """List contexts accessible to the current user."""
+    """
+    List states accessible to the current user.
+
+    Returns:
+    - Own states (always)
+    - Shared states in namespaces where user has read:all permission
+    """
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
-    # Build base query based on permissions
-    if check_permission(permissions,"sinas.contexts.get:all"):
-        set_permission_used(request, "sinas.contexts.get:all")
-        # Admin - see all non-expired contexts
-        query = select(State).where(
+    # Build base query: own states OR (shared + has namespace permission)
+    # We'll filter by namespace permission in Python since we can't do dynamic permission checks in SQL
+    query = select(State).where(
+        and_(
             or_(
                 State.expires_at == None,
                 State.expires_at > datetime.utcnow()
             )
         )
-    elif check_permission(permissions,"sinas.contexts.get:group"):
-        set_permission_used(request, "sinas.contexts.get:group")
-        # Can see own contexts and group contexts they have access to
-        user_groups = await get_user_group_ids(db, user_uuid)
-        query = select(State).where(
-            and_(
-                or_(
-                    State.expires_at == None,
-                    State.expires_at > datetime.utcnow()
-                ),
-                or_(
-                    State.user_id == user_uuid,
-                    and_(
-                        State.visibility == "group",
-                        State.group_id.in_(user_groups) if user_groups else False
-                    )
-                )
-            )
-        )
-    else:
-        set_permission_used(request, "sinas.contexts.get:own")
-        # Own contexts only
-        query = select(State).where(
-            and_(
-                State.user_id == user_uuid,
-                or_(
-                    State.expires_at == None,
-                    State.expires_at > datetime.utcnow()
-                )
-            )
-        )
+    )
 
-    # Apply filters
+    # Add filters
     if namespace:
         query = query.where(State.namespace == namespace)
-
     if visibility:
         query = query.where(State.visibility == visibility)
-
     if tags:
-        tag_list = [tag.strip() for tag in tags.split(',')]
-        for tag in tag_list:
-            query = query.where(State.tags.contains([tag]))
-
+        tag_list = [t.strip() for t in tags.split(',')]
+        query = query.where(State.tags.contains(tag_list))
     if search:
-        search_pattern = f"%{search}%"
         query = query.where(
             or_(
-                State.key.ilike(search_pattern),
-                State.description.ilike(search_pattern)
+                State.key.ilike(f"%{search}%"),
+                State.description.ilike(f"%{search}%")
             )
         )
 
-    query = query.offset(skip).limit(limit)
-    result = await db.execute(query)
-    contexts = result.scalars().all()
+    # Execute query
+    result = await db.execute(query.offset(skip).limit(limit))
+    all_states = result.scalars().all()
 
-    return contexts
+    # Filter based on permissions
+    accessible_states = []
+    for state in all_states:
+        # Own state?
+        if state.user_id == user_uuid:
+            accessible_states.append(state)
+            continue
+
+        # Shared state with namespace permission?
+        if state.visibility == "shared":
+            namespace_perm_all = f"sinas.states/{state.namespace}.read:all"
+            if check_permission(permissions, namespace_perm_all):
+                accessible_states.append(state)
+
+    # Set permission used (use generic if no namespace filter, specific if filtered)
+    if namespace:
+        perm = f"sinas.states/{namespace}.read:own"
+        set_permission_used(request, perm)
+    else:
+        set_permission_used(request, "sinas.states.read:own")
+
+    return accessible_states
 
 
-@router.get("/{context_id}", response_model=StateResponse)
-async def get_context(
+@router.get("/{state_id}", response_model=StateResponse)
+async def get_state(
     request: Request,
-    context_id: uuid.UUID,
+    state_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """Get a specific state entry."""
+    """Get a specific state by ID."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
+    # Get state
     result = await db.execute(
-        select(State).where(State.id == context_id)
+        select(State).where(State.id == state_id)
     )
-    context = result.scalar_one_or_none()
+    state = result.scalar_one_or_none()
 
-    if not context:
-        raise HTTPException(status_code=404, detail="Context not found")
+    if not state:
+        raise HTTPException(status_code=404, detail="State not found")
 
     # Check if expired
-    if context.expires_at and context.expires_at <= datetime.utcnow():
-        raise HTTPException(status_code=404, detail="Context has expired")
+    if state.expires_at and state.expires_at <= datetime.utcnow():
+        raise HTTPException(status_code=404, detail="State has expired")
 
     # Check permissions
-    if check_permission(permissions,"sinas.contexts.get:all"):
-        set_permission_used(request, "sinas.contexts.get:all")
-    elif context.user_id == user_uuid:
-        # User owns the context
-        if check_permission(permissions,"sinas.contexts.get:own"):
-            set_permission_used(request, "sinas.contexts.get:own")
-        else:
-            set_permission_used(request, "sinas.contexts.get:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to view this context")
-    elif context.visibility == "group" and context.group_id:
-        # Check if user is in the group
-        user_groups = await get_user_group_ids(db, user_uuid)
-        if context.group_id in user_groups:
-            if check_permission(permissions,"sinas.contexts.get:group"):
-                set_permission_used(request, "sinas.contexts.get:group")
-            else:
-                set_permission_used(request, "sinas.contexts.get:group", has_perm=False)
-                raise HTTPException(status_code=403, detail="Not authorized to view this context")
-        else:
-            set_permission_used(request, "sinas.contexts.get:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to view this context")
-    else:
-        set_permission_used(request, "sinas.contexts.get:own", has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to view this context")
+    namespace_perm = f"sinas.states/{state.namespace}.read:own"
+    namespace_perm_all = f"sinas.states/{state.namespace}.read:all"
 
-    return context
+    # Own state?
+    if state.user_id == user_uuid:
+        set_permission_used(request, namespace_perm)
+        return state
+
+    # Shared state with namespace permission?
+    if state.visibility == "shared" and check_permission(permissions, namespace_perm_all):
+        set_permission_used(request, namespace_perm_all)
+        return state
+
+    # No access
+    set_permission_used(request, namespace_perm, has_perm=False)
+    raise HTTPException(status_code=403, detail="Not authorized to view this state")
 
 
-@router.put("/{context_id}", response_model=StateResponse)
-async def update_context(
+@router.put("/{state_id}", response_model=StateResponse)
+async def update_state(
     request: Request,
-    context_id: uuid.UUID,
+    state_id: uuid.UUID,
     state_data: StateUpdate,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """Update a state entry."""
+    """Update a state entry. Only owner can update."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
+    # Get state
     result = await db.execute(
-        select(State).where(State.id == context_id)
+        select(State).where(State.id == state_id)
     )
-    context = result.scalar_one_or_none()
+    state = result.scalar_one_or_none()
 
-    if not context:
-        raise HTTPException(status_code=404, detail="Context not found")
+    if not state:
+        raise HTTPException(status_code=404, detail="State not found")
 
-    # Check permissions
-    can_update = False
-    if check_permission(permissions,"sinas.contexts.put:all"):
-        set_permission_used(request, "sinas.contexts.put:all")
-        can_update = True
-    elif context.user_id == user_uuid:
-        # User owns the context
-        if check_permission(permissions,"sinas.contexts.put:own"):
-            set_permission_used(request, "sinas.contexts.put:own")
-            can_update = True
-    elif context.visibility == "group" and context.group_id:
-        # Check if user is in the group
-        user_groups = await get_user_group_ids(db, user_uuid)
-        if context.group_id in user_groups:
-            if check_permission(permissions,"sinas.contexts.put:group"):
-                set_permission_used(request, "sinas.contexts.put:group")
-                can_update = True
+    # Check permissions - only owner can update
+    namespace_perm = f"sinas.states/{state.namespace}.update:own"
+    namespace_perm_all = f"sinas.states/{state.namespace}.update:all"
 
-    if not can_update:
-        set_permission_used(request, "sinas.contexts.put:own", has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to update this context")
+    if state.user_id != user_uuid:
+        # Not the owner - check if admin with :all permission
+        if not check_permission(permissions, namespace_perm_all):
+            set_permission_used(request, namespace_perm, has_perm=False)
+            raise HTTPException(status_code=403, detail="Not authorized to update this state")
+        set_permission_used(request, namespace_perm_all)
+    else:
+        set_permission_used(request, namespace_perm)
 
     # Update fields
     if state_data.value is not None:
-        context.value = state_data.value
+        state.value = state_data.value
     if state_data.description is not None:
-        context.description = state_data.description
+        state.description = state_data.description
     if state_data.tags is not None:
-        context.tags = state_data.tags
+        state.tags = state_data.tags
     if state_data.relevance_score is not None:
-        context.relevance_score = state_data.relevance_score
+        state.relevance_score = state_data.relevance_score
     if state_data.expires_at is not None:
-        context.expires_at = state_data.expires_at
+        state.expires_at = state_data.expires_at
     if state_data.visibility is not None:
-        # If changing to group visibility, verify group_id exists
-        if state_data.visibility == "group" and not context.group_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot change to group visibility without a group_id"
-            )
-        context.visibility = state_data.visibility
+        state.visibility = state_data.visibility
 
     await db.commit()
-    await db.refresh(context)
+    await db.refresh(state)
 
-    return context
+    return state
 
 
-@router.delete("/{context_id}")
-async def delete_context(
+@router.delete("/{state_id}")
+async def delete_state(
     request: Request,
-    context_id: uuid.UUID,
+    state_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data = Depends(get_current_user_with_permissions)
 ):
-    """Delete a state entry."""
+    """Delete a state entry. Only owner can delete."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
+    # Get state
     result = await db.execute(
-        select(State).where(State.id == context_id)
+        select(State).where(State.id == state_id)
     )
-    context = result.scalar_one_or_none()
+    state = result.scalar_one_or_none()
 
-    if not context:
-        raise HTTPException(status_code=404, detail="Context not found")
+    if not state:
+        raise HTTPException(status_code=404, detail="State not found")
 
-    # Check permissions
-    can_delete = False
-    if check_permission(permissions,"sinas.contexts.delete:all"):
-        set_permission_used(request, "sinas.contexts.delete:all")
-        can_delete = True
-    elif context.user_id == user_uuid:
-        # User owns the context
-        if check_permission(permissions,"sinas.contexts.delete:own"):
-            set_permission_used(request, "sinas.contexts.delete:own")
-            can_delete = True
-    elif context.visibility == "group" and context.group_id:
-        # Check if user is in the group
-        user_groups = await get_user_group_ids(db, user_uuid)
-        if context.group_id in user_groups:
-            if check_permission(permissions,"sinas.contexts.delete:group"):
-                set_permission_used(request, "sinas.contexts.delete:group")
-                can_delete = True
+    # Check permissions - only owner can delete
+    namespace_perm = f"sinas.states/{state.namespace}.delete:own"
+    namespace_perm_all = f"sinas.states/{state.namespace}.delete:all"
 
-    if not can_delete:
-        set_permission_used(request, "sinas.contexts.delete:own", has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to delete this context")
+    if state.user_id != user_uuid:
+        # Not the owner - check if admin with :all permission
+        if not check_permission(permissions, namespace_perm_all):
+            set_permission_used(request, namespace_perm, has_perm=False)
+            raise HTTPException(status_code=403, detail="Not authorized to delete this state")
+        set_permission_used(request, namespace_perm_all)
+    else:
+        set_permission_used(request, namespace_perm)
 
-    await db.delete(context)
+    await db.delete(state)
     await db.commit()
 
-    return {"message": f"Context '{context.namespace}/{context.key}' deleted successfully"}
+    return {"message": f"State '{state.namespace}/{state.key}' deleted successfully"}

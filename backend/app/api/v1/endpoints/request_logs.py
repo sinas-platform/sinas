@@ -32,17 +32,17 @@ async def list_request_logs(
     Query request logs with filters.
 
     Permissions:
-    - Admins with "sinas.logs.get:all" can see all logs
+    - Admins with "sinas.logs.read:all" can see all logs
     - Users can only see their own logs
     """
     current_user_id, permissions = current_user_data
 
     # Check if user has admin permission to see all logs
-    can_see_all = check_permission(permissions, "sinas.logs.get:all")
+    can_see_all = check_permission(permissions, "sinas.logs.read:all")
 
     # If not admin, restrict to own logs only
     if not can_see_all:
-        set_permission_used(request, "sinas.logs.get:own")
+        set_permission_used(request, "sinas.logs.read:own")
         if user_id and user_id != current_user_id:
             raise HTTPException(
                 status_code=403,
@@ -50,7 +50,7 @@ async def list_request_logs(
             )
         user_id = current_user_id
     else:
-        set_permission_used(request, "sinas.logs.get:all")
+        set_permission_used(request, "sinas.logs.read:all")
 
     # Query ClickHouse
     logs = await clickhouse_logger.query_logs(
@@ -106,17 +106,17 @@ async def get_request_log_stats(
     Get aggregated statistics for request logs.
 
     Permissions:
-    - Admins with "sinas.logs.get:all" can see stats for all users
+    - Admins with "sinas.logs.read:all" can see stats for all users
     - Users can only see their own stats
     """
     current_user_id, permissions = current_user_data
 
     # Check if user has admin permission
-    can_see_all = check_permission(permissions, "sinas.logs.get:all")
+    can_see_all = check_permission(permissions, "sinas.logs.read:all")
 
     # If not admin, restrict to own logs only
     if not can_see_all:
-        set_permission_used(request, "sinas.logs.get:own")
+        set_permission_used(request, "sinas.logs.read:own")
         if user_id and user_id != current_user_id:
             raise HTTPException(
                 status_code=403,
@@ -124,7 +124,7 @@ async def get_request_log_stats(
             )
         user_id = current_user_id
     else:
-        set_permission_used(request, "sinas.logs.get:all")
+        set_permission_used(request, "sinas.logs.read:all")
 
     # Build WHERE conditions
     conditions = []

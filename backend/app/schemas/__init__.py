@@ -7,7 +7,7 @@ from .webhook import *
 from .schedule import *
 from .execution import *
 from .package import *
-from .group import *
+from .role import *
 from .user import *
 from .state import *
 from .api_key import *

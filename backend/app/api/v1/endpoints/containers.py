@@ -10,7 +10,7 @@ router = APIRouter(prefix="/containers", tags=["containers"])
 
 @router.get("/stats")
 async def get_container_stats(
-    user_id: str = Depends(require_permission("sinas.containers.get:all"))
+    user_id: str = Depends(require_permission("sinas.containers.read:all"))
 ) -> List[Dict[str, Any]]:
     """Get stats for all user containers. Admin only."""
     if settings.function_execution_mode != 'docker':
@@ -26,7 +26,7 @@ async def get_container_stats(
 
 @router.post("/reload")
 async def reload_all_containers(
-    current_user_id: str = Depends(require_permission("sinas.containers.put:all"))
+    current_user_id: str = Depends(require_permission("sinas.containers.update:all"))
 ):
     """
     Reload all user containers by stopping them.

@@ -26,7 +26,7 @@ class State(Base):
     visibility: Mapped[str] = mapped_column(
         String(20), nullable=False, default="private", index=True
     )
-    # Options: "private" (user only), "group" (group members), "public" (future: org-wide)
+    # Options: "private" (owner only), "shared" (accessible by users with namespace permissions)
 
     # Metadata
     description: Mapped[Optional[str]] = mapped_column(Text)

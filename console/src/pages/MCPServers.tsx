@@ -20,12 +20,6 @@ export function MCPServers() {
     retry: false,
   });
 
-  const { data: groups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: () => apiClient.listGroups(),
-    retry: false,
-  });
-
   const createMutation = useMutation({
     mutationFn: (data: MCPServerCreate) => apiClient.createMCPServer(data),
     onSuccess: () => {
@@ -65,7 +59,6 @@ export function MCPServers() {
       url: server.url,
       protocol: server.protocol,
       api_key: undefined, // API key is not returned from backend for security
-      group_id: server.group_id || undefined,
     });
   };
 
@@ -130,14 +123,6 @@ export function MCPServers() {
                       <span className={`text-xs ${server.is_active ? 'text-green-600' : 'text-red-600'}`}>
                         {server.connection_status}
                       </span>
-                      {server.group_id && groups && (
-                        <>
-                          <span className="text-gray-300">•</span>
-                          <span className="text-xs text-gray-500">
-                            Group: {groups.find((g) => g.id === server.group_id)?.name || server.group_id}
-                          </span>
-                        </>
-                      )}
                     </div>
                     {server.last_connected && (
                       <p className="text-xs text-gray-500 mt-1">
@@ -251,28 +236,6 @@ export function MCPServers() {
                   <option value="http">HTTP</option>
                   <option value="sse">SSE</option>
                 </select>
-              </div>
-
-              <div>
-                <label htmlFor="group_id" className="block text-sm font-medium text-gray-700 mb-2">
-                  Group (optional)
-                </label>
-                <select
-                  id="group_id"
-                  value={formData.group_id || ''}
-                  onChange={(e) => setFormData({ ...formData, group_id: e.target.value || undefined })}
-                  className="input"
-                >
-                  <option value="">No group (Personal)</option>
-                  {groups?.map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">
-                  Assign to a group to share with team members
-                </p>
               </div>
 
               <div>

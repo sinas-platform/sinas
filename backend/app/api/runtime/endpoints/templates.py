@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.permissions import check_permission
 from app.models.template import Template
-from app.models.user import GroupMember
+from app.models.user import UserRole
 from app.services.template_renderer import render_template
 from app.core.email import _send_email_sync
 from app.core.config import settings
@@ -51,10 +51,10 @@ class TemplateEmailResponse(BaseModel):
 async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:
     """Get all group IDs that the user is a member of."""
     result = await db.execute(
-        select(GroupMember.group_id).where(
+        select(UserRole.role_id).where(
             and_(
-                GroupMember.user_id == user_id,
-                GroupMember.active == True
+                UserRole.user_id == user_id,
+                UserRole.active == True
             )
         )
     )

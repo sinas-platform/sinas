@@ -151,7 +151,7 @@ async def export_config(
     user_id, permissions = current_user_data
 
     # Check permission
-    perm = "sinas.config.get:all"
+    perm = "sinas.config.read:all"
     if not check_permission(permissions, perm):
         set_permission_used(request, perm, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to export config")

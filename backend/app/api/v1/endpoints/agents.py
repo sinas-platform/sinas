@@ -29,12 +29,12 @@ async def create_agent(
     """Create a new agent."""
     user_id, permissions = current_user_data
 
-    # Check namespace permission
-    namespace_perm = f"sinas.agents.{agent_data.namespace}.post:own"
-    if not check_permission(permissions, namespace_perm):
-        set_permission_used(req, namespace_perm, has_perm=False)
-        raise HTTPException(status_code=403, detail=f"Not authorized to create agents in namespace '{agent_data.namespace}'")
-    set_permission_used(req, namespace_perm)
+    # Check create permission
+    create_perm = "sinas.agents.create:own"
+    if not check_permission(permissions, create_perm):
+        set_permission_used(req, create_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create agents")
+    set_permission_used(req, create_perm)
 
     # Check if agent name already exists in this namespace
     from sqlalchemy import and_
@@ -48,22 +48,9 @@ async def create_agent(
     )
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists")
-
-    # Resolve group_name to group_id (group_name takes precedence if both provided)
-    final_group_id = agent_data.group_id
-    if agent_data.group_name:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == agent_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{agent_data.group_name}' not found")
-        final_group_id = group
-
     agent = Agent(
         user_id=user_id,
-        group_id=final_group_id,
+        
         namespace=agent_data.namespace,
         name=agent_data.name,
         description=agent_data.description,
@@ -89,14 +76,8 @@ async def create_agent(
     await db.commit()
     await db.refresh(agent)
 
-    # Load group name for response
+    
     response = AgentResponse.model_validate(agent)
-    if agent.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == agent.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -111,8 +92,8 @@ async def list_agents(
     user_id, permissions = current_user_data
 
     # Check if user has get:all permission (e.g., admin)
-    if check_permission(permissions, "sinas.agents.*.get:all"):
-        set_permission_used(req, "sinas.agents.*.get:all", has_perm=True)
+    if check_permission(permissions, "sinas.agents.read:all"):
+        set_permission_used(req, "sinas.agents.read:all", has_perm=True)
         # Return all agents
         result = await db.execute(
             select(Agent).where(
@@ -120,7 +101,7 @@ async def list_agents(
             ).order_by(Agent.created_at.desc())
         )
     else:
-        set_permission_used(req, "sinas.agents.*.get:own", has_perm=True)
+        set_permission_used(req, "sinas.agents.read:own", has_perm=True)
         # Return only user's own agents
         result = await db.execute(
             select(Agent).where(
@@ -131,19 +112,7 @@ async def list_agents(
 
     agents = result.scalars().all()
 
-    # Load group names for all agents
-    from app.models.user import Group
-    responses = []
-    for agent in agents:
-        response = AgentResponse.model_validate(agent)
-        if agent.group_id:
-            group_result = await db.execute(
-                select(Group.name).where(Group.id == agent.group_id)
-            )
-            response.group_name = group_result.scalar_one_or_none()
-        responses.append(response)
-
-    return responses
+    return [AgentResponse.model_validate(agent) for agent in agents]
 
 
 @router.get("/{namespace}/{name}", response_model=AgentResponse)
@@ -158,16 +127,16 @@ async def get_agent(
     user_id, permissions = current_user_data
 
     # Check permissions first to determine query scope
-    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.get:all")
+    has_all_permission = check_permission(permissions, "sinas.agents.read:all")
 
     if has_all_permission:
         # Admin can see all agents - don't filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=None)
-        set_permission_used(req, f"sinas.agents.{namespace}.get:all")
+        set_permission_used(req, "sinas.agents.read:all")
     else:
         # Regular user - filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
-        set_permission_used(req, f"sinas.agents.{namespace}.get:own")
+        set_permission_used(req, f"sinas.agents/{namespace}/{name}.read:own")
 
     if not agent:
         raise HTTPException(
@@ -179,14 +148,8 @@ async def get_agent(
     if not has_all_permission and agent.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this agent")
 
-    # Load group name for response
+    
     response = AgentResponse.model_validate(agent)
-    if agent.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == agent.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -204,16 +167,16 @@ async def update_agent(
     user_id, permissions = current_user_data
 
     # Check permissions first to determine query scope
-    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.put:all")
+    has_all_permission = check_permission(permissions, "sinas.agents.update:all")
 
     if has_all_permission:
         # Admin can update all agents - don't filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=None)
-        set_permission_used(req, f"sinas.agents.{namespace}.put:all")
+        set_permission_used(req, "sinas.agents.update:all")
     else:
         # Regular user - filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
-        set_permission_used(req, f"sinas.agents.{namespace}.put:own")
+        set_permission_used(req, f"sinas.agents/{namespace}/{name}.update:own")
 
     if not agent:
         raise HTTPException(
@@ -264,30 +227,11 @@ async def update_agent(
         agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
     if agent_data.is_active is not None:
         agent.is_active = agent_data.is_active
-    # Resolve group_name to group_id (group_name takes precedence)
-    if agent_data.group_name is not None:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == agent_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{agent_data.group_name}' not found")
-        agent.group_id = group
-    elif agent_data.group_id is not None:
-        agent.group_id = agent_data.group_id
-
     await db.commit()
     await db.refresh(agent)
 
-    # Load group name for response
+    
     response = AgentResponse.model_validate(agent)
-    if agent.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == agent.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -304,16 +248,16 @@ async def delete_agent(
     user_id, permissions = current_user_data
 
     # Check permissions first to determine query scope
-    has_all_permission = check_permission(permissions, f"sinas.agents.{namespace}.delete:all")
+    has_all_permission = check_permission(permissions, "sinas.agents.delete:all")
 
     if has_all_permission:
         # Admin can delete all agents - don't filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=None)
-        set_permission_used(req, f"sinas.agents.{namespace}.delete:all")
+        set_permission_used(req, "sinas.agents.delete:all")
     else:
         # Regular user - filter by user_id
         agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
-        set_permission_used(req, f"sinas.agents.{namespace}.delete:own")
+        set_permission_used(req, f"sinas.agents/{namespace}/{name}.delete:own")
 
     if not agent:
         raise HTTPException(

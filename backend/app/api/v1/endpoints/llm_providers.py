@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("", response_model=LLMProviderResponse, status_code=status.HTTP_201_CREATED)
 async def create_llm_provider(
     request: LLMProviderCreate,
-    user_id: str = Depends(require_permission("sinas.llm_providers.post:all")),
+    user_id: str = Depends(require_permission("sinas.llm_providers.create:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new LLM provider configuration. Admin only."""
@@ -68,7 +68,7 @@ async def create_llm_provider(
 
 @router.get("", response_model=List[LLMProviderResponse])
 async def list_llm_providers(
-    user_id: str = Depends(require_permission("sinas.llm_providers.get:all")),
+    user_id: str = Depends(require_permission("sinas.llm_providers.read:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """List all LLM providers. Admin only."""
@@ -82,7 +82,7 @@ async def list_llm_providers(
 @router.get("/{name}", response_model=LLMProviderResponse)
 async def get_llm_provider(
     name: str,
-    user_id: str = Depends(require_permission("sinas.llm_providers.get:all")),
+    user_id: str = Depends(require_permission("sinas.llm_providers.read:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Get a specific LLM provider by name. Admin only."""
@@ -99,7 +99,7 @@ async def get_llm_provider(
 async def update_llm_provider(
     provider_id: uuid.UUID,
     request: LLMProviderUpdate,
-    user_id: str = Depends(require_permission("sinas.llm_providers.put:all")),
+    user_id: str = Depends(require_permission("sinas.llm_providers.update:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an LLM provider. Admin only."""

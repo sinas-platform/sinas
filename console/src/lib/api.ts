@@ -24,10 +24,11 @@ import type {
   MCPServer,
   MCPServerCreate,
   MCPServerUpdate,
-  Group,
-  GroupCreate,
-  GroupPermission,
-  GroupPermissionUpdate,
+  Role,
+  RoleCreate,
+  UserRole,
+  RolePermission,
+  RolePermissionUpdate,
   Function,
   FunctionCreate,
   FunctionUpdate,
@@ -350,59 +351,59 @@ class APIClient {
     return response.data;
   }
 
-  // Groups
-  async listGroups(): Promise<Group[]> {
-    const response = await this.configClient.get('/groups');
+  // Roles
+  async listRoles(): Promise<Role[]> {
+    const response = await this.configClient.get('/roles');
     return response.data;
   }
 
-  async getGroup(groupId: string): Promise<any> {
-    const response = await this.configClient.get(`/groups/${groupId}`);
+  async getRole(roleId: string): Promise<any> {
+    const response = await this.configClient.get(`/roles/${roleId}`);
     return response.data;
   }
 
-  async createGroup(data: GroupCreate): Promise<Group> {
-    const response = await this.configClient.post('/groups', data);
+  async createRole(data: RoleCreate): Promise<Role> {
+    const response = await this.configClient.post('/roles', data);
     return response.data;
   }
 
-  async updateGroup(groupName: string, data: any): Promise<Group> {
-    const response = await this.configClient.patch(`/groups/${groupName}`, data);
+  async updateRole(roleName: string, data: any): Promise<Role> {
+    const response = await this.configClient.patch(`/roles/${roleName}`, data);
     return response.data;
   }
 
-  async deleteGroup(groupName: string): Promise<void> {
-    await this.configClient.delete(`/groups/${groupName}`);
+  async deleteRole(roleName: string): Promise<void> {
+    await this.configClient.delete(`/roles/${roleName}`);
   }
 
-  // Group Members
-  async listGroupMembers(groupName: string): Promise<any[]> {
-    const response = await this.configClient.get(`/groups/${groupName}/members`);
+  // Role Members
+  async listRoleMembers(roleName: string): Promise<UserRole[]> {
+    const response = await this.configClient.get(`/roles/${roleName}/members`);
     return response.data;
   }
 
-  async addGroupMember(groupName: string, data: any): Promise<any> {
-    const response = await this.configClient.post(`/groups/${groupName}/members`, data);
+  async addRoleMember(roleName: string, data: any): Promise<any> {
+    const response = await this.configClient.post(`/roles/${roleName}/members`, data);
     return response.data;
   }
 
-  async removeGroupMember(groupName: string, userId: string): Promise<void> {
-    await this.configClient.delete(`/groups/${groupName}/members/${userId}`);
+  async removeRoleMember(roleName: string, userId: string): Promise<void> {
+    await this.configClient.delete(`/roles/${roleName}/members/${userId}`);
   }
 
-  // Group Permissions
-  async listGroupPermissions(groupName: string): Promise<GroupPermission[]> {
-    const response = await this.configClient.get(`/groups/${groupName}/permissions`);
+  // Role Permissions
+  async listRolePermissions(roleName: string): Promise<RolePermission[]> {
+    const response = await this.configClient.get(`/roles/${roleName}/permissions`);
     return response.data;
   }
 
-  async setGroupPermission(groupName: string, data: GroupPermissionUpdate): Promise<GroupPermission> {
-    const response = await this.configClient.post(`/groups/${groupName}/permissions`, data);
+  async setRolePermission(roleName: string, data: RolePermissionUpdate): Promise<RolePermission> {
+    const response = await this.configClient.post(`/roles/${roleName}/permissions`, data);
     return response.data;
   }
 
-  async deleteGroupPermission(groupName: string, permissionKey: string): Promise<void> {
-    await this.configClient.delete(`/groups/${groupName}/permissions/${permissionKey}`);
+  async deleteRolePermission(roleName: string, permissionKey: string): Promise<void> {
+    await this.configClient.delete(`/roles/${roleName}/permissions/${permissionKey}`);
   }
 
   // Users

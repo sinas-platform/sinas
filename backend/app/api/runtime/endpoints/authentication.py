@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.auth import (
     create_otp_session,
     verify_otp_code,
-    get_or_create_user,
+    get_user_by_email,
     get_user_permissions,
     create_access_token,
     create_refresh_token,
@@ -25,7 +25,6 @@ from app.schemas.auth import (
     LoginResponse,
     OTPVerifyRequest,
     OTPVerifyResponse,
-    ExternalAuthRequest,
     RefreshRequest,
     RefreshResponse,
     LogoutRequest,
@@ -46,21 +45,19 @@ async def login(
     """
     Initiate login by sending OTP to email.
 
-    Creates user if doesn't exist (when auto_provision_users=true).
-    Fails fast if user doesn't exist and auto-provisioning is disabled.
+    User must exist - users are created by admins only.
     """
-    # Check if user exists when auto-provisioning is disabled
-    if not settings.auto_provision_users:
-        from app.core.auth import normalize_email
-        result = await db.execute(
-            select(User).where(User.email == normalize_email(request.email))
+    # Check if user exists - no auto-provisioning
+    from app.core.auth import normalize_email
+    result = await db.execute(
+        select(User).where(User.email == normalize_email(request.email))
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not found. Contact your administrator."
         )
-        user = result.scalar_one_or_none()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User not found and auto-provisioning is disabled"
-            )
 
     # Create OTP session and send email
     try:
@@ -96,8 +93,14 @@ async def verify_otp(
             detail="Invalid or expired OTP"
         )
 
-    # Get or create user
-    user = await get_or_create_user(db, otp_session.email, assign_to_users_group=True)
+    # Get user (must exist - checked during login)
+    user = await get_user_by_email(db, otp_session.email)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not found. Contact your administrator."
+        )
 
     # Create access token (short-lived, no permissions in payload)
     access_token = create_access_token(
@@ -113,95 +116,6 @@ async def verify_otp(
         refresh_token=refresh_token_plain,
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
-        user=UserResponse.model_validate(user)
-    )
-
-
-@router.post("/external-auth", response_model=OTPVerifyResponse)
-async def exchange_external_token(
-    request: ExternalAuthRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Exchange external OIDC token for SINAS JWT.
-
-    Only works if EXTERNAL_AUTH_ENABLED=true and OIDC_ISSUER configured.
-    """
-    from app.services.auth import get_oidc_provider
-    from app.services.auth.group_sync import sync_user_groups
-
-    # Get OIDC provider
-    provider = get_oidc_provider()
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="External authentication not configured"
-        )
-
-    # Validate external token
-    user_info = await provider.validate_token(request.token)
-    if not user_info:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid external token"
-        )
-
-    # Get or create user
-    result = await db.execute(
-        select(User).where(User.external_user_id == user_info["external_user_id"])
-    )
-    user = result.scalar_one_or_none()
-
-    if user:
-        # Update existing user metadata
-        user.external_metadata = user_info.get("metadata")
-        user.email = user_info["email"]
-    else:
-        # Try linking by email
-        result = await db.execute(
-            select(User).where(User.email == user_info["email"])
-        )
-        user = result.scalar_one_or_none()
-
-        if user:
-            # Link existing OTP user to external auth
-            user.external_user_id = user_info["external_user_id"]
-            user.external_metadata = user_info.get("metadata")
-        else:
-            # Create new user
-            if not settings.auto_provision_users:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="User auto-provisioning disabled"
-                )
-
-            user = User(
-                email=user_info["email"],
-                external_user_id=user_info["external_user_id"],
-                external_metadata=user_info.get("metadata")
-            )
-            db.add(user)
-            await db.flush()
-
-    # Sync groups based on external groups
-    await sync_user_groups(db, user, user_info.get("external_groups", []))
-
-    await db.commit()
-
-    # Create access token (short-lived, no permissions in payload)
-    access_token = create_access_token(
-        user_id=str(user.id),
-        email=user.email
-    )
-
-    # Create refresh token (long-lived, stored in DB)
-    refresh_token_plain, _ = await create_refresh_token(db, str(user.id))
-
-    return OTPVerifyResponse(
-        access_token=access_token,
-        refresh_token=refresh_token_plain,
-        token_type="bearer",
-        expires_in=settings.access_token_expire_minutes * 60,
         user=UserResponse.model_validate(user)
     )
 

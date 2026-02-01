@@ -8,7 +8,7 @@ import uuid
 from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.permissions import check_permission
-from app.models.user import User, Group, GroupMember
+from app.models.user import User, Role, UserRole
 from app.schemas import UserResponse, UserWithGroupsResponse, UserUpdate
 from app.schemas.auth import CreateUserRequest
 
@@ -27,11 +27,11 @@ async def list_users(
     user_id, permissions = current_user_data
 
     # Only admins can list users
-    if not check_permission(permissions, "sinas.users.get:all"):
-        set_permission_used(request, "sinas.users.get:all", has_perm=False)
+    if not check_permission(permissions, "sinas.users.read:all"):
+        set_permission_used(request, "sinas.users.read:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to list users")
 
-    set_permission_used(request, "sinas.users.get:all")
+    set_permission_used(request, "sinas.users.read:all")
 
     query = select(User).offset(skip).limit(limit)
     result = await db.execute(query)
@@ -56,14 +56,14 @@ async def create_user(
     user_id, permissions = current_user_data
 
     # Check admin permission
-    if not check_permission(permissions, "sinas.users.post:all"):
-        set_permission_used(request, "sinas.users.post:all", has_perm=False)
+    if not check_permission(permissions, "sinas.users.create:all"):
+        set_permission_used(request, "sinas.users.create:all", has_perm=False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to create users"
         )
 
-    set_permission_used(request, "sinas.users.post:all")
+    set_permission_used(request, "sinas.users.create:all")
 
     # Check if user already exists
     from app.core.auth import normalize_email
@@ -87,20 +87,20 @@ async def create_user(
 
     # Check if already has groups
     memberships_result = await db.execute(
-        select(GroupMember).where(GroupMember.user_id == user.id)
+        select(UserRole).where(UserRole.user_id == user.id)
     )
     existing_memberships = memberships_result.scalars().all()
 
     # Only add to GuestUsers if no groups assigned yet
     if not existing_memberships:
         guest_group_result = await db.execute(
-            select(Group).where(Group.name == "GuestUsers")
+            select(Role).where(Role.name == "GuestUsers")
         )
         guest_group = guest_group_result.scalar_one_or_none()
 
         if guest_group:
-            membership = GroupMember(
-                group_id=guest_group.id,
+            membership = UserRole(
+                role_id=guest_group.id,
                 user_id=user.id,
                 active=True
             )
@@ -123,11 +123,11 @@ async def get_user(
 
     # Users can view their own profile, admins can view any user
     if str(user_id) == current_user_id:
-        set_permission_used(request, "sinas.users.get:own")
-    elif check_permission(permissions, "sinas.users.get:all"):
-        set_permission_used(request, "sinas.users.get:all")
+        set_permission_used(request, "sinas.users.read:own")
+    elif check_permission(permissions, "sinas.users.read:all"):
+        set_permission_used(request, "sinas.users.read:all")
     else:
-        set_permission_used(request, "sinas.users.get:all", has_perm=False)
+        set_permission_used(request, "sinas.users.read:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view this user")
 
     result = await db.execute(
@@ -140,19 +140,19 @@ async def get_user(
 
     # Get user's groups
     memberships_result = await db.execute(
-        select(GroupMember).where(
-            GroupMember.user_id == user_id,
-            GroupMember.active == True
+        select(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.active == True
         )
     )
     memberships = memberships_result.scalars().all()
 
     # Get group names
-    from app.models.user import Group
+    from app.models.user import Role
     group_names = []
     for membership in memberships:
         group_result = await db.execute(
-            select(Group).where(Group.id == membership.group_id)
+            select(Role).where(Role.id == membership.role_id)
         )
         group = group_result.scalar_one_or_none()
         if group:
@@ -180,11 +180,11 @@ async def update_user(
 
     # Users can update themselves, admins can update anyone
     if str(user_id) == current_user_id:
-        set_permission_used(request, "sinas.users.put:own")
-    elif check_permission(permissions, "sinas.users.put:all"):
-        set_permission_used(request, "sinas.users.put:all")
+        set_permission_used(request, "sinas.users.update:own")
+    elif check_permission(permissions, "sinas.users.update:all"):
+        set_permission_used(request, "sinas.users.update:all")
     else:
-        set_permission_used(request, "sinas.users.put:all", has_perm=False)
+        set_permission_used(request, "sinas.users.update:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to update this user")
 
     result = await db.execute(

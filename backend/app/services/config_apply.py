@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from datetime import datetime
 
-from app.models.user import User, Group, GroupMember, GroupPermission
+from app.models.user import User, Role, UserRole, RolePermission
 from app.models.llm_provider import LLMProvider
 from app.models.mcp import MCPServer
 from app.models.function import Function, FunctionVersion
@@ -130,7 +130,7 @@ class ConfigApplyService:
         for group_config in groups:
             try:
                 # Check if exists
-                stmt = select(Group).where(Group.name == group_config.name)
+                stmt = select(Role).where(Role.name == group_config.name)
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
@@ -202,17 +202,17 @@ class ConfigApplyService:
         """Apply permissions to a group"""
         # Delete existing config-managed permissions
         from sqlalchemy import delete
-        stmt = delete(GroupPermission).where(
+        stmt = delete(RolePermission).where(
             and_(
-                GroupPermission.group_id == group_id,
-                GroupPermission.managed_by == "config"
+                RolePermission.group_id == group_id,
+                RolePermission.managed_by == "config"
             )
         )
         await self.db.execute(stmt)
 
         # Add new permissions
         for perm in permissions:
-            perm_obj = GroupPermission(
+            perm_obj = RolePermission(
                 group_id=group_id,
                 permission_key=perm.key,
                 permission_value=perm.value,
@@ -288,10 +288,10 @@ class ConfigApplyService:
         """Apply group memberships to a user"""
         # Remove existing config-managed memberships
         from sqlalchemy import delete
-        stmt = delete(GroupMember).where(
+        stmt = delete(UserRole).where(
             and_(
-                GroupMember.user_id == user_id,
-                GroupMember.managed_by == "config"
+                UserRole.user_id == user_id,
+                UserRole.managed_by == "config"
             )
         )
         await self.db.execute(stmt)
@@ -302,7 +302,7 @@ class ConfigApplyService:
                 self.warnings.append(f"Group '{group_name}' not found for user membership")
                 continue
 
-            membership = GroupMember(
+            membership = UserRole(
                 user_id=user_id,
                 group_id=self.group_ids[group_name],
                 role="member",
@@ -521,7 +521,7 @@ class ConfigApplyService:
                             continue
 
                         # Get a user from the group for created_by
-                        stmt = select(GroupMember).where(GroupMember.group_id == group_id).limit(1)
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
@@ -667,7 +667,7 @@ class ConfigApplyService:
                             continue
 
                         # Get user for created_by
-                        stmt = select(GroupMember).where(GroupMember.group_id == group_id).limit(1)
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
@@ -768,7 +768,7 @@ class ConfigApplyService:
                             continue
 
                         # Get user for created_by
-                        stmt = select(GroupMember).where(GroupMember.group_id == group_id).limit(1)
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
@@ -852,7 +852,7 @@ class ConfigApplyService:
                             continue
 
                         # Get user for created_by
-                        stmt = select(GroupMember).where(GroupMember.group_id == group_id).limit(1)
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:

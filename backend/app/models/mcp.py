@@ -29,9 +29,6 @@ class MCPServer(Base):
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     config_checksum: Mapped[Optional[str]] = mapped_column(Text)
 
-    # Relationships
-    group: Mapped[Optional["Group"]] = relationship("Group")
-
     @classmethod
     async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["MCPServer"]:
         """Get MCP server by name."""

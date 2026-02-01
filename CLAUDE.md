@@ -93,29 +93,41 @@ SINAS is built around three independent but integrated subsystems:
 
 **Format:** `sinas.{service}.{resource}.{...segments}.{action}:{scope}`
 
+**Action Verbs (CRUD):**
+- **Standard**: `create`, `read`, `update`, `delete`
+- **Domain-specific**: `execute` (functions), `render`/`send` (templates), `install` (packages), etc.
+- **Never use HTTP verbs** (get/post/put) - always use CRUD verbs
+
 **Scope Hierarchy (automatic):**
-- `:all` grants `:group` and `:own`
-- `:group` grants `:own`
+- `:all` grants `:own` (admins have full access)
+- `:own` is the standard user scope
 - Admins have `sinas.*:all` (full system access)
 
 **Key Implementation Details:**
 - `check_permission()` in `app/core/permissions.py` handles ALL permission checks
 - Scope hierarchy is automatic - never manually check multiple scopes
-- Wildcards supported: `sinas.functions.*.create:group` matches any function namespace
+- Wildcards supported: `sinas.functions.*.create:own` matches any function namespace
 - Pattern matching in `matches_permission_pattern()` handles both wildcards and scope hierarchy
 
 **Common Pattern (CORRECT):**
 ```python
 # Only check the requested scope - hierarchy is automatic
-if check_permission(permissions, f"sinas.functions.{namespace}.{name}.read:group"):
+if check_permission(permissions, f"sinas.functions.{namespace}.{name}.read:own"):
     # Users with :all automatically get access
 ```
 
 **Anti-Pattern (WRONG):**
 ```python
 # Never do this - inefficient and unnecessary
-if check_permission(permissions, perm_group) or check_permission(permissions, perm_all):
+if check_permission(permissions, perm_own) or check_permission(permissions, perm_all):
 ```
+
+**Namespace-Based Permissions:**
+Resources like agents, functions, states use namespace-based permissions:
+- `sinas.agents/{namespace}/{name}.read:own` - Read specific agent
+- `sinas.functions/{namespace}/{name}.execute:own` - Execute specific function
+- `sinas.states/{namespace}.create:own` - Create state in namespace
+- `sinas.states/api_keys.read:all` - Read shared states in api_keys namespace
 
 ### Agent System Architecture
 
@@ -199,34 +211,60 @@ def my_function(input, context):
 
 ### State Management System
 
-**Purpose:** Persistent key-value storage for agents to maintain state across conversations.
+**Purpose:** Persistent key-value storage for agents to maintain state across conversations, with namespace-based permission control for sharing.
 
 **Core Components:**
 - **State**: Key-value pair with namespace organization
-  - `namespace`: Organization level (e.g., "customer-sessions", "user-preferences")
+  - `namespace`: Organization level (e.g., "preferences", "memory", "api_keys")
   - `key`: Unique identifier within namespace
-  - `value`: JSON data
+  - `value`: JSON data (dict/object)
+  - `visibility`: `private` (owner only) or `shared` (accessible with namespace permission)
   - `ttl`: Optional time-to-live in seconds
-  - `user_id`/`group_id`: Ownership for access control
+  - `user_id`: Owner of the state
 
-**Access Control:**
-- Agents declare state access via `state_namespaces_readonly` and `state_namespaces_readwrite`
-- Permissions enforced at namespace level
-- Agents can only access states in namespaces they're granted
+**Access Control (Namespace-Based):**
+- **Permissions**: `sinas.states/{namespace}.{action}:scope`
+  - Example: `sinas.states/preferences.read:own` - read own preferences
+  - Example: `sinas.states/api_keys.read:all` - read shared API keys
+- **Visibility**:
+  - `private`: Only owner can access (regardless of namespace permissions)
+  - `shared`: Users with namespace `:all` permission can access
+- **Agent Access**: Agents declare state access via `state_namespaces_readonly` and `state_namespaces_readwrite`
+
+**Common Use Cases:**
+```python
+# User preferences (private)
+namespace="preferences", key="language", visibility="private"
+# Only owner can access
+
+# Shared API keys (shared)
+namespace="api_keys", key="stripe", visibility="shared"
+# Users with sinas.states/api_keys.read:all can access
+
+# User memory (private)
+namespace="memory", key="name", visibility="private"
+# Agent can access if granted memory namespace
+```
 
 **Key Files:**
 - `app/models/state.py` - State model
-- `app/api/v1/endpoints/states.py` - State CRUD endpoints
+- `app/api/runtime/endpoints/states.py` - State CRUD endpoints (runtime API)
 - `app/services/state_tools.py` - LLM tools for state access
 
 ### Database Architecture
 
 **Primary Database (PostgreSQL):**
-- User accounts, groups, permissions
+- User accounts, roles, permissions
 - Chat history, messages, agents
 - Function definitions and execution history
 - State storage (key-value)
 - LLM provider configurations
+
+**Note on Roles vs Groups:**
+- **Roles** (formerly "groups"): Access control roles with permissions
+- Database tables: `roles`, `user_roles`, `role_permissions`
+- Resources (agents, functions, etc.) are **owned by users**, not roles
+- Roles grant permissions, not ownership
 
 **Redis:**
 - Execution logs (before persisting to ClickHouse)
@@ -243,8 +281,8 @@ def my_function(input, context):
 
 1. Redis connection established
 2. APScheduler started for cron jobs
-3. Default groups created (GuestUsers, Users, Admins)
-4. Superadmin user created if `SUPERADMIN_EMAIL` set and Admins group empty
+3. Default roles created (GuestUsers, Users, Admins)
+4. Superadmin user created if `SUPERADMIN_EMAIL` set and Admins role empty
 5. Declarative config applied if `CONFIG_FILE` and `AUTO_APPLY_CONFIG=true`
 6. MCP (Model Context Protocol) client initialized
 7. Default agents created
@@ -308,7 +346,7 @@ alembic upgrade head
 
 ### Common Gotchas
 
-1. **Permission Checking:** Always use `check_permission()`, never manually check multiple scopes. Scope hierarchy (:all → :group → :own) is automatic.
+1. **Permission Checking:** Always use `check_permission()`, never manually check multiple scopes. Scope hierarchy (:all → :own) is automatic. Use CRUD verbs (create/read/update/delete), not HTTP verbs.
 
 2. **Async Context:** Most DB operations are async. Use `AsyncSession`, `await db.execute()`, and `await db.commit()`.
 
@@ -323,6 +361,12 @@ alembic upgrade head
 7. **Message Content Format:** Messages support multimodal content stored as JSON arrays: `[{"type": "text", "text": "..."}, {"type": "image", "image": "data:image/..."}]`. Frontend must parse JSON strings from database.
 
 8. **Provider Type Detection:** When agents don't have explicit `llm_provider_id`, the system falls back to default provider. Ensure `provider_type` is determined before building messages for content conversion.
+
+9. **Chats and Agents:** Chats are always linked to agents via `agent_id`, `agent_namespace`, and `agent_name`. Chat access is controlled by agent permissions (`sinas.agents/{namespace}/{name}.read:own`), not separate chat permissions. Chats are created via `/api/runtime/agents/{namespace}/{agent_name}/chats`.
+
+10. **State Namespaces:** States use namespace-based permissions similar to agents and functions. Users can create private states in any namespace they have permission for. Shared states require both `visibility="shared"` AND the viewer must have `sinas.states/{namespace}.read:all` permission.
+
+11. **CRUD Verbs:** Always use CRUD action verbs in permissions: `create`, `read`, `update`, `delete`, `execute`, `render`, `send`, etc. Never use HTTP verbs like `get`, `post`, `put`. Example: `sinas.functions.read:own` not `sinas.functions.get:own`.
 
 ## Key Integration Points
 
@@ -342,11 +386,11 @@ async def list_resource(
     user_id, permissions = current_user_data
 
     # Check permission (scope hierarchy automatic)
-    if not check_permission(permissions, "sinas.resource.read:group"):
-        set_permission_used(request, "sinas.resource.read:group", has_perm=False)
+    if not check_permission(permissions, "sinas.resource.read:own"):
+        set_permission_used(request, "sinas.resource.read:own", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    set_permission_used(request, "sinas.resource.read:group", has_perm=True)
+    set_permission_used(request, "sinas.resource.read:own", has_perm=True)
     # ... implementation
 ```
 
@@ -401,7 +445,7 @@ await scheduler.schedule_function(
 - API keys are encrypted in the database using `ENCRYPTION_KEY`
 
 **Admin:**
-- `SUPERADMIN_EMAIL` - Auto-create admin user on startup if Admins group empty
+- `SUPERADMIN_EMAIL` - Auto-create admin user on startup if Admins role empty
 
 **Function Execution:**
 - `FUNCTION_TIMEOUT` - Max execution time in seconds (default: 300)

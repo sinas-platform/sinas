@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.user import User, Group, GroupPermission
+from app.models.user import User, Role, RolePermission
 from app.models.llm_provider import LLMProvider
 from app.models.mcp import MCPServer
 from app.models.function import Function
@@ -65,9 +65,9 @@ class ConfigExportService:
 
     async def _export_groups(self) -> List[Dict]:
         """Export groups"""
-        stmt = select(Group)
+        stmt = select(Role)
         if self.managed_only:
-            stmt = stmt.where(Group.managed_by == "config")
+            stmt = stmt.where(Role.managed_by == "config")
 
         result = await self.db.execute(stmt)
         groups = result.scalars().all()
@@ -82,7 +82,7 @@ class ConfigExportService:
                 group_dict["emailDomain"] = group.email_domain
 
             # Export permissions
-            perm_stmt = select(GroupPermission).where(GroupPermission.group_id == group.id)
+            perm_stmt = select(RolePermission).where(RolePermission.group_id == group.id)
             perm_result = await self.db.execute(perm_stmt)
             permissions = perm_result.scalars().all()
             if permissions:
@@ -107,12 +107,12 @@ class ConfigExportService:
         exported = []
         for user in users:
             # Get user groups
-            from app.models.user import GroupMember
-            member_stmt = select(GroupMember).where(GroupMember.user_id == user.id)
+            from app.models.user import UserRole
+            member_stmt = select(UserRole).where(UserRole.user_id == user.id)
             member_result = await self.db.execute(member_stmt)
             memberships = member_result.scalars().all()
 
-            group_stmt = select(Group).where(Group.id.in_([m.group_id for m in memberships]))
+            group_stmt = select(Role).where(Role.id.in_([m.group_id for m in memberships]))
             group_result = await self.db.execute(group_stmt)
             groups = group_result.scalars().all()
 
@@ -163,7 +163,7 @@ class ConfigExportService:
         servers = result.scalars().all()
 
         # Get default group (Admins) for servers without group_id
-        default_group_stmt = select(Group).where(Group.name == "Admins")
+        default_group_stmt = select(Role).where(Role.name == "Admins")
         default_group_result = await self.db.execute(default_group_stmt)
         default_group = default_group_result.scalar_one_or_none()
 
@@ -171,7 +171,7 @@ class ConfigExportService:
         for server in servers:
             group = None
             if server.group_id:
-                group_stmt = select(Group).where(Group.id == server.group_id)
+                group_stmt = select(Role).where(Role.id == server.group_id)
                 group_result = await self.db.execute(group_stmt)
                 group = group_result.scalar_one_or_none()
 
@@ -201,7 +201,7 @@ class ConfigExportService:
         functions = result.scalars().all()
 
         # Get default group (Users) for functions without group_id
-        default_group_stmt = select(Group).where(Group.name == "Users")
+        default_group_stmt = select(Role).where(Role.name == "Users")
         default_group_result = await self.db.execute(default_group_stmt)
         default_group = default_group_result.scalar_one_or_none()
 
@@ -210,7 +210,7 @@ class ConfigExportService:
             # Get group name
             group = None
             if func.group_id:
-                group_stmt = select(Group).where(Group.id == func.group_id)
+                group_stmt = select(Role).where(Role.id == func.group_id)
                 group_result = await self.db.execute(group_stmt)
                 group = group_result.scalar_one_or_none()
 
@@ -240,7 +240,7 @@ class ConfigExportService:
         agents = result.scalars().all()
 
         # Get default group (Users) for agents without group_id
-        default_group_stmt = select(Group).where(Group.name == "Users")
+        default_group_stmt = select(Role).where(Role.name == "Users")
         default_group_result = await self.db.execute(default_group_stmt)
         default_group = default_group_result.scalar_one_or_none()
 
@@ -249,7 +249,7 @@ class ConfigExportService:
             # Get group and provider names
             group = None
             if agent.group_id:
-                group_stmt = select(Group).where(Group.id == agent.group_id)
+                group_stmt = select(Role).where(Role.id == agent.group_id)
                 group_result = await self.db.execute(group_stmt)
                 group = group_result.scalar_one_or_none()
 
@@ -291,7 +291,7 @@ class ConfigExportService:
         webhooks = result.scalars().all()
 
         # Get default group (Users) for webhooks without group_id
-        default_group_stmt = select(Group).where(Group.name == "Users")
+        default_group_stmt = select(Role).where(Role.name == "Users")
         default_group_result = await self.db.execute(default_group_stmt)
         default_group = default_group_result.scalar_one_or_none()
 
@@ -304,7 +304,7 @@ class ConfigExportService:
 
             group = None
             if webhook.group_id:
-                group_stmt = select(Group).where(Group.id == webhook.group_id)
+                group_stmt = select(Role).where(Role.id == webhook.group_id)
                 group_result = await self.db.execute(group_stmt)
                 group = group_result.scalar_one_or_none()
 
@@ -334,7 +334,7 @@ class ConfigExportService:
         schedules = result.scalars().all()
 
         # Get default group (Users) for schedules without group_id
-        default_group_stmt = select(Group).where(Group.name == "Users")
+        default_group_stmt = select(Role).where(Role.name == "Users")
         default_group_result = await self.db.execute(default_group_stmt)
         default_group = default_group_result.scalar_one_or_none()
 
@@ -347,7 +347,7 @@ class ConfigExportService:
 
             group = None
             if schedule.group_id:
-                group_stmt = select(Group).where(Group.id == schedule.group_id)
+                group_stmt = select(Role).where(Role.id == schedule.group_id)
                 group_result = await self.db.execute(group_stmt)
                 group = group_result.scalar_one_or_none()
 

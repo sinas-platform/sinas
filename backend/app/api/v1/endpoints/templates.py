@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.permissions import check_permission
 from app.models import Template
-from app.models.user import GroupMember
+from app.models.user import UserRole
 from app.schemas.template import (
     TemplateCreate,
     TemplateUpdate,
@@ -25,10 +25,10 @@ router = APIRouter()
 async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:
     """Get all group IDs that the user is a member of."""
     result = await db.execute(
-        select(GroupMember.group_id).where(
+        select(UserRole.role_id).where(
             and_(
-                GroupMember.user_id == user_id,
-                GroupMember.active == True
+                UserRole.user_id == user_id,
+                UserRole.active == True
             )
         )
     )
@@ -116,24 +116,12 @@ async def list_templates(
     user_uuid = uuid.UUID(user_id)
 
     # Build query based on permissions
-    if check_permission(permissions, "sinas.templates.*.*.get:all"):
-        set_permission_used(req, "sinas.templates.*.*.get:all")
+    if check_permission(permissions, "sinas.templates.read:all"):
+        set_permission_used(req, "sinas.templates.read:all")
         # Admin - see all templates
         query = select(Template).order_by(Template.created_at.desc())
-    elif check_permission(permissions, "sinas.templates.*.*.get:group"):
-        set_permission_used(req, "sinas.templates.*.*.get:group")
-        # Can see own templates and group templates they have access to
-        user_groups = await get_user_group_ids(db, user_uuid)
-        query = select(Template).where(
-            or_(
-                Template.user_id == user_uuid,
-                and_(
-                    Template.group_id.in_(user_groups) if user_groups else False
-                )
-            )
-        ).order_by(Template.created_at.desc())
     else:
-        set_permission_used(req, "sinas.templates.*.*.get:own")
+        set_permission_used(req, "sinas.templates.read:own")
         # Own templates only
         query = select(Template).where(
             Template.user_id == user_uuid

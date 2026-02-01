@@ -71,7 +71,7 @@ async def list_packages(
     user_id: str = Depends(get_current_user)
 ):
     """List all approved global packages (visible to all authenticated users)."""
-    set_permission_used(request, "sinas.packages.get:own")
+    set_permission_used(request, "sinas.packages.read:own")
 
     # All packages are global, visible to everyone
     result = await db.execute(select(InstalledPackage))

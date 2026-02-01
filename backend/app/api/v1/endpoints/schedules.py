@@ -24,12 +24,12 @@ async def create_schedule(
     """Create a new scheduled job."""
     user_id, permissions = current_user_data
 
-    # Check namespace permission
-    namespace_perm = f"sinas.functions.{schedule_data.function_namespace}.post:own"
-    if not check_permission(permissions, namespace_perm):
-        set_permission_used(request, namespace_perm, has_perm=False)
-        raise HTTPException(status_code=403, detail=f"Not authorized to schedule functions in namespace '{schedule_data.function_namespace}'")
-    set_permission_used(request, namespace_perm)
+    # Check create permission
+    create_perm = "sinas.schedules.create:own"
+    if not check_permission(permissions, create_perm):
+        set_permission_used(request, create_perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create schedules")
+    set_permission_used(request, create_perm)
 
     # Check if schedule name already exists for this user
     result = await db.execute(
@@ -48,23 +48,10 @@ async def create_schedule(
     function = await Function.get_by_name(db, schedule_data.function_namespace, schedule_data.function_name, user_id)
     if not function:
         raise HTTPException(status_code=404, detail=f"Function '{schedule_data.function_namespace}/{schedule_data.function_name}' not found")
-
-    # Resolve group_name to group_id (group_name takes precedence if both provided)
-    final_group_id = schedule_data.group_id
-    if schedule_data.group_name:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == schedule_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{schedule_data.group_name}' not found")
-        final_group_id = group
-
     # Create schedule
     schedule = ScheduledJob(
         user_id=user_id,
-        group_id=final_group_id,
+        
         name=schedule_data.name,
         function_namespace=schedule_data.function_namespace,
         function_name=schedule_data.function_name,
@@ -80,14 +67,8 @@ async def create_schedule(
 
     # TODO: Register job with scheduler
 
-    # Load group name for response
+    
     response = ScheduledJobResponse.model_validate(schedule)
-    if schedule.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == schedule.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -104,30 +85,18 @@ async def list_schedules(
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.schedules.get:all"):
-        set_permission_used(request, "sinas.schedules.get:all")
+    if check_permission(permissions,"sinas.schedules.read:all"):
+        set_permission_used(request, "sinas.schedules.read:all")
         query = select(ScheduledJob)
     else:
-        set_permission_used(request, "sinas.schedules.get:own")
+        set_permission_used(request, "sinas.schedules.read:own")
         query = select(ScheduledJob).where(ScheduledJob.user_id == user_id)
 
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     schedules = result.scalars().all()
 
-    # Load group names for all schedules
-    from app.models.user import Group
-    responses = []
-    for schedule in schedules:
-        response = ScheduledJobResponse.model_validate(schedule)
-        if schedule.group_id:
-            group_result = await db.execute(
-                select(Group.name).where(Group.id == schedule.group_id)
-            )
-            response.group_name = group_result.scalar_one_or_none()
-        responses.append(response)
-
-    return responses
+    return [ScheduledJobResponse.model_validate(schedule) for schedule in schedules]
 
 
 @router.get("/{name}", response_model=ScheduledJobResponse)
@@ -146,22 +115,16 @@ async def get_schedule(
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.schedules.get:all"):
-        set_permission_used(request, "sinas.schedules.get:all")
+    if check_permission(permissions,"sinas.schedules.read:all"):
+        set_permission_used(request, "sinas.schedules.read:all")
     else:
         if schedule.user_id != user_id:
-            set_permission_used(request, "sinas.schedules.get:own", has_perm=False)
+            set_permission_used(request, "sinas.schedules.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this schedule")
-        set_permission_used(request, "sinas.schedules.get:own")
+        set_permission_used(request, "sinas.schedules.read:own")
 
-    # Load group name for response
+    
     response = ScheduledJobResponse.model_validate(schedule)
-    if schedule.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == schedule.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 
@@ -183,13 +146,13 @@ async def update_schedule(
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.schedules.put:all"):
-        set_permission_used(request, "sinas.schedules.put:all")
+    if check_permission(permissions,"sinas.schedules.update:all"):
+        set_permission_used(request, "sinas.schedules.update:all")
     else:
         if schedule.user_id != user_id:
-            set_permission_used(request, "sinas.schedules.put:own", has_perm=False)
+            set_permission_used(request, "sinas.schedules.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this schedule")
-        set_permission_used(request, "sinas.schedules.put:own")
+        set_permission_used(request, "sinas.schedules.update:own")
 
     # Update fields
     if schedule_data.function_name is not None:
@@ -217,33 +180,13 @@ async def update_schedule(
         schedule.input_data = schedule_data.input_data
     if schedule_data.is_active is not None:
         schedule.is_active = schedule_data.is_active
-
-    # Resolve group_name to group_id (group_name takes precedence)
-    if schedule_data.group_name is not None:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.id).where(Group.name == schedule_data.group_name)
-        )
-        group = result.scalar_one_or_none()
-        if not group:
-            raise HTTPException(status_code=400, detail=f"Group '{schedule_data.group_name}' not found")
-        schedule.group_id = group
-    elif schedule_data.group_id is not None:
-        schedule.group_id = schedule_data.group_id
-
     await db.commit()
     await db.refresh(schedule)
 
     # TODO: Update job in scheduler
 
-    # Load group name for response
+    
     response = ScheduledJobResponse.model_validate(schedule)
-    if schedule.group_id:
-        from app.models.user import Group
-        result = await db.execute(
-            select(Group.name).where(Group.id == schedule.group_id)
-        )
-        response.group_name = result.scalar_one_or_none()
 
     return response
 

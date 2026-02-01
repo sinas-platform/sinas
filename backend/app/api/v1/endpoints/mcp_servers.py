@@ -21,7 +21,7 @@ router = APIRouter()
 @router.post("/servers", response_model=MCPServerResponse, status_code=status.HTTP_201_CREATED)
 async def create_mcp_server(
     request: MCPServerCreate,
-    user_id: str = Depends(require_permission("sinas.mcp.post:all")),
+    user_id: str = Depends(require_permission("sinas.mcp_servers.create:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -47,7 +47,6 @@ async def create_mcp_server(
         url=request.url,
         protocol=request.protocol,
         api_key=request.api_key,
-        group_id=request.group_id,
         is_active=True,
         connection_status="disconnected"
     )
@@ -71,7 +70,7 @@ async def create_mcp_server(
 
 @router.get("/servers", response_model=List[MCPServerResponse])
 async def list_mcp_servers(
-    user_id: str = Depends(require_permission("sinas.mcp.get:all")),
+    user_id: str = Depends(require_permission("sinas.mcp_servers.read:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """List all MCP servers."""
@@ -86,7 +85,7 @@ async def list_mcp_servers(
 @router.get("/servers/{name}", response_model=MCPServerResponse)
 async def get_mcp_server(
     name: str,
-    user_id: str = Depends(require_permission("sinas.mcp.get:all")),
+    user_id: str = Depends(require_permission("sinas.mcp_servers.read:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Get an MCP server."""
@@ -105,7 +104,7 @@ async def get_mcp_server(
 async def update_mcp_server(
     name: str,
     request: MCPServerUpdate,
-    user_id: str = Depends(require_permission("sinas.mcp.put:all")),
+    user_id: str = Depends(require_permission("sinas.mcp_servers.update:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Update an MCP server."""
@@ -126,8 +125,6 @@ async def update_mcp_server(
         server.api_key = request.api_key
     if request.is_active is not None:
         server.is_active = request.is_active
-    if request.group_id is not None:
-        server.group_id = request.group_id
 
     await db.commit()
 
@@ -149,7 +146,7 @@ async def update_mcp_server(
 @router.delete("/servers/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_mcp_server(
     name: str,
-    user_id: str = Depends(require_permission("sinas.mcp.delete:all")),
+    user_id: str = Depends(require_permission("sinas.mcp_servers.delete:all")),
     db: AsyncSession = Depends(get_db)
 ):
     """Disconnect and delete an MCP server."""
@@ -173,7 +170,7 @@ async def delete_mcp_server(
 
 @router.get("/tools", response_model=List[dict])
 async def list_mcp_tools(
-    user_id: str = Depends(require_permission("sinas.mcp.get:all"))
+    user_id: str = Depends(require_permission("sinas.mcp_tools.read:all"))
 ):
     """List all available MCP tools."""
     tools = await mcp_client.get_available_tools()
@@ -184,7 +181,7 @@ async def list_mcp_tools(
 async def execute_mcp_tool(
     tool_name: str,
     request: MCPToolExecuteRequest,
-    user_id: str = Depends(require_permission("sinas.mcp.execute:all"))
+    user_id: str = Depends(require_permission("sinas.mcp_tools.execute:all"))
 ):
     """Execute an MCP tool directly."""
     try:

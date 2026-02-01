@@ -29,11 +29,11 @@ async def list_executions(
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.executions.get:all"):
-        set_permission_used(request, "sinas.executions.get:all")
+    if check_permission(permissions,"sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
         query = select(Execution)
     else:
-        set_permission_used(request, "sinas.executions.get:own")
+        set_permission_used(request, "sinas.executions.read:own")
         query = select(Execution).where(Execution.user_id == user_id)
 
     if function_name:
@@ -67,13 +67,13 @@ async def get_execution(
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.executions.get:all"):
-        set_permission_used(request, "sinas.executions.get:all")
+    if check_permission(permissions,"sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
     else:
         if execution.user_id != user_id:
-            set_permission_used(request, "sinas.executions.get:own", has_perm=False)
+            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this execution")
-        set_permission_used(request, "sinas.executions.get:own")
+        set_permission_used(request, "sinas.executions.read:own")
 
     return execution
 
@@ -97,13 +97,13 @@ async def get_execution_steps(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
 
-    if check_permission(permissions,"sinas.executions.get:all"):
-        set_permission_used(request, "sinas.executions.get:all")
+    if check_permission(permissions,"sinas.executions.read:all"):
+        set_permission_used(request, "sinas.executions.read:all")
     else:
         if execution.user_id != user_id:
-            set_permission_used(request, "sinas.executions.get:own", has_perm=False)
+            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to view this execution")
-        set_permission_used(request, "sinas.executions.get:own")
+        set_permission_used(request, "sinas.executions.read:own")
 
     # Get steps
     result = await db.execute(
@@ -137,13 +137,13 @@ async def continue_execution(
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.executions.put:all"):
-        set_permission_used(http_request, "sinas.executions.put:all")
+    if check_permission(permissions,"sinas.executions.update:all"):
+        set_permission_used(http_request, "sinas.executions.update:all")
     else:
         if execution.user_id != user_id:
-            set_permission_used(http_request, "sinas.executions.put:own", has_perm=False)
+            set_permission_used(http_request, "sinas.executions.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to continue this execution")
-        set_permission_used(http_request, "sinas.executions.put:own")
+        set_permission_used(http_request, "sinas.executions.update:own")
 
     # Check if execution is awaiting input
     if execution.status != ExecutionStatus.AWAITING_INPUT:
