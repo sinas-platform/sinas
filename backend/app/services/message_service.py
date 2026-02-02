@@ -36,6 +36,40 @@ class MessageService:
         self.skill_converter = SkillToolConverter()
         self.context_tools = StateTools()
 
+    def _validate_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Validate tool calls and filter out corrupted ones.
+        Returns only valid tool calls.
+        """
+        if not tool_calls:
+            return []
+
+        valid_tool_calls = []
+        for tc in tool_calls:
+            try:
+                # Check required fields
+                if not tc.get("id") or not tc.get("function", {}).get("name"):
+                    print(f"⚠️ Skipping tool call without id or name: {tc}")
+                    continue
+
+                # Validate arguments is valid JSON
+                args_str = tc.get("function", {}).get("arguments", "")
+                if args_str:
+                    json.loads(args_str)  # This will raise if invalid
+
+                valid_tool_calls.append(tc)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Invalid tool call arguments JSON: {e}")
+                print(f"   Tool call: {tc.get('function', {}).get('name')}")
+                print(f"   Arguments: {repr(args_str[:200])}")
+                # Skip this tool call - don't add to valid list
+                continue
+            except Exception as e:
+                print(f"⚠️ Error validating tool call: {e}")
+                continue
+
+        return valid_tool_calls
+
     async def create_chat_with_agent(
         self,
         agent_id: str,
@@ -527,7 +561,23 @@ class MessageService:
                 for tc in chunk["tool_calls"]:
                     # OpenAI sends tool calls with an index property in streaming
                     # First chunk has id/type/name, subsequent chunks have only arguments
-                    tc_index = tc.get("index", 0)
+                    tc_index = tc.get("index")
+
+                    # If no index provided, try to find by ID (for providers that send complete tool calls)
+                    if tc_index is None and tc.get("id"):
+                        # Look for existing tool call with this ID
+                        for idx, existing_tc in enumerate(tool_calls_list):
+                            if existing_tc.get("id") == tc["id"]:
+                                tc_index = idx
+                                break
+
+                        # If not found and this has an ID, it's a new tool call - append it
+                        if tc_index is None:
+                            tc_index = len(tool_calls_list)
+
+                    # If still no index, default to 0
+                    if tc_index is None:
+                        tc_index = 0
 
                     # Extend list if needed
                     while len(tool_calls_list) <= tc_index:
@@ -556,6 +606,10 @@ class MessageService:
 
         # Use accumulated tool calls
         tool_calls = tool_calls_list if tool_calls_list else []
+
+        # Validate tool calls before saving
+        if tool_calls:
+            tool_calls = self._validate_tool_calls(tool_calls)
 
         # Save assistant message after streaming completes
         assistant_message = Message(
@@ -1332,7 +1386,14 @@ class MessageService:
             if msg.content:
                 message_dict["content"] = msg.content
             if msg.tool_calls:
-                message_dict["tool_calls"] = msg.tool_calls
+                # Validate tool calls when loading from DB to filter out corrupted ones
+                validated_tool_calls = self._validate_tool_calls(msg.tool_calls)
+                if validated_tool_calls:
+                    message_dict["tool_calls"] = validated_tool_calls
+                elif msg.tool_calls:  # Had tool calls but all were invalid
+                    # Skip this message entirely to avoid breaking the conversation
+                    print(f"⚠️ Skipping message {msg.id} with corrupted tool calls")
+                    continue
             if msg.tool_call_id:
                 message_dict["tool_call_id"] = msg.tool_call_id
             if msg.name:
@@ -1361,7 +1422,23 @@ class MessageService:
             # Accumulate tool calls (streaming sends deltas with index)
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    tc_index = tc.get("index", 0)
+                    tc_index = tc.get("index")
+
+                    # If no index provided, try to find by ID (for providers that send complete tool calls)
+                    if tc_index is None and tc.get("id"):
+                        # Look for existing tool call with this ID
+                        for idx, existing_tc in enumerate(tool_calls_list):
+                            if existing_tc.get("id") == tc["id"]:
+                                tc_index = idx
+                                break
+
+                        # If not found and this has an ID, it's a new tool call - append it
+                        if tc_index is None:
+                            tc_index = len(tool_calls_list)
+
+                    # If still no index, default to 0
+                    if tc_index is None:
+                        tc_index = 0
 
                     # Extend list if needed
                     while len(tool_calls_list) <= tc_index:

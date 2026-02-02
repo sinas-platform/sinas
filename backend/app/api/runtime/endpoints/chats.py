@@ -242,6 +242,11 @@ async def stream_message(
 
                 # Try to yield - this will raise exception if client disconnected
                 try:
+                    # Ensure chunk is properly formatted
+                    if not isinstance(chunk, dict):
+                        print(f"⚠️  WARNING: Chunk is not a dict: {type(chunk)} - {repr(chunk)[:200]}")
+                        chunk = {"content": str(chunk)}
+
                     yield {
                         "event": "message",
                         "data": json.dumps(chunk)
