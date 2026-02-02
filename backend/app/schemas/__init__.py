@@ -11,3 +11,4 @@ from .role import *
 from .user import *
 from .state import *
 from .api_key import *
+from .skill import *

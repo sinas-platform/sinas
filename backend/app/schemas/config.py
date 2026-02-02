@@ -64,6 +64,20 @@ class FunctionConfig(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+class SkillConfig(BaseModel):
+    """Skill configuration"""
+    namespace: str = "default"
+    name: str
+    description: str  # What this skill helps with (shown to LLM)
+    content: str  # Markdown instructions (retrieved on demand)
+
+
+class EnabledSkillConfigYaml(BaseModel):
+    """Configuration for an enabled skill in agent config"""
+    skill: str = Field(..., description="Skill identifier in format 'namespace/name'")
+    preload: bool = Field(default=False, description="If true, inject into system prompt instead of exposing as tool")
+
+
 class AgentConfig(BaseModel):
     """Agent configuration"""
     namespace: str = "default"
@@ -79,6 +93,7 @@ class AgentConfig(BaseModel):
     functionParameters: Dict[str, Any] = Field(default_factory=dict)  # {"namespace/name": {"param": "value or {{template}}"}}
     enabledMcpTools: List[str] = Field(default_factory=list)
     enabledAgents: List[str] = Field(default_factory=list)  # Other agents this agent can call
+    enabledSkills: List[Union[str, EnabledSkillConfigYaml]] = Field(default_factory=list)  # List of skill configs (string for backward compat, dict for preload)
     stateNamespacesReadonly: List[str] = Field(default_factory=list)  # Readonly state namespaces
     stateNamespacesReadwrite: List[str] = Field(default_factory=list)  # Read-write state namespaces
 
@@ -122,6 +137,7 @@ class ConfigSpec(BaseModel):
     users: List[UserConfig] = Field(default_factory=list)
     llmProviders: List[LLMProviderConfig] = Field(default_factory=list)
     mcpServers: List[MCPServerConfig] = Field(default_factory=list)
+    skills: List[SkillConfig] = Field(default_factory=list)
     functions: List[FunctionConfig] = Field(default_factory=list)
     agents: List[AgentConfig] = Field(default_factory=list)
     webhooks: List[WebhookConfig] = Field(default_factory=list)

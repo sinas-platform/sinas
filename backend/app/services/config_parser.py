@@ -97,6 +97,10 @@ class ConfigParser:
             f"{a.get('namespace', 'default')}/{a['name']}"
             for a in spec.get("agents", [])
         }
+        skill_names = {
+            f"{s.get('namespace', 'default')}/{s['name']}"
+            for s in spec.get("skills", [])
+        }
         llm_provider_names = {p["name"] for p in spec.get("llmProviders", [])}
         mcp_server_names = {s["name"] for s in spec.get("mcpServers", [])}
 
@@ -104,6 +108,7 @@ class ConfigParser:
         db_group_names: Set[str] = set()
         db_function_names: Set[str] = set()
         db_agent_names: Set[str] = set()
+        db_skill_names: Set[str] = set()
         db_llm_provider_names: Set[str] = set()
         db_mcp_server_names: Set[str] = set()
 
@@ -111,6 +116,7 @@ class ConfigParser:
             from app.models.user import Role
             from app.models.function import Function
             from app.models.agent import Agent
+            from app.models.skill import Skill
             from app.models.llm_provider import LLMProvider
             from app.models.mcp import MCPServer
 
@@ -118,12 +124,15 @@ class ConfigParser:
             result = await db.execute(select(Role.name))
             db_group_names = {name for (name,) in result.fetchall()}
 
-            # Functions and agents use namespace/name format
+            # Functions, agents, and skills use namespace/name format
             result = await db.execute(select(Function.namespace, Function.name))
             db_function_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
 
             result = await db.execute(select(Agent.namespace, Agent.name))
             db_agent_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
+
+            result = await db.execute(select(Skill.namespace, Skill.name))
+            db_skill_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
 
             result = await db.execute(select(LLMProvider.name))
             db_llm_provider_names = {name for (name,) in result.fetchall()}
@@ -135,6 +144,7 @@ class ConfigParser:
         all_group_names = group_names | db_group_names
         all_function_names = function_names | db_function_names
         all_agent_names = agent_names | db_agent_names
+        all_skill_names = skill_names | db_skill_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
         all_mcp_server_names = mcp_server_names | db_mcp_server_names
 
@@ -180,6 +190,15 @@ class ConfigParser:
                         errors.append(ConfigValidationError(
                             path=f"spec.agents[{i}].enabledAgents",
                             message=f"Referenced agent '{agent_ref}' not defined"
+                        ))
+
+            # Validate enabled skill references
+            if "enabledSkills" in agent and agent["enabledSkills"]:
+                for skill_ref in agent["enabledSkills"]:
+                    if skill_ref not in all_skill_names:
+                        errors.append(ConfigValidationError(
+                            path=f"spec.agents[{i}].enabledSkills",
+                            message=f"Referenced skill '{skill_ref}' not defined"
                         ))
 
             # Validate MCP tool references

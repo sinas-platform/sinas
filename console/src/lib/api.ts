@@ -42,6 +42,9 @@ import type {
   TemplateCreate,
   TemplateUpdate,
   TemplateRenderResponse,
+  Skill,
+  SkillCreate,
+  SkillUpdate,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -648,6 +651,31 @@ class APIClient {
   async scaleWorkers(targetCount: number): Promise<any> {
     const response = await this.configClient.post('/workers/scale', { target_count: targetCount });
     return response.data;
+  }
+
+  // Skills
+  async listSkills(): Promise<Skill[]> {
+    const response = await this.configClient.get('/skills');
+    return response.data;
+  }
+
+  async getSkill(namespace: string, name: string): Promise<Skill> {
+    const response = await this.configClient.get(`/skills/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createSkill(data: SkillCreate): Promise<Skill> {
+    const response = await this.configClient.post('/skills', data);
+    return response.data;
+  }
+
+  async updateSkill(namespace: string, name: string, data: SkillUpdate): Promise<Skill> {
+    const response = await this.configClient.put(`/skills/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteSkill(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/skills/${namespace}/${name}`);
   }
 
   // Templates

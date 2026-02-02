@@ -1,8 +1,14 @@
 """Agent schemas."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import uuid
+
+
+class EnabledSkillConfig(BaseModel):
+    """Configuration for an enabled skill."""
+    skill: str = Field(..., description="Skill identifier in format 'namespace/name'")
+    preload: bool = Field(default=False, description="If true, inject into system prompt instead of exposing as tool")
 
 
 class AgentCreate(BaseModel):
@@ -20,6 +26,7 @@ class AgentCreate(BaseModel):
     enabled_functions: Optional[List[str]] = None  # List of "namespace/name" strings
     enabled_mcp_tools: Optional[List[str]] = None
     enabled_agents: Optional[List[str]] = None  # List of agent names that can be called as tools
+    enabled_skills: Optional[List[EnabledSkillConfig]] = None  # List of skill configs with preload option
     function_parameters: Optional[Dict[str, Any]] = None  # {"namespace/name": {"param": "value or {{template}}"}}
     mcp_tool_parameters: Optional[Dict[str, Any]] = None
     state_namespaces_readonly: Optional[List[str]] = None  # Readonly state namespaces
@@ -41,6 +48,7 @@ class AgentUpdate(BaseModel):
     enabled_functions: Optional[List[str]] = None  # List of "namespace/name" strings
     enabled_mcp_tools: Optional[List[str]] = None
     enabled_agents: Optional[List[str]] = None  # List of agent names that can be called as tools
+    enabled_skills: Optional[List[EnabledSkillConfig]] = None  # List of skill configs with preload option
     function_parameters: Optional[Dict[str, Any]] = None  # {"namespace/name": {"param": "value or {{template}}"}}
     mcp_tool_parameters: Optional[Dict[str, Any]] = None
     state_namespaces_readonly: Optional[List[str]] = None
@@ -65,6 +73,7 @@ class AgentResponse(BaseModel):
     enabled_functions: List[str]  # List of "namespace/name" strings
     enabled_mcp_tools: List[str]
     enabled_agents: List[str]  # List of agent names that can be called as tools
+    enabled_skills: List[EnabledSkillConfig]  # List of skill configs with preload option
     function_parameters: Dict[str, Any]  # {"namespace/name": {"param": "value or {{template}}"}}
     mcp_tool_parameters: Dict[str, Any]
     state_namespaces_readonly: List[str]
@@ -72,6 +81,24 @@ class AgentResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    @field_validator('enabled_skills', mode='before')
+    @classmethod
+    def convert_enabled_skills(cls, v):
+        """Convert dicts from database to EnabledSkillConfig objects."""
+        if not v:
+            return []
+
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(EnabledSkillConfig(**item))
+            elif isinstance(item, EnabledSkillConfig):
+                result.append(item)
+            else:
+                # Fallback for unexpected types
+                result.append(EnabledSkillConfig(skill=str(item), preload=False))
+        return result
 
     class Config:
         from_attributes = True

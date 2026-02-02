@@ -144,13 +144,15 @@ Agents are AI assistants with configurable LLM providers, tools, and behavior.
   - `function_parameters`: Default parameter values per function (supports Jinja2)
   - `enabled_mcp_tools`: List of MCP tools the agent can use
   - `enabled_agents`: Other agents this agent can call as tools
+  - `enabled_skills`: List of skill configs with `{"skill": "namespace/name", "preload": bool}` - preload injects into system prompt
   - `state_namespaces_readonly`/`state_namespaces_readwrite`: State access permissions
 
 **Agent Features:**
-- **Tool Calling**: Agents can call functions, other agents, and MCP tools
+- **Tool Calling**: Agents can call functions, other agents, MCP tools, and retrieve skills
 - **Function Parameter Defaults**: Configure default parameter values per function
   - Example: `{"email/send_email": {"sender": "{{company_email}}", "priority": "high"}}`
   - Supports Jinja2 templates that reference agent input variables
+- **Skills**: Retrieve instruction modules on-demand (progressive) or preload into system prompt (always-on)
 - **Multi-Modal Support**: Images, audio, files in chat messages
 - **Streaming Responses**: SSE (Server-Sent Events) for real-time output
 
@@ -159,6 +161,77 @@ Agents are AI assistants with configurable LLM providers, tools, and behavior.
 - `app/services/message_service.py` - Chat message handling and LLM orchestration
 - `app/services/function_tools.py` - Function tool conversion and parameter defaults
 - `app/api/runtime/endpoints/chats.py` - Chat endpoints with streaming
+
+### Skills System
+
+**Skills** are reusable instruction modules that agents can retrieve on-demand for guidance on specific tasks.
+
+**How It Works:**
+1. Skills are stored in the database with `namespace`, `name`, `description`, and `content` (markdown)
+2. Agents enable skills via `enabled_skills` with two modes:
+   - **Progressive disclosure** (`preload: false`): Exposed as tools, LLM calls when needed
+   - **Preloaded** (`preload: true`): Injected into system prompt, always present
+3. Progressive skills are exposed as tools to the LLM with their description
+4. When the LLM calls `get_skill_namespace_name()`, the markdown content is returned
+5. Preloaded skills are injected into the system prompt at chat initialization
+
+**Example:**
+```yaml
+skills:
+  - namespace: "default"
+    name: "tone_guidelines"
+    description: "Professional communication tone guidelines"
+    content: |
+      # Communication Tone
+
+      Always maintain a professional, helpful tone.
+      Avoid jargon. Be concise but thorough.
+
+  - namespace: "default"
+    name: "web_research"
+    description: "Get instructions for conducting thorough web research"
+    content: |
+      # Web Research Guidelines
+
+      When researching topics:
+      1. Use multiple search queries with different phrasings
+      2. Prioritize authoritative sources (.gov, .edu, news)
+      3. Cross-reference facts across 3+ sources
+      4. Always cite sources with URLs
+
+agents:
+  - namespace: "support"
+    name: "research_assistant"
+    enabled_skills:
+      - skill: "default/tone_guidelines"
+        preload: true  # Always present in system prompt
+      - skill: "default/web_research"
+        preload: false  # Tool that LLM can call when needed (default)
+```
+
+**Runtime Behavior:**
+- **Preloaded skills**: Tone guidelines are injected into system prompt at chat start → LLM always follows them
+- **Progressive skills**: User asks "Research climate policy trends"
+  - LLM decides it needs research guidelines → Calls `get_skill_default_web_research()`
+  - System returns markdown content → LLM follows guidelines
+  - LLM performs research using web search following best practices
+
+**When to Preload vs. Progressive:**
+- **Preload**: Core behavior/persona that should always apply (tone, safety rules, universal guidelines)
+- **Progressive**: Task-specific expertise that may not be needed in every conversation (research methods, specific domain knowledge)
+
+**Key Files:**
+- `app/models/skill.py` - Skill model
+- `app/services/skill_tools.py` - Converts skills to LLM tools, handles retrieval
+- `app/api/v1/endpoints/skills.py` - CRUD endpoints with namespace-based permissions
+- `console/src/pages/Skills.tsx` - Frontend skill management
+
+**Permissions:**
+- `sinas.skills.create:own` - Create skills
+- `sinas.skills/{namespace}/{name}.read:own` - Read specific skill
+- `sinas.skills/{namespace}/{name}.update:own` - Update skill
+- `sinas.skills/{namespace}/{name}.delete:own` - Delete skill
+- Admins get `sinas.*:all` (full access)
 
 ### Function Execution System
 

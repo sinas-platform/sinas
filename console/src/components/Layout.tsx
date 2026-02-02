@@ -19,6 +19,7 @@ import {
   Activity,
   Webhook,
   FileText,
+  Lightbulb,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -33,6 +34,7 @@ const navigationSections = [
     name: 'CONFIGURE',
     items: [
       { name: 'Agents', href: '/agents', icon: Bot },
+      { name: 'Skills', href: '/skills', icon: Lightbulb },
       { name: 'Functions', href: '/functions', icon: Code },
       { name: 'Templates', href: '/templates', icon: FileText },
       { name: 'Webhooks', href: '/webhooks', icon: Webhook },

@@ -49,6 +49,7 @@ class Agent(Base):
     enabled_functions: Mapped[List[str]] = mapped_column(JSON, default=list)  # List of "namespace/name" strings
     enabled_mcp_tools: Mapped[List[str]] = mapped_column(JSON, default=list)
     enabled_agents: Mapped[List[str]] = mapped_column(JSON, default=list)  # List of agent names
+    enabled_skills: Mapped[List[Dict[str, Any]]] = mapped_column(JSON, default=list)  # List of {"skill": "namespace/name", "preload": bool}
     function_parameters: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # {"namespace/name": {"param": "value or {{template}}"}}
     mcp_tool_parameters: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 

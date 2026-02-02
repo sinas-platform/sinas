@@ -13,6 +13,7 @@ from app.models.user import User, Role, UserRole, RolePermission
 from app.models.llm_provider import LLMProvider
 from app.models.mcp import MCPServer
 from app.models.function import Function, FunctionVersion
+from app.models.skill import Skill
 from app.models.agent import Agent
 from app.models.webhook import Webhook
 from app.models.schedule import ScheduledJob
@@ -99,6 +100,7 @@ class ConfigApplyService:
             await self._apply_mcp_servers(config.spec.mcpServers, dry_run)
 
             await self._apply_functions(config.spec.functions, dry_run)
+            await self._apply_skills(config.spec.skills, dry_run)
             await self._apply_agents(config.spec.agents, dry_run)
             await self._apply_webhooks(config.spec.webhooks, dry_run)
             await self._apply_schedules(config.spec.schedules, dry_run)
@@ -588,6 +590,123 @@ class ConfigApplyService:
                 normalized.append(func_name)
         return normalized
 
+    def _normalize_skill_references(self, skills: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Normalize skill references to dict format with skill and preload keys.
+        Supports backward compatibility with string format.
+
+        Args:
+            skills: List of skill configs (strings or dicts)
+
+        Returns:
+            List of normalized skill configs as dicts
+        """
+        normalized = []
+        for skill_item in skills:
+            if isinstance(skill_item, str):
+                # Old format: "namespace/name"
+                skill_ref = skill_item
+                if "/" not in skill_ref:
+                    skill_ref = f"default/{skill_ref}"
+                normalized.append({"skill": skill_ref, "preload": False})
+            elif isinstance(skill_item, dict):
+                # New format: {"skill": "namespace/name", "preload": bool}
+                skill_ref = skill_item.get("skill", "")
+                if "/" not in skill_ref:
+                    skill_ref = f"default/{skill_ref}"
+                normalized.append({
+                    "skill": skill_ref,
+                    "preload": skill_item.get("preload", False)
+                })
+            else:
+                # Pydantic model (EnabledSkillConfigYaml)
+                skill_ref = skill_item.skill
+                if "/" not in skill_ref:
+                    skill_ref = f"default/{skill_ref}"
+                normalized.append({
+                    "skill": skill_ref,
+                    "preload": skill_item.preload
+                })
+        return normalized
+
+    async def _apply_skills(self, skills, dry_run: bool):
+        """Apply skill configurations"""
+        for skill_config in skills:
+            try:
+                stmt = select(Skill).where(
+                    Skill.namespace == skill_config.namespace,
+                    Skill.name == skill_config.name
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash({
+                    "namespace": skill_config.namespace,
+                    "name": skill_config.name,
+                    "description": skill_config.description,
+                    "content": skill_config.content,
+                })
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"Skill '{skill_config.namespace}/{skill_config.name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change("unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                        continue
+
+                    if not dry_run:
+                        # Update skill
+                        existing.description = skill_config.description
+                        existing.content = skill_config.content
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "skills", f"{skill_config.namespace}/{skill_config.name}")
+
+                else:
+                    if not dry_run:
+                        # Get admin user for created_by (skills are typically system-wide)
+                        # Use first admin user
+                        from app.models.user import Role, UserRole
+                        stmt = select(Role).where(Role.name == "Admins")
+                        result = await self.db.execute(stmt)
+                        admin_role = result.scalar_one_or_none()
+
+                        if not admin_role:
+                            self.errors.append(f"Admins role not found for skill '{skill_config.namespace}/{skill_config.name}'")
+                            continue
+
+                        stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
+                        result = await self.db.execute(stmt)
+                        admin_member = result.scalar_one_or_none()
+
+                        if not admin_member:
+                            self.errors.append(f"No admin users found for skill '{skill_config.namespace}/{skill_config.name}'")
+                            continue
+
+                        new_skill = Skill(
+                            namespace=skill_config.namespace,
+                            name=skill_config.name,
+                            description=skill_config.description,
+                            content=skill_config.content,
+                            user_id=admin_member.user_id,
+                            is_active=True,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_skill)
+
+                    self._track_change("create", "skills", f"{skill_config.namespace}/{skill_config.name}")
+
+            except Exception as e:
+                self.errors.append(f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}")
+
     async def _apply_agents(self, agents, dry_run: bool):
         """Apply agent configurations"""
         for agent_config in agents:
@@ -604,6 +723,11 @@ class ConfigApplyService:
                     agent_config.enabledFunctions
                 ) if agent_config.enabledFunctions else []
 
+                # Normalize skill references to dict format
+                normalized_skills = self._normalize_skill_references(
+                    agent_config.enabledSkills
+                ) if agent_config.enabledSkills else []
+
                 config_hash = self._calculate_hash({
                     "namespace": agent_config.namespace,
                     "name": agent_config.name,
@@ -617,6 +741,7 @@ class ConfigApplyService:
                     "function_parameters": agent_config.functionParameters if agent_config.functionParameters else {},
                     "enabled_mcp_tools": sorted(agent_config.enabledMcpTools) if agent_config.enabledMcpTools else [],
                     "enabled_agents": sorted(agent_config.enabledAgents) if agent_config.enabledAgents else [],
+                    "enabled_skills": sorted(normalized_skills, key=lambda x: x["skill"]) if normalized_skills else [],
                     "state_namespaces_readonly": sorted(agent_config.stateNamespacesReadonly) if agent_config.stateNamespacesReadonly else [],
                     "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite) if agent_config.stateNamespacesReadwrite else [],
                 })
@@ -651,6 +776,7 @@ class ConfigApplyService:
                         existing.function_parameters = agent_config.functionParameters
                         existing.enabled_mcp_tools = agent_config.enabledMcpTools
                         existing.enabled_agents = agent_config.enabledAgents
+                        existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
                         existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
                         existing.config_checksum = config_hash
@@ -692,6 +818,7 @@ class ConfigApplyService:
                             function_parameters=agent_config.functionParameters,
                             enabled_mcp_tools=agent_config.enabledMcpTools,
                             enabled_agents=agent_config.enabledAgents,
+                            enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,
                             state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
                             user_id=member.user_id,

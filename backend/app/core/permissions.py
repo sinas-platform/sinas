@@ -278,6 +278,12 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.functions.delete:own": True,
         "sinas.functions/*/*.execute:own": True,  # Execute specific functions
 
+        # Skills (namespaced: namespace/name)
+        "sinas.skills.create:own": True,
+        "sinas.skills.read:own": True,
+        "sinas.skills.update:own": True,
+        "sinas.skills.delete:own": True,
+
         # Webhooks (non-namespaced)
         "sinas.webhooks.create:own": True,
         "sinas.webhooks.read:own": True,

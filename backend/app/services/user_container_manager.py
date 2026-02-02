@@ -367,7 +367,10 @@ sys.exit(1)
         db: AsyncSession,
     ) -> Dict[str, Any]:
         """Execute a function in user's container with inline code (no pre-loading needed)."""
+        container_get_start = time.time()
         container = await self.get_or_create_container(user_id, db)
+        container_get_elapsed = time.time() - container_get_start
+        print(f"⏱️  [TIMING] get_or_create_container took {container_get_elapsed:.3f}s")
 
         # Update last used time
         async with self.container_lock:
@@ -412,6 +415,8 @@ sys.exit(1)
 
         try:
             # Execute via exec_run (run in thread pool to avoid blocking)
+            exec_start = time.time()
+            print(f"⏱️  [TIMING] Starting container exec_run for {function_namespace}/{function_name}")
             exec_result = await asyncio.to_thread(
                 container.exec_run,
                 cmd=['python3', '-c', f'''
@@ -446,6 +451,9 @@ sys.exit(1)
 '''],
                 demux=True,
             )
+
+            exec_elapsed = time.time() - exec_start
+            print(f"⏱️  [TIMING] Container exec_run completed in {exec_elapsed:.3f}s")
 
             stdout, stderr = exec_result.output
 

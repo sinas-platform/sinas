@@ -12,6 +12,7 @@ from .mcp import MCPServer
 from .state import State
 from .pending_approval import PendingToolApproval
 from .template import Template
+from .skill import Skill
 
 __all__ = [
     "Base",
@@ -37,4 +38,5 @@ __all__ = [
     "State",
     "PendingToolApproval",
     "Template",
+    "Skill",
 ]

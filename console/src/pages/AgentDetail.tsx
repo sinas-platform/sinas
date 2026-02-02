@@ -23,6 +23,12 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: skills } = useQuery({
+    queryKey: ['skills'],
+    queryFn: () => apiClient.listSkills(),
+    retry: false,
+  });
+
   const { data: states } = useQuery({
     queryKey: ['states'],
     queryFn: () => apiClient.listStates(),
@@ -48,7 +54,7 @@ export function AgentDetail() {
   });
 
   const [formData, setFormData] = useState<AssistantUpdate>({});
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'functions' | 'mcp' | 'states'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'mcp' | 'states'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
 
   // Initialize form data when agent loads
@@ -70,6 +76,7 @@ export function AgentDetail() {
         enabled_functions: agent.enabled_functions || [],
         enabled_mcp_tools: agent.enabled_mcp_tools || [],
         enabled_agents: agent.enabled_agents || [],
+        enabled_skills: agent.enabled_skills || [],
         function_parameters: agent.function_parameters || {},
         mcp_tool_parameters: agent.mcp_tool_parameters || {},
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
@@ -392,6 +399,17 @@ export function AgentDetail() {
             </button>
             <button
               type="button"
+              onClick={() => setToolsTab('skills')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'skills'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Skills
+            </button>
+            <button
+              type="button"
               onClick={() => setToolsTab('functions')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'functions'
@@ -474,6 +492,86 @@ export function AgentDetail() {
                 ) : (
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <p className="text-sm text-gray-500">No other agents available.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Skills Tab */}
+            {toolsTab === 'skills' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable skills that this agent can retrieve for instructions. Mark as "Preload" to inject into system prompt instead of exposing as tool.
+                </p>
+                {skills && skills.length > 0 ? (
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-96 overflow-y-auto">
+                    {skills.map((skill: any) => {
+                      const skillIdentifier = `${skill.namespace}/${skill.name}`;
+                      const current = formData.enabled_skills || agent.enabled_skills || [];
+                      const skillConfig = current.find((s: any) => s.skill === skillIdentifier);
+                      const isEnabled = !!skillConfig;
+                      const isPreloaded = skillConfig?.preload || false;
+
+                      return (
+                        <div
+                          key={skill.id}
+                          className="flex items-start p-2 hover:bg-gray-50 rounded"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isEnabled}
+                            onChange={(e) => {
+                              const current = formData.enabled_skills || agent.enabled_skills || [];
+                              const updated = e.target.checked
+                                ? [...current, { skill: skillIdentifier, preload: false }]
+                                : current.filter((s: any) => s.skill !== skillIdentifier);
+                              setFormData({ ...formData, enabled_skills: updated });
+                            }}
+                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                          />
+                          <div className="ml-3 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-medium text-gray-900 font-mono">
+                                {skillIdentifier}
+                              </span>
+                              {!skill.is_active && (
+                                <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">
+                                  Inactive
+                                </span>
+                              )}
+                            </div>
+                            {skill.description && (
+                              <p className="text-xs text-gray-500 mt-0.5">{skill.description}</p>
+                            )}
+                            {isEnabled && (
+                              <label className="flex items-center mt-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isPreloaded}
+                                  onChange={(e) => {
+                                    const current = formData.enabled_skills || agent.enabled_skills || [];
+                                    const updated = current.map((s: any) =>
+                                      s.skill === skillIdentifier
+                                        ? { ...s, preload: e.target.checked }
+                                        : s
+                                    );
+                                    setFormData({ ...formData, enabled_skills: updated });
+                                  }}
+                                  className="w-3 h-3 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                />
+                                <span className="ml-2 text-xs text-gray-600">
+                                  Preload (inject into system prompt)
+                                </span>
+                              </label>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <p className="text-sm text-gray-500">No skills available. Create skills to use them with agents.</p>
                   </div>
                 )}
               </div>

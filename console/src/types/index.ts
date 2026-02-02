@@ -146,6 +146,12 @@ export interface ApprovalRequiredEvent {
   arguments: Record<string, any>;
 }
 
+// Skills configuration for agents
+export interface EnabledSkillConfig {
+  skill: string;  // "namespace/name"
+  preload: boolean;  // If true, inject into system prompt instead of exposing as tool
+}
+
 // Assistants (Agents)
 export interface Assistant {
   id: string;
@@ -164,6 +170,7 @@ export interface Assistant {
   enabled_functions: string[];
   enabled_mcp_tools: string[];
   enabled_agents: string[];
+  enabled_skills: EnabledSkillConfig[];
   function_parameters: Record<string, any>;
   mcp_tool_parameters: Record<string, any>;
   state_namespaces_readonly: string[] | null;
@@ -188,6 +195,7 @@ export interface AssistantCreate {
   enabled_functions?: string[];
   enabled_mcp_tools?: string[];
   enabled_agents?: string[];
+  enabled_skills?: EnabledSkillConfig[];
   function_parameters?: Record<string, any>;
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
@@ -209,6 +217,7 @@ export interface AssistantUpdate {
   enabled_functions?: string[];
   enabled_mcp_tools?: string[];
   enabled_agents?: string[];
+  enabled_skills?: EnabledSkillConfig[];
   function_parameters?: Record<string, any>;
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
@@ -518,4 +527,35 @@ export interface TemplateRenderResponse {
   title?: string;
   html_content: string;
   text_content?: string;
+}
+
+// Skills
+export interface Skill {
+  id: string;
+  namespace: string;
+  name: string;
+  description: string;
+  content: string;
+  user_id: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string;
+  managed_by?: string;
+  config_name?: string;
+  config_checksum?: string;
+}
+
+export interface SkillCreate {
+  namespace?: string;
+  name: string;
+  description: string;
+  content: string;
+}
+
+export interface SkillUpdate {
+  namespace?: string;
+  name?: string;
+  description?: string;
+  content?: string;
+  is_active?: boolean;
 }

@@ -2,6 +2,7 @@
 import ast
 import asyncio
 import json
+import logging
 import time
 import traceback
 import uuid
@@ -18,6 +19,8 @@ from app.models.execution import Execution, StepExecution, ExecutionStatus
 from app.core.database import AsyncSessionLocal
 from app.services.tracking import ExecutionTracker
 from app.services.clickhouse_logger import clickhouse_logger
+
+logger = logging.getLogger(__name__)
 
 
 class FunctionExecutionError(Exception):
@@ -368,6 +371,7 @@ class FunctionExecutor:
                 # Route execution based on shared_pool setting
                 if function.shared_pool:
                     # Execute in shared worker container pool
+                    print(f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in shared pool")
                     exec_result = await self._execute_in_shared_pool(
                         function=function,
                         input_data=input_data,
@@ -379,9 +383,13 @@ class FunctionExecutor:
                         chat_id=chat_id,
                         db=db
                     )
+                    elapsed = time.time() - start_time
+                    print(f"⏱️  [TIMING] Shared pool execution completed in {elapsed:.3f}s")
                 else:
                     # Execute in isolated Docker container (per-user, untrusted code)
+                    print(f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in isolated container for user {user_id}")
                     print(f"🐳 CONTAINER: Executing {function_namespace}/{function_name} in isolated container for user {user_id}")
+                    container_start = time.time()
                     exec_result = await self.container_manager.execute_function(
                         user_id=user_id,
                         user_email=user_email,
@@ -395,6 +403,8 @@ class FunctionExecutor:
                         chat_id=chat_id,
                         db=db,
                     )
+                    container_elapsed = time.time() - container_start
+                    print(f"⏱️  [TIMING] Container execution completed in {container_elapsed:.3f}s")
 
                 if exec_result.get('status') == 'failed':
                     raise FunctionExecutionError(exec_result.get('error', 'Unknown error'))

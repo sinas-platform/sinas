@@ -1,6 +1,7 @@
 """Message service for chat processing with tool calling."""
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional, AsyncIterator
 from datetime import datetime, timezone
 
@@ -15,6 +16,7 @@ from app.models.function import Function
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.function_tools import FunctionToolConverter
+from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
 from app.services.mcp import mcp_client
 from app.services.execution_engine import executor
@@ -31,6 +33,7 @@ class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.function_converter = FunctionToolConverter()
+        self.skill_converter = SkillToolConverter()
         self.context_tools = StateTools()
 
     async def create_chat_with_agent(
@@ -375,7 +378,9 @@ class MessageService:
                             "Please use streaming mode to handle approval flow."
                         )
 
-            return await self._handle_tool_calls(
+            # Consume the generator to get the final message (non-streaming)
+            final_msg = None
+            async for chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
                 user_token=user_token,
@@ -386,7 +391,15 @@ class MessageService:
                 temperature=prep["final_temperature"],
                 max_tokens=prep["final_max_tokens"],
                 tools=prep["tools"]
+            ):
+                # In non-streaming mode, we just consume chunks but don't yield them
+                pass
+
+            # After generator completes, return the final message from DB
+            result = await self.db.execute(
+                select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(1)
             )
+            return result.scalar_one()
 
         # Save assistant message
         assistant_message = Message(
@@ -596,8 +609,8 @@ class MessageService:
                 # PAUSE - don't execute tools yet, wait for approval
                 return
 
-            # No approval needed - execute tools immediately
-            await self._handle_tool_calls(
+            # No approval needed - execute tools immediately and stream the response
+            async for chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
                 user_token=user_token,
@@ -608,7 +621,8 @@ class MessageService:
                 temperature=final_temperature,
                 max_tokens=max_tokens,
                 tools=tools
-            )
+            ):
+                yield chunk
 
     def _parse_function_name(self, tool_name: str) -> tuple[Optional[str], Optional[str]]:
         """
@@ -745,6 +759,15 @@ class MessageService:
                         system_content = agent.system_prompt
                 else:
                     system_content = agent.system_prompt
+
+            # Inject preloaded skills content into system prompt
+            if agent and agent.enabled_skills:
+                preloaded_content = await self.skill_converter.get_preloaded_skills_content(
+                    db=self.db,
+                    enabled_skills=agent.enabled_skills
+                )
+                if preloaded_content:
+                    system_content += f"\n\n# Preloaded Skills\n\n{preloaded_content}"
 
             # Add output schema instruction if agent has one
             if agent and agent.output_schema and agent.output_schema.get("properties"):
@@ -979,6 +1002,14 @@ class MessageService:
             )
             tools.extend(mcp_tools)
 
+        # Get skill tools (only if list has items - opt-in)
+        if agent.enabled_skills and len(agent.enabled_skills) > 0:
+            skill_tools = await self.skill_converter.get_available_skills(
+                db=self.db,
+                enabled_skills=agent.enabled_skills
+            )
+            tools.extend(skill_tools)
+
         # Check for paused executions belonging to this chat
         result = await self.db.execute(
             select(Execution).where(
@@ -1197,10 +1228,25 @@ class MessageService:
                         arguments=arguments,
                         enabled_agent_ids=enabled_agent_ids
                     )
+                elif tool_name.startswith("get_skill_"):
+                    # Handle skill tool calls - return skill content (markdown instructions)
+                    start_time = time.time()
+                    print(f"⏱️  [TIMING] Starting skill retrieval: {tool_name}")
+                    result = await self.skill_converter.handle_skill_tool_call(
+                        db=self.db,
+                        tool_name=tool_name,
+                        arguments=arguments
+                    )
+                    elapsed = time.time() - start_time
+                    print(f"⏱️  [TIMING] Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
+                    if result is None:
+                        result = {"error": f"Skill not found for tool: {tool_name}"}
                 elif tool_name in mcp_client.tools:
                     result = await mcp_client.execute_tool(tool_name, arguments)
                 else:
                     # Default: execute as function tool
+                    start_time = time.time()
+                    print(f"⏱️  [TIMING] Starting function execution: {tool_name}")
                     # Extract prefilled params from tool metadata (if available)
                     prefilled_params = {}
                     for tool in tools:
@@ -1217,6 +1263,8 @@ class MessageService:
                         chat_id=str(chat_id),
                         prefilled_params=prefilled_params
                     )
+                    elapsed = time.time() - start_time
+                    print(f"⏱️  [TIMING] Function execution completed in {elapsed:.3f}s: {tool_name}")
 
                 result_content = json.dumps(result) if not isinstance(result, str) else result
 
@@ -1296,41 +1344,81 @@ class MessageService:
         # Strip _metadata from tools before sending to LLM
         clean_tools = self._strip_tool_metadata(tools)
 
-        final_response = await llm_provider.complete(
+        # Stream the response after tool execution
+        full_content = ""
+        tool_calls_list = []
+
+        async for chunk in llm_provider.stream(
             messages=updated_messages,
             model=model,
             tools=clean_tools,
             temperature=temperature,
             max_tokens=max_tokens
-        )
+        ):
+            if chunk.get("content"):
+                full_content += chunk["content"]
+
+            # Accumulate tool calls (streaming sends deltas with index)
+            if chunk.get("tool_calls"):
+                for tc in chunk["tool_calls"]:
+                    tc_index = tc.get("index", 0)
+
+                    # Extend list if needed
+                    while len(tool_calls_list) <= tc_index:
+                        tool_calls_list.append({
+                            "id": None,
+                            "type": "function",
+                            "function": {
+                                "name": "",
+                                "arguments": ""
+                            }
+                        })
+
+                    # Update ID, type, name if provided (first chunk)
+                    if tc.get("id"):
+                        tool_calls_list[tc_index]["id"] = tc["id"]
+                    if tc.get("type"):
+                        tool_calls_list[tc_index]["type"] = tc["type"]
+                    if tc.get("function", {}).get("name"):
+                        tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
+
+                    # Accumulate arguments (all chunks)
+                    if tc.get("function", {}).get("arguments"):
+                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"]["arguments"]
+
+            # Yield the chunk for streaming
+            yield chunk
+
+        final_tool_calls = tool_calls_list if tool_calls_list else None
 
         # Check if the response has more tool calls (for multi-step tool usage)
-        if final_response.get("tool_calls"):
+        if final_tool_calls:
             # Recursively handle the next round of tool calls
-            return await self._handle_tool_calls(
+            async for result_chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
                 user_token=user_token,
                 messages=updated_messages,
-                tool_calls=final_response["tool_calls"],
+                tool_calls=final_tool_calls,
                 provider=provider,
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 tools=tools
-            )
+            ):
+                yield result_chunk
+            return
 
         # Save final assistant message
         final_message = Message(
             chat_id=chat_id,
             role="assistant",
-            content=final_response.get("content", "")
+            content=full_content if full_content else None
         )
         self.db.add(final_message)
         await self.db.commit()
         await self.db.refresh(final_message)
-
-        return final_message
+        # Generator ends here (can't return value from async generator)
 
     async def _log_request(
         self,
