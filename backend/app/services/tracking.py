@@ -2,11 +2,13 @@
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.execution import StepExecution, ExecutionStatus
+from app.models.execution import ExecutionStatus, StepExecution
 from app.services.clickhouse_logger import clickhouse_logger
 
 
@@ -15,13 +17,10 @@ class ExecutionTracker:
         self.execution_id = execution_id
         self.db = db
         self.user_id = user_id
-        self.call_stack: List[str] = []
+        self.call_stack: list[str] = []
 
     async def track_function_call(
-        self,
-        func: Callable,
-        args: Tuple[Any, ...],
-        kwargs: Dict[str, Any]
+        self, func: Callable, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> Any:
         """Track a function call with start/end times and results."""
         function_name = func.__name__
@@ -36,7 +35,7 @@ class ExecutionTracker:
             function_name=function_name,
             status=ExecutionStatus.RUNNING,
             input_data=input_data,
-            started_at=datetime.utcnow()
+            started_at=datetime.utcnow(),
         )
 
         self.db.add(step)
@@ -72,8 +71,7 @@ class ExecutionTracker:
 
             # Log function result to Redis
             await clickhouse_logger.log_function_result(
-                self.execution_id, function_name, str(step.id),
-                result, None, duration_ms
+                self.execution_id, function_name, str(step.id), result, None, duration_ms
             )
 
             return result
@@ -92,8 +90,7 @@ class ExecutionTracker:
 
             # Log function error to Redis
             await clickhouse_logger.log_function_result(
-                self.execution_id, function_name, str(step.id),
-                None, str(e), duration_ms
+                self.execution_id, function_name, str(step.id), None, str(e), duration_ms
             )
 
             raise e
@@ -103,6 +100,6 @@ class ExecutionTracker:
             if self.call_stack and self.call_stack[-1] == function_name:
                 self.call_stack.pop()
 
-    def get_call_stack(self) -> List[str]:
+    def get_call_stack(self) -> list[str]:
         """Get current call stack."""
         return self.call_stack.copy()

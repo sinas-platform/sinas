@@ -1,10 +1,11 @@
 """JSON Schema utilities for validation and type coercion."""
 import json
-from typing import Any, Dict
+from typing import Any
+
 import jsonschema
 
 
-def coerce_types(data: Any, schema: Dict[str, Any]) -> Any:
+def coerce_types(data: Any, schema: dict[str, Any]) -> Any:
     """
     Coerce data types to match JSON schema.
 
@@ -74,7 +75,7 @@ def coerce_types(data: Any, schema: Dict[str, Any]) -> Any:
     return data
 
 
-def validate_with_coercion(data: Any, schema: Dict[str, Any]) -> Any:
+def validate_with_coercion(data: Any, schema: dict[str, Any]) -> Any:
     """
     Coerce types and then validate against JSON schema.
 

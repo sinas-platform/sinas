@@ -1,22 +1,23 @@
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends
+
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1 import router as api_v1_router
 from app.api.runtime import runtime_router
-from app.core.config import settings
+from app.api.v1 import router as api_v1_router
 from app.core.auth import initialize_default_roles, initialize_superadmin
-from app.core.templates import initialize_default_templates
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
-from app.services.scheduler import scheduler
+from app.core.templates import initialize_default_templates
+from app.middleware.request_logger import RequestLoggerMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.mcp import mcp_client
 from app.services.openapi_generator import generate_runtime_openapi
-from app.middleware.request_logger import RequestLoggerMiddleware
-import logging
+from app.services.scheduler import scheduler
 
 
 @asynccontextmanager
@@ -45,25 +46,27 @@ async def lifespan(app: FastAPI):
         logger = logging.getLogger(__name__)
         logger.info(f"🔧 AUTO_APPLY_CONFIG enabled, applying config from {settings.config_file}...")
         async with AsyncSessionLocal() as db:
-            from app.services.config_parser import ConfigParser
             from app.services.config_apply import ConfigApplyService
+            from app.services.config_parser import ConfigParser
 
             try:
                 # Read config file
-                with open(settings.config_file, 'r') as f:
+                with open(settings.config_file) as f:
                     config_yaml = f.read()
 
                 # Parse and validate (with database-aware checking)
-                config, validation = await ConfigParser.parse_and_validate(config_yaml, db=db, strict=False)
+                config, validation = await ConfigParser.parse_and_validate(
+                    config_yaml, db=db, strict=False
+                )
 
                 if not validation.valid:
-                    logger.error(f"❌ Config validation failed:")
+                    logger.error("❌ Config validation failed:")
                     for error in validation.errors:
                         logger.error(f"  - {error.path}: {error.message}")
                     raise RuntimeError("Config validation failed")
 
                 if validation.warnings:
-                    logger.warning(f"⚠️  Config validation warnings:")
+                    logger.warning("⚠️  Config validation warnings:")
                     for warning in validation.warnings:
                         logger.warning(f"  - {warning.path}: {warning.message}")
 
@@ -72,13 +75,13 @@ async def lifespan(app: FastAPI):
                 result = await apply_service.apply_config(config, dry_run=False)
 
                 if not result.success:
-                    logger.error(f"❌ Config application failed:")
+                    logger.error("❌ Config application failed:")
                     for error in result.errors:
                         logger.error(f"  - {error}")
                     raise RuntimeError("Config application failed")
 
                 # Log summary
-                logger.info(f"✅ Config applied successfully!")
+                logger.info("✅ Config applied successfully!")
                 if result.summary.created:
                     logger.info(f"  Created: {dict(result.summary.created)}")
                 if result.summary.updated:
@@ -95,10 +98,12 @@ async def lifespan(app: FastAPI):
 
     # Start container manager cleanup task
     from app.services.user_container_manager import container_manager
+
     await container_manager.start_cleanup_task()
 
     # Initialize shared worker manager
     from app.services.shared_worker_manager import shared_worker_manager
+
     await shared_worker_manager.initialize()
 
     yield
@@ -114,7 +119,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
     docs_url=None,  # We'll create custom docs endpoint
-    openapi_url=None  # We'll create custom OpenAPI endpoint
+    openapi_url=None,  # We'll create custom OpenAPI endpoint
 )
 
 app.add_middleware(
@@ -134,7 +139,7 @@ management_app = FastAPI(
     description="Manage agents, functions, webhooks, schedules, and configuration",
     version="1.0.0",
     docs_url="/docs",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
 )
 
 # Include management routes in sub-app
@@ -160,8 +165,7 @@ async def get_runtime_openapi(db: AsyncSession = Depends(get_db)):
 async def get_runtime_docs():
     """Runtime API documentation using dynamic OpenAPI spec."""
     return get_swagger_ui_html(
-        openapi_url="/openapi.json",
-        title="SINAS Runtime API - Documentation"
+        openapi_url="/openapi.json", title="SINAS Runtime API - Documentation"
     )
 
 
@@ -177,4 +181,5 @@ async def scheduler_status():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -2,16 +2,18 @@
 Configuration parser and validator
 Validates declarative configuration before application
 """
-from typing import List, Tuple, Optional, Set
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from typing import Optional
+
 import yaml
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.config import SinasConfig
 
 
 class ConfigValidationError:
     """Configuration validation error"""
+
     def __init__(self, path: str, message: str):
         self.path = path
         self.message = message
@@ -22,9 +24,10 @@ class ConfigValidationError:
 
 class ConfigValidation:
     """Configuration validation result"""
+
     def __init__(self):
-        self.errors: List[ConfigValidationError] = []
-        self.warnings: List[str] = []
+        self.errors: list[ConfigValidationError] = []
+        self.warnings: list[str] = []
 
     @property
     def is_valid(self) -> bool:
@@ -36,10 +39,8 @@ class ConfigParser:
 
     @staticmethod
     async def parse_and_validate(
-        config_yaml: str,
-        db: Optional[AsyncSession] = None,
-        strict: bool = True
-    ) -> Tuple[Optional[SinasConfig], ConfigValidation]:
+        config_yaml: str, db: Optional[AsyncSession] = None, strict: bool = True
+    ) -> tuple[Optional[SinasConfig], ConfigValidation]:
         """
         Parse and validate SINAS configuration
 
@@ -57,9 +58,7 @@ class ConfigParser:
         try:
             config_dict = yaml.safe_load(config_yaml)
         except yaml.YAMLError as e:
-            validation.errors.append(
-                ConfigValidationError("root", f"Invalid YAML: {str(e)}")
-            )
+            validation.errors.append(ConfigValidationError("root", f"Invalid YAML: {str(e)}"))
             return None, validation
 
         # Parse into Pydantic model
@@ -78,47 +77,44 @@ class ConfigParser:
 
     @staticmethod
     async def _validate_references(
-        config: SinasConfig,
-        validation: ConfigValidation,
-        db: Optional[AsyncSession]
+        config: SinasConfig, validation: ConfigValidation, db: Optional[AsyncSession]
     ):
         """Validate cross-references within configuration"""
         errors = validation.errors
-        spec = config.spec.model_dump() if hasattr(config.spec, 'model_dump') else config.spec.dict()
+        spec = (
+            config.spec.model_dump() if hasattr(config.spec, "model_dump") else config.spec.dict()
+        )
 
         # Collect all group names from config
         group_names = {g["name"] for g in spec.get("groups", [])}
         # Functions and agents use namespace/name format
         function_names = {
-            f"{f.get('namespace', 'default')}/{f['name']}"
-            for f in spec.get("functions", [])
+            f"{f.get('namespace', 'default')}/{f['name']}" for f in spec.get("functions", [])
         }
         agent_names = {
-            f"{a.get('namespace', 'default')}/{a['name']}"
-            for a in spec.get("agents", [])
+            f"{a.get('namespace', 'default')}/{a['name']}" for a in spec.get("agents", [])
         }
         skill_names = {
-            f"{s.get('namespace', 'default')}/{s['name']}"
-            for s in spec.get("skills", [])
+            f"{s.get('namespace', 'default')}/{s['name']}" for s in spec.get("skills", [])
         }
         llm_provider_names = {p["name"] for p in spec.get("llmProviders", [])}
         mcp_server_names = {s["name"] for s in spec.get("mcpServers", [])}
 
         # Database names (if db provided)
-        db_group_names: Set[str] = set()
-        db_function_names: Set[str] = set()
-        db_agent_names: Set[str] = set()
-        db_skill_names: Set[str] = set()
-        db_llm_provider_names: Set[str] = set()
-        db_mcp_server_names: Set[str] = set()
+        db_group_names: set[str] = set()
+        db_function_names: set[str] = set()
+        db_agent_names: set[str] = set()
+        db_skill_names: set[str] = set()
+        db_llm_provider_names: set[str] = set()
+        db_mcp_server_names: set[str] = set()
 
         if db:
-            from app.models.user import Role
-            from app.models.function import Function
             from app.models.agent import Agent
-            from app.models.skill import Skill
+            from app.models.function import Function
             from app.models.llm_provider import LLMProvider
             from app.models.mcp import MCPServer
+            from app.models.skill import Skill
+            from app.models.user import Role
 
             # Load existing resource names from database
             result = await db.execute(select(Role.name))
@@ -151,35 +147,43 @@ class ConfigParser:
         # Validate function references
         for i, func in enumerate(spec.get("functions", [])):
             if func["groupName"] not in all_group_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.functions[{i}].groupName",
-                    message=f"Referenced group '{func['groupName']}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.functions[{i}].groupName",
+                        message=f"Referenced group '{func['groupName']}' not defined",
+                    )
+                )
 
         # Validate agent references
         for i, agent in enumerate(spec.get("agents", [])):
             if agent["groupName"] not in all_group_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.agents[{i}].groupName",
-                    message=f"Referenced group '{agent['groupName']}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.agents[{i}].groupName",
+                        message=f"Referenced group '{agent['groupName']}' not defined",
+                    )
+                )
 
             # Validate LLM provider reference
             if "llmProviderName" in agent and agent["llmProviderName"]:
                 if agent["llmProviderName"] not in all_llm_provider_names:
-                    errors.append(ConfigValidationError(
-                        path=f"spec.agents[{i}].llmProviderName",
-                        message=f"Referenced LLM provider '{agent['llmProviderName']}' not defined"
-                    ))
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.agents[{i}].llmProviderName",
+                            message=f"Referenced LLM provider '{agent['llmProviderName']}' not defined",
+                        )
+                    )
 
             # Validate enabled function references
             if "enabledFunctions" in agent and agent["enabledFunctions"]:
                 for func_name in agent["enabledFunctions"]:
                     if func_name not in all_function_names:
-                        errors.append(ConfigValidationError(
-                            path=f"spec.agents[{i}].enabledFunctions",
-                            message=f"Referenced function '{func_name}' not defined"
-                        ))
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledFunctions",
+                                message=f"Referenced function '{func_name}' not defined",
+                            )
+                        )
 
             # Validate enabled agent references (for agent calling)
             if "enabledAgents" in agent and agent["enabledAgents"]:
@@ -187,19 +191,23 @@ class ConfigParser:
                 current_agent_ref = f"{agent.get('namespace', 'default')}/{agent['name']}"
                 for agent_ref in agent["enabledAgents"]:
                     if agent_ref not in all_agent_names and agent_ref != current_agent_ref:
-                        errors.append(ConfigValidationError(
-                            path=f"spec.agents[{i}].enabledAgents",
-                            message=f"Referenced agent '{agent_ref}' not defined"
-                        ))
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledAgents",
+                                message=f"Referenced agent '{agent_ref}' not defined",
+                            )
+                        )
 
             # Validate enabled skill references
             if "enabledSkills" in agent and agent["enabledSkills"]:
                 for skill_ref in agent["enabledSkills"]:
                     if skill_ref not in all_skill_names:
-                        errors.append(ConfigValidationError(
-                            path=f"spec.agents[{i}].enabledSkills",
-                            message=f"Referenced skill '{skill_ref}' not defined"
-                        ))
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledSkills",
+                                message=f"Referenced skill '{skill_ref}' not defined",
+                            )
+                        )
 
             # Validate MCP tool references
             if "enabledMcpTools" in agent and agent["enabledMcpTools"]:
@@ -208,49 +216,61 @@ class ConfigParser:
                     if ":" in tool_ref:
                         server_name = tool_ref.split(":")[0]
                         if server_name not in all_mcp_server_names:
-                            errors.append(ConfigValidationError(
-                                path=f"spec.agents[{i}].enabledMcpTools",
-                                message=f"Referenced MCP server '{server_name}' not defined"
-                            ))
+                            errors.append(
+                                ConfigValidationError(
+                                    path=f"spec.agents[{i}].enabledMcpTools",
+                                    message=f"Referenced MCP server '{server_name}' not defined",
+                                )
+                            )
 
         # Validate webhook references
         for i, webhook in enumerate(spec.get("webhooks", [])):
             if webhook["groupName"] not in all_group_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.webhooks[{i}].groupName",
-                    message=f"Referenced group '{webhook['groupName']}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.webhooks[{i}].groupName",
+                        message=f"Referenced group '{webhook['groupName']}' not defined",
+                    )
+                )
             # Build function reference as namespace/name
             func_namespace = webhook.get("functionNamespace", "default")
             func_name = webhook["functionName"]
             func_ref = f"{func_namespace}/{func_name}"
             if func_ref not in all_function_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.webhooks[{i}].functionName",
-                    message=f"Referenced function '{func_ref}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.webhooks[{i}].functionName",
+                        message=f"Referenced function '{func_ref}' not defined",
+                    )
+                )
 
         # Validate schedule references
         for i, schedule in enumerate(spec.get("schedules", [])):
             if schedule["groupName"] not in all_group_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.schedules[{i}].groupName",
-                    message=f"Referenced group '{schedule['groupName']}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.schedules[{i}].groupName",
+                        message=f"Referenced group '{schedule['groupName']}' not defined",
+                    )
+                )
             # Build function reference as namespace/name
             func_namespace = schedule.get("functionNamespace", "default")
             func_name = schedule["functionName"]
             func_ref = f"{func_namespace}/{func_name}"
             if func_ref not in all_function_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.schedules[{i}].functionName",
-                    message=f"Referenced function '{func_ref}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.schedules[{i}].functionName",
+                        message=f"Referenced function '{func_ref}' not defined",
+                    )
+                )
 
         # Validate MCP server references
         for i, server in enumerate(spec.get("mcpServers", [])):
             if server["groupName"] not in all_group_names:
-                errors.append(ConfigValidationError(
-                    path=f"spec.mcpServers[{i}].groupName",
-                    message=f"Referenced group '{server['groupName']}' not defined"
-                ))
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.mcpServers[{i}].groupName",
+                        message=f"Referenced group '{server['groupName']}' not defined",
+                    )
+                )

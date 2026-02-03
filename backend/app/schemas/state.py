@@ -1,28 +1,29 @@
 """State store schemas."""
-from pydantic import BaseModel, Field, validator
-from typing import Dict, List, Optional, Any
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Optional
+
+from pydantic import BaseModel, Field
 
 
 class StateCreate(BaseModel):
     namespace: str = Field(..., min_length=1, max_length=100)
     key: str = Field(..., min_length=1, max_length=255)
-    value: Dict[str, Any] = Field(...)
-    visibility: str = Field(default="private", pattern=r'^(private|shared)$')
+    value: dict[str, Any] = Field(...)
+    visibility: str = Field(default="private", pattern=r"^(private|shared)$")
     description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
     relevance_score: float = Field(default=1.0, ge=0.0, le=1.0)
     expires_at: Optional[datetime] = None
 
 
 class StateUpdate(BaseModel):
-    value: Optional[Dict[str, Any]] = None
+    value: Optional[dict[str, Any]] = None
     description: Optional[str] = None
-    tags: Optional[List[str]] = None
+    tags: Optional[list[str]] = None
     relevance_score: Optional[float] = Field(None, ge=0.0, le=1.0)
     expires_at: Optional[datetime] = None
-    visibility: Optional[str] = Field(None, pattern=r'^(private|shared)$')
+    visibility: Optional[str] = Field(None, pattern=r"^(private|shared)$")
 
 
 class StateResponse(BaseModel):
@@ -30,10 +31,10 @@ class StateResponse(BaseModel):
     user_id: uuid.UUID
     namespace: str
     key: str
-    value: Dict[str, Any]
+    value: dict[str, Any]
     visibility: str
     description: Optional[str]
-    tags: List[str]
+    tags: list[str]
     relevance_score: float
     expires_at: Optional[datetime]
     created_at: datetime

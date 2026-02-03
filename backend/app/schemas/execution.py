@@ -1,10 +1,11 @@
 """Execution schemas."""
-from pydantic import BaseModel
-from typing import Dict, Optional, Any
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Optional
 
-from app.models.execution import TriggerType, ExecutionStatus
+from pydantic import BaseModel
+
+from app.models.execution import ExecutionStatus, TriggerType
 
 
 class ExecutionResponse(BaseModel):
@@ -14,7 +15,7 @@ class ExecutionResponse(BaseModel):
     trigger_type: TriggerType
     trigger_id: uuid.UUID
     status: ExecutionStatus
-    input_data: Dict[str, Any]
+    input_data: dict[str, Any]
     output_data: Optional[Any]
     error: Optional[str]
     traceback: Optional[str]
@@ -31,7 +32,7 @@ class StepExecutionResponse(BaseModel):
     execution_id: str
     function_name: str
     status: ExecutionStatus
-    input_data: Dict[str, Any]
+    input_data: dict[str, Any]
     output_data: Optional[Any]
     error: Optional[str]
     duration_ms: Optional[int]
@@ -43,7 +44,7 @@ class StepExecutionResponse(BaseModel):
 
 
 class ContinueExecutionRequest(BaseModel):
-    input: Dict[str, Any]
+    input: dict[str, Any]
 
 
 class ContinueExecutionResponse(BaseModel):
@@ -51,4 +52,4 @@ class ContinueExecutionResponse(BaseModel):
     status: ExecutionStatus
     output_data: Optional[Any] = None
     prompt: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None
+    schema: Optional[dict[str, Any]] = None

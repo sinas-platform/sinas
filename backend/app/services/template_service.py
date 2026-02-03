@@ -1,10 +1,11 @@
 """Template rendering service with Jinja2 and schema validation."""
+import logging
+from typing import Any, Optional
+
 import jsonschema
-from jinja2 import Environment, BaseLoader, TemplateError, StrictUndefined
+from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Dict, Any, Optional, Tuple
-import logging
 
 from app.models.template import Template
 
@@ -21,10 +22,10 @@ class TemplateService:
         self.jinja_env = Environment(
             loader=BaseLoader(),
             autoescape=True,  # Protects variables: {{user_email}} is escaped
-            undefined=StrictUndefined  # Raise errors on undefined variables
+            undefined=StrictUndefined,  # Raise errors on undefined variables
         )
 
-    def validate_variables(self, variables: Dict[str, Any], schema: Dict[str, Any]) -> None:
+    def validate_variables(self, variables: dict[str, Any], schema: dict[str, Any]) -> None:
         """
         Validate variables against JSON schema.
 
@@ -44,9 +45,9 @@ class TemplateService:
         self,
         db: AsyncSession,
         template_name: str,
-        variables: Dict[str, Any],
-        namespace: str = "default"
-    ) -> Tuple[Optional[str], str, Optional[str]]:
+        variables: dict[str, Any],
+        namespace: str = "default",
+    ) -> tuple[Optional[str], str, Optional[str]]:
         """
         Render a template by namespace/name with given variables.
 
@@ -72,7 +73,7 @@ class TemplateService:
                 and_(
                     Template.namespace == namespace,
                     Template.name == template_name,
-                    Template.is_active == True
+                    Template.is_active == True,
                 )
             )
         )
@@ -122,11 +123,11 @@ class TemplateService:
     async def render_inline(
         self,
         html_content: str,
-        variables: Dict[str, Any],
+        variables: dict[str, Any],
         title: Optional[str] = None,
         text_content: Optional[str] = None,
-        variable_schema: Optional[Dict[str, Any]] = None
-    ) -> Tuple[Optional[str], str, Optional[str]]:
+        variable_schema: Optional[dict[str, Any]] = None,
+    ) -> tuple[Optional[str], str, Optional[str]]:
         """
         Render template from inline content (not from database).
 

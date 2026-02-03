@@ -1,47 +1,43 @@
 """Authentication endpoints."""
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import timedelta
 
-from app.core.database import get_db
 from app.core.auth import (
-    create_otp_session,
-    verify_otp_code,
-    get_user_by_email,
-    get_user_permissions,
     create_access_token,
+    create_otp_session,
     create_refresh_token,
-    validate_refresh_token,
-    revoke_refresh_token,
     get_current_user,
     get_current_user_with_permissions,
+    get_user_by_email,
+    revoke_refresh_token,
     set_permission_used,
+    validate_refresh_token,
+    verify_otp_code,
 )
 from app.core.config import settings
+from app.core.database import get_db
 from app.models import User
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
+    LogoutRequest,
     OTPVerifyRequest,
     OTPVerifyResponse,
-    RefreshRequest,
-    RefreshResponse,
-    LogoutRequest,
-    UserResponse,
     PermissionCheckRequest,
     PermissionCheckResponse,
     PermissionCheckResult,
+    RefreshRequest,
+    RefreshResponse,
+    UserResponse,
 )
 
 router = APIRouter()
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(
-    request: LoginRequest,
-    db: AsyncSession = Depends(get_db)
-):
+async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     """
     Initiate login by sending OTP to email.
 
@@ -49,14 +45,13 @@ async def login(
     """
     # Check if user exists - no auto-provisioning
     from app.core.auth import normalize_email
-    result = await db.execute(
-        select(User).where(User.email == normalize_email(request.email))
-    )
+
+    result = await db.execute(select(User).where(User.email == normalize_email(request.email)))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not found. Contact your administrator."
+            detail="User not found. Contact your administrator.",
         )
 
     # Create OTP session and send email
@@ -65,20 +60,14 @@ async def login(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to send OTP email: {str(e)}"
+            detail=f"Failed to send OTP email: {str(e)}",
         )
 
-    return LoginResponse(
-        message="OTP sent to your email",
-        session_id=otp_session.id
-    )
+    return LoginResponse(message="OTP sent to your email", session_id=otp_session.id)
 
 
 @router.post("/verify-otp", response_model=OTPVerifyResponse)
-async def verify_otp(
-    request: OTPVerifyRequest,
-    db: AsyncSession = Depends(get_db)
-):
+async def verify_otp(request: OTPVerifyRequest, db: AsyncSession = Depends(get_db)):
     """
     Verify OTP and return access + refresh tokens.
 
@@ -89,8 +78,7 @@ async def verify_otp(
 
     if not otp_session:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired OTP"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OTP"
         )
 
     # Get user (must exist - checked during login)
@@ -99,14 +87,11 @@ async def verify_otp(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not found. Contact your administrator."
+            detail="User not found. Contact your administrator.",
         )
 
     # Create access token (short-lived, no permissions in payload)
-    access_token = create_access_token(
-        user_id=str(user.id),
-        email=user.email
-    )
+    access_token = create_access_token(user_id=str(user.id), email=user.email)
 
     # Create refresh token (long-lived, stored in DB)
     refresh_token_plain, _ = await create_refresh_token(db, str(user.id))
@@ -116,15 +101,12 @@ async def verify_otp(
         refresh_token=refresh_token_plain,
         token_type="bearer",
         expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
-        user=UserResponse.model_validate(user)
+        user=UserResponse.model_validate(user),
     )
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_access_token(
-    request: RefreshRequest,
-    db: AsyncSession = Depends(get_db)
-):
+async def refresh_access_token(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """
     Refresh access token using refresh token.
 
@@ -136,30 +118,23 @@ async def refresh_access_token(
 
     if not result:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token"
         )
 
     user_id, email = result
 
     # Create new access token
-    access_token = create_access_token(
-        user_id=user_id,
-        email=email
-    )
+    access_token = create_access_token(user_id=user_id, email=email)
 
     return RefreshResponse(
         access_token=access_token,
         token_type="bearer",
-        expires_in=settings.access_token_expire_minutes * 60
+        expires_in=settings.access_token_expire_minutes * 60,
     )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    request: LogoutRequest,
-    db: AsyncSession = Depends(get_db)
-):
+async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_db)):
     """
     Logout by revoking refresh token.
 
@@ -169,33 +144,23 @@ async def logout(
     success = await revoke_refresh_token(db, request.refresh_token)
 
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Refresh token not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Refresh token not found")
 
     return None
 
 
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
-    request: Request,
-    user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    request: Request, user_id: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     """Get current authenticated user info."""
     set_permission_used(request, "sinas.users.get:own")
 
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
+    result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     return UserResponse.model_validate(user)
 
@@ -204,7 +169,7 @@ async def get_current_user_info(
 async def check_permissions(
     request: Request,
     check_request: PermissionCheckRequest,
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Check if the authenticated user has specific permission(s).
@@ -230,10 +195,7 @@ async def check_permissions(
     for perm in check_request.permissions:
         has_perm = check_permission(permissions, perm)
         set_permission_used(request, perm, has_perm=has_perm)
-        checks.append(PermissionCheckResult(
-            permission=perm,
-            has_permission=has_perm
-        ))
+        checks.append(PermissionCheckResult(permission=perm, has_permission=has_perm))
 
     # Calculate overall result based on logic
     if check_request.logic == "AND":
@@ -241,8 +203,4 @@ async def check_permissions(
     else:  # OR
         result = any(check.has_permission for check in checks)
 
-    return PermissionCheckResponse(
-        result=result,
-        logic=check_request.logic,
-        checks=checks
-    )
+    return PermissionCheckResponse(result=result, logic=check_request.logic, checks=checks)

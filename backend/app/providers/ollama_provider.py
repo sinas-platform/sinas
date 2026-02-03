@@ -1,6 +1,8 @@
 """Ollama LLM provider implementation."""
 import json
-from typing import List, Dict, Any, Optional, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, Optional
+
 import httpx
 
 from .base import BaseLLMProvider
@@ -9,19 +11,21 @@ from .base import BaseLLMProvider
 class OllamaProvider(BaseLLMProvider):
     """Ollama local LLM provider."""
 
-    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = "http://localhost:11434"):
+    def __init__(
+        self, api_key: Optional[str] = None, base_url: Optional[str] = "http://localhost:11434"
+    ):
         super().__init__(api_key, base_url)
         self.base_url = base_url or "http://localhost:11434"
 
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> dict[str, Any]:
         """Generate a completion using Ollama API."""
         async with httpx.AsyncClient(timeout=300.0) as client:
             payload = {
@@ -30,7 +34,7 @@ class OllamaProvider(BaseLLMProvider):
                 "stream": False,
                 "options": {
                     "temperature": temperature,
-                }
+                },
             }
 
             if max_tokens:
@@ -40,14 +44,12 @@ class OllamaProvider(BaseLLMProvider):
             if tools:
                 payload["tools"] = self._convert_tools_to_ollama_format(tools)
 
-            response = await client.post(
-                f"{self.base_url}/api/chat",
-                json=payload
-            )
+            response = await client.post(f"{self.base_url}/api/chat", json=payload)
 
             # Debug logging
             if response.status_code != 200:
                 import logging
+
                 logger = logging.getLogger(__name__)
                 logger.error(f"Ollama API error: {response.status_code}")
                 logger.error(f"URL: {self.base_url}/api/chat")
@@ -75,13 +77,13 @@ class OllamaProvider(BaseLLMProvider):
 
     async def stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> AsyncIterator[Dict[str, Any]]:
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Generate a streaming completion using Ollama API."""
         async with httpx.AsyncClient(timeout=300.0) as client:
             payload = {
@@ -90,7 +92,7 @@ class OllamaProvider(BaseLLMProvider):
                 "stream": True,
                 "options": {
                     "temperature": temperature,
-                }
+                },
             }
 
             if max_tokens:
@@ -99,11 +101,7 @@ class OllamaProvider(BaseLLMProvider):
             if tools:
                 payload["tools"] = self._convert_tools_to_ollama_format(tools)
 
-            async with client.stream(
-                "POST",
-                f"{self.base_url}/api/chat",
-                json=payload
-            ) as response:
+            async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
                 response.raise_for_status()
 
                 async for line in response.aiter_lines():
@@ -131,7 +129,7 @@ class OllamaProvider(BaseLLMProvider):
                     except json.JSONDecodeError:
                         continue
 
-    def _convert_tools_to_ollama_format(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_ollama_format(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert OpenAI tool format to Ollama tool format.
 
@@ -142,18 +140,20 @@ class OllamaProvider(BaseLLMProvider):
         for tool in tools:
             if tool.get("type") == "function":
                 func = tool.get("function", {})
-                ollama_tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": func.get("name"),
-                        "description": func.get("description", ""),
-                        "parameters": func.get("parameters", {})
+                ollama_tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": func.get("name"),
+                            "description": func.get("description", ""),
+                            "parameters": func.get("parameters", {}),
+                        },
                     }
-                })
+                )
 
         return ollama_tools
 
-    def format_tool_calls(self, tool_calls: Any) -> List[Dict[str, Any]]:
+    def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
         """
         Convert Ollama tool calls to standard OpenAI format.
 
@@ -179,18 +179,17 @@ class OllamaProvider(BaseLLMProvider):
                 if isinstance(arguments, dict):
                     arguments = json.dumps(arguments)
 
-                formatted.append({
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": func.get("name", ""),
-                        "arguments": arguments
+                formatted.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {"name": func.get("name", ""), "arguments": arguments},
                     }
-                })
+                )
 
         return formatted
 
-    def extract_usage(self, response: Any) -> Dict[str, int]:
+    def extract_usage(self, response: Any) -> dict[str, int]:
         """
         Extract token usage from Ollama response.
 
@@ -202,5 +201,5 @@ class OllamaProvider(BaseLLMProvider):
         return {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens
+            "total_tokens": prompt_tokens + completion_tokens,
         }

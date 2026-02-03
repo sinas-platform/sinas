@@ -1,19 +1,19 @@
-from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
-from alembic import context
 import os
 import sys
+from logging.config import fileConfig
+
+from sqlalchemy import engine_from_config, pool
+
+from alembic import context
 
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.models.base import Base, GUID
-from app.core.config import settings
 # Import all models to ensure they're registered with Base.metadata
-import app.models
+from app.core.config import settings
+from app.models.base import Base
 
 # Make GUID available to migrations
-import app.models.base
 
 # this is the Alembic Config object
 config = context.config

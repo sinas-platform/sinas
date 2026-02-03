@@ -1,19 +1,21 @@
 """Factory for creating LLM provider instances."""
 from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
+
 from .base import BaseLLMProvider
-from .openai_provider import OpenAIProvider
-from .ollama_provider import OllamaProvider
 from .mistral_provider import MistralProvider
+from .ollama_provider import OllamaProvider
+from .openai_provider import OpenAIProvider
 
 
 async def create_provider(
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
-    db: Optional[AsyncSession] = None
+    db: Optional[AsyncSession] = None,
 ) -> BaseLLMProvider:
     """
     Create an LLM provider instance from database configuration.
@@ -39,8 +41,7 @@ async def create_provider(
         # Find by name
         result = await db.execute(
             select(LLMProvider).where(
-                LLMProvider.name == provider_name,
-                LLMProvider.is_active == True
+                LLMProvider.name == provider_name, LLMProvider.is_active == True
             )
         )
     else:
@@ -48,7 +49,11 @@ async def create_provider(
         if model:
             if model.startswith("gpt-") or model.startswith("o1-"):
                 provider_type = "openai"
-            elif model.startswith("mistral-") or model.startswith("pixtral-") or model.startswith("codestral-"):
+            elif (
+                model.startswith("mistral-")
+                or model.startswith("pixtral-")
+                or model.startswith("codestral-")
+            ):
                 provider_type = "mistral"
             elif "/" in model or model in ["llama", "codellama"]:
                 provider_type = "ollama"
@@ -57,25 +62,24 @@ async def create_provider(
 
             if provider_type:
                 result = await db.execute(
-                    select(LLMProvider).where(
-                        LLMProvider.provider_type == provider_type,
-                        LLMProvider.is_active == True
-                    ).order_by(LLMProvider.is_default.desc())
+                    select(LLMProvider)
+                    .where(
+                        LLMProvider.provider_type == provider_type, LLMProvider.is_active == True
+                    )
+                    .order_by(LLMProvider.is_default.desc())
                 )
             else:
                 # Use default provider
                 result = await db.execute(
                     select(LLMProvider).where(
-                        LLMProvider.is_default == True,
-                        LLMProvider.is_active == True
+                        LLMProvider.is_default == True, LLMProvider.is_active == True
                     )
                 )
         else:
             # Use default provider
             result = await db.execute(
                 select(LLMProvider).where(
-                    LLMProvider.is_default == True,
-                    LLMProvider.is_active == True
+                    LLMProvider.is_default == True, LLMProvider.is_active == True
                 )
             )
 
@@ -93,18 +97,10 @@ async def create_provider(
     provider_type = provider_config.provider_type.lower()
 
     if provider_type == "openai":
-        return OpenAIProvider(
-            api_key=api_key,
-            base_url=provider_config.api_endpoint
-        )
+        return OpenAIProvider(api_key=api_key, base_url=provider_config.api_endpoint)
     elif provider_type == "mistral":
-        return MistralProvider(
-            api_key=api_key,
-            base_url=provider_config.api_endpoint
-        )
+        return MistralProvider(api_key=api_key, base_url=provider_config.api_endpoint)
     elif provider_type == "ollama":
-        return OllamaProvider(
-            base_url=provider_config.api_endpoint or "http://localhost:11434"
-        )
+        return OllamaProvider(base_url=provider_config.api_endpoint or "http://localhost:11434")
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")

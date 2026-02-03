@@ -1,6 +1,7 @@
 """Mistral AI LLM provider implementation."""
-import json
-from typing import List, Dict, Any, Optional, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, Optional
+
 from openai import AsyncOpenAI
 
 from .base import BaseLLMProvider
@@ -20,20 +21,17 @@ class MistralProvider(BaseLLMProvider):
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
         super().__init__(api_key, base_url)
         # Use OpenAI client with Mistral endpoint
-        self.client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url or "https://api.mistral.ai/v1"
-        )
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or "https://api.mistral.ai/v1")
 
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> dict[str, Any]:
         """Generate a completion using Mistral API."""
         params = {
             "model": model,
@@ -71,13 +69,13 @@ class MistralProvider(BaseLLMProvider):
 
     async def stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> AsyncIterator[Dict[str, Any]]:
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Generate a streaming completion using Mistral API."""
         params = {
             "model": model,
@@ -123,10 +121,7 @@ class MistralProvider(BaseLLMProvider):
                         tool_calls_buffer[idx] = {
                             "id": tool_call.id or "",
                             "type": "function",
-                            "function": {
-                                "name": "",
-                                "arguments": ""
-                            }
+                            "function": {"name": "", "arguments": ""},
                         }
 
                     if tool_call.id:
@@ -136,7 +131,9 @@ class MistralProvider(BaseLLMProvider):
                         if tool_call.function.name:
                             tool_calls_buffer[idx]["function"]["name"] = tool_call.function.name
                         if tool_call.function.arguments:
-                            tool_calls_buffer[idx]["function"]["arguments"] += tool_call.function.arguments
+                            tool_calls_buffer[idx]["function"][
+                                "arguments"
+                            ] += tool_call.function.arguments
 
             # When streaming finishes, include complete tool calls
             if chunk_data["finish_reason"] and tool_calls_buffer:
@@ -144,30 +141,28 @@ class MistralProvider(BaseLLMProvider):
 
             yield chunk_data
 
-    def format_tool_calls(self, tool_calls: Any) -> List[Dict[str, Any]]:
+    def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
         """Convert Mistral/OpenAI tool call format to standard format."""
         result = []
         for tool_call in tool_calls:
-            result.append({
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments
+            result.append(
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
                 }
-            })
+            )
         return result
 
-    def extract_usage(self, response: Any) -> Dict[str, int]:
+    def extract_usage(self, response: Any) -> dict[str, int]:
         """Extract token usage from Mistral response."""
         if hasattr(response, "usage") and response.usage:
             return {
                 "prompt_tokens": response.usage.prompt_tokens or 0,
                 "completion_tokens": response.usage.completion_tokens or 0,
-                "total_tokens": response.usage.total_tokens or 0
+                "total_tokens": response.usage.total_tokens or 0,
             }
-        return {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0
-        }
+        return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}

@@ -1,8 +1,9 @@
 """Role schemas."""
-from pydantic import BaseModel, Field
-from typing import Optional, List
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class RoleCreate(BaseModel):

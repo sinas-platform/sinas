@@ -1,13 +1,12 @@
 """Shared worker pool manager for executing trusted functions."""
 import asyncio
-import docker
 import json
-import time
-import traceback
-from typing import Dict, Any, Optional, List
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Optional
+
+import docker
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 
@@ -24,7 +23,7 @@ class SharedWorkerManager:
 
     def __init__(self):
         self.client = docker.from_env()
-        self.workers: Dict[str, Dict[str, Any]] = {}  # worker_id -> worker_info
+        self.workers: dict[str, dict[str, Any]] = {}  # worker_id -> worker_info
         self.next_worker_index = 0  # For round-robin load balancing
         self._lock = asyncio.Lock()
         self._initialized = False
@@ -40,9 +39,10 @@ class SharedWorkerManager:
         # Try to auto-detect by inspecting the backend container
         try:
             import socket
+
             hostname = socket.gethostname()
             container = self.client.containers.get(hostname)
-            networks = list(container.attrs['NetworkSettings']['Networks'].keys())
+            networks = list(container.attrs["NetworkSettings"]["Networks"].keys())
             if networks:
                 detected = networks[0]
                 print(f"🔍 Auto-detected Docker network: {detected}")
@@ -70,6 +70,7 @@ class SharedWorkerManager:
         if current_count < settings.default_worker_count:
             print(f"📦 Scaling to default worker count: {settings.default_worker_count}")
             from app.core.database import AsyncSessionLocal
+
             async with AsyncSessionLocal() as db:
                 await self.scale_workers(settings.default_worker_count, db)
 
@@ -80,10 +81,7 @@ class SharedWorkerManager:
         """Discover and re-register existing worker containers (including stopped ones)."""
         try:
             # List all containers (including stopped) with sinas-worker-* naming pattern
-            containers = self.client.containers.list(
-                all=True,
-                filters={"name": "sinas-worker-"}
-            )
+            containers = self.client.containers.list(all=True, filters={"name": "sinas-worker-"})
 
             for container in containers:
                 container_name = container.name
@@ -110,7 +108,9 @@ class SharedWorkerManager:
                             "executions": 0,  # Reset execution count on rediscovery
                         }
 
-                        print(f"🔍 Rediscovered worker: {container_name} (status: {container.status})")
+                        print(
+                            f"🔍 Rediscovered worker: {container_name} (status: {container.status})"
+                        )
                     except Exception as e:
                         print(f"⚠️  Failed to process worker {container_name}: {e}")
 
@@ -121,31 +121,35 @@ class SharedWorkerManager:
         """Get current number of workers."""
         return len(self.workers)
 
-    def list_workers(self) -> List[Dict[str, Any]]:
+    def list_workers(self) -> list[dict[str, Any]]:
         """List all workers with status."""
         workers = []
         for worker_id, info in self.workers.items():
             try:
                 container = self.client.containers.get(info["container_name"])
-                workers.append({
-                    "id": worker_id,
-                    "container_name": info["container_name"],
-                    "status": container.status,
-                    "created_at": info["created_at"],
-                    "executions": info.get("executions", 0),
-                })
+                workers.append(
+                    {
+                        "id": worker_id,
+                        "container_name": info["container_name"],
+                        "status": container.status,
+                        "created_at": info["created_at"],
+                        "executions": info.get("executions", 0),
+                    }
+                )
             except docker.errors.NotFound:
                 # Container was removed
-                workers.append({
-                    "id": worker_id,
-                    "container_name": info["container_name"],
-                    "status": "missing",
-                    "created_at": info["created_at"],
-                    "executions": info.get("executions", 0),
-                })
+                workers.append(
+                    {
+                        "id": worker_id,
+                        "container_name": info["container_name"],
+                        "status": "missing",
+                        "created_at": info["created_at"],
+                        "executions": info.get("executions", 0),
+                    }
+                )
         return workers
 
-    async def scale_workers(self, target_count: int, db: AsyncSession) -> Dict[str, Any]:
+    async def scale_workers(self, target_count: int, db: AsyncSession) -> dict[str, Any]:
         """
         Scale workers to target count.
 
@@ -167,7 +171,7 @@ class SharedWorkerManager:
                     "action": "scale_up",
                     "previous_count": current_count,
                     "current_count": len(self.workers),
-                    "added": added
+                    "added": added,
                 }
 
             elif target_count < current_count:
@@ -183,14 +187,11 @@ class SharedWorkerManager:
                     "action": "scale_down",
                     "previous_count": current_count,
                     "current_count": len(self.workers),
-                    "removed": removed
+                    "removed": removed,
                 }
 
             else:
-                return {
-                    "action": "no_change",
-                    "current_count": current_count
-                }
+                return {"action": "no_change", "current_count": current_count}
 
     async def _create_worker(self, db: AsyncSession) -> Optional[str]:
         """Create a new worker container."""
@@ -206,12 +207,12 @@ class SharedWorkerManager:
                 network=self.docker_network,
                 mem_limit="1g",
                 nano_cpus=1_000_000_000,  # 1 CPU core
-                cap_drop=['ALL'],  # Drop all capabilities for security
-                cap_add=['CHOWN', 'SETUID', 'SETGID'],  # Only essential capabilities
-                security_opt=['no-new-privileges:true'],  # Prevent privilege escalation
-                tmpfs={'/tmp': 'size=100m,mode=1777'},  # Temp storage only
+                cap_drop=["ALL"],  # Drop all capabilities for security
+                cap_add=["CHOWN", "SETUID", "SETGID"],  # Only essential capabilities
+                security_opt=["no-new-privileges:true"],  # Prevent privilege escalation
+                tmpfs={"/tmp": "size=100m,mode=1777"},  # Temp storage only
                 environment={
-                    'PYTHONUNBUFFERED': '1',
+                    "PYTHONUNBUFFERED": "1",
                     "WORKER_MODE": "true",
                     "WORKER_ID": worker_id,
                 },
@@ -254,7 +255,7 @@ class SharedWorkerManager:
             approved_packages = result.scalars().all()
 
             if not approved_packages:
-                print(f"📦 No approved packages to install in worker")
+                print("📦 No approved packages to install in worker")
                 return
 
             # Build package specs with admin-locked versions
@@ -265,7 +266,9 @@ class SharedWorkerManager:
                 else:
                     packages_to_install.append(pkg.package_name)
 
-            print(f"📦 Installing {len(packages_to_install)} packages in worker: {', '.join(packages_to_install)}")
+            print(
+                f"📦 Installing {len(packages_to_install)} packages in worker: {', '.join(packages_to_install)}"
+            )
 
             # Install packages in container
             install_cmd = ["pip", "install", "--no-cache-dir"] + packages_to_install
@@ -278,7 +281,7 @@ class SharedWorkerManager:
 
             stdout, stderr = exec_result.output
             if exec_result.exit_code == 0:
-                print(f"✅ Successfully installed packages in worker")
+                print("✅ Successfully installed packages in worker")
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 print(f"⚠️  Package installation had issues in worker: {error_msg}")
@@ -314,17 +317,14 @@ class SharedWorkerManager:
             print(f"❌ Failed to remove worker {container_name}: {e}")
             return False
 
-    async def reload_packages(self, db: AsyncSession) -> Dict[str, Any]:
+    async def reload_packages(self, db: AsyncSession) -> dict[str, Any]:
         """
         Reload packages in all shared workers.
         Reinstalls all approved packages in each worker.
         """
         async with self._lock:
             if not self.workers:
-                return {
-                    "status": "no_workers",
-                    "message": "No workers to reload"
-                }
+                return {"status": "no_workers", "message": "No workers to reload"}
 
             success_count = 0
             failed_count = 0
@@ -348,7 +348,7 @@ class SharedWorkerManager:
                 "total_workers": len(self.workers),
                 "success": success_count,
                 "failed": failed_count,
-                "errors": errors if errors else None
+                "errors": errors if errors else None,
             }
 
     async def execute_function(
@@ -358,13 +358,13 @@ class SharedWorkerManager:
         access_token: str,
         function_namespace: str,
         function_name: str,
-        enabled_namespaces: List[str],
-        input_data: Dict[str, Any],
+        enabled_namespaces: list[str],
+        input_data: dict[str, Any],
         execution_id: str,
         trigger_type: str,
         chat_id: Optional[str],
         db: AsyncSession,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute function in a worker container using round-robin load balancing.
         """
@@ -372,7 +372,7 @@ class SharedWorkerManager:
             if not self.workers:
                 return {
                     "status": "failed",
-                    "error": "No workers available. Please scale workers up first."
+                    "error": "No workers available. Please scale workers up first.",
                 }
 
             # Round-robin load balancing
@@ -388,12 +388,13 @@ class SharedWorkerManager:
 
             # Fetch function code from database
             from app.models.function import Function
+
             result = await db.execute(
                 select(Function).where(
                     Function.namespace == function_namespace,
                     Function.name == function_name,
                     Function.is_active == True,
-                    Function.shared_pool == True
+                    Function.shared_pool == True,
                 )
             )
             function = result.scalar_one_or_none()
@@ -401,32 +402,35 @@ class SharedWorkerManager:
             if not function:
                 return {
                     "status": "failed",
-                    "error": f"Function {function_namespace}/{function_name} not found or not marked as shared_pool"
+                    "error": f"Function {function_namespace}/{function_name} not found or not marked as shared_pool",
                 }
 
             # Prepare execution payload with inline code
             payload = {
-                'action': 'execute_inline',
-                'function_code': function.code,
-                'execution_id': execution_id,
-                'function_namespace': function_namespace,
-                'function_name': function_name,
-                'enabled_namespaces': enabled_namespaces,
-                'input_data': input_data,
-                'context': {
-                    'user_id': user_id,
-                    'user_email': user_email,
-                    'access_token': access_token,
-                    'execution_id': execution_id,
-                    'trigger_type': trigger_type,
-                    'chat_id': chat_id,
-                }
+                "action": "execute_inline",
+                "function_code": function.code,
+                "execution_id": execution_id,
+                "function_namespace": function_namespace,
+                "function_name": function_name,
+                "enabled_namespaces": enabled_namespaces,
+                "input_data": input_data,
+                "context": {
+                    "user_id": user_id,
+                    "user_email": user_email,
+                    "access_token": access_token,
+                    "execution_id": execution_id,
+                    "trigger_type": trigger_type,
+                    "chat_id": chat_id,
+                },
             }
 
             # Execute via file-based trigger (run in thread pool to avoid blocking)
             exec_result = await asyncio.to_thread(
                 container.exec_run,
-                cmd=['python3', '-c', f'''
+                cmd=[
+                    "python3",
+                    "-c",
+                    f"""
 import sys
 import json
 payload = {json.dumps(payload)}
@@ -455,8 +459,9 @@ while time.time() - start < max_wait:
         continue
 print(json.dumps({{"error": "Execution timeout"}}))
 sys.exit(1)
-'''],
-                demux=True  # Separate stdout and stderr
+""",
+                ],
+                demux=True,  # Separate stdout and stderr
             )
 
             stdout, stderr = exec_result.output
@@ -468,21 +473,17 @@ sys.exit(1)
 
                 # Track execution count
                 async with self._lock:
-                    self.workers[worker_id]["executions"] = self.workers[worker_id].get("executions", 0) + 1
+                    self.workers[worker_id]["executions"] = (
+                        self.workers[worker_id].get("executions", 0) + 1
+                    )
 
                 return result
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                return {
-                    "status": "failed",
-                    "error": error_msg
-                }
+                return {"status": "failed", "error": error_msg}
 
         except Exception as e:
-            return {
-                "status": "failed",
-                "error": f"Worker execution failed: {str(e)}"
-            }
+            return {"status": "failed", "error": f"Worker execution failed: {str(e)}"}
 
 
 # Global worker manager instance

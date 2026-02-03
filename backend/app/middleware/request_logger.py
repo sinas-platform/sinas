@@ -1,10 +1,9 @@
 """FastAPI middleware for comprehensive request logging to ClickHouse."""
+import asyncio
+import json
 import time
 import uuid
-import json
-import asyncio
-from typing import Callable
-from fastapi import Request, Response
+
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.services.clickhouse_logger import clickhouse_logger
@@ -79,7 +78,13 @@ class RequestLoggerMiddleware:
 
         # After request is processed, parse the cached body
         # Skip logging request bodies for auth endpoints (security best practice)
-        is_auth_endpoint = path.startswith("/api/auth/") or "/login" in path or "/verify-otp" in path or "/refresh" in path or "/logout" in path
+        is_auth_endpoint = (
+            path.startswith("/api/auth/")
+            or "/login" in path
+            or "/verify-otp" in path
+            or "/refresh" in path
+            or "/logout" in path
+        )
 
         if body_parts and method in ["POST", "PUT", "PATCH"] and not is_auth_endpoint:
             full_body = b"".join(body_parts)
@@ -88,7 +93,15 @@ class RequestLoggerMiddleware:
                     request_body = json.loads(full_body.decode())
                     # Redact sensitive fields
                     if isinstance(request_body, dict):
-                        for sensitive_key in ["password", "api_key", "secret", "token", "refresh_token", "access_token", "otp"]:
+                        for sensitive_key in [
+                            "password",
+                            "api_key",
+                            "secret",
+                            "token",
+                            "refresh_token",
+                            "access_token",
+                            "otp",
+                        ]:
                             if sensitive_key in request_body:
                                 request_body[sensitive_key] = "***REDACTED***"
                 except Exception:
@@ -133,6 +146,6 @@ class RequestLoggerMiddleware:
                     resource_id=resource_id,
                     group_id=group_id,
                     error_message=error_message,
-                    error_type=error_type
+                    error_type=error_type,
                 )
             )

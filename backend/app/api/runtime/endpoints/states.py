@@ -1,16 +1,17 @@
 """State Store API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
-from typing import List, Optional
 import uuid
 from datetime import datetime
+from typing import Optional
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.state import State
-from app.schemas import StateCreate, StateUpdate, StateResponse
+from app.schemas import StateCreate, StateResponse, StateUpdate
 
 router = APIRouter(prefix="/states")
 
@@ -20,7 +21,7 @@ async def create_state(
     request: Request,
     state_data: StateCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Create a new state entry.
@@ -40,7 +41,10 @@ async def create_state(
         set_permission_used(request, namespace_perm)
     else:
         set_permission_used(request, namespace_perm, has_perm=False)
-        raise HTTPException(status_code=403, detail=f"Not authorized to create states in namespace '{state_data.namespace}'")
+        raise HTTPException(
+            status_code=403,
+            detail=f"Not authorized to create states in namespace '{state_data.namespace}'",
+        )
 
     # Check if state with same user_id, namespace, and key already exists
     result = await db.execute(
@@ -48,14 +52,14 @@ async def create_state(
             and_(
                 State.user_id == user_uuid,
                 State.namespace == state_data.namespace,
-                State.key == state_data.key
+                State.key == state_data.key,
             )
         )
     )
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=400,
-            detail=f"State with namespace '{state_data.namespace}' and key '{state_data.key}' already exists"
+            detail=f"State with namespace '{state_data.namespace}' and key '{state_data.key}' already exists",
         )
 
     # Create state
@@ -68,7 +72,7 @@ async def create_state(
         description=state_data.description,
         tags=state_data.tags,
         relevance_score=state_data.relevance_score,
-        expires_at=state_data.expires_at
+        expires_at=state_data.expires_at,
     )
 
     db.add(state)
@@ -78,17 +82,17 @@ async def create_state(
     return state
 
 
-@router.get("", response_model=List[StateResponse])
+@router.get("", response_model=list[StateResponse])
 async def list_states(
     request: Request,
     namespace: Optional[str] = None,
-    visibility: Optional[str] = Query(None, pattern=r'^(private|shared)$'),
+    visibility: Optional[str] = Query(None, pattern=r"^(private|shared)$"),
     tags: Optional[str] = Query(None, description="Comma-separated list of tags"),
     search: Optional[str] = Query(None, description="Search in keys and descriptions"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     List states accessible to the current user.
@@ -103,12 +107,7 @@ async def list_states(
     # Build base query: own states OR (shared + has namespace permission)
     # We'll filter by namespace permission in Python since we can't do dynamic permission checks in SQL
     query = select(State).where(
-        and_(
-            or_(
-                State.expires_at == None,
-                State.expires_at > datetime.utcnow()
-            )
-        )
+        and_(or_(State.expires_at == None, State.expires_at > datetime.utcnow()))
     )
 
     # Add filters
@@ -117,14 +116,11 @@ async def list_states(
     if visibility:
         query = query.where(State.visibility == visibility)
     if tags:
-        tag_list = [t.strip() for t in tags.split(',')]
+        tag_list = [t.strip() for t in tags.split(",")]
         query = query.where(State.tags.contains(tag_list))
     if search:
         query = query.where(
-            or_(
-                State.key.ilike(f"%{search}%"),
-                State.description.ilike(f"%{search}%")
-            )
+            or_(State.key.ilike(f"%{search}%"), State.description.ilike(f"%{search}%"))
         )
 
     # Execute query
@@ -160,16 +156,14 @@ async def get_state(
     request: Request,
     state_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific state by ID."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
     # Get state
-    result = await db.execute(
-        select(State).where(State.id == state_id)
-    )
+    result = await db.execute(select(State).where(State.id == state_id))
     state = result.scalar_one_or_none()
 
     if not state:
@@ -204,16 +198,14 @@ async def update_state(
     state_id: uuid.UUID,
     state_data: StateUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a state entry. Only owner can update."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
     # Get state
-    result = await db.execute(
-        select(State).where(State.id == state_id)
-    )
+    result = await db.execute(select(State).where(State.id == state_id))
     state = result.scalar_one_or_none()
 
     if not state:
@@ -257,16 +249,14 @@ async def delete_state(
     request: Request,
     state_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a state entry. Only owner can delete."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
     # Get state
-    result = await db.execute(
-        select(State).where(State.id == state_id)
-    )
+    result = await db.execute(select(State).where(State.id == state_id))
     state = result.scalar_one_or_none()
 
     if not state:

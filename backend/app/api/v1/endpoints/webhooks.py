@@ -1,15 +1,14 @@
 """Webhooks API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import List
-import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
 from app.models.webhook import Webhook
-from app.schemas import WebhookCreate, WebhookUpdate, WebhookResponse
+from app.schemas import WebhookCreate, WebhookResponse, WebhookUpdate
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -19,7 +18,7 @@ async def create_webhook(
     request: Request,
     webhook_data: WebhookCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new webhook."""
     user_id, permissions = current_user_data
@@ -33,57 +32,58 @@ async def create_webhook(
 
     # Check if path already exists for this user
     result = await db.execute(
-        select(Webhook).where(
-            and_(
-                Webhook.user_id == user_id,
-                Webhook.path == webhook_data.path
-            )
-        )
+        select(Webhook).where(and_(Webhook.user_id == user_id, Webhook.path == webhook_data.path))
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Webhook path '{webhook_data.path}' already exists")
+        raise HTTPException(
+            status_code=400, detail=f"Webhook path '{webhook_data.path}' already exists"
+        )
 
     # Verify function exists
     from app.models.function import Function
-    function = await Function.get_by_name(db, webhook_data.function_namespace, webhook_data.function_name, user_id)
+
+    function = await Function.get_by_name(
+        db, webhook_data.function_namespace, webhook_data.function_name, user_id
+    )
     if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{webhook_data.function_namespace}.{webhook_data.function_name}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Function '{webhook_data.function_namespace}.{webhook_data.function_name}' not found",
+        )
     # Create webhook
     webhook = Webhook(
         user_id=user_id,
-        
         path=webhook_data.path,
         function_namespace=webhook_data.function_namespace,
         function_name=webhook_data.function_name,
         http_method=webhook_data.http_method,
         description=webhook_data.description,
         default_values=webhook_data.default_values or {},
-        requires_auth=webhook_data.requires_auth
+        requires_auth=webhook_data.requires_auth,
     )
 
     db.add(webhook)
     await db.commit()
     await db.refresh(webhook)
 
-    
     response = WebhookResponse.model_validate(webhook)
 
     return response
 
 
-@router.get("", response_model=List[WebhookResponse])
+@router.get("", response_model=list[WebhookResponse])
 async def list_webhooks(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List webhooks (own and group-accessible)."""
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.webhooks.read:all"):
+    if check_permission(permissions, "sinas.webhooks.read:all"):
         set_permission_used(request, "sinas.webhooks.read:all")
         query = select(Webhook)
     else:
@@ -102,7 +102,7 @@ async def get_webhook(
     request: Request,
     path: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific webhook."""
     user_id, permissions = current_user_data
@@ -113,7 +113,7 @@ async def get_webhook(
         raise HTTPException(status_code=404, detail=f"Webhook '{path}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.webhooks.read:all"):
+    if check_permission(permissions, "sinas.webhooks.read:all"):
         set_permission_used(request, "sinas.webhooks.read:all")
     else:
         if webhook.user_id != user_id:
@@ -121,7 +121,6 @@ async def get_webhook(
             raise HTTPException(status_code=403, detail="Not authorized to view this webhook")
         set_permission_used(request, "sinas.webhooks.read:own")
 
-    
     response = WebhookResponse.model_validate(webhook)
 
     return response
@@ -133,7 +132,7 @@ async def update_webhook(
     path: str,
     webhook_data: WebhookUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a webhook."""
     user_id, permissions = current_user_data
@@ -144,7 +143,7 @@ async def update_webhook(
         raise HTTPException(status_code=404, detail=f"Webhook '{path}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.webhooks.update:all"):
+    if check_permission(permissions, "sinas.webhooks.update:all"):
         set_permission_used(request, "sinas.webhooks.update:all")
     else:
         if webhook.user_id != user_id:
@@ -155,19 +154,33 @@ async def update_webhook(
     # Update fields
     if webhook_data.function_namespace is not None or webhook_data.function_name is not None:
         # Use updated namespace or keep existing
-        new_namespace = webhook_data.function_namespace if webhook_data.function_namespace is not None else webhook.function_namespace
-        new_function_name = webhook_data.function_name if webhook_data.function_name is not None else webhook.function_name
+        new_namespace = (
+            webhook_data.function_namespace
+            if webhook_data.function_namespace is not None
+            else webhook.function_namespace
+        )
+        new_function_name = (
+            webhook_data.function_name
+            if webhook_data.function_name is not None
+            else webhook.function_name
+        )
 
         # Verify function reference can be updated (already checked webhook.update above)
-        if webhook_data.function_namespace is not None and webhook_data.function_namespace != webhook.function_namespace:
+        if (
+            webhook_data.function_namespace is not None
+            and webhook_data.function_namespace != webhook.function_namespace
+        ):
             # Permission already validated with sinas.webhooks.update:own/all
             pass
 
         # Verify new function exists
         from app.models.function import Function
+
         function = await Function.get_by_name(db, new_namespace, new_function_name, user_id)
         if not function:
-            raise HTTPException(status_code=404, detail=f"Function '{new_namespace}.{new_function_name}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Function '{new_namespace}.{new_function_name}' not found"
+            )
 
         webhook.function_namespace = new_namespace
         webhook.function_name = new_function_name
@@ -185,7 +198,6 @@ async def update_webhook(
     await db.commit()
     await db.refresh(webhook)
 
-    
     response = WebhookResponse.model_validate(webhook)
 
     return response
@@ -196,7 +208,7 @@ async def delete_webhook(
     request: Request,
     path: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a webhook."""
     user_id, permissions = current_user_data
@@ -207,7 +219,7 @@ async def delete_webhook(
         raise HTTPException(status_code=404, detail=f"Webhook '{path}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.webhooks.delete:all"):
+    if check_permission(permissions, "sinas.webhooks.delete:all"):
         set_permission_used(request, "sinas.webhooks.delete:all")
     else:
         if webhook.user_id != user_id:

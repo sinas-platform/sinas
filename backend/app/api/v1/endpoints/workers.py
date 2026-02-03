@@ -1,11 +1,11 @@
 """Workers API endpoints for managing shared worker pool."""
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-from pydantic import BaseModel
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.services.shared_worker_manager import shared_worker_manager
 
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/workers", tags=["workers"])
 
 class WorkerResponse(BaseModel):
     """Worker information response."""
+
     id: str
     container_name: str
     status: str
@@ -23,11 +24,13 @@ class WorkerResponse(BaseModel):
 
 class ScaleWorkersRequest(BaseModel):
     """Request to scale workers."""
+
     target_count: int
 
 
 class ScaleWorkersResponse(BaseModel):
     """Response from scaling workers."""
+
     action: str
     previous_count: int
     current_count: int
@@ -35,11 +38,11 @@ class ScaleWorkersResponse(BaseModel):
     removed: int = 0
 
 
-@router.get("", response_model=List[WorkerResponse])
+@router.get("", response_model=list[WorkerResponse])
 async def list_workers(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     List all shared workers.
@@ -67,7 +70,7 @@ async def scale_workers(
     request: Request,
     scale_request: ScaleWorkersRequest,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     Scale workers up or down to target count.
@@ -101,7 +104,7 @@ async def scale_workers(
 async def get_worker_count(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Get current worker count."""
     user_id, permissions = current_user_data
@@ -123,7 +126,7 @@ async def get_worker_count(
 async def reload_worker_packages(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     Reload packages in all shared workers.

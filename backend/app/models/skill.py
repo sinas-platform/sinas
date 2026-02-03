@@ -1,6 +1,5 @@
 """Skill model."""
 import uuid
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text, UniqueConstraint
@@ -35,22 +34,10 @@ class Skill(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    __table_args__ = (
-        UniqueConstraint('namespace', 'name', name='uq_skill_namespace_name'),
-    )
+    __table_args__ = (UniqueConstraint("namespace", "name", name="uq_skill_namespace_name"),)
 
     @classmethod
-    async def get_by_name(
-        cls,
-        db: AsyncSession,
-        namespace: str,
-        name: str
-    ) -> Optional["Skill"]:
+    async def get_by_name(cls, db: AsyncSession, namespace: str, name: str) -> Optional["Skill"]:
         """Get skill by namespace and name."""
-        result = await db.execute(
-            select(cls).where(
-                cls.namespace == namespace,
-                cls.name == name
-            )
-        )
+        result = await db.execute(select(cls).where(cls.namespace == namespace, cls.name == name))
         return result.scalar_one_or_none()

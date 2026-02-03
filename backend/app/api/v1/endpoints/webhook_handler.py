@@ -1,21 +1,22 @@
 """Webhook handler endpoint for executing functions via HTTP."""
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import Dict, Any, Optional
 import uuid
+from typing import Any, Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import set_permission_used, verify_jwt_or_api_key
 from app.core.database import get_db
-from app.core.auth import verify_jwt_or_api_key, set_permission_used
 from app.core.permissions import check_permission
-from app.models.webhook import Webhook
 from app.models.execution import TriggerType
+from app.models.webhook import Webhook
 from app.services.execution_engine import executor
 
 router = APIRouter(prefix="/h", tags=["webhook-handler"])
 
 
-async def extract_request_data(request: Request) -> Dict[str, Any]:
+async def extract_request_data(request: Request) -> dict[str, Any]:
     """Extract all request data (body, headers, query params) into a structured format."""
     # Get request body
     body = {}
@@ -42,8 +43,9 @@ async def extract_request_data(request: Request) -> Dict[str, Any]:
 
     # Extract headers (exclude some internal ones)
     headers = {
-        k: v for k, v in request.headers.items()
-        if not k.lower().startswith(('host', 'user-agent', 'accept-encoding'))
+        k: v
+        for k, v in request.headers.items()
+        if not k.lower().startswith(("host", "user-agent", "accept-encoding"))
     }
 
     # Extract query parameters
@@ -59,20 +61,16 @@ async def extract_request_data(request: Request) -> Dict[str, Any]:
         "path_params": path_params,
         "method": request.method,
         "url": str(request.url),
-        "path": request.url.path
+        "path": request.url.path,
     }
 
 
 @router.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    operation_id="handle_webhook_request"
+    operation_id="handle_webhook_request",
 )
-async def handle_webhook(
-    path: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db)
-):
+async def handle_webhook(path: str, request: Request, db: AsyncSession = Depends(get_db)):
     """Handle incoming webhook requests by executing the associated function."""
 
     # Look up webhook configuration
@@ -81,7 +79,7 @@ async def handle_webhook(
             and_(
                 Webhook.path == path,
                 Webhook.http_method == request.method,
-                Webhook.is_active == True
+                Webhook.is_active == True,
             )
         )
     )
@@ -90,7 +88,7 @@ async def handle_webhook(
     if not webhook:
         raise HTTPException(
             status_code=404,
-            detail=f"No active webhook found for path '{path}' and method '{request.method}'"
+            detail=f"No active webhook found for path '{path}' and method '{request.method}'",
         )
 
     # Check authentication if required
@@ -110,7 +108,7 @@ async def handle_webhook(
                 set_permission_used(request, execute_perm, has_perm=False)
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Not authorized to execute functions in namespace '{webhook.function_namespace}'"
+                    detail=f"Not authorized to execute functions in namespace '{webhook.function_namespace}'",
                 )
             set_permission_used(request, execute_perm)
         except HTTPException:
@@ -148,17 +146,10 @@ async def handle_webhook(
             trigger_type=TriggerType.WEBHOOK.value,
             trigger_id=str(webhook.id),
             user_id=user_id,
-            chat_id=chat_id
+            chat_id=chat_id,
         )
 
-        return {
-            "success": True,
-            "execution_id": execution_id,
-            "result": result
-        }
+        return {"success": True, "execution_id": execution_id, "result": result}
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Function execution failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Function execution failed: {str(e)}")

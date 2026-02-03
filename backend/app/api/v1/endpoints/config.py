@@ -2,11 +2,13 @@
 Declarative configuration endpoints
 Handles applying, validating, and exporting SINAS configuration
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.schemas.config import (
     ConfigApplyRequest,
@@ -14,11 +16,9 @@ from app.schemas.config import (
     ConfigValidateRequest,
     ConfigValidateResponse,
 )
-from app.services.config_parser import ConfigParser
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
-
-import logging
+from app.services.config_parser import ConfigParser
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ async def validate_config(
     config, validation = await ConfigParser.parse_and_validate(
         validate_request.config,
         db=db,  # Pass database for checking existing resources
-        strict=False  # Don't error on missing env vars for validation
+        strict=False,  # Don't error on missing env vars for validation
     )
 
     # Convert ConfigValidation to ConfigValidateResponse
@@ -63,14 +63,8 @@ async def validate_config(
 
     return ConfigValidateResponse(
         valid=validation.is_valid,
-        errors=[
-            SchemaValidationError(path=e.path, message=e.message)
-            for e in validation.errors
-        ],
-        warnings=[
-            SchemaValidationError(path="", message=w)
-            for w in validation.warnings
-        ]
+        errors=[SchemaValidationError(path=e.path, message=e.message) for e in validation.errors],
+        warnings=[SchemaValidationError(path="", message=w) for w in validation.warnings],
     )
 
 
@@ -106,7 +100,7 @@ async def apply_config(
         config, validation = await ConfigParser.parse_and_validate(
             apply_request.config,
             db=db,  # Pass database for checking existing resources
-            strict=not apply_request.force  # Allow missing env vars if force=True
+            strict=not apply_request.force,  # Allow missing env vars if force=True
         )
 
         if not validation.is_valid and not apply_request.force:
@@ -159,10 +153,13 @@ async def export_config(
     set_permission_used(request, perm, has_perm=True)
 
     try:
-        export_service = ConfigExportService(db, include_secrets=include_secrets, managed_only=managed_only)
+        export_service = ConfigExportService(
+            db, include_secrets=include_secrets, managed_only=managed_only
+        )
         yaml_config = await export_service.export_config()
 
         from fastapi.responses import Response
+
         return Response(content=yaml_config, media_type="application/x-yaml")
 
     except Exception as e:

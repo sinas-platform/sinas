@@ -4,8 +4,8 @@ Convert universal content format to provider-specific formats.
 This allows users to send the same message format regardless of which
 LLM provider (OpenAI, Mistral, Ollama) is being used.
 """
-from typing import List, Dict, Any, Union
 import logging
+from typing import Any, Union
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class ContentConverter:
     """Converts universal content format to provider-specific formats."""
 
     @staticmethod
-    def to_openai(content: Union[str, List[Dict[str, Any]]]) -> Union[str, List[Dict[str, Any]]]:
+    def to_openai(content: Union[str, list[dict[str, Any]]]) -> Union[str, list[dict[str, Any]]]:
         """
         Convert universal content format to OpenAI format.
 
@@ -32,30 +32,22 @@ class ContentConverter:
             chunk_type = chunk.get("type")
 
             if chunk_type == "text":
-                result.append({
-                    "type": "text",
-                    "text": chunk["text"]
-                })
+                result.append({"type": "text", "text": chunk["text"]})
 
             elif chunk_type == "image":
                 image_url = chunk["image"]
                 detail = chunk.get("detail", "auto")
-                result.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": image_url,
-                        "detail": detail
-                    }
-                })
+                result.append(
+                    {"type": "image_url", "image_url": {"url": image_url, "detail": detail}}
+                )
 
             elif chunk_type == "audio":
-                result.append({
-                    "type": "input_audio",
-                    "input_audio": {
-                        "data": chunk["data"],
-                        "format": chunk["format"]
+                result.append(
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": chunk["data"], "format": chunk["format"]},
                     }
-                })
+                )
 
             elif chunk_type == "file":
                 file_obj = {}
@@ -75,10 +67,7 @@ class ContentConverter:
                     )
                     continue
 
-                result.append({
-                    "type": "file",
-                    "file": file_obj
-                })
+                result.append({"type": "file", "file": file_obj})
 
             else:
                 # Unknown type, pass through as-is
@@ -87,7 +76,7 @@ class ContentConverter:
         return result
 
     @staticmethod
-    def to_mistral(content: Union[str, List[Dict[str, Any]]]) -> Union[str, List[Dict[str, Any]]]:
+    def to_mistral(content: Union[str, list[dict[str, Any]]]) -> Union[str, list[dict[str, Any]]]:
         """
         Convert universal content format to Mistral format.
 
@@ -105,33 +94,26 @@ class ContentConverter:
             chunk_type = chunk.get("type")
 
             if chunk_type == "text":
-                result.append({
-                    "type": "text",
-                    "text": chunk["text"]
-                })
+                result.append({"type": "text", "text": chunk["text"]})
 
             elif chunk_type == "image":
                 # Mistral wants just the URL string, not an object
-                result.append({
-                    "type": "image_url",
-                    "image_url": chunk["image"]
-                })
+                result.append({"type": "image_url", "image_url": chunk["image"]})
 
             elif chunk_type == "audio":
                 # Mistral wants just the base64 string, no format field
-                result.append({
-                    "type": "input_audio",
-                    "input_audio": chunk["data"]
-                })
+                result.append({"type": "input_audio", "input_audio": chunk["data"]})
 
             elif chunk_type == "file":
                 # Mistral prefers URLs for documents
                 if "file_url" in chunk:
-                    result.append({
-                        "type": "document_url",
-                        "document_url": chunk["file_url"],
-                        "document_name": chunk.get("filename")
-                    })
+                    result.append(
+                        {
+                            "type": "document_url",
+                            "document_url": chunk["file_url"],
+                            "document_name": chunk.get("filename"),
+                        }
+                    )
                 elif "file_data" in chunk:
                     # Mistral doesn't support inline file data well
                     logger.warning(
@@ -152,7 +134,7 @@ class ContentConverter:
         return result
 
     @staticmethod
-    def to_ollama(content: Union[str, List[Dict[str, Any]]]) -> Union[str, List[Dict[str, Any]]]:
+    def to_ollama(content: Union[str, list[dict[str, Any]]]) -> Union[str, list[dict[str, Any]]]:
         """
         Convert universal content format to Ollama format.
 
@@ -170,18 +152,14 @@ class ContentConverter:
             chunk_type = chunk.get("type")
 
             if chunk_type == "text":
-                result.append({
-                    "type": "text",
-                    "text": chunk["text"]
-                })
+                result.append({"type": "text", "text": chunk["text"]})
 
             elif chunk_type == "image":
                 # Ollama uses OpenAI format for images
                 image_url = chunk["image"]
-                result.append({
-                    "type": "image_url",
-                    "image_url": image_url  # Can be URL or data URL
-                })
+                result.append(
+                    {"type": "image_url", "image_url": image_url}  # Can be URL or data URL
+                )
 
             elif chunk_type == "audio":
                 logger.warning("Ollama doesn't support audio input. Skipping audio chunk.")
@@ -199,9 +177,8 @@ class ContentConverter:
 
     @staticmethod
     def convert_message_content(
-        content: Union[str, List[Dict[str, Any]]],
-        provider_type: str
-    ) -> Union[str, List[Dict[str, Any]]]:
+        content: Union[str, list[dict[str, Any]]], provider_type: str
+    ) -> Union[str, list[dict[str, Any]]]:
         """
         Convert message content to provider-specific format.
 
@@ -222,5 +199,7 @@ class ContentConverter:
             return ContentConverter.to_ollama(content)
         else:
             # Unknown provider, pass through as-is
-            logger.warning(f"Unknown provider type: {provider_type}. Passing content through as-is.")
+            logger.warning(
+                f"Unknown provider type: {provider_type}. Passing content through as-is."
+            )
             return content

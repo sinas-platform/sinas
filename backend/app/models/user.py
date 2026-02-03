@@ -1,10 +1,11 @@
-from sqlalchemy import String, Boolean, DateTime, ForeignKey, Index, JSON, Text, select
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, List, Dict
 import uuid
+from typing import Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class User(Base):
@@ -23,19 +24,19 @@ class User(Base):
 
     # External auth (null = OTP user)
     external_user_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
-    external_metadata: Mapped[Optional[Dict]] = mapped_column(JSON)
+    external_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     last_external_sync: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
 
     # Relationships
-    role_memberships: Mapped[List["UserRole"]] = relationship(
+    role_memberships: Mapped[list["UserRole"]] = relationship(
         "UserRole", back_populates="user", foreign_keys="[UserRole.user_id]"
     )
-    api_keys: Mapped[List["APIKey"]] = relationship(
+    api_keys: Mapped[list["APIKey"]] = relationship(
         "APIKey", back_populates="user", foreign_keys="[APIKey.user_id]"
     )
-    chats: Mapped[List["Chat"]] = relationship("Chat", back_populates="user")
-    agents: Mapped[List["Agent"]] = relationship("Agent", back_populates="user")
-    states: Mapped[List["State"]] = relationship("State", back_populates="user")
+    chats: Mapped[list["Chat"]] = relationship("Chat", back_populates="user")
+    agents: Mapped[list["Agent"]] = relationship("Agent", back_populates="user")
+    states: Mapped[list["State"]] = relationship("State", back_populates="user")
 
 
 class Role(Base):
@@ -57,19 +58,17 @@ class Role(Base):
     external_group_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
 
     # Relationships
-    members: Mapped[List["UserRole"]] = relationship(
+    members: Mapped[list["UserRole"]] = relationship(
         "UserRole", back_populates="role", cascade="all, delete-orphan"
     )
-    permissions: Mapped[List["RolePermission"]] = relationship(
+    permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission", back_populates="role", cascade="all, delete-orphan"
     )
 
     @classmethod
     async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["Role"]:
         """Get role by name."""
-        result = await db.execute(
-            select(cls).where(cls.name == name)
-        )
+        result = await db.execute(select(cls).where(cls.name == name))
         return result.scalar_one_or_none()
 
 
@@ -88,14 +87,14 @@ class UserRole(Base):
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="members")
-    user: Mapped["User"] = relationship("User", back_populates="role_memberships", foreign_keys=[user_id])
+    user: Mapped["User"] = relationship(
+        "User", back_populates="role_memberships", foreign_keys=[user_id]
+    )
 
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
-    __table_args__ = (
-        Index('ix_role_permission_unique', 'role_id', 'permission_key', unique=True),
-    )
+    __table_args__ = (Index("ix_role_permission_unique", "role_id", "permission_key", unique=True),)
 
     id: Mapped[uuid_pk]
     role_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("roles.id"), nullable=False, index=True)
@@ -127,7 +126,7 @@ class APIKey(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     key_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
-    permissions: Mapped[Dict[str, bool]] = mapped_column(JSON, nullable=False)
+    permissions: Mapped[dict[str, bool]] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     last_used_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
@@ -145,6 +144,7 @@ class RefreshToken(Base):
     Refresh tokens for JWT authentication.
     Stored in database for revocation control (logout, user deactivation).
     """
+
     __tablename__ = "refresh_tokens"
 
     id: Mapped[uuid_pk]
@@ -152,7 +152,9 @@ class RefreshToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     token_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
-    expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    expires_at: Mapped[DateTime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     last_used_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[created_at]
     revoked_at: Mapped[Optional[DateTime]] = mapped_column(DateTime(timezone=True))

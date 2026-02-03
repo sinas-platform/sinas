@@ -3,11 +3,11 @@ import hashlib
 import random
 import secrets
 import string
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, List, Tuple
+from datetime import UTC, datetime, timedelta
+from typing import Optional
 
-from fastapi import HTTPException, Depends, Header, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,17 +16,17 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.email import send_otp_email_async
 from app.core.permissions import (
+    DEFAULT_ROLE_PERMISSIONS,
     check_permission,
     validate_permission_subset,
-    DEFAULT_ROLE_PERMISSIONS,
 )
 from app.models import (
-    User,
-    Role,
-    UserRole,
-    RolePermission,
-    OTPSession,
     APIKey,
+    OTPSession,
+    Role,
+    RolePermission,
+    User,
+    UserRole,
 )
 
 security = HTTPBearer()
@@ -39,7 +39,7 @@ def normalize_email(email: str) -> str:
 
 def generate_otp_code(length: int = 6) -> str:
     """Generate a random numeric OTP code."""
-    return ''.join(random.choices(string.digits, k=length))
+    return "".join(random.choices(string.digits, k=length))
 
 
 async def create_otp_session(db: AsyncSession, email: str) -> OTPSession:
@@ -54,22 +54,16 @@ async def create_otp_session(db: AsyncSession, email: str) -> OTPSession:
         Created OTPSession
     """
     otp_code = generate_otp_code()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.otp_expire_minutes)
+    expires_at = datetime.now(UTC) + timedelta(minutes=settings.otp_expire_minutes)
 
     # Delete any existing OTP sessions for this email
-    result = await db.execute(
-        select(OTPSession).where(OTPSession.email == normalize_email(email))
-    )
+    result = await db.execute(select(OTPSession).where(OTPSession.email == normalize_email(email)))
     existing_sessions = result.scalars().all()
     for session in existing_sessions:
         await db.delete(session)
 
     # Create new OTP session
-    otp_session = OTPSession(
-        email=normalize_email(email),
-        otp_code=otp_code,
-        expires_at=expires_at
-    )
+    otp_session = OTPSession(email=normalize_email(email), otp_code=otp_code, expires_at=expires_at)
     db.add(otp_session)
     await db.commit()
     await db.refresh(otp_session)
@@ -92,16 +86,14 @@ async def verify_otp_code(db: AsyncSession, session_id: str, otp_code: str) -> O
     Returns:
         OTPSession if valid, None otherwise
     """
-    result = await db.execute(
-        select(OTPSession).where(OTPSession.id == session_id)
-    )
+    result = await db.execute(select(OTPSession).where(OTPSession.id == session_id))
     otp_session = result.scalar_one_or_none()
 
     if not otp_session:
         return None
 
     # Check if expired
-    if otp_session.expires_at < datetime.now(timezone.utc):
+    if otp_session.expires_at < datetime.now(UTC):
         return None
 
     # Check if already verified
@@ -119,10 +111,7 @@ async def verify_otp_code(db: AsyncSession, session_id: str, otp_code: str) -> O
     return otp_session
 
 
-async def get_user_by_email(
-    db: AsyncSession,
-    email: str
-) -> User | None:
+async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
     """
     Get user by email address.
 
@@ -135,13 +124,11 @@ async def get_user_by_email(
     """
     normalized_email = normalize_email(email)
 
-    result = await db.execute(
-        select(User).where(User.email == normalized_email)
-    )
+    result = await db.execute(select(User).where(User.email == normalized_email))
     return result.scalar_one_or_none()
 
 
-async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool]:
+async def get_user_permissions(db: AsyncSession, user_id: str) -> dict[str, bool]:
     """
     Get all permissions for a user by aggregating from their active groups.
 
@@ -154,10 +141,7 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool
     """
     # Get all active group memberships
     result = await db.execute(
-        select(UserRole).where(
-            UserRole.user_id == user_id,
-            UserRole.active == True
-        )
+        select(UserRole).where(UserRole.user_id == user_id, UserRole.active == True)
     )
     memberships = result.scalars().all()
 
@@ -169,9 +153,7 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool
 
     for membership in memberships:
         result = await db.execute(
-            select(RolePermission).where(
-                RolePermission.role_id == membership.role_id
-            )
+            select(RolePermission).where(RolePermission.role_id == membership.role_id)
         )
         group_permissions = result.scalars().all()
 
@@ -185,11 +167,7 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> Dict[str, bool
     return all_permissions
 
 
-def create_access_token(
-    user_id: str,
-    email: str,
-    expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(user_id: str, email: str, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create JWT access token (short-lived, no permissions in payload).
 
@@ -204,7 +182,7 @@ def create_access_token(
     Returns:
         Encoded JWT token
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if expires_delta:
         expire = now + expires_delta
@@ -215,17 +193,14 @@ def create_access_token(
         "sub": str(user_id),
         "email": email,
         "iat": int(now.timestamp()),  # Issued at (best practice)
-        "exp": int(expire.timestamp())
+        "exp": int(expire.timestamp()),
     }
 
     encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
     return encoded_jwt
 
 
-async def create_refresh_token(
-    db: AsyncSession,
-    user_id: str
-) -> Tuple[str, "RefreshToken"]:
+async def create_refresh_token(db: AsyncSession, user_id: str) -> tuple[str, "RefreshToken"]:
     """
     Create a refresh token and store it in the database.
 
@@ -238,8 +213,9 @@ async def create_refresh_token(
     Returns:
         Tuple of (plain_token, refresh_token_model)
     """
-    from app.models import RefreshToken
     import uuid as uuid_lib
+
+    from app.models import RefreshToken
 
     # Generate random token
     plain_token = secrets.token_urlsafe(32)
@@ -247,7 +223,7 @@ async def create_refresh_token(
     token_prefix = plain_token[:8]
 
     # Calculate expiration
-    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    expires_at = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
 
     # Create refresh token record
     refresh_token = RefreshToken(
@@ -255,7 +231,7 @@ async def create_refresh_token(
         token_hash=token_hash,
         token_prefix=token_prefix,
         is_revoked=False,
-        expires_at=expires_at
+        expires_at=expires_at,
     )
 
     db.add(refresh_token)
@@ -265,10 +241,7 @@ async def create_refresh_token(
     return plain_token, refresh_token
 
 
-async def validate_refresh_token(
-    db: AsyncSession,
-    plain_token: str
-) -> Optional[Tuple[str, str]]:
+async def validate_refresh_token(db: AsyncSession, plain_token: str) -> Optional[tuple[str, str]]:
     """
     Validate a refresh token and return user info.
 
@@ -286,8 +259,7 @@ async def validate_refresh_token(
     # Find active refresh token
     result = await db.execute(
         select(RefreshToken).where(
-            RefreshToken.token_hash == token_hash,
-            RefreshToken.is_revoked == False
+            RefreshToken.token_hash == token_hash, RefreshToken.is_revoked == False
         )
     )
     refresh_token = result.scalar_one_or_none()
@@ -296,32 +268,27 @@ async def validate_refresh_token(
         return None
 
     # Check if expired
-    if refresh_token.expires_at < datetime.now(timezone.utc):
+    if refresh_token.expires_at < datetime.now(UTC):
         return None
 
     # Update last used timestamp
-    refresh_token.last_used_at = datetime.now(timezone.utc)
+    refresh_token.last_used_at = datetime.now(UTC)
 
     # Get user and update last_login
-    result = await db.execute(
-        select(User).where(User.id == refresh_token.user_id)
-    )
+    result = await db.execute(select(User).where(User.id == refresh_token.user_id))
     user = result.scalar_one_or_none()
 
     if not user:
         return None
 
     # Update last login timestamp
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
     await db.commit()
 
     return str(user.id), user.email
 
 
-async def revoke_refresh_token(
-    db: AsyncSession,
-    plain_token: str
-) -> bool:
+async def revoke_refresh_token(db: AsyncSession, plain_token: str) -> bool:
     """
     Revoke a refresh token (logout).
 
@@ -336,16 +303,14 @@ async def revoke_refresh_token(
 
     token_hash = hashlib.sha256(plain_token.encode()).hexdigest()
 
-    result = await db.execute(
-        select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-    )
+    result = await db.execute(select(RefreshToken).where(RefreshToken.token_hash == token_hash))
     refresh_token = result.scalar_one_or_none()
 
     if not refresh_token:
         return False
 
     refresh_token.is_revoked = True
-    refresh_token.revoked_at = datetime.now(timezone.utc)
+    refresh_token.revoked_at = datetime.now(UTC)
     await db.commit()
 
     return True
@@ -353,7 +318,8 @@ async def revoke_refresh_token(
 
 # API Key Management
 
-def generate_api_key() -> Tuple[str, str, str]:
+
+def generate_api_key() -> tuple[str, str, str]:
     """
     Generate a new API key.
 
@@ -375,10 +341,10 @@ async def create_api_key(
     db: AsyncSession,
     user: User,
     name: str,
-    permissions: Dict[str, bool],
+    permissions: dict[str, bool],
     expires_at: Optional[datetime] = None,
-    created_by: Optional[User] = None
-) -> Tuple[APIKey, str]:
+    created_by: Optional[User] = None,
+) -> tuple[APIKey, str]:
     """
     Create a new API key for a user.
 
@@ -405,7 +371,7 @@ async def create_api_key(
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"API key permissions exceed user's group permissions. Violations: {', '.join(violations)}"
+            detail=f"API key permissions exceed user's group permissions. Violations: {', '.join(violations)}",
         )
 
     # Generate key
@@ -420,7 +386,7 @@ async def create_api_key(
         permissions=permissions,
         is_active=True,
         expires_at=expires_at,
-        created_by=created_by.id if created_by else user.id
+        created_by=created_by.id if created_by else user.id,
     )
 
     db.add(api_key)
@@ -430,7 +396,7 @@ async def create_api_key(
     return api_key, plain_key
 
 
-async def validate_api_key(db: AsyncSession, key: str) -> Optional[Tuple[User, Dict[str, bool]]]:
+async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, dict[str, bool]]]:
     """
     Validate an API key and return the user and permissions.
 
@@ -445,10 +411,7 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[Tuple[User, D
 
     # Find active API key
     result = await db.execute(
-        select(APIKey).where(
-            APIKey.key_hash == key_hash,
-            APIKey.is_active == True
-        )
+        select(APIKey).where(APIKey.key_hash == key_hash, APIKey.is_active == True)
     )
     api_key = result.scalar_one_or_none()
 
@@ -456,23 +419,21 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[Tuple[User, D
         return None
 
     # Check if expired
-    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         return None
 
     # Update last used timestamp
-    api_key.last_used_at = datetime.now(timezone.utc)
+    api_key.last_used_at = datetime.now(UTC)
 
     # Get user and update last_login
-    result = await db.execute(
-        select(User).where(User.id == api_key.user_id)
-    )
+    result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
 
     if not user:
         return None
 
     # Update last login timestamp
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.now(UTC)
     await db.commit()
 
     return user, api_key.permissions
@@ -487,8 +448,8 @@ http_bearer = HTTPBearer(auto_error=False)
 async def verify_jwt_or_api_key(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    db: AsyncSession = Depends(get_db)
-) -> Tuple[str, str, Dict[str, bool]]:
+    db: AsyncSession = Depends(get_db),
+) -> tuple[str, str, dict[str, bool]]:
     """
     Verify either JWT access token or API key from Authorization or X-API-Key header.
 
@@ -513,8 +474,7 @@ async def verify_jwt_or_api_key(
         token = credentials.credentials  # HTTPBearer already strips "Bearer " prefix
     else:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authorization header"
         )
 
     # Try JWT first
@@ -525,8 +485,7 @@ async def verify_jwt_or_api_key(
 
         if not user_id or not email:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
             )
 
         # BEST PRACTICE: Load permissions from database, not from JWT
@@ -538,13 +497,10 @@ async def verify_jwt_or_api_key(
         user = result.scalar_one_or_none()
 
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
-            )
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
         # Update last login timestamp
-        user.last_login_at = datetime.now(timezone.utc)
+        user.last_login_at = datetime.now(UTC)
         await db.commit()
 
         return str(user_id), email, permissions
@@ -555,8 +511,7 @@ async def verify_jwt_or_api_key(
 
         if not result:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid or expired credentials"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired credentials"
             )
 
         user, permissions = result
@@ -580,9 +535,10 @@ def require_permission(required_permission: str):
     Returns:
         Dependency function that returns user_id if authorized
     """
+
     async def permission_checker(
         request: Request,
-        auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
+        auth_data: tuple[str, str, dict[str, bool]] = Depends(verify_jwt_or_api_key),
     ) -> str:
         user_id, email, permissions = auth_data
         has_perm = check_permission(permissions, required_permission)
@@ -596,7 +552,7 @@ def require_permission(required_permission: str):
         if not has_perm:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {required_permission}"
+                detail=f"Permission denied: {required_permission}",
             )
 
         return user_id
@@ -605,8 +561,7 @@ def require_permission(required_permission: str):
 
 
 async def get_current_user(
-    request: Request,
-    auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
+    request: Request, auth_data: tuple[str, str, dict[str, bool]] = Depends(verify_jwt_or_api_key)
 ) -> str:
     """
     Get current authenticated user ID without requiring specific permission.
@@ -624,8 +579,7 @@ async def get_current_user(
 
 
 async def get_current_user_optional(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
+    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
 ) -> Optional[str]:
     """
     Get current authenticated user ID if auth header provided, otherwise return None.
@@ -639,6 +593,7 @@ async def get_current_user_optional(
 
     try:
         from app.core.database import AsyncSessionLocal
+
         async with AsyncSessionLocal() as db:
             user_id, email, _ = await verify_jwt_or_api_key(credentials, db)
             # Store user info in request state for logging
@@ -651,9 +606,8 @@ async def get_current_user_optional(
 
 
 async def get_current_user_with_permissions(
-    request: Request,
-    auth_data: Tuple[str, str, Dict[str, bool]] = Depends(verify_jwt_or_api_key)
-) -> Tuple[str, Dict[str, bool]]:
+    request: Request, auth_data: tuple[str, str, dict[str, bool]] = Depends(verify_jwt_or_api_key)
+) -> tuple[str, dict[str, bool]]:
     """
     Get current authenticated user ID and their permissions.
 
@@ -696,6 +650,7 @@ def set_permission_used(request: Request, permission: str, has_perm: bool = True
 
 # Group initialization helper
 
+
 async def initialize_default_roles(db: AsyncSession):
     """
     Initialize default groups (GuestUsers, Users, Admins) with permissions.
@@ -704,9 +659,7 @@ async def initialize_default_roles(db: AsyncSession):
     """
     for group_name, permissions in DEFAULT_ROLE_PERMISSIONS.items():
         # Check if group exists
-        result = await db.execute(
-            select(Role).where(Role.name == group_name)
-        )
+        result = await db.execute(select(Role).where(Role.name == group_name))
         group = result.scalar_one_or_none()
 
         if not group:
@@ -720,8 +673,7 @@ async def initialize_default_roles(db: AsyncSession):
         for perm_key, perm_value in permissions.items():
             result = await db.execute(
                 select(RolePermission).where(
-                    RolePermission.role_id == group.id,
-                    RolePermission.permission_key == perm_key
+                    RolePermission.role_id == group.id, RolePermission.permission_key == perm_key
                 )
             )
             existing_perm = result.scalar_one_or_none()
@@ -730,9 +682,7 @@ async def initialize_default_roles(db: AsyncSession):
                 existing_perm.permission_value = perm_value
             else:
                 new_perm = RolePermission(
-                    role_id=group.id,
-                    permission_key=perm_key,
-                    permission_value=perm_value
+                    role_id=group.id, permission_key=perm_key, permission_value=perm_value
                 )
                 db.add(new_perm)
 
@@ -755,23 +705,19 @@ async def initialize_superadmin(db: AsyncSession):
     email = normalize_email(settings.superadmin_email)
 
     # Get Admins group (should already exist from initialize_default_groups)
-    result = await db.execute(
-        select(Role).where(Role.name == "Admins")
-    )
+    result = await db.execute(select(Role).where(Role.name == "Admins"))
     admins_role = result.scalar_one_or_none()
 
     if not admins_role:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.error("Admins group not found. Run initialize_default_groups first.")
         return
 
     # Check if any user is already in Admins group
     result = await db.execute(
-        select(UserRole).where(
-            UserRole.role_id == admins_role.id,
-            UserRole.active == True
-        )
+        select(UserRole).where(UserRole.role_id == admins_role.id, UserRole.active == True)
     )
     existing_members = result.scalars().all()
 
@@ -792,24 +738,17 @@ async def initialize_superadmin(db: AsyncSession):
 
     # Check if user is already in Admins group
     result = await db.execute(
-        select(UserRole).where(
-            UserRole.role_id == admins_role.id,
-            UserRole.user_id == user.id
-        )
+        select(UserRole).where(UserRole.role_id == admins_role.id, UserRole.user_id == user.id)
     )
     existing_membership = result.scalar_one_or_none()
 
     if not existing_membership:
         # Add user to Admins group
-        membership = UserRole(
-            role_id=admins_role.id,
-            user_id=user.id,
-            role="admin",
-            active=True
-        )
+        membership = UserRole(role_id=admins_role.id, user_id=user.id, role="admin", active=True)
         db.add(membership)
         await db.commit()
 
         import logging
+
         logger = logging.getLogger(__name__)
         logger.info(f"Admin user created: {email}")

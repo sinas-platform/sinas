@@ -1,11 +1,11 @@
 """MCP (Model Context Protocol) client for external tool integration."""
 import json
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any, Optional
+
 import httpx
 import websockets
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,14 +17,21 @@ logger = logging.getLogger(__name__)
 class MCPToolHandler:
     """Wrapper for an MCP tool to make it callable."""
 
-    def __init__(self, server_url: str, tool_name: str, tool_schema: Dict[str, Any], protocol: str = "http", api_key: Optional[str] = None):
+    def __init__(
+        self,
+        server_url: str,
+        tool_name: str,
+        tool_schema: dict[str, Any],
+        protocol: str = "http",
+        api_key: Optional[str] = None,
+    ):
         self.server_url = server_url
         self.tool_name = tool_name
         self.tool_schema = tool_schema
         self.protocol = protocol
         self.api_key = api_key
 
-    async def execute(self, arguments: Dict[str, Any]) -> Any:
+    async def execute(self, arguments: dict[str, Any]) -> Any:
         """Execute the MCP tool with given arguments."""
         if self.protocol == "http":
             return await self._execute_http(arguments)
@@ -33,7 +40,7 @@ class MCPToolHandler:
         else:
             raise ValueError(f"Unsupported protocol: {self.protocol}")
 
-    async def _execute_http(self, arguments: Dict[str, Any]) -> Any:
+    async def _execute_http(self, arguments: dict[str, Any]) -> Any:
         """Execute tool via HTTP."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             headers = {"Content-Type": "application/json"}
@@ -42,21 +49,14 @@ class MCPToolHandler:
 
             payload = {
                 "method": "tools/call",
-                "params": {
-                    "name": self.tool_name,
-                    "arguments": arguments
-                }
+                "params": {"name": self.tool_name, "arguments": arguments},
             }
 
-            response = await client.post(
-                self.server_url,
-                json=payload,
-                headers=headers
-            )
+            response = await client.post(self.server_url, json=payload, headers=headers)
             response.raise_for_status()
             return response.json()
 
-    async def _execute_websocket(self, arguments: Dict[str, Any]) -> Any:
+    async def _execute_websocket(self, arguments: dict[str, Any]) -> Any:
         """Execute tool via WebSocket."""
         extra_headers = {}
         if self.api_key:
@@ -65,28 +65,24 @@ class MCPToolHandler:
         async with websockets.connect(self.server_url, extra_headers=extra_headers) as websocket:
             request = {
                 "method": "tools/call",
-                "params": {
-                    "name": self.tool_name,
-                    "arguments": arguments
-                }
+                "params": {"name": self.tool_name, "arguments": arguments},
             }
 
             await websocket.send(json.dumps(request))
             response = await websocket.recv()
             return json.loads(response)
 
-    def to_openai_tool(self) -> Dict[str, Any]:
+    def to_openai_tool(self) -> dict[str, Any]:
         """Convert MCP tool schema to OpenAI tool format."""
         return {
             "type": "function",
             "function": {
                 "name": self.tool_name,
                 "description": self.tool_schema.get("description", f"MCP tool: {self.tool_name}"),
-                "parameters": self.tool_schema.get("inputSchema", {
-                    "type": "object",
-                    "properties": {}
-                })
-            }
+                "parameters": self.tool_schema.get(
+                    "inputSchema", {"type": "object", "properties": {}}
+                ),
+            },
         }
 
 
@@ -94,8 +90,8 @@ class MCPClient:
     """Client for managing MCP server connections and tool execution."""
 
     def __init__(self):
-        self.servers: Dict[str, MCPServer] = {}
-        self.tools: Dict[str, MCPToolHandler] = {}
+        self.servers: dict[str, MCPServer] = {}
+        self.tools: dict[str, MCPToolHandler] = {}
 
     async def initialize(self, db: AsyncSession):
         """
@@ -104,9 +100,7 @@ class MCPClient:
         Args:
             db: Database session
         """
-        result = await db.execute(
-            select(MCPServer).where(MCPServer.is_active == True)
-        )
+        result = await db.execute(select(MCPServer).where(MCPServer.is_active == True))
         servers = result.scalars().all()
 
         for server in servers:
@@ -118,7 +112,7 @@ class MCPClient:
                 server.error_message = str(e)
                 await db.commit()
 
-    async def connect_server(self, db: AsyncSession, server: MCPServer) -> List[str]:
+    async def connect_server(self, db: AsyncSession, server: MCPServer) -> list[str]:
         """
         Connect to an MCP server and discover available tools.
 
@@ -145,18 +139,20 @@ class MCPClient:
                     tool_name=tool_name,
                     tool_schema=tool,
                     protocol=server.protocol,
-                    api_key=server.api_key
+                    api_key=server.api_key,
                 )
                 self.tools[tool_name] = handler
                 discovered_tool_names.append(tool_name)
 
             # Update server status
             server.connection_status = "connected"
-            server.last_connected = datetime.now(timezone.utc)
+            server.last_connected = datetime.now(UTC)
             server.error_message = None
             await db.commit()
 
-            logger.info(f"Connected to MCP server {server.name}, discovered {len(discovered_tool_names)} tools")
+            logger.info(
+                f"Connected to MCP server {server.name}, discovered {len(discovered_tool_names)} tools"
+            )
             return discovered_tool_names
 
         except Exception as e:
@@ -178,7 +174,8 @@ class MCPClient:
 
             # Remove all tools from this server
             tools_to_remove = [
-                tool_name for tool_name, handler in self.tools.items()
+                tool_name
+                for tool_name, handler in self.tools.items()
                 if handler.server_url == server.url
             ]
             for tool_name in tools_to_remove:
@@ -188,9 +185,7 @@ class MCPClient:
             del self.servers[server_name]
 
             # Update database
-            result = await db.execute(
-                select(MCPServer).where(MCPServer.name == server_name)
-            )
+            result = await db.execute(select(MCPServer).where(MCPServer.name == server_name))
             db_server = result.scalar_one_or_none()
             if db_server:
                 db_server.connection_status = "disconnected"
@@ -198,7 +193,7 @@ class MCPClient:
 
             logger.info(f"Disconnected from MCP server {server_name}")
 
-    async def _discover_tools(self, server: MCPServer) -> List[Dict[str, Any]]:
+    async def _discover_tools(self, server: MCPServer) -> list[dict[str, Any]]:
         """
         Discover available tools from an MCP server.
 
@@ -215,40 +210,30 @@ class MCPClient:
         else:
             raise ValueError(f"Unsupported protocol: {server.protocol}")
 
-    async def _discover_tools_http(self, server: MCPServer) -> List[Dict[str, Any]]:
+    async def _discover_tools_http(self, server: MCPServer) -> list[dict[str, Any]]:
         """Discover tools via HTTP."""
         async with httpx.AsyncClient(timeout=10.0) as client:
             headers = {"Content-Type": "application/json"}
             if server.api_key:
                 headers["Authorization"] = f"Bearer {server.api_key}"
 
-            payload = {
-                "method": "tools/list",
-                "params": {}
-            }
+            payload = {"method": "tools/list", "params": {}}
 
-            response = await client.post(
-                server.url,
-                json=payload,
-                headers=headers
-            )
+            response = await client.post(server.url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
 
             # MCP response format: {"tools": [...]}
             return data.get("tools", [])
 
-    async def _discover_tools_websocket(self, server: MCPServer) -> List[Dict[str, Any]]:
+    async def _discover_tools_websocket(self, server: MCPServer) -> list[dict[str, Any]]:
         """Discover tools via WebSocket."""
         extra_headers = {}
         if server.api_key:
             extra_headers["Authorization"] = f"Bearer {server.api_key}"
 
         async with websockets.connect(server.url, extra_headers=extra_headers) as websocket:
-            request = {
-                "method": "tools/list",
-                "params": {}
-            }
+            request = {"method": "tools/list", "params": {}}
 
             await websocket.send(json.dumps(request))
             response = await websocket.recv()
@@ -257,9 +242,8 @@ class MCPClient:
             return data.get("tools", [])
 
     async def get_available_tools(
-        self,
-        enabled_tools: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        self, enabled_tools: Optional[list[str]] = None
+    ) -> list[dict[str, Any]]:
         """
         Get all available MCP tools in OpenAI tool format.
 
@@ -280,11 +264,7 @@ class MCPClient:
 
         return tools
 
-    async def execute_tool(
-        self,
-        tool_name: str,
-        arguments: Dict[str, Any]
-    ) -> Any:
+    async def execute_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """
         Execute an MCP tool.
 
@@ -304,7 +284,7 @@ class MCPClient:
         handler = self.tools[tool_name]
         return await handler.execute(arguments)
 
-    def get_tool_names(self) -> List[str]:
+    def get_tool_names(self) -> list[str]:
         """Get list of all available tool names."""
         return list(self.tools.keys())
 

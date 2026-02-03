@@ -6,19 +6,20 @@ import logging
 import time
 import traceback
 import uuid
-import inspect
-import dill
+from collections.abc import Callable
 from datetime import datetime
-from typing import Any, Dict, Optional, Callable, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-import jsonschema
+from typing import Any, Optional
 
-from app.models.function import Function
-from app.models.execution import Execution, StepExecution, ExecutionStatus
+import dill
+import jsonschema
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.database import AsyncSessionLocal
-from app.services.tracking import ExecutionTracker
+from app.models.execution import Execution, ExecutionStatus
+from app.models.function import Function
 from app.services.clickhouse_logger import clickhouse_logger
+from app.services.tracking import ExecutionTracker
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +38,16 @@ class TrackingDecorator:
 
     def __call__(self, func: Callable) -> Callable:
         if asyncio.iscoroutinefunction(func):
+
             async def async_wrapper(*args, **kwargs):
                 return await self.tracker.track_function_call(func, args, kwargs)
+
             return async_wrapper
         else:
             # For sync functions, make wrapper async so tracking works in event loop
             async def async_sync_wrapper(*args, **kwargs):
                 return await self.tracker.track_function_call(func, args, kwargs)
+
             return async_sync_wrapper
 
 
@@ -60,8 +64,7 @@ class ASTInjector:
 
                 # Check if decorator already exists
                 has_track_decorator = any(
-                    isinstance(d, ast.Name) and d.id == tracker_name
-                    for d in node.decorator_list
+                    isinstance(d, ast.Name) and d.id == tracker_name for d in node.decorator_list
                 )
 
                 if not has_track_decorator:
@@ -74,8 +77,7 @@ class ASTInjector:
                 track_decorator = ast.Name(id=tracker_name, ctx=ast.Load())
 
                 has_track_decorator = any(
-                    isinstance(d, ast.Name) and d.id == tracker_name
-                    for d in node.decorator_list
+                    isinstance(d, ast.Name) and d.id == tracker_name for d in node.decorator_list
                 )
 
                 if not has_track_decorator:
@@ -91,13 +93,14 @@ class ASTInjector:
 
         # Convert back to code
         import astor
+
         return astor.to_source(modified_tree)
 
 
 class FunctionExecutor:
     def __init__(self):
-        self.functions_cache: Dict[str, Function] = {}
-        self.namespace_cache: Dict[str, Dict[str, Any]] = {}
+        self.functions_cache: dict[str, Function] = {}
+        self.namespace_cache: dict[str, dict[str, Any]] = {}
         self._container_manager = None
 
     @property
@@ -105,18 +108,20 @@ class FunctionExecutor:
         """Lazy load container manager (always enabled for security)."""
         if self._container_manager is None:
             from app.services.user_container_manager import container_manager
+
             self._container_manager = container_manager
         return self._container_manager
 
     @property
     def worker_manager(self):
         """Lazy load shared worker manager."""
-        if not hasattr(self, '_worker_manager') or self._worker_manager is None:
+        if not hasattr(self, "_worker_manager") or self._worker_manager is None:
             from app.services.shared_worker_manager import shared_worker_manager
+
             self._worker_manager = shared_worker_manager
         return self._worker_manager
 
-    async def validate_schema(self, data: Any, schema: Dict[str, Any]) -> Any:
+    async def validate_schema(self, data: Any, schema: dict[str, Any]) -> Any:
         """
         Validate data against JSON schema with type coercion.
 
@@ -124,6 +129,7 @@ class FunctionExecutor:
             Coerced data
         """
         from app.utils.schema import validate_with_coercion
+
         try:
             return validate_with_coercion(data, schema)
         except jsonschema.ValidationError as e:
@@ -132,15 +138,15 @@ class FunctionExecutor:
     async def _execute_in_shared_pool(
         self,
         function: Function,
-        input_data: Dict[str, Any],
+        input_data: dict[str, Any],
         execution_id: str,
         user_id: str,
         user_email: str,
         access_token: str,
         trigger_type: str,
         chat_id: Optional[str],
-        db: AsyncSession
-    ) -> Dict[str, Any]:
+        db: AsyncSession,
+    ) -> dict[str, Any]:
         """
         Execute function in shared worker pool (separate worker containers).
 
@@ -165,7 +171,9 @@ class FunctionExecutor:
 
         return exec_result
 
-    async def load_function(self, db: AsyncSession, function_namespace: str, function_name: str, user_id: str) -> Function:
+    async def load_function(
+        self, db: AsyncSession, function_namespace: str, function_name: str, user_id: str
+    ) -> Function:
         """Load function from database with caching."""
         cache_key = f"{user_id}:{function_namespace}:{function_name}"
         if cache_key in self.functions_cache:
@@ -176,13 +184,15 @@ class FunctionExecutor:
                 Function.user_id == user_id,
                 Function.namespace == function_namespace,
                 Function.name == function_name,
-                Function.is_active == True
+                Function.is_active == True,
             )
         )
         function = result.scalar_one_or_none()
 
         if not function:
-            raise FunctionExecutionError(f"Function '{function_namespace}/{function_name}' not found or inactive")
+            raise FunctionExecutionError(
+                f"Function '{function_namespace}/{function_name}' not found or inactive"
+            )
 
         self.functions_cache[cache_key] = function
         return function
@@ -197,8 +207,8 @@ class FunctionExecutor:
         trigger_type: str,
         chat_id: Optional[str],
         function_namespace: str,
-        enabled_namespaces: List[str]
-    ) -> Dict[str, Any]:
+        enabled_namespaces: list[str],
+    ) -> dict[str, Any]:
         """
         Build namespace with functions from enabled namespaces + own namespace.
         Functions are organized as nested namespace objects (e.g., payments.charge()).
@@ -207,8 +217,9 @@ class FunctionExecutor:
         if cache_key in self.namespace_cache:
             return self.namespace_cache[cache_key]
 
-        from app.models.user import UserRole
         from types import SimpleNamespace
+
+        from app.models.user import UserRole
 
         # Get user's groups
         groups_result = await db.execute(
@@ -225,7 +236,7 @@ class FunctionExecutor:
             select(Function).where(
                 Function.is_active == True,
                 Function.namespace.in_(allowed_namespaces),
-                (Function.user_id == user_id) | (Function.group_id.in_(group_ids))
+                (Function.user_id == user_id) | (Function.group_id.in_(group_ids)),
             )
         )
         functions = result.scalars().all()
@@ -271,7 +282,9 @@ class FunctionExecutor:
                     "datetime": datetime,
                     "uuid": uuid,
                 }
-                compiled_code = compile(modified_code, f"<function:{func.namespace}/{func.name}>", "exec")
+                compiled_code = compile(
+                    modified_code, f"<function:{func.namespace}/{func.name}>", "exec"
+                )
                 exec(compiled_code, temp_ns)
 
                 # Create namespace object if not exists
@@ -282,7 +295,14 @@ class FunctionExecutor:
                 # The function is whatever was defined in the code (usually matches func.name)
                 # Find the actual function object (skip builtins and our injected vars)
                 for key, value in temp_ns.items():
-                    if key not in ["__builtins__", "track", "context", "json", "datetime", "uuid"] and callable(value):
+                    if key not in [
+                        "__builtins__",
+                        "track",
+                        "context",
+                        "json",
+                        "datetime",
+                        "uuid",
+                    ] and callable(value):
                         setattr(namespace_objects[func.namespace], func.name, value)
                         break
 
@@ -300,23 +320,21 @@ class FunctionExecutor:
         self,
         function_namespace: str,
         function_name: str,
-        input_data: Dict[str, Any],
+        input_data: dict[str, Any],
         execution_id: str,
         trigger_type: str,
         trigger_id: str,
         user_id: str,
-        resume_data: Optional[Dict[str, Any]] = None,
-        chat_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        resume_data: Optional[dict[str, Any]] = None,
+        chat_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Execute a function with input validation and tracking."""
         async with AsyncSessionLocal() as db:
             # Get user info for context
-            from app.models.user import User
             from app.core.auth import create_access_token
+            from app.models.user import User
 
-            user_result = await db.execute(
-                select(User).where(User.id == user_id)
-            )
+            user_result = await db.execute(select(User).where(User.id == user_id))
             user = user_result.scalar_one_or_none()
             user_email = user.email if user else "unknown@unknown.com"
 
@@ -340,15 +358,13 @@ class FunctionExecutor:
                     chat_id=chat_id,
                     status=ExecutionStatus.RUNNING,
                     input_data=input_data,
-                    started_at=datetime.utcnow()
+                    started_at=datetime.utcnow(),
                 )
                 db.add(execution)
                 await db.commit()
 
                 # Log execution start to Redis
-                await clickhouse_logger.log_execution_start(
-                    execution_id, function_name, input_data
-                )
+                await clickhouse_logger.log_execution_start(execution_id, function_name, input_data)
             elif resume_data is not None:
                 # Resuming paused execution
                 if execution.status != ExecutionStatus.AWAITING_INPUT:
@@ -371,7 +387,9 @@ class FunctionExecutor:
                 # Route execution based on shared_pool setting
                 if function.shared_pool:
                     # Execute in shared worker container pool
-                    print(f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in shared pool")
+                    print(
+                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in shared pool"
+                    )
                     exec_result = await self._execute_in_shared_pool(
                         function=function,
                         input_data=input_data,
@@ -381,14 +399,18 @@ class FunctionExecutor:
                         access_token=access_token,
                         trigger_type=trigger_type,
                         chat_id=chat_id,
-                        db=db
+                        db=db,
                     )
                     elapsed = time.time() - start_time
                     print(f"⏱️  [TIMING] Shared pool execution completed in {elapsed:.3f}s")
                 else:
                     # Execute in isolated Docker container (per-user, untrusted code)
-                    print(f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in isolated container for user {user_id}")
-                    print(f"🐳 CONTAINER: Executing {function_namespace}/{function_name} in isolated container for user {user_id}")
+                    print(
+                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in isolated container for user {user_id}"
+                    )
+                    print(
+                        f"🐳 CONTAINER: Executing {function_namespace}/{function_name} in isolated container for user {user_id}"
+                    )
                     container_start = time.time()
                     exec_result = await self.container_manager.execute_function(
                         user_id=user_id,
@@ -406,11 +428,11 @@ class FunctionExecutor:
                     container_elapsed = time.time() - container_start
                     print(f"⏱️  [TIMING] Container execution completed in {container_elapsed:.3f}s")
 
-                if exec_result.get('status') == 'failed':
-                    raise FunctionExecutionError(exec_result.get('error', 'Unknown error'))
+                if exec_result.get("status") == "failed":
+                    raise FunctionExecutionError(exec_result.get("error", "Unknown error"))
 
-                result = exec_result.get('result')
-                duration_ms = exec_result.get('duration_ms', 0)
+                result = exec_result.get("result")
+                duration_ms = exec_result.get("duration_ms", 0)
 
                 # Validate output
                 if function.output_schema:
@@ -451,10 +473,10 @@ class FunctionExecutor:
         self,
         execution: Execution,
         func: Callable,
-        input_data: Dict[str, Any],
-        resume_data: Optional[Dict[str, Any]],
-        db: AsyncSession
-    ) -> Dict[str, Any]:
+        input_data: dict[str, Any],
+        resume_data: Optional[dict[str, Any]],
+        db: AsyncSession,
+    ) -> dict[str, Any]:
         """Execute a generator function with pause/resume support."""
 
         # Resume existing generator or create new one
@@ -505,8 +527,8 @@ class FunctionExecutor:
 
         # Generator yielded (paused for user input)
         execution.status = ExecutionStatus.AWAITING_INPUT
-        execution.input_prompt = yielded_value.get('prompt')
-        execution.input_schema = yielded_value.get('schema')
+        execution.input_prompt = yielded_value.get("prompt")
+        execution.input_schema = yielded_value.get("schema")
         execution.generator_state = dill.dumps(gen)
 
         await db.commit()
@@ -516,7 +538,7 @@ class FunctionExecutor:
             "status": "awaiting_input",
             "execution_id": execution.execution_id,
             "prompt": execution.input_prompt,
-            "schema": execution.input_schema
+            "schema": execution.input_schema,
         }
 
     def clear_cache(self):

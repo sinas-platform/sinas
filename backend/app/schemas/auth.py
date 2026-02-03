@@ -1,8 +1,9 @@
 """Authentication schemas."""
-from pydantic import BaseModel, EmailStr
-from typing import Optional, Dict, List, Literal
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Literal, Optional
+
+from pydantic import BaseModel, EmailStr
 
 
 class LoginRequest(BaseModel):
@@ -39,7 +40,7 @@ class UserResponse(BaseModel):
 
 class APIKeyCreate(BaseModel):
     name: str
-    permissions: Dict[str, bool]
+    permissions: dict[str, bool]
     expires_at: Optional[datetime] = None
 
 
@@ -47,7 +48,7 @@ class APIKeyResponse(BaseModel):
     id: uuid.UUID
     name: str
     key_prefix: str
-    permissions: Dict[str, bool]
+    permissions: dict[str, bool]
     is_active: bool
     last_used_at: Optional[datetime]
     expires_at: Optional[datetime]
@@ -63,11 +64,13 @@ class APIKeyCreatedResponse(APIKeyResponse):
 
 class RefreshRequest(BaseModel):
     """Request to refresh access token using refresh token."""
+
     refresh_token: str
 
 
 class RefreshResponse(BaseModel):
     """Response with new access token."""
+
     access_token: str
     token_type: str = "bearer"
     expires_in: int  # Access token expiry in seconds
@@ -75,6 +78,7 @@ class RefreshResponse(BaseModel):
 
 class LogoutRequest(BaseModel):
     """Request to logout (revoke refresh token)."""
+
     refresh_token: str
 
 
@@ -84,18 +88,21 @@ class CreateUserRequest(BaseModel):
 
 class PermissionCheckRequest(BaseModel):
     """Request to check if user has permission(s)."""
-    permissions: List[str]
+
+    permissions: list[str]
     logic: Literal["AND", "OR"] = "AND"
 
 
 class PermissionCheckResult(BaseModel):
     """Individual permission check result."""
+
     permission: str
     has_permission: bool
 
 
 class PermissionCheckResponse(BaseModel):
     """Response with permission check results."""
+
     result: bool  # Overall result based on logic (AND/OR)
     logic: str
-    checks: List[PermissionCheckResult]
+    checks: list[PermissionCheckResult]

@@ -1,11 +1,12 @@
-from sqlalchemy import String, Text, Boolean, JSON, Enum, ForeignKey, UniqueConstraint, select
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
 import enum
 import uuid
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, Boolean, Enum, ForeignKey, String, Text, UniqueConstraint, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class HTTPMethod(str, enum.Enum):
@@ -18,9 +19,7 @@ class HTTPMethod(str, enum.Enum):
 
 class Webhook(Base):
     __tablename__ = "webhooks"
-    __table_args__ = (
-        UniqueConstraint('path', 'http_method', name='uix_webhook_path_method'),
-    )
+    __table_args__ = (UniqueConstraint("path", "http_method", name="uix_webhook_path_method"),)
 
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
@@ -31,7 +30,7 @@ class Webhook(Base):
         Enum(HTTPMethod), default=HTTPMethod.POST, nullable=False
     )
     description: Mapped[Optional[str]] = mapped_column(Text)
-    default_values: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON)
+    default_values: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     requires_auth: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[created_at]
@@ -41,12 +40,17 @@ class Webhook(Base):
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     config_checksum: Mapped[Optional[str]] = mapped_column(Text)
 
-
     # Relationships
     user: Mapped["User"] = relationship("User")
 
     @classmethod
-    async def get_by_path(cls, db: AsyncSession, path: str, user_id: Optional[uuid.UUID] = None, http_method: Optional[HTTPMethod] = None) -> Optional["Webhook"]:
+    async def get_by_path(
+        cls,
+        db: AsyncSession,
+        path: str,
+        user_id: Optional[uuid.UUID] = None,
+        http_method: Optional[HTTPMethod] = None,
+    ) -> Optional["Webhook"]:
         """Get webhook by path, optionally filtered by user_id and HTTP method."""
         query = select(cls).where(cls.path == path, cls.is_active == True)
         if user_id is not None:

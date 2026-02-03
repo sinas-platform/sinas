@@ -1,21 +1,22 @@
 """Template runtime API endpoints - rendering and email sending."""
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
-from pydantic import BaseModel, EmailStr
-from typing import Dict, Any, Optional, List
+import asyncio
+import logging
 import uuid
+from typing import Any, Optional
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.config import settings
+from app.core.database import get_db
+from app.core.email import _send_email_sync
 from app.core.permissions import check_permission
 from app.models.template import Template
 from app.models.user import UserRole
 from app.services.template_renderer import render_template
-from app.core.email import _send_email_sync
-from app.core.config import settings
-import asyncio
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +25,22 @@ router = APIRouter(prefix="/templates")
 
 class TemplateRenderRequest(BaseModel):
     """Request to render a template."""
-    variables: Dict[str, Any]
+
+    variables: dict[str, Any]
 
 
 class TemplateEmailRequest(BaseModel):
     """Request to send email with template."""
+
     to: EmailStr
     from_alias: Optional[str] = None  # e.g., "support" -> support@domain.com
-    from_name: Optional[str] = None   # e.g., "SINAS Support"
-    variables: Dict[str, Any]
+    from_name: Optional[str] = None  # e.g., "SINAS Support"
+    variables: dict[str, Any]
 
 
 class TemplateRenderResponse(BaseModel):
     """Response from template rendering."""
+
     title: Optional[str] = None
     html_content: str
     text_content: Optional[str] = None
@@ -44,19 +48,15 @@ class TemplateRenderResponse(BaseModel):
 
 class TemplateEmailResponse(BaseModel):
     """Response from email sending."""
+
     message: str
     to: str
 
 
-async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:
+async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
     """Get all group IDs that the user is a member of."""
     result = await db.execute(
-        select(UserRole.role_id).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.active == True
-            )
-        )
+        select(UserRole.role_id).where(and_(UserRole.user_id == user_id, UserRole.active == True))
     )
     return [row[0] for row in result.all()]
 
@@ -66,9 +66,9 @@ async def get_template_with_permission_check(
     namespace: str,
     name: str,
     user_id: uuid.UUID,
-    permissions: Dict[str, bool],
+    permissions: dict[str, bool],
     action: str,  # "render" or "send"
-    request: Request
+    request: Request,
 ) -> Template:
     """
     Get template by namespace/name and check permissions.
@@ -91,19 +91,14 @@ async def get_template_with_permission_check(
     # Load template
     result = await db.execute(
         select(Template).where(
-            and_(
-                Template.namespace == namespace,
-                Template.name == name,
-                Template.is_active == True
-            )
+            and_(Template.namespace == namespace, Template.name == name, Template.is_active == True)
         )
     )
     template = result.scalar_one_or_none()
 
     if not template:
         raise HTTPException(
-            status_code=404,
-            detail=f"Template '{namespace}/{name}' not found or inactive"
+            status_code=404, detail=f"Template '{namespace}/{name}' not found or inactive"
         )
 
     # Check permissions based on ownership
@@ -122,8 +117,7 @@ async def get_template_with_permission_check(
         else:
             set_permission_used(request, f"{perm_base}:own", has_perm=False)
             raise HTTPException(
-                status_code=403,
-                detail=f"Not authorized to {action} template '{namespace}/{name}'"
+                status_code=403, detail=f"Not authorized to {action} template '{namespace}/{name}'"
             )
 
     # Check group ownership
@@ -137,14 +131,13 @@ async def get_template_with_permission_check(
                 set_permission_used(request, f"{perm_base}:group", has_perm=False)
                 raise HTTPException(
                     status_code=403,
-                    detail=f"Not authorized to {action} template '{namespace}/{name}'"
+                    detail=f"Not authorized to {action} template '{namespace}/{name}'",
                 )
 
     # No ownership match
     set_permission_used(request, f"{perm_base}:own", has_perm=False)
     raise HTTPException(
-        status_code=403,
-        detail=f"Not authorized to {action} template '{namespace}/{name}'"
+        status_code=403, detail=f"Not authorized to {action} template '{namespace}/{name}'"
     )
 
 
@@ -155,7 +148,7 @@ async def render_template_endpoint(
     render_request: TemplateRenderRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Render a template with given variables.
@@ -173,19 +166,17 @@ async def render_template_endpoint(
         user_id=user_uuid,
         permissions=permissions,
         action="render",
-        request=request
+        request=request,
     )
 
     # Validate variables against schema if defined
     if template.variable_schema:
         try:
             import jsonschema
+
             jsonschema.validate(render_request.variables, template.variable_schema)
         except jsonschema.ValidationError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Variable validation failed: {e.message}"
-            )
+            raise HTTPException(status_code=400, detail=f"Variable validation failed: {e.message}")
 
     # Render title
     rendered_title = None
@@ -193,19 +184,13 @@ async def render_template_endpoint(
         try:
             rendered_title = render_template(template.title, render_request.variables)
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to render title: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to render title: {str(e)}")
 
     # Render HTML content
     try:
         rendered_html = render_template(template.html_content, render_request.variables)
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to render HTML content: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to render HTML content: {str(e)}")
 
     # Render text content
     rendered_text = None
@@ -213,15 +198,10 @@ async def render_template_endpoint(
         try:
             rendered_text = render_template(template.text_content, render_request.variables)
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to render text content: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to render text content: {str(e)}")
 
     return TemplateRenderResponse(
-        title=rendered_title,
-        html_content=rendered_html,
-        text_content=rendered_text
+        title=rendered_title, html_content=rendered_html, text_content=rendered_text
     )
 
 
@@ -232,7 +212,7 @@ async def send_email_with_template(
     email_request: TemplateEmailRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Send email using a template.
@@ -244,10 +224,7 @@ async def send_email_with_template(
 
     # Check SMTP configuration
     if not settings.smtp_host or not settings.smtp_domain:
-        raise HTTPException(
-            status_code=503,
-            detail="Email service not configured"
-        )
+        raise HTTPException(status_code=503, detail="Email service not configured")
 
     # Get template with permission check
     template = await get_template_with_permission_check(
@@ -257,19 +234,17 @@ async def send_email_with_template(
         user_id=user_uuid,
         permissions=permissions,
         action="send",
-        request=request
+        request=request,
     )
 
     # Validate variables against schema if defined
     if template.variable_schema:
         try:
             import jsonschema
+
             jsonschema.validate(email_request.variables, template.variable_schema)
         except jsonschema.ValidationError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Variable validation failed: {e.message}"
-            )
+            raise HTTPException(status_code=400, detail=f"Variable validation failed: {e.message}")
 
     # Render title (subject)
     subject = "Notification"  # Default subject
@@ -277,19 +252,13 @@ async def send_email_with_template(
         try:
             subject = render_template(template.title, email_request.variables)
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to render subject: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to render subject: {str(e)}")
 
     # Render HTML content
     try:
         html_content = render_template(template.html_content, email_request.variables)
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to render HTML content: {str(e)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to render HTML content: {str(e)}")
 
     # Render text content (or generate plain text from HTML)
     text_content = None
@@ -297,14 +266,12 @@ async def send_email_with_template(
         try:
             text_content = render_template(template.text_content, email_request.variables)
         except Exception as e:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to render text content: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Failed to render text content: {str(e)}")
     else:
         # Generate basic plain text version if not provided
         import re
-        text_content = re.sub('<[^<]+?>', '', html_content)
+
+        text_content = re.sub("<[^<]+?>", "", html_content)
 
     # Determine from email
     if email_request.from_alias:
@@ -314,49 +281,37 @@ async def send_email_with_template(
 
     # Send email
     try:
-        from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
 
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = f"{email_request.from_name or 'SINAS'} <{from_email}>"
-        msg['To'] = email_request.to
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{email_request.from_name or 'SINAS'} <{from_email}>"
+        msg["To"] = email_request.to
 
         # Attach both text and HTML versions
-        part1 = MIMEText(text_content, 'plain')
-        part2 = MIMEText(html_content, 'html')
+        part1 = MIMEText(text_content, "plain")
+        part2 = MIMEText(html_content, "html")
         msg.attach(part1)
         msg.attach(part2)
 
         # Send via SMTP in thread pool (non-blocking)
         await asyncio.wait_for(
             asyncio.to_thread(
-                _send_email_sync,
-                email_request.to,
-                subject,
-                html_content,
-                text_content,
-                settings
+                _send_email_sync, email_request.to, subject, html_content, text_content, settings
             ),
-            timeout=12  # SMTP_TIMEOUT + 2
+            timeout=12,  # SMTP_TIMEOUT + 2
         )
 
-        logger.info(f"Email sent successfully to {email_request.to} using template {namespace}/{name}")
-
-        return TemplateEmailResponse(
-            message="Email sent successfully",
-            to=email_request.to
+        logger.info(
+            f"Email sent successfully to {email_request.to} using template {namespace}/{name}"
         )
+
+        return TemplateEmailResponse(message="Email sent successfully", to=email_request.to)
 
     except asyncio.TimeoutError:
         logger.error(f"Timeout sending email to {email_request.to}")
-        raise HTTPException(
-            status_code=504,
-            detail="Email service timeout"
-        )
+        raise HTTPException(status_code=504, detail="Email service timeout")
     except Exception as e:
         logger.error(f"Failed to send email to {email_request.to}: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to send email: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")

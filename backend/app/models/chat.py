@@ -1,9 +1,10 @@
-from sqlalchemy import String, Text, Boolean, DateTime, ForeignKey, JSON
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import Optional, List, Dict, Any
 import uuid
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, ForeignKey, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class Chat(Base):
@@ -20,7 +21,7 @@ class Chat(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
 
     # Chat metadata for creation context (agent input, resolved function params, etc.)
-    chat_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=None)
+    chat_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)
     # Example: {"agent_input": {"my_city": "London"}, "resolved_function_params": {"check_weather": {"city": "London"}}}
 
     created_at: Mapped[created_at]
@@ -29,8 +30,11 @@ class Chat(Base):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="chats")
     agent: Mapped[Optional["Agent"]] = relationship("Agent", back_populates="chats")
-    messages: Mapped[List["Message"]] = relationship(
-        "Message", back_populates="chat", cascade="all, delete-orphan", order_by="Message.created_at"
+    messages: Mapped[list["Message"]] = relationship(
+        "Message",
+        back_populates="chat",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at",
     )
 
 
@@ -41,11 +45,15 @@ class Message(Base):
     chat_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("chats.id"), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user, assistant, system, tool
     content: Mapped[Optional[str]] = mapped_column(Text)
-    tool_calls: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON)
+    tool_calls: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON)
     tool_call_id: Mapped[Optional[str]] = mapped_column(String(255))
     name: Mapped[Optional[str]] = mapped_column(String(255))  # For tool response messages
-    enabled_functions: Mapped[Optional[List[str]]] = mapped_column(JSON)  # Per-message function overrides
-    enabled_mcp_tools: Mapped[Optional[List[str]]] = mapped_column(JSON)  # Per-message MCP tool overrides
+    enabled_functions: Mapped[Optional[list[str]]] = mapped_column(
+        JSON
+    )  # Per-message function overrides
+    enabled_mcp_tools: Mapped[Optional[list[str]]] = mapped_column(
+        JSON
+    )  # Per-message MCP tool overrides
     created_at: Mapped[created_at]
 
     # Relationships

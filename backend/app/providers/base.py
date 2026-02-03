@@ -1,6 +1,7 @@
 """Base LLM provider interface."""
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, Optional
 
 
 class BaseLLMProvider(ABC):
@@ -20,13 +21,13 @@ class BaseLLMProvider(ABC):
     @abstractmethod
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Generate a completion from the LLM.
 
@@ -50,13 +51,13 @@ class BaseLLMProvider(ABC):
     @abstractmethod
     async def stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> AsyncIterator[Dict[str, Any]]:
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
         """
         Generate a streaming completion from the LLM.
 
@@ -74,7 +75,7 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def format_tool_calls(self, tool_calls: Any) -> List[Dict[str, Any]]:
+    def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
         """
         Convert provider-specific tool call format to standard format.
 
@@ -97,7 +98,7 @@ class BaseLLMProvider(ABC):
         pass
 
     @abstractmethod
-    def extract_usage(self, response: Any) -> Dict[str, int]:
+    def extract_usage(self, response: Any) -> dict[str, int]:
         """
         Extract token usage from provider response.
 

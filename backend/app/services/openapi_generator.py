@@ -1,15 +1,16 @@
 """Dynamic OpenAPI specification generator for runtime API."""
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import Dict, Any
-from fastapi.openapi.utils import get_openapi
+from typing import Any
 
-from app.models.webhook import Webhook
+from fastapi.openapi.utils import get_openapi
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.agent import Agent
 from app.models.function import Function
+from app.models.webhook import Webhook
 
 
-async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
+async def generate_runtime_openapi(db: AsyncSession) -> dict[str, Any]:
     """
     Generate dynamic OpenAPI specification for runtime API.
 
@@ -36,22 +37,12 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
         base_spec["components"] = {}
     if "securitySchemes" not in base_spec["components"]:
         base_spec["components"]["securitySchemes"] = {
-            "BearerAuth": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT"
-            },
-            "ApiKeyAuth": {
-                "type": "apiKey",
-                "in": "header",
-                "name": "X-API-Key"
-            }
+            "BearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"},
+            "ApiKeyAuth": {"type": "apiKey", "in": "header", "name": "X-API-Key"},
         }
 
     # Add dynamic webhook endpoints (database-driven)
-    webhook_result = await db.execute(
-        select(Webhook).where(Webhook.is_active == True)
-    )
+    webhook_result = await db.execute(select(Webhook).where(Webhook.is_active == True))
     webhooks = webhook_result.scalars().all()
 
     for webhook in webhooks:
@@ -65,16 +56,19 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
             base_spec["paths"][path] = {}
 
         base_spec["paths"][path][method] = {
-            "summary": webhook.description or f"Execute {webhook.function_namespace}/{webhook.function_name}",
+            "summary": webhook.description
+            or f"Execute {webhook.function_namespace}/{webhook.function_name}",
             "tags": ["runtime-webhooks"],
             "operationId": f"execute_webhook_{webhook.path.replace('/', '_')}_{method}",
             "requestBody": {
                 "required": True,
                 "content": {
                     "application/json": {
-                        "schema": function.input_schema if function and function.input_schema else {"type": "object"}
+                        "schema": function.input_schema
+                        if function and function.input_schema
+                        else {"type": "object"}
                     }
-                }
+                },
             },
             "responses": {
                 "200": {
@@ -86,35 +80,26 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
                                 "properties": {
                                     "success": {"type": "boolean"},
                                     "execution_id": {"type": "string", "format": "uuid"},
-                                    "result": function.output_schema if function and function.output_schema else {"type": "object"}
-                                }
+                                    "result": function.output_schema
+                                    if function and function.output_schema
+                                    else {"type": "object"},
+                                },
                             }
                         }
-                    }
+                    },
                 },
-                "401": {
-                    "description": "Authentication required"
-                },
-                "404": {
-                    "description": "Webhook not found"
-                },
-                "500": {
-                    "description": "Function execution failed"
-                }
-            }
+                "401": {"description": "Authentication required"},
+                "404": {"description": "Webhook not found"},
+                "500": {"description": "Function execution failed"},
+            },
         }
 
         # Add security if required
         if webhook.requires_auth:
-            base_spec["paths"][path][method]["security"] = [
-                {"BearerAuth": []},
-                {"ApiKeyAuth": []}
-            ]
+            base_spec["paths"][path][method]["security"] = [{"BearerAuth": []}, {"ApiKeyAuth": []}]
 
     # Add dynamic agent chat creation endpoints (database-driven)
-    agent_result = await db.execute(
-        select(Agent).where(Agent.is_active == True)
-    )
+    agent_result = await db.execute(select(Agent).where(Agent.is_active == True))
     agents = agent_result.scalars().all()
 
     for agent in agents:
@@ -127,10 +112,13 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
             "properties": {
                 "input": {
                     **input_schema_props,
-                    "description": "Structured input for system prompt templating (validated against agent's input_schema)"
+                    "description": "Structured input for system prompt templating (validated against agent's input_schema)",
                 },
-                "title": {"type": "string", "description": "Optional title for the chat (defaults to 'Chat with {namespace}/{name}')"}
-            }
+                "title": {
+                    "type": "string",
+                    "description": "Optional title for the chat (defaults to 'Chat with {namespace}/{name}')",
+                },
+            },
         }
 
         base_spec["paths"][path] = {
@@ -138,14 +126,12 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
                 "summary": f"Create chat with {agent.namespace}/{agent.name}",
                 "description": f"Create new chat with the {agent.namespace}/{agent.name} agent. Returns chat object. Use POST /chats/{{chat_id}}/messages to send messages.",
                 "tags": ["runtime-agents"],
-                "operationId": f"create_chat_with_{agent.namespace}_{agent.name}".replace('-', '_').replace('.', '_'),
+                "operationId": f"create_chat_with_{agent.namespace}_{agent.name}".replace(
+                    "-", "_"
+                ).replace(".", "_"),
                 "requestBody": {
                     "required": False,
-                    "content": {
-                        "application/json": {
-                            "schema": request_schema
-                        }
-                    }
+                    "content": {"application/json": {"schema": request_schema}},
                 },
                 "responses": {
                     "200": {
@@ -163,20 +149,16 @@ async def generate_runtime_openapi(db: AsyncSession) -> Dict[str, Any]:
                                         "agent_name": {"type": "string"},
                                         "title": {"type": "string"},
                                         "created_at": {"type": "string", "format": "date-time"},
-                                        "updated_at": {"type": "string", "format": "date-time"}
-                                    }
+                                        "updated_at": {"type": "string", "format": "date-time"},
+                                    },
                                 }
                             }
-                        }
+                        },
                     },
-                    "400": {
-                        "description": "Input validation failed"
-                    },
-                    "404": {
-                        "description": "Agent not found"
-                    }
+                    "400": {"description": "Input validation failed"},
+                    "404": {"description": "Agent not found"},
                 },
-                "security": []  # Optional auth
+                "security": [],  # Optional auth
             }
         }
 

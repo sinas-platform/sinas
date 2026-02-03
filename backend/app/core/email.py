@@ -1,11 +1,11 @@
 """Email utility with template support."""
-import smtplib
-import logging
 import asyncio
-from email.mime.text import MIMEText
+import logging
+import smtplib
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Tuple
 
 from app.core.config import settings
 from app.services.template_service import template_service
@@ -17,11 +17,7 @@ SMTP_TIMEOUT = 10
 
 
 def _send_email_sync(
-    email: str,
-    subject: str,
-    html_content: str,
-    text_content: str,
-    settings
+    email: str, subject: str, html_content: str, text_content: str, settings
 ) -> None:
     """
     Synchronous SMTP email sending (to be run in thread pool).
@@ -36,14 +32,14 @@ def _send_email_sync(
     from_email = f"login@{settings.smtp_domain}"
 
     # Create message
-    msg = MIMEMultipart('alternative')
-    msg['Subject'] = subject
-    msg['From'] = from_email
-    msg['To'] = email
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = email
 
     # Attach both text and HTML versions
-    part1 = MIMEText(text_content, 'plain')
-    part2 = MIMEText(html_content, 'html')
+    part1 = MIMEText(text_content, "plain")
+    part2 = MIMEText(html_content, "html")
     msg.attach(part1)
     msg.attach(part2)
 
@@ -93,10 +89,7 @@ async def send_otp_email_async(db: AsyncSession, email: str, otp_code: str) -> N
 
     try:
         subject, html_content, text_content = await template_service.render_template(
-            db=db,
-            template_name="otp_email",
-            namespace="default",
-            variables=variables
+            db=db, template_name="otp_email", namespace="default", variables=variables
         )
         logger.debug("Using database template 'default/otp_email' for OTP email")
     except ValueError:
@@ -166,8 +159,10 @@ SINAS Team
     try:
         # Run SMTP in thread pool with timeout to avoid blocking the event loop
         await asyncio.wait_for(
-            asyncio.to_thread(_send_email_sync, email, subject, html_content, text_content, settings),
-            timeout=SMTP_TIMEOUT + 2  # Give a bit more than SMTP timeout
+            asyncio.to_thread(
+                _send_email_sync, email, subject, html_content, text_content, settings
+            ),
+            timeout=SMTP_TIMEOUT + 2,  # Give a bit more than SMTP timeout
         )
 
         logger.info(f"OTP email sent successfully to {email}")
@@ -183,4 +178,4 @@ SINAS Team
         raise Exception(f"Failed to send OTP email: {str(e)}")
 
 
-__all__ = ['send_otp_email_async']
+__all__ = ["send_otp_email_async"]

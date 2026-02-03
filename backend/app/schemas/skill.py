@@ -1,20 +1,33 @@
 """Skill schemas."""
-from pydantic import BaseModel, Field
-from typing import Optional
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class SkillCreate(BaseModel):
-    namespace: str = Field(default="default", min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
-    name: str = Field(..., min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
-    description: str = Field(..., min_length=1, description="What this skill helps with (shown to LLM as tool description)")
-    content: str = Field(..., min_length=1, description="Markdown instructions (retrieved when LLM calls the skill)")
+    namespace: str = Field(
+        default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
+    )
+    name: str = Field(..., min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$")
+    description: str = Field(
+        ...,
+        min_length=1,
+        description="What this skill helps with (shown to LLM as tool description)",
+    )
+    content: str = Field(
+        ..., min_length=1, description="Markdown instructions (retrieved when LLM calls the skill)"
+    )
 
 
 class SkillUpdate(BaseModel):
-    namespace: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
-    name: Optional[str] = Field(None, min_length=1, max_length=255, pattern=r'^[a-zA-Z][a-zA-Z0-9_-]*$')
+    namespace: Optional[str] = Field(
+        None, min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
+    )
+    name: Optional[str] = Field(
+        None, min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
+    )
     description: Optional[str] = Field(None, min_length=1)
     content: Optional[str] = Field(None, min_length=1)
     is_active: Optional[bool] = None

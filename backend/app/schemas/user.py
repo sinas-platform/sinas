@@ -1,8 +1,9 @@
 """User schemas."""
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel
 
 
 class UserResponse(BaseModel):
@@ -16,7 +17,7 @@ class UserResponse(BaseModel):
 
 
 class UserWithGroupsResponse(UserResponse):
-    groups: List[str]  # List of group names
+    groups: list[str]  # List of group names
 
 
 class UserUpdate(BaseModel):

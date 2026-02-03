@@ -2,31 +2,33 @@
 Configuration export service
 Exports current database state to declarative YAML format
 """
-from typing import Dict, List, Optional
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-
-from app.models.user import User, Role, RolePermission
-from app.models.llm_provider import LLMProvider
-from app.models.mcp import MCPServer
-from app.models.function import Function
-from app.models.agent import Agent
-from app.models.webhook import Webhook
-from app.models.schedule import ScheduledJob
-from app.core.encryption import EncryptionService
+import logging
 
 import yaml
-import logging
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.encryption import EncryptionService
+from app.models.agent import Agent
+from app.models.function import Function
+from app.models.llm_provider import LLMProvider
+from app.models.mcp import MCPServer
+from app.models.schedule import ScheduledJob
+from app.models.user import Role, RolePermission, User
+from app.models.webhook import Webhook
 
 logger = logging.getLogger(__name__)
 
 
-def _remove_none_values(d: Dict) -> Dict:
+def _remove_none_values(d: dict) -> dict:
     """Remove None values from dictionary recursively"""
     if not isinstance(d, dict):
         return d
-    return {k: _remove_none_values(v) if isinstance(v, dict) else v
-            for k, v in d.items() if v is not None}
+    return {
+        k: _remove_none_values(v) if isinstance(v, dict) else v
+        for k, v in d.items()
+        if v is not None
+    }
 
 
 class ConfigExportService:
@@ -42,11 +44,8 @@ class ConfigExportService:
         config_dict = {
             "apiVersion": "sinas.co/v1",
             "kind": "SinasConfig",
-            "metadata": {
-                "name": "exported-config",
-                "description": "Exported from SINAS database"
-            },
-            "spec": {}
+            "metadata": {"name": "exported-config", "description": "Exported from SINAS database"},
+            "spec": {},
         }
 
         # Export all resource types
@@ -63,7 +62,7 @@ class ConfigExportService:
         # Convert to YAML
         return yaml.dump(config_dict, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
-    async def _export_groups(self) -> List[Dict]:
+    async def _export_groups(self) -> list[dict]:
         """Export groups"""
         stmt = select(Role)
         if self.managed_only:
@@ -87,15 +86,14 @@ class ConfigExportService:
             permissions = perm_result.scalars().all()
             if permissions:
                 group_dict["permissions"] = [
-                    {"key": p.permission_key, "value": p.permission_value}
-                    for p in permissions
+                    {"key": p.permission_key, "value": p.permission_value} for p in permissions
                 ]
 
             exported.append(group_dict)
 
         return exported
 
-    async def _export_users(self) -> List[Dict]:
+    async def _export_users(self) -> list[dict]:
         """Export users"""
         stmt = select(User)
         if self.managed_only:
@@ -108,6 +106,7 @@ class ConfigExportService:
         for user in users:
             # Get user groups
             from app.models.user import UserRole
+
             member_stmt = select(UserRole).where(UserRole.user_id == user.id)
             member_result = await self.db.execute(member_stmt)
             memberships = member_result.scalars().all()
@@ -119,14 +118,14 @@ class ConfigExportService:
             user_dict = {
                 "email": user.email,
                 "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
-                "groups": [g.name for g in groups]
+                "groups": [g.name for g in groups],
             }
 
             exported.append(user_dict)
 
         return exported
 
-    async def _export_llm_providers(self) -> List[Dict]:
+    async def _export_llm_providers(self) -> list[dict]:
         """Export LLM providers"""
         stmt = select(LLMProvider)
         if self.managed_only:
@@ -153,7 +152,7 @@ class ConfigExportService:
 
         return exported
 
-    async def _export_mcp_servers(self) -> List[Dict]:
+    async def _export_mcp_servers(self) -> list[dict]:
         """Export MCP servers"""
         stmt = select(MCPServer)
         if self.managed_only:
@@ -180,7 +179,9 @@ class ConfigExportService:
                 "url": server.url,
                 "protocol": server.protocol,
                 "isActive": server.is_active,
-                "groupName": group.name if group else (default_group.name if default_group else "Admins"),
+                "groupName": group.name
+                if group
+                else (default_group.name if default_group else "Admins"),
             }
 
             # Include API key if exporting secrets
@@ -191,7 +192,7 @@ class ConfigExportService:
 
         return exported
 
-    async def _export_functions(self) -> List[Dict]:
+    async def _export_functions(self) -> list[dict]:
         """Export functions"""
         stmt = select(Function)
         if self.managed_only:
@@ -221,7 +222,9 @@ class ConfigExportService:
                 "code": func.code,
                 "inputSchema": func.input_schema,
                 "outputSchema": func.output_schema,
-                "groupName": group.name if group else (default_group.name if default_group else "Users"),
+                "groupName": group.name
+                if group
+                else (default_group.name if default_group else "Users"),
                 "requirements": func.requirements if func.requirements else None,
                 "enabledNamespaces": func.enabled_namespaces if func.enabled_namespaces else None,
             }
@@ -230,7 +233,7 @@ class ConfigExportService:
 
         return exported
 
-    async def _export_agents(self) -> List[Dict]:
+    async def _export_agents(self) -> list[dict]:
         """Export agents"""
         stmt = select(Agent)
         if self.managed_only:
@@ -264,24 +267,32 @@ class ConfigExportService:
                 "namespace": agent.namespace,
                 "description": agent.description,
                 "model": agent.model,
-                "groupName": group.name if group else (default_group.name if default_group else "Users"),
+                "groupName": group.name
+                if group
+                else (default_group.name if default_group else "Users"),
                 "llmProviderName": provider.name if provider else None,
                 "temperature": agent.temperature,
                 "maxTokens": agent.max_tokens,
                 "systemPrompt": agent.system_prompt,
                 "enabledFunctions": agent.enabled_functions if agent.enabled_functions else None,
-                "functionParameters": agent.function_parameters if agent.function_parameters else None,
+                "functionParameters": agent.function_parameters
+                if agent.function_parameters
+                else None,
                 "enabledMcpTools": agent.enabled_mcp_tools if agent.enabled_mcp_tools else None,
                 "enabledAgents": agent.enabled_agents if agent.enabled_agents else None,
-                "stateNamespacesReadonly": agent.state_namespaces_readonly if agent.state_namespaces_readonly else None,
-                "stateNamespacesReadwrite": agent.state_namespaces_readwrite if agent.state_namespaces_readwrite else None,
+                "stateNamespacesReadonly": agent.state_namespaces_readonly
+                if agent.state_namespaces_readonly
+                else None,
+                "stateNamespacesReadwrite": agent.state_namespaces_readwrite
+                if agent.state_namespaces_readwrite
+                else None,
             }
 
             exported.append(_remove_none_values(agent_dict))
 
         return exported
 
-    async def _export_webhooks(self) -> List[Dict]:
+    async def _export_webhooks(self) -> list[dict]:
         """Export webhooks"""
         stmt = select(Webhook)
         if self.managed_only:
@@ -316,7 +327,9 @@ class ConfigExportService:
                     "httpMethod": webhook.http_method,
                     "requiresAuth": webhook.requires_auth,
                     "description": webhook.description,
-                    "groupName": group.name if group else (default_group.name if default_group else "Users"),
+                    "groupName": group.name
+                    if group
+                    else (default_group.name if default_group else "Users"),
                     "defaultValues": webhook.default_values,
                 }
 
@@ -324,7 +337,7 @@ class ConfigExportService:
 
         return exported
 
-    async def _export_schedules(self) -> List[Dict]:
+    async def _export_schedules(self) -> list[dict]:
         """Export scheduled jobs"""
         stmt = select(ScheduledJob)
         if self.managed_only:
@@ -359,7 +372,9 @@ class ConfigExportService:
                     "cronExpression": schedule.cron_expression,
                     "isActive": schedule.is_active,
                     "timezone": schedule.timezone,
-                    "groupName": group.name if group else (default_group.name if default_group else "Users"),
+                    "groupName": group.name
+                    if group
+                    else (default_group.name if default_group else "Users"),
                     "inputData": schedule.input_data,
                 }
 

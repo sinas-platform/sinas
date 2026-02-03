@@ -1,21 +1,26 @@
 """Executions API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import List, Optional
-import uuid
+from typing import Optional
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
-from app.models.execution import Execution, StepExecution, ExecutionStatus
-from app.schemas import ExecutionResponse, StepExecutionResponse, ContinueExecutionRequest, ContinueExecutionResponse
+from app.models.execution import Execution, ExecutionStatus, StepExecution
+from app.schemas import (
+    ContinueExecutionRequest,
+    ContinueExecutionResponse,
+    ExecutionResponse,
+    StepExecutionResponse,
+)
 from app.services.execution_engine import executor
 
 router = APIRouter(prefix="/executions")
 
 
-@router.get("", response_model=List[ExecutionResponse])
+@router.get("", response_model=list[ExecutionResponse])
 async def list_executions(
     request: Request,
     skip: int = Query(0, ge=0),
@@ -23,13 +28,13 @@ async def list_executions(
     function_name: Optional[str] = None,
     status: Optional[ExecutionStatus] = None,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List executions (own and group-accessible)."""
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.executions.read:all"):
+    if check_permission(permissions, "sinas.executions.read:all"):
         set_permission_used(request, "sinas.executions.read:all")
         query = select(Execution)
     else:
@@ -53,21 +58,19 @@ async def get_execution(
     request: Request,
     execution_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific execution."""
     user_id, permissions = current_user_data
 
-    result = await db.execute(
-        select(Execution).where(Execution.execution_id == execution_id)
-    )
+    result = await db.execute(select(Execution).where(Execution.execution_id == execution_id))
     execution = result.scalar_one_or_none()
 
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.executions.read:all"):
+    if check_permission(permissions, "sinas.executions.read:all"):
         set_permission_used(request, "sinas.executions.read:all")
     else:
         if execution.user_id != user_id:
@@ -78,26 +81,24 @@ async def get_execution(
     return execution
 
 
-@router.get("/{execution_id}/steps", response_model=List[StepExecutionResponse])
+@router.get("/{execution_id}/steps", response_model=list[StepExecutionResponse])
 async def get_execution_steps(
     request: Request,
     execution_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get all steps for an execution."""
     user_id, permissions = current_user_data
 
     # First check if execution exists and user has access
-    result = await db.execute(
-        select(Execution).where(Execution.execution_id == execution_id)
-    )
+    result = await db.execute(select(Execution).where(Execution.execution_id == execution_id))
     execution = result.scalar_one_or_none()
 
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
 
-    if check_permission(permissions,"sinas.executions.read:all"):
+    if check_permission(permissions, "sinas.executions.read:all"):
         set_permission_used(request, "sinas.executions.read:all")
     else:
         if execution.user_id != user_id:
@@ -122,22 +123,20 @@ async def continue_execution(
     execution_id: str,
     request: ContinueExecutionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Continue a paused execution with user input."""
     user_id, permissions = current_user_data
 
     # Get execution
-    result = await db.execute(
-        select(Execution).where(Execution.execution_id == execution_id)
-    )
+    result = await db.execute(select(Execution).where(Execution.execution_id == execution_id))
     execution = result.scalar_one_or_none()
 
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.executions.update:all"):
+    if check_permission(permissions, "sinas.executions.update:all"):
         set_permission_used(http_request, "sinas.executions.update:all")
     else:
         if execution.user_id != user_id:
@@ -158,7 +157,7 @@ async def continue_execution(
             trigger_type=execution.trigger_type,
             trigger_id=str(execution.trigger_id),
             user_id=str(execution.user_id),
-            resume_data=request.input
+            resume_data=request.input,
         )
 
         # Refresh execution from DB to get updated status
@@ -167,9 +166,15 @@ async def continue_execution(
         return ContinueExecutionResponse(
             execution_id=execution_id,
             status=execution.status,
-            output_data=result.get("output_data") if execution.status == ExecutionStatus.COMPLETED else None,
-            prompt=result.get("prompt") if execution.status == ExecutionStatus.AWAITING_INPUT else None,
-            schema=result.get("schema") if execution.status == ExecutionStatus.AWAITING_INPUT else None
+            output_data=result.get("output_data")
+            if execution.status == ExecutionStatus.COMPLETED
+            else None,
+            prompt=result.get("prompt")
+            if execution.status == ExecutionStatus.AWAITING_INPUT
+            else None,
+            schema=result.get("schema")
+            if execution.status == ExecutionStatus.AWAITING_INPUT
+            else None,
         )
 
     except Exception as e:

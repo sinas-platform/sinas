@@ -1,20 +1,20 @@
-from sqlalchemy import String, Text, Boolean, ForeignKey, JSON, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
 import uuid
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class Template(Base):
     __tablename__ = "templates"
-    __table_args__ = (
-        UniqueConstraint('namespace', 'name', name='uix_template_namespace_name'),
-    )
+    __table_args__ = (UniqueConstraint("namespace", "name", name="uix_template_namespace_name"),)
 
     id: Mapped[uuid_pk]
-    namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    namespace: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="default", index=True
+    )
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     # Unique key like "otp_email", "function_failed_email", "sales_report_output"
     # Name indicates purpose - no need for separate type enum
@@ -25,12 +25,14 @@ class Template(Base):
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id"), index=True)
 
     # Template content
-    title: Mapped[Optional[str]] = mapped_column(Text) # subject for email, possibel other use cases
+    title: Mapped[Optional[str]] = mapped_column(
+        Text
+    )  # subject for email, possibel other use cases
     html_content: Mapped[str] = mapped_column(Text, nullable=False)  # Jinja2 template
     text_content: Mapped[Optional[str]] = mapped_column(Text)  # Plain text fallback
 
     # Variable schema (like Function.input_schema)
-    variable_schema: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    variable_schema: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # Example:
     # {
     #   "type": "object",

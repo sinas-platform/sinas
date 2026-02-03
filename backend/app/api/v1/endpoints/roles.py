@@ -1,18 +1,22 @@
 """Roles API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import List
 import uuid
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
-from app.models.user import Role, UserRole, RolePermission, User
+from app.models.user import Role, RolePermission, User, UserRole
 from app.schemas import (
-    RoleCreate, RoleUpdate, RoleResponse,
-    UserRoleResponse, UserRoleAdd,
-    RolePermissionResponse, RolePermissionUpdate
+    RoleCreate,
+    RolePermissionResponse,
+    RolePermissionUpdate,
+    RoleResponse,
+    RoleUpdate,
+    UserRoleAdd,
+    UserRoleResponse,
 )
 
 router = APIRouter(prefix="/roles", tags=["roles"])
@@ -22,14 +26,12 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 async def create_group(
     role_data: RoleCreate,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.roles.create:own"))
+    user_id: str = Depends(require_permission("sinas.roles.create:own")),
 ):
     """Create a new group. Requires admin permission."""
 
     # Check if group name already exists
-    result = await db.execute(
-        select(Role).where(Role.name == role_data.name)
-    )
+    result = await db.execute(select(Role).where(Role.name == role_data.name))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"Group '{role_data.name}' already exists")
 
@@ -38,7 +40,7 @@ async def create_group(
         name=role_data.name,
         description=role_data.description,
         email_domain=role_data.email_domain,
-        external_role_id=role_data.external_role_id
+        external_role_id=role_data.external_role_id,
     )
 
     db.add(group)
@@ -51,7 +53,7 @@ async def create_group(
         user_id=uuid.UUID(user_id),
         role="admin",
         active=True,
-        added_by=uuid.UUID(user_id)
+        added_by=uuid.UUID(user_id),
     )
     db.add(member)
     await db.commit()
@@ -59,13 +61,13 @@ async def create_group(
     return group
 
 
-@router.get("", response_model=List[RoleResponse])
+@router.get("", response_model=list[RoleResponse])
 async def list_groups(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List groups accessible to the current user."""
     user_id, permissions = current_user_data
@@ -80,12 +82,7 @@ async def list_groups(
         query = (
             select(Role)
             .join(UserRole, Role.id == UserRole.role_id)
-            .where(
-                and_(
-                    UserRole.user_id == uuid.UUID(user_id),
-                    UserRole.active == True
-                )
-            )
+            .where(and_(UserRole.user_id == uuid.UUID(user_id), UserRole.active == True))
         )
 
     query = query.offset(skip).limit(limit)
@@ -100,7 +97,7 @@ async def get_group(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific group."""
     user_id, permissions = current_user_data
@@ -111,7 +108,7 @@ async def get_group(
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.roles.read:all"):
+    if check_permission(permissions, "sinas.roles.read:all"):
         set_permission_used(request, "sinas.roles.read:all")
     else:
         # Check if user is a member
@@ -120,7 +117,7 @@ async def get_group(
                 and_(
                     UserRole.role_id == group.id,
                     UserRole.user_id == uuid.UUID(user_id),
-                    UserRole.active == True
+                    UserRole.active == True,
                 )
             )
         )
@@ -138,7 +135,7 @@ async def update_group(
     name: str,
     role_data: RoleUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a group. Requires admin permission."""
     user_id, permissions = current_user_data
@@ -149,7 +146,7 @@ async def update_group(
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
     # Only admins can update groups
-    if not check_permission(permissions,"sinas.roles.update:all"):
+    if not check_permission(permissions, "sinas.roles.update:all"):
         set_permission_used(request, "sinas.roles.update:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to update groups")
 
@@ -159,15 +156,12 @@ async def update_group(
     if role_data.name is not None:
         # Check if new name already exists
         result = await db.execute(
-            select(Role).where(
-                and_(
-                    Role.name == role_data.name,
-                    Role.id != group.id
-                )
-            )
+            select(Role).where(and_(Role.name == role_data.name, Role.id != group.id))
         )
         if result.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail=f"Group name '{role_data.name}' already exists")
+            raise HTTPException(
+                status_code=400, detail=f"Group name '{role_data.name}' already exists"
+            )
         group.name = role_data.name
 
     if role_data.description is not None:
@@ -188,7 +182,7 @@ async def delete_group(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a group. Only admins can delete groups."""
     user_id, permissions = current_user_data
@@ -199,7 +193,7 @@ async def delete_group(
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
     # Only admins can delete groups
-    if not check_permission(permissions,"sinas.roles.delete:all"):
+    if not check_permission(permissions, "sinas.roles.delete:all"):
         set_permission_used(request, "sinas.roles.delete:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to delete groups")
 
@@ -213,12 +207,13 @@ async def delete_group(
 
 # Role Membership Management
 
-@router.get("/{name}/members", response_model=List[UserRoleResponse])
+
+@router.get("/{name}/members", response_model=list[UserRoleResponse])
 async def list_group_members(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List members of a group."""
     user_id, permissions = current_user_data
@@ -229,7 +224,7 @@ async def list_group_members(
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
     # Admins can see all, users can only see groups they're in
-    if check_permission(permissions,"sinas.roles.read:all"):
+    if check_permission(permissions, "sinas.roles.read:all"):
         set_permission_used(request, "sinas.roles.read:all")
     else:
         membership_check = await db.execute(
@@ -237,7 +232,7 @@ async def list_group_members(
                 and_(
                     UserRole.role_id == group.id,
                     UserRole.user_id == uuid.UUID(user_id),
-                    UserRole.active == True
+                    UserRole.active == True,
                 )
             )
         )
@@ -248,29 +243,26 @@ async def list_group_members(
 
     # Join with User table to get email addresses
     result = await db.execute(
-        select(UserRole, User.email).join(
-            User, UserRole.user_id == User.id
-        ).where(
-            and_(
-                UserRole.role_id == group.id,
-                UserRole.active == True
-            )
-        )
+        select(UserRole, User.email)
+        .join(User, UserRole.user_id == User.id)
+        .where(and_(UserRole.role_id == group.id, UserRole.active == True))
     )
     rows = result.all()
 
     # Build response with user_email
     members_response = []
     for member, email in rows:
-        members_response.append(UserRoleResponse(
-            id=member.id,
-            role_id=member.role_id,
-            user_id=member.user_id,
-            user_email=email,
-            role=member.role,
-            active=member.active,
-            added_at=member.added_at
-        ))
+        members_response.append(
+            UserRoleResponse(
+                id=member.id,
+                role_id=member.role_id,
+                user_id=member.user_id,
+                user_email=email,
+                role=member.role,
+                active=member.active,
+                added_at=member.added_at,
+            )
+        )
 
     return members_response
 
@@ -281,12 +273,12 @@ async def add_group_member(
     name: str,
     member_data: UserRoleAdd,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Add a member to a group. Only admins can manage group members."""
     user_id, permissions = current_user_data
 
-    if not check_permission(permissions,"sinas.roles.manage_members:all"):
+    if not check_permission(permissions, "sinas.roles.manage_members:all"):
         set_permission_used(request, "sinas.roles.manage_members:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to manage group members")
 
@@ -298,9 +290,7 @@ async def add_group_member(
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
     # Check if user exists
-    result = await db.execute(
-        select(User).where(User.id == member_data.user_id)
-    )
+    result = await db.execute(select(User).where(User.id == member_data.user_id))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -308,10 +298,7 @@ async def add_group_member(
     # Check if already a member
     result = await db.execute(
         select(UserRole).where(
-            and_(
-                UserRole.role_id == group.id,
-                UserRole.user_id == member_data.user_id
-            )
+            and_(UserRole.role_id == group.id, UserRole.user_id == member_data.user_id)
         )
     )
     existing = result.scalar_one_or_none()
@@ -333,7 +320,7 @@ async def add_group_member(
             user_email=user.email,
             role=existing.role,
             active=existing.active,
-            added_at=existing.added_at
+            added_at=existing.added_at,
         )
 
     # Create new membership
@@ -342,7 +329,7 @@ async def add_group_member(
         user_id=member_data.user_id,
         role=member_data.role,
         active=True,
-        added_by=uuid.UUID(user_id)
+        added_by=uuid.UUID(user_id),
     )
 
     db.add(membership)
@@ -356,7 +343,7 @@ async def add_group_member(
         user_email=user.email,
         role=membership.role,
         active=membership.active,
-        added_at=membership.added_at
+        added_at=membership.added_at,
     )
 
 
@@ -366,12 +353,12 @@ async def remove_group_member(
     name: str,
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Remove a member from a group. Only admins can manage group members."""
     current_user_id, permissions = current_user_data
 
-    if not check_permission(permissions,"sinas.roles.manage_members:all"):
+    if not check_permission(permissions, "sinas.roles.manage_members:all"):
         set_permission_used(request, "sinas.roles.manage_members:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to manage group members")
 
@@ -387,11 +374,7 @@ async def remove_group_member(
 
     result = await db.execute(
         select(UserRole).where(
-            and_(
-                UserRole.role_id == group.id,
-                UserRole.user_id == user_id,
-                UserRole.active == True
-            )
+            and_(UserRole.role_id == group.id, UserRole.user_id == user_id, UserRole.active == True)
         )
     )
     membership = result.scalar_one_or_none()
@@ -401,6 +384,7 @@ async def remove_group_member(
 
     # Soft delete by marking inactive
     from datetime import datetime as dt
+
     membership.active = False
     membership.removed_at = dt.utcnow()
     membership.removed_by = uuid.UUID(current_user_id)
@@ -412,17 +396,18 @@ async def remove_group_member(
 
 # Role Permission Management
 
-@router.get("/{name}/permissions", response_model=List[RolePermissionResponse])
+
+@router.get("/{name}/permissions", response_model=list[RolePermissionResponse])
 async def list_group_permissions(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List permissions for a group. Only admins can view permissions."""
     user_id, permissions = current_user_data
 
-    if not check_permission(permissions,"sinas.roles.manage_permissions:all"):
+    if not check_permission(permissions, "sinas.roles.manage_permissions:all"):
         set_permission_used(request, "sinas.roles.manage_permissions:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view group permissions")
 
@@ -433,9 +418,7 @@ async def list_group_permissions(
     if not group:
         raise HTTPException(status_code=404, detail=f"Group '{name}' not found")
 
-    result = await db.execute(
-        select(RolePermission).where(RolePermission.role_id == group.id)
-    )
+    result = await db.execute(select(RolePermission).where(RolePermission.role_id == group.id))
     group_permissions = result.scalars().all()
 
     return group_permissions
@@ -447,12 +430,12 @@ async def set_group_permission(
     name: str,
     permission_data: RolePermissionUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Set a permission for a group. Only admins can manage permissions."""
     user_id, permissions = current_user_data
 
-    if not check_permission(permissions,"sinas.roles.manage_permissions:all"):
+    if not check_permission(permissions, "sinas.roles.manage_permissions:all"):
         set_permission_used(request, "sinas.roles.manage_permissions:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to manage group permissions")
 
@@ -472,7 +455,7 @@ async def set_group_permission(
         select(RolePermission).where(
             and_(
                 RolePermission.role_id == group.id,
-                RolePermission.permission_key == permission_data.permission_key
+                RolePermission.permission_key == permission_data.permission_key,
             )
         )
     )
@@ -488,7 +471,7 @@ async def set_group_permission(
     new_permission = RolePermission(
         role_id=group.id,
         permission_key=permission_data.permission_key,
-        permission_value=permission_data.permission_value
+        permission_value=permission_data.permission_value,
     )
 
     db.add(new_permission)
@@ -504,12 +487,12 @@ async def delete_group_permission(
     name: str,
     permission_key: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a permission from a group. Only admins can manage permissions."""
     user_id, permissions = current_user_data
 
-    if not check_permission(permissions,"sinas.roles.manage_permissions:all"):
+    if not check_permission(permissions, "sinas.roles.manage_permissions:all"):
         set_permission_used(request, "sinas.roles.manage_permissions:all", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to manage group permissions")
 
@@ -526,8 +509,7 @@ async def delete_group_permission(
     result = await db.execute(
         select(RolePermission).where(
             and_(
-                RolePermission.role_id == group.id,
-                RolePermission.permission_key == permission_key
+                RolePermission.role_id == group.id, RolePermission.permission_key == permission_key
             )
         )
     )

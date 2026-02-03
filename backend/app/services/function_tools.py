@@ -1,10 +1,8 @@
 """Function-to-tool converter for LLM tool calling."""
-import json
-import uuid
 import logging
-from typing import List, Dict, Any, Optional
+import uuid
+from typing import Any, Optional
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.function import Function
@@ -20,11 +18,11 @@ class FunctionToolConverter:
         self,
         db: AsyncSession,
         user_id: str,
-        enabled_functions: Optional[List[str]] = None,
-        disabled_functions: Optional[List[str]] = None,
-        function_parameters: Optional[Dict[str, Dict[str, Any]]] = None,
-        agent_input_context: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        enabled_functions: Optional[list[str]] = None,
+        disabled_functions: Optional[list[str]] = None,
+        function_parameters: Optional[dict[str, dict[str, Any]]] = None,
+        agent_input_context: Optional[dict[str, Any]] = None,
+    ) -> list[dict[str, Any]]:
         """
         Get functions and convert to OpenAI tools format.
 
@@ -73,12 +71,12 @@ class FunctionToolConverter:
                 if agent_input_context:
                     try:
                         prefilled_params = render_function_parameters(
-                            param_templates,
-                            agent_input_context
+                            param_templates, agent_input_context
                         )
                     except Exception as e:
                         # Log error but don't fail - just skip pre-filling
                         import logging
+
                         logger = logging.getLogger(__name__)
                         logger.warning(
                             f"Failed to render function parameters for {function_ref}: {e}"
@@ -94,10 +92,8 @@ class FunctionToolConverter:
         return tools
 
     def _function_to_tool(
-        self,
-        function: Function,
-        prefilled_params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, function: Function, prefilled_params: Optional[dict[str, Any]] = None
+    ) -> dict[str, Any]:
         """
         Convert a function to OpenAI tool format.
 
@@ -131,7 +127,7 @@ class FunctionToolConverter:
         metadata = {
             "namespace": function.namespace,
             "name": function.name,
-            "prefilled_params": prefilled_params or {}
+            "prefilled_params": prefilled_params or {},
         }
 
         # Convert namespace/name to namespace__name for LLM compatibility
@@ -144,20 +140,20 @@ class FunctionToolConverter:
                 "name": llm_tool_name,
                 "description": description,
                 "parameters": parameters,
-                "_metadata": metadata  # Internal use for execution
-            }
+                "_metadata": metadata,  # Internal use for execution
+            },
         }
 
     async def execute_function_tool(
         self,
         db: AsyncSession,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         user_id: str,
         user_token: str,
         chat_id: Optional[str] = None,
-        prefilled_params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        prefilled_params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """
         Execute a function as a tool call.
 
@@ -198,8 +194,8 @@ class FunctionToolConverter:
         final_input = {**(arguments or {}), **(prefilled_params or {})}
 
         # Execute function directly via execution engine
-        from app.services.execution_engine import executor, FunctionExecutionError
         from app.models.execution import TriggerType
+        from app.services.execution_engine import FunctionExecutionError, executor
 
         # Generate execution ID
         execution_id = str(uuid.uuid4())
@@ -213,7 +209,7 @@ class FunctionToolConverter:
                 trigger_type=TriggerType.AGENT.value,
                 trigger_id=chat_id or "unknown",
                 user_id=user_id,
-                chat_id=chat_id
+                chat_id=chat_id,
             )
 
             # Return execution result (raw value on success)
@@ -223,7 +219,4 @@ class FunctionToolConverter:
         except FunctionExecutionError as e:
             # Function execution failed - return error
             logger.error(f"Function execution failed: {e}")
-            return {
-                "error": "Function execution failed",
-                "message": str(e)
-            }
+            return {"error": "Function execution failed", "message": str(e)}

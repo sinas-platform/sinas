@@ -1,9 +1,10 @@
 """Universal content chunk schemas - used internally after conversion."""
-from typing import Literal, Union, List, Dict, Any
-from typing_extensions import TypedDict, NotRequired
+from typing import Literal, NotRequired, Union
 
+from typing_extensions import TypedDict
 
 # Provider-specific formats (internal use only, after conversion from universal schema)
+
 
 class TextChunk(TypedDict):
     type: Literal["text"]
@@ -47,10 +48,4 @@ class DocumentURLChunk(TypedDict):
     document_name: NotRequired[str]
 
 
-ContentChunk = Union[
-    TextChunk,
-    ImageURLChunk,
-    InputAudioChunk,
-    FileChunk,
-    DocumentURLChunk
-]
+ContentChunk = Union[TextChunk, ImageURLChunk, InputAudioChunk, FileChunk, DocumentURLChunk]

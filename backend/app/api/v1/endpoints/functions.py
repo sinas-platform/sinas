@@ -1,21 +1,21 @@
 """Functions API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
-from typing import List, Optional
 import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
 from app.models.function import Function, FunctionVersion
 from app.models.package import InstalledPackage
-from app.schemas import FunctionCreate, FunctionUpdate, FunctionResponse, FunctionVersionResponse
+from app.schemas import FunctionCreate, FunctionResponse, FunctionUpdate, FunctionVersionResponse
 
 router = APIRouter(prefix="/functions", tags=["functions"])
 
 
-async def validate_requirements(requirements: List[str], db: AsyncSession) -> None:
+async def validate_requirements(requirements: list[str], db: AsyncSession) -> None:
     """
     Validate that all function requirements are admin-approved packages.
 
@@ -32,7 +32,9 @@ async def validate_requirements(requirements: List[str], db: AsyncSession) -> No
     unapproved = []
     for req in requirements:
         # Extract package name from requirement (e.g., "pandas==2.0.0" -> "pandas")
-        package_name = req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0].strip()
+        package_name = (
+            req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0].strip()
+        )
 
         if package_name not in approved_packages:
             unapproved.append(package_name)
@@ -40,7 +42,7 @@ async def validate_requirements(requirements: List[str], db: AsyncSession) -> No
     if unapproved:
         raise HTTPException(
             status_code=400,
-            detail=f"Unapproved packages in requirements: {', '.join(unapproved)}. Contact admin to approve these packages first."
+            detail=f"Unapproved packages in requirements: {', '.join(unapproved)}. Contact admin to approve these packages first.",
         )
 
 
@@ -49,7 +51,7 @@ async def create_function(
     request: Request,
     function_data: FunctionCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new function."""
     user_id, permissions = current_user_data
@@ -66,7 +68,10 @@ async def create_function(
         shared_pool_permission = "sinas.functions.shared_pool:all"
         if not check_permission(permissions, shared_pool_permission):
             set_permission_used(request, shared_pool_permission, has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to create shared pool functions (admin only)")
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to create shared pool functions (admin only)",
+            )
         set_permission_used(request, shared_pool_permission)
 
     # Validate requirements against approved packages
@@ -75,14 +80,14 @@ async def create_function(
     # Check if function name already exists in this namespace
     result = await db.execute(
         select(Function).where(
-            and_(
-                Function.namespace == function_data.namespace,
-                Function.name == function_data.name
-            )
+            and_(Function.namespace == function_data.namespace, Function.name == function_data.name)
         )
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Function '{function_data.namespace}/{function_data.name}' already exists")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Function '{function_data.namespace}/{function_data.name}' already exists",
+        )
 
     # Create function
     function = Function(
@@ -95,7 +100,7 @@ async def create_function(
         output_schema=function_data.output_schema,
         requirements=function_data.requirements,
         shared_pool=function_data.shared_pool,
-        requires_approval=function_data.requires_approval
+        requires_approval=function_data.requires_approval,
     )
 
     db.add(function)
@@ -109,7 +114,7 @@ async def create_function(
         code=function.code,
         input_schema=function.input_schema,
         output_schema=function.output_schema,
-        created_by=str(user_id)
+        created_by=str(user_id),
     )
     db.add(version)
     await db.commit()
@@ -117,13 +122,13 @@ async def create_function(
     return FunctionResponse.model_validate(function)
 
 
-@router.get("", response_model=List[FunctionResponse])
+@router.get("", response_model=list[FunctionResponse])
 async def list_functions(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List functions (own or all based on permissions)."""
     user_id, permissions = current_user_data
@@ -151,7 +156,7 @@ async def get_function(
     namespace: str,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific function."""
     user_id, permissions = current_user_data
@@ -179,7 +184,7 @@ async def update_function(
     name: str,
     function_data: FunctionUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a function."""
     user_id, permissions = current_user_data
@@ -202,7 +207,9 @@ async def update_function(
         shared_pool_permission = "sinas.functions.shared_pool:all"
         if not check_permission(permissions, shared_pool_permission):
             set_permission_used(request, shared_pool_permission, has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to enable shared pool (admin only)")
+            raise HTTPException(
+                status_code=403, detail="Not authorized to enable shared pool (admin only)"
+            )
         set_permission_used(request, shared_pool_permission)
 
     # Validate requirements if being updated
@@ -212,20 +219,19 @@ async def update_function(
     # Check for namespace/name conflict if renaming
     new_namespace = function_data.namespace or function.namespace
     new_name = function_data.name or function.name
-    if (new_namespace != function.namespace or new_name != function.name):
+    if new_namespace != function.namespace or new_name != function.name:
         result = await db.execute(
             select(Function).where(
                 and_(
                     Function.namespace == new_namespace,
                     Function.name == new_name,
-                    Function.id != function.id
+                    Function.id != function.id,
                 )
             )
         )
         if result.scalar_one_or_none():
             raise HTTPException(
-                status_code=400,
-                detail=f"Function '{new_namespace}/{new_name}' already exists"
+                status_code=400, detail=f"Function '{new_namespace}/{new_name}' already exists"
             )
 
     # Update fields
@@ -251,9 +257,13 @@ async def update_function(
             function_id=function.id,
             version=new_version_num,
             code=function.code,
-            input_schema=function.input_schema if function_data.input_schema is None else function_data.input_schema,
-            output_schema=function.output_schema if function_data.output_schema is None else function_data.output_schema,
-            created_by=str(user_id)
+            input_schema=function.input_schema
+            if function_data.input_schema is None
+            else function_data.input_schema,
+            output_schema=function.output_schema
+            if function_data.output_schema is None
+            else function_data.output_schema,
+            created_by=str(user_id),
         )
         db.add(version)
 
@@ -284,7 +294,7 @@ async def delete_function(
     namespace: str,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a function."""
     user_id, permissions = current_user_data
@@ -308,13 +318,13 @@ async def delete_function(
     return {"message": f"Function '{namespace}/{name}' deleted successfully"}
 
 
-@router.get("/{namespace}/{name}/versions", response_model=List[FunctionVersionResponse])
+@router.get("/{namespace}/{name}/versions", response_model=list[FunctionVersionResponse])
 async def list_function_versions(
     request: Request,
     namespace: str,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List all versions of a function."""
     user_id, permissions = current_user_data
@@ -350,7 +360,7 @@ async def execute_function(
     name: str,
     input_data: dict,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Execute a function directly from the management UI."""
     user_id, permissions = current_user_data
@@ -369,15 +379,13 @@ async def execute_function(
     set_permission_used(request, permission)
 
     # Execute function via execution engine
-    from app.services.execution_engine import executor
-    from app.models.execution import TriggerType
     from app.core.auth import create_access_token
+    from app.models.execution import TriggerType
     from app.models.user import User
+    from app.services.execution_engine import executor
 
     # Get user info for context
-    user_result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
+    user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
     user_email = user.email if user else "unknown@unknown.com"
 
@@ -394,17 +402,9 @@ async def execute_function(
             trigger_type=TriggerType.MANUAL.value,
             trigger_id="management-ui",
             user_id=user_id,
-            chat_id=None
+            chat_id=None,
         )
 
-        return {
-            "status": "success",
-            "execution_id": execution_id,
-            "result": result
-        }
+        return {"status": "success", "execution_id": execution_id, "result": result}
     except Exception as e:
-        return {
-            "status": "error",
-            "execution_id": execution_id,
-            "error": str(e)
-        }
+        return {"status": "error", "execution_id": execution_id, "error": str(e)}

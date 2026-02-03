@@ -1,6 +1,7 @@
 """OpenAI LLM provider implementation."""
-import json
-from typing import List, Dict, Any, Optional, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any, Optional
+
 from openai import AsyncOpenAI
 
 from .base import BaseLLMProvider
@@ -11,20 +12,17 @@ class OpenAIProvider(BaseLLMProvider):
 
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
         super().__init__(api_key, base_url)
-        self.client = AsyncOpenAI(
-            api_key=api_key,
-            base_url=base_url
-        )
+        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def complete(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> dict[str, Any]:
         """Generate a completion using OpenAI API."""
         params = {
             "model": model,
@@ -60,13 +58,13 @@ class OpenAIProvider(BaseLLMProvider):
 
     async def stream(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
-        tools: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[list[dict[str, Any]]] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
-        **kwargs
-    ) -> AsyncIterator[Dict[str, Any]]:
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Generate a streaming completion using OpenAI API."""
         params = {
             "model": model,
@@ -101,38 +99,36 @@ class OpenAIProvider(BaseLLMProvider):
 
             yield result
 
-    def format_tool_calls(self, tool_calls: Any) -> List[Dict[str, Any]]:
+    def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
         """Convert OpenAI tool calls to standard format (already in correct format)."""
         formatted = []
 
         for tc in tool_calls:
             tool_call_dict = {
-                "id": tc.id if hasattr(tc, 'id') else None,
-                "type": tc.type if hasattr(tc, 'type') else "function",
+                "id": tc.id if hasattr(tc, "id") else None,
+                "type": tc.type if hasattr(tc, "type") else "function",
                 "function": {
-                    "name": tc.function.name if hasattr(tc.function, 'name') else None,
-                    "arguments": tc.function.arguments if hasattr(tc.function, 'arguments') else None
-                }
+                    "name": tc.function.name if hasattr(tc.function, "name") else None,
+                    "arguments": tc.function.arguments
+                    if hasattr(tc.function, "arguments")
+                    else None,
+                },
             }
             # Include index if present (used in streaming)
-            if hasattr(tc, 'index'):
+            if hasattr(tc, "index"):
                 tool_call_dict["index"] = tc.index
 
             formatted.append(tool_call_dict)
 
         return formatted
 
-    def extract_usage(self, response: Any) -> Dict[str, int]:
+    def extract_usage(self, response: Any) -> dict[str, int]:
         """Extract token usage from OpenAI response."""
         if not response.usage:
-            return {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0
-            }
+            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
         return {
             "prompt_tokens": response.usage.prompt_tokens,
             "completion_tokens": response.usage.completion_tokens,
-            "total_tokens": response.usage.total_tokens
+            "total_tokens": response.usage.total_tokens,
         }

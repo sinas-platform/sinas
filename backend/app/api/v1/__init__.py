@@ -1,23 +1,24 @@
 """API v1 router - Management API (Control Plane for configuration)."""
 from fastapi import APIRouter
+
 from .endpoints import (
     agents,
+    api_keys,
+    config,
+    containers,
+    functions,
     llm_providers,
     mcp_servers,
-    roles,
-    users,
-    functions,
-    webhooks,
-    packages,
-    schedules,
-    request_logs,
-    containers,
-    workers,
-    config,
-    api_keys,
-    templates,
-    skills,
     messages,
+    packages,
+    request_logs,
+    roles,
+    schedules,
+    skills,
+    templates,
+    users,
+    webhooks,
+    workers,
 )
 
 router = APIRouter()

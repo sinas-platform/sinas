@@ -1,21 +1,21 @@
 """Request logs API endpoints for querying access logs."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from typing import List, Optional
 from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.permissions import check_permission
-from app.services.clickhouse_logger import clickhouse_logger
 from app.schemas.request_log import (
     RequestLogResponse,
-    RequestLogQueryParams,
-    RequestLogStatsResponse
+    RequestLogStatsResponse,
 )
+from app.services.clickhouse_logger import clickhouse_logger
 
 router = APIRouter(prefix="/request-logs", tags=["request-logs"])
 
 
-@router.get("", response_model=List[RequestLogResponse])
+@router.get("", response_model=list[RequestLogResponse])
 async def list_request_logs(
     request: Request,
     user_id: Optional[str] = Query(None),
@@ -26,7 +26,7 @@ async def list_request_logs(
     status_code: Optional[int] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Query request logs with filters.
@@ -44,10 +44,7 @@ async def list_request_logs(
     if not can_see_all:
         set_permission_used(request, "sinas.logs.read:own")
         if user_id and user_id != current_user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only view your own request logs"
-            )
+            raise HTTPException(status_code=403, detail="You can only view your own request logs")
         user_id = current_user_id
     else:
         set_permission_used(request, "sinas.logs.read:all")
@@ -61,7 +58,7 @@ async def list_request_logs(
         path_pattern=path_pattern,
         status_code=status_code,
         limit=limit,
-        offset=offset
+        offset=offset,
     )
 
     # Convert to response models
@@ -88,7 +85,7 @@ async def list_request_logs(
             group_id=log[18],
             error_message=log[19],
             error_type=log[20],
-            metadata=log[21]
+            metadata=log[21],
         )
         for log in logs
     ]
@@ -100,7 +97,7 @@ async def get_request_log_stats(
     user_id: Optional[str] = Query(None),
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """
     Get aggregated statistics for request logs.
@@ -118,10 +115,7 @@ async def get_request_log_stats(
     if not can_see_all:
         set_permission_used(request, "sinas.logs.read:own")
         if user_id and user_id != current_user_id:
-            raise HTTPException(
-                status_code=403,
-                detail="You can only view your own statistics"
-            )
+            raise HTTPException(status_code=403, detail="You can only view your own statistics")
         user_id = current_user_id
     else:
         set_permission_used(request, "sinas.logs.read:all")
@@ -183,7 +177,9 @@ async def get_request_log_stats(
             avg_response_time_ms=float(stats_row[2]) if stats_row[2] else 0.0,
             error_rate=float(stats_row[3]) if stats_row[3] else 0.0,
             top_paths=[{"path": row[0], "count": row[1]} for row in top_paths_result.result_rows],
-            top_permissions=[{"permission": row[0], "count": row[1]} for row in top_perms_result.result_rows]
+            top_permissions=[
+                {"permission": row[0], "count": row[1]} for row in top_perms_result.result_rows
+            ],
         )
 
     except Exception as e:

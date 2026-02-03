@@ -1,16 +1,16 @@
 """MCP server endpoints."""
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
-from app.core.database import get_db
 from app.core.auth import require_permission
+from app.core.database import get_db
 from app.models import MCPServer
 from app.schemas.mcp import (
     MCPServerCreate,
-    MCPServerUpdate,
     MCPServerResponse,
+    MCPServerUpdate,
     MCPToolExecuteRequest,
 )
 from app.services.mcp import mcp_client
@@ -22,7 +22,7 @@ router = APIRouter()
 async def create_mcp_server(
     request: MCPServerCreate,
     user_id: str = Depends(require_permission("sinas.mcp_servers.create:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Connect to an MCP server and discover tools.
@@ -30,15 +30,13 @@ async def create_mcp_server(
     Requires admin permission.
     """
     # Check if server with this name already exists
-    result = await db.execute(
-        select(MCPServer).where(MCPServer.name == request.name)
-    )
+    result = await db.execute(select(MCPServer).where(MCPServer.name == request.name))
     existing = result.scalar_one_or_none()
 
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"MCP server with name '{request.name}' already exists"
+            detail=f"MCP server with name '{request.name}' already exists",
         )
 
     # Create server
@@ -48,7 +46,7 @@ async def create_mcp_server(
         protocol=request.protocol,
         api_key=request.api_key,
         is_active=True,
-        connection_status="disconnected"
+        connection_status="disconnected",
     )
 
     db.add(server)
@@ -61,22 +59,20 @@ async def create_mcp_server(
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to connect to MCP server: {str(e)}"
+            detail=f"Failed to connect to MCP server: {str(e)}",
         )
 
     await db.refresh(server)
     return MCPServerResponse.model_validate(server)
 
 
-@router.get("/servers", response_model=List[MCPServerResponse])
+@router.get("/servers", response_model=list[MCPServerResponse])
 async def list_mcp_servers(
     user_id: str = Depends(require_permission("sinas.mcp_servers.read:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List all MCP servers."""
-    result = await db.execute(
-        select(MCPServer).order_by(MCPServer.created_at.desc())
-    )
+    result = await db.execute(select(MCPServer).order_by(MCPServer.created_at.desc()))
     servers = result.scalars().all()
 
     return [MCPServerResponse.model_validate(server) for server in servers]
@@ -86,15 +82,14 @@ async def list_mcp_servers(
 async def get_mcp_server(
     name: str,
     user_id: str = Depends(require_permission("sinas.mcp_servers.read:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get an MCP server."""
     server = await MCPServer.get_by_name(db, name)
 
     if not server:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"MCP server '{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"MCP server '{name}' not found"
         )
 
     return MCPServerResponse.model_validate(server)
@@ -105,15 +100,14 @@ async def update_mcp_server(
     name: str,
     request: MCPServerUpdate,
     user_id: str = Depends(require_permission("sinas.mcp_servers.update:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an MCP server."""
     server = await MCPServer.get_by_name(db, name)
 
     if not server:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"MCP server '{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"MCP server '{name}' not found"
         )
 
     # Update fields
@@ -136,7 +130,7 @@ async def update_mcp_server(
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to reconnect to MCP server: {str(e)}"
+                detail=f"Failed to reconnect to MCP server: {str(e)}",
             )
 
     await db.refresh(server)
@@ -147,15 +141,14 @@ async def update_mcp_server(
 async def delete_mcp_server(
     name: str,
     user_id: str = Depends(require_permission("sinas.mcp_servers.delete:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Disconnect and delete an MCP server."""
     server = await MCPServer.get_by_name(db, name)
 
     if not server:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"MCP server '{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"MCP server '{name}' not found"
         )
 
     # Disconnect
@@ -168,10 +161,8 @@ async def delete_mcp_server(
     return None
 
 
-@router.get("/tools", response_model=List[dict])
-async def list_mcp_tools(
-    user_id: str = Depends(require_permission("sinas.mcp_tools.read:all"))
-):
+@router.get("/tools", response_model=list[dict])
+async def list_mcp_tools(user_id: str = Depends(require_permission("sinas.mcp_tools.read:all"))):
     """List all available MCP tools."""
     tools = await mcp_client.get_available_tools()
     return tools
@@ -181,19 +172,16 @@ async def list_mcp_tools(
 async def execute_mcp_tool(
     tool_name: str,
     request: MCPToolExecuteRequest,
-    user_id: str = Depends(require_permission("sinas.mcp_tools.execute:all"))
+    user_id: str = Depends(require_permission("sinas.mcp_tools.execute:all")),
 ):
     """Execute an MCP tool directly."""
     try:
         result = await mcp_client.execute_tool(tool_name, request.arguments)
         return {"result": result}
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Tool execution failed: {str(e)}"
+            detail=f"Tool execution failed: {str(e)}",
         )

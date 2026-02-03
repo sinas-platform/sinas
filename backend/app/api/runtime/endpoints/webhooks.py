@@ -1,20 +1,21 @@
 """Runtime webhook endpoints - execute functions via HTTP."""
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import Dict, Any, Optional
 import uuid
+from typing import Any
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
-from app.models.webhook import Webhook
+from app.core.database import get_db
 from app.models.execution import TriggerType
+from app.models.webhook import Webhook
 from app.services.execution_engine import executor
 
 router = APIRouter()
 
 
-async def extract_request_data(request: Request) -> Dict[str, Any]:
+async def extract_request_data(request: Request) -> dict[str, Any]:
     """Extract all request data (body, headers, query params) into a structured format."""
     # Get request body
     body = {}
@@ -41,8 +42,9 @@ async def extract_request_data(request: Request) -> Dict[str, Any]:
 
     # Extract headers (exclude some internal ones)
     headers = {
-        k: v for k, v in request.headers.items()
-        if not k.lower().startswith(('host', 'user-agent', 'accept-encoding'))
+        k: v
+        for k, v in request.headers.items()
+        if not k.lower().startswith(("host", "user-agent", "accept-encoding"))
     }
 
     # Extract query parameters
@@ -58,20 +60,20 @@ async def extract_request_data(request: Request) -> Dict[str, Any]:
         "path_params": path_params,
         "method": request.method,
         "url": str(request.url),
-        "path": request.url.path
+        "path": request.url.path,
     }
 
 
 @router.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    operation_id="execute_webhook"
+    operation_id="execute_webhook",
 )
 async def execute_webhook(
     path: str,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """Execute webhook by triggering associated function. Requires authentication."""
     from app.core.permissions import check_permission
@@ -84,7 +86,7 @@ async def execute_webhook(
             and_(
                 Webhook.path == path,
                 Webhook.http_method == request.method,
-                Webhook.is_active == True
+                Webhook.is_active == True,
             )
         )
     )
@@ -93,28 +95,34 @@ async def execute_webhook(
     if not webhook:
         raise HTTPException(
             status_code=404,
-            detail=f"No active webhook found for path '{path}' and method '{request.method}'"
+            detail=f"No active webhook found for path '{path}' and method '{request.method}'",
         )
 
     # Check permissions: Need function execute permission
-    function_perm = f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:own"
-    function_perm_group = f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:group"
-    function_perm_all = f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:all"
+    function_perm = (
+        f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:own"
+    )
+    function_perm_group = (
+        f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:group"
+    )
+    function_perm_all = (
+        f"sinas.functions.{webhook.function_namespace}.{webhook.function_name}.execute:all"
+    )
 
     has_permission = (
-        check_permission(permissions, function_perm_all) or
-        (check_permission(permissions, function_perm_group) and webhook.group_id) or
-        (check_permission(permissions, function_perm) and str(webhook.user_id) == user_id)
+        check_permission(permissions, function_perm_all)
+        or (check_permission(permissions, function_perm_group) and webhook.group_id)
+        or (check_permission(permissions, function_perm) and str(webhook.user_id) == user_id)
     )
 
     if not has_permission:
         set_permission_used(request, function_perm, has_perm=False)
-        raise HTTPException(
-            status_code=403,
-            detail=f"Not authorized to execute webhook '{path}'"
-        )
+        raise HTTPException(status_code=403, detail=f"Not authorized to execute webhook '{path}'")
 
-    set_permission_used(request, function_perm_all if check_permission(permissions, function_perm_all) else function_perm)
+    set_permission_used(
+        request,
+        function_perm_all if check_permission(permissions, function_perm_all) else function_perm,
+    )
 
     try:
         # Extract request data
@@ -141,17 +149,10 @@ async def execute_webhook(
             trigger_type=TriggerType.WEBHOOK.value,
             trigger_id=str(webhook.id),
             user_id=user_id,
-            chat_id=chat_id
+            chat_id=chat_id,
         )
 
-        return {
-            "success": True,
-            "execution_id": execution_id,
-            "result": result
-        }
+        return {"success": True, "execution_id": execution_id, "result": result}
 
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Function execution failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Function execution failed: {str(e)}")

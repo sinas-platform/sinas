@@ -1,18 +1,18 @@
 """LLM Provider endpoints for managing LLM configurations."""
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-import uuid
 
-from app.core.database import get_db
 from app.core.auth import require_permission
+from app.core.database import get_db
 from app.core.encryption import EncryptionService
 from app.models import LLMProvider
 from app.schemas.llm_provider import (
     LLMProviderCreate,
-    LLMProviderUpdate,
     LLMProviderResponse,
+    LLMProviderUpdate,
 )
 
 router = APIRouter()
@@ -22,25 +22,21 @@ router = APIRouter()
 async def create_llm_provider(
     request: LLMProviderCreate,
     user_id: str = Depends(require_permission("sinas.llm_providers.create:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a new LLM provider configuration. Admin only."""
     # Check if provider with same name already exists
-    result = await db.execute(
-        select(LLMProvider).where(LLMProvider.name == request.name)
-    )
+    result = await db.execute(select(LLMProvider).where(LLMProvider.name == request.name))
     existing = result.scalar_one_or_none()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Provider with name '{request.name}' already exists"
+            detail=f"Provider with name '{request.name}' already exists",
         )
 
     # If this is set as default, unset other defaults
     if request.is_default:
-        await db.execute(
-            LLMProvider.__table__.update().values(is_default=False)
-        )
+        await db.execute(LLMProvider.__table__.update().values(is_default=False))
 
     # Encrypt API key if provided
     encrypted_api_key = None
@@ -56,7 +52,7 @@ async def create_llm_provider(
         default_model=request.default_model,
         config=request.config or {},
         is_default=request.is_default or False,
-        is_active=True
+        is_active=True,
     )
 
     db.add(provider)
@@ -66,14 +62,16 @@ async def create_llm_provider(
     return LLMProviderResponse.model_validate(provider)
 
 
-@router.get("", response_model=List[LLMProviderResponse])
+@router.get("", response_model=list[LLMProviderResponse])
 async def list_llm_providers(
     user_id: str = Depends(require_permission("sinas.llm_providers.read:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List all LLM providers. Admin only."""
     result = await db.execute(
-        select(LLMProvider).where(LLMProvider.is_active == True).order_by(LLMProvider.created_at.desc())
+        select(LLMProvider)
+        .where(LLMProvider.is_active == True)
+        .order_by(LLMProvider.created_at.desc())
     )
     providers = result.scalars().all()
     return [LLMProviderResponse.model_validate(p) for p in providers]
@@ -83,14 +81,13 @@ async def list_llm_providers(
 async def get_llm_provider(
     name: str,
     user_id: str = Depends(require_permission("sinas.llm_providers.read:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a specific LLM provider by name. Admin only."""
     provider = await LLMProvider.get_by_name(db, name)
     if not provider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Provider '{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Provider '{name}' not found"
         )
     return LLMProviderResponse.model_validate(provider)
 
@@ -100,35 +97,36 @@ async def update_llm_provider(
     provider_id: uuid.UUID,
     request: LLMProviderUpdate,
     user_id: str = Depends(require_permission("sinas.llm_providers.update:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an LLM provider. Admin only."""
-    result = await db.execute(
-        select(LLMProvider).where(LLMProvider.id == provider_id)
-    )
+    result = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
     provider = result.scalar_one_or_none()
     if not provider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Provider '{provider_id}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Provider '{provider_id}' not found"
         )
 
     # If setting as default, unset other defaults
     if request.is_default:
         await db.execute(
-            LLMProvider.__table__.update().where(LLMProvider.id != provider.id).values(is_default=False)
+            LLMProvider.__table__.update()
+            .where(LLMProvider.id != provider.id)
+            .values(is_default=False)
         )
 
     # Update fields
     if request.name is not None:
         # Check name uniqueness
         name_check = await db.execute(
-            select(LLMProvider).where(LLMProvider.name == request.name, LLMProvider.id != provider.id)
+            select(LLMProvider).where(
+                LLMProvider.name == request.name, LLMProvider.id != provider.id
+            )
         )
         if name_check.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Provider with name '{request.name}' already exists"
+                detail=f"Provider with name '{request.name}' already exists",
             )
         provider.name = request.name
 
@@ -164,17 +162,14 @@ async def update_llm_provider(
 async def delete_llm_provider(
     provider_id: uuid.UUID,
     user_id: str = Depends(require_permission("sinas.llm_providers.delete:all")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Soft delete an LLM provider. Admin only."""
-    result = await db.execute(
-        select(LLMProvider).where(LLMProvider.id == provider_id)
-    )
+    result = await db.execute(select(LLMProvider).where(LLMProvider.id == provider_id))
     provider = result.scalar_one_or_none()
     if not provider:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Provider '{provider_id}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Provider '{provider_id}' not found"
         )
 
     provider.is_active = False

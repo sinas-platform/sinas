@@ -1,14 +1,14 @@
 """API Key management endpoints."""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-from datetime import datetime
 
+from app.core.auth import generate_api_key, get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, set_permission_used, generate_api_key
 from app.models import APIKey
-from app.schemas.api_key import APIKeyCreate, APIKeyResponse, APIKeyCreated
+from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse
 
 router = APIRouter()
 
@@ -18,7 +18,7 @@ async def create_api_key(
     request_data: APIKeyCreate,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     Create a new API key for the current user.
@@ -40,7 +40,7 @@ async def create_api_key(
         permissions=request_data.permissions or {},
         expires_at=request_data.expires_at,
         is_active=True,
-        created_by=user_id
+        created_by=user_id,
     )
 
     db.add(api_key)
@@ -55,15 +55,15 @@ async def create_api_key(
         key_prefix=api_key.key_prefix,
         permissions=api_key.permissions,
         expires_at=api_key.expires_at,
-        created_at=api_key.created_at
+        created_at=api_key.created_at,
     )
 
 
-@router.get("/api-keys", response_model=List[APIKeyResponse])
+@router.get("/api-keys", response_model=list[APIKeyResponse])
 async def list_api_keys(
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     List all API keys for the current user.
@@ -84,7 +84,7 @@ async def get_api_key(
     key_id: str,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     Get details of a specific API key.
@@ -95,10 +95,7 @@ async def get_api_key(
     api_key = await db.get(APIKey, key_id)
 
     if not api_key or str(api_key.user_id) != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API key not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     return APIKeyResponse.model_validate(api_key)
 
@@ -108,7 +105,7 @@ async def revoke_api_key(
     key_id: str,
     http_request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data: tuple = Depends(get_current_user_with_permissions)
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
     Revoke (soft delete) an API key.
@@ -119,10 +116,7 @@ async def revoke_api_key(
     api_key = await db.get(APIKey, key_id)
 
     if not api_key or str(api_key.user_id) != user_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API key not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     # Soft delete: mark as revoked
     api_key.is_active = False

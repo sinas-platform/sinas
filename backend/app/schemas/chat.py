@@ -1,8 +1,9 @@
 """Chat and message schemas."""
-from pydantic import BaseModel
-from typing import Optional, List, Dict, Any, Union
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Optional, Union
+
+from pydantic import BaseModel
 
 
 class ChatCreate(BaseModel):
@@ -35,7 +36,7 @@ class MessageResponse(BaseModel):
     chat_id: uuid.UUID
     role: str
     content: Optional[str]
-    tool_calls: Optional[List[Dict[str, Any]]]
+    tool_calls: Optional[list[dict[str, Any]]]
     tool_call_id: Optional[str]
     name: Optional[str]
     created_at: datetime
@@ -48,7 +49,7 @@ class AgentChatCreateRequest(BaseModel):
     """Create chat with agent using system prompt templating."""
 
     # System prompt templating (validated against agent.input_schema)
-    input: Optional[Dict[str, Any]] = None
+    input: Optional[dict[str, Any]] = None
 
     # Optional title for the chat
     title: Optional[str] = None
@@ -65,7 +66,7 @@ class MessageSendRequest(BaseModel):
     Universal format - automatically converted to provider-specific format.
     """
 
-    content: Union[str, List[Dict[str, Any]]]
+    content: Union[str, list[dict[str, Any]]]
     # String: "Hello world"
     # Multimodal:
     # [
@@ -77,16 +78,18 @@ class MessageSendRequest(BaseModel):
 
 
 class ChatWithMessages(ChatResponse):
-    messages: List[MessageResponse]
+    messages: list[MessageResponse]
 
 
 class ToolApprovalRequest(BaseModel):
     """Approve or reject a tool call that requires user approval."""
+
     approved: bool
 
 
 class ToolApprovalResponse(BaseModel):
     """Response from approving/rejecting a tool call."""
+
     status: str  # "approved", "rejected"
     tool_call_id: str
     message: Optional[str] = None

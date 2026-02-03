@@ -1,5 +1,6 @@
 """Default template initialization."""
 import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +17,7 @@ async def initialize_default_templates(db: AsyncSession):
     """
     # OTP Email Template
     otp_template_name = "otp_email"
-    result = await db.execute(
-        select(Template).where(Template.name == otp_template_name)
-    )
+    result = await db.execute(select(Template).where(Template.name == otp_template_name))
     existing = result.scalar_one_or_none()
 
     if not existing:
@@ -56,21 +55,18 @@ SINAS Team
             variable_schema={
                 "type": "object",
                 "properties": {
-                    "otp_code": {
-                        "type": "string",
-                        "description": "6-digit OTP verification code"
-                    },
+                    "otp_code": {"type": "string", "description": "6-digit OTP verification code"},
                     "user_email": {
                         "type": "string",
                         "format": "email",
-                        "description": "User's email address"
+                        "description": "User's email address",
                     },
                     "expiry_minutes": {
                         "type": "integer",
-                        "description": "Minutes until OTP expires"
-                    }
+                        "description": "Minutes until OTP expires",
+                    },
                 },
-                "required": ["otp_code", "user_email", "expiry_minutes"]
+                "required": ["otp_code", "user_email", "expiry_minutes"],
             },
             is_active=True,
         )

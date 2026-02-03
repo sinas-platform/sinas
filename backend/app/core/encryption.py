@@ -1,5 +1,6 @@
 """Encryption utilities for sensitive data."""
 from cryptography.fernet import Fernet
+
 from app.core.config import settings
 
 
@@ -9,7 +10,7 @@ class EncryptionService:
     def __init__(self):
         # In production, load this from environment variable or secret manager
         # For now, generate or use from settings
-        if hasattr(settings, 'encryption_key') and settings.encryption_key:
+        if hasattr(settings, "encryption_key") and settings.encryption_key:
             self.key = settings.encryption_key.encode()
         else:
             # Generate a key (this should be stored securely)

@@ -1,12 +1,12 @@
 """Webhook-to-tool converter for LLM tool calling."""
 import json
-from typing import List, Dict, Any, Optional
-import httpx
+from typing import Any, Optional
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Webhook, Function
+from app.models import Function, Webhook
 
 
 class WebhookToolConverter:
@@ -25,9 +25,9 @@ class WebhookToolConverter:
         self,
         db: AsyncSession,
         user_id: str,
-        enabled_webhooks: Optional[List[str]] = None,
-        disabled_webhooks: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        enabled_webhooks: Optional[list[str]] = None,
+        disabled_webhooks: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
         """
         Get webhooks and convert to OpenAI tools format.
 
@@ -41,10 +41,7 @@ class WebhookToolConverter:
             List of tools in OpenAI format
         """
         # Query active webhooks for user (or shared via group)
-        query = select(Webhook).where(
-            Webhook.is_active == True,
-            Webhook.user_id == user_id
-        )
+        query = select(Webhook).where(Webhook.is_active == True, Webhook.user_id == user_id)
 
         result = await db.execute(query)
         webhooks = result.scalars().all()
@@ -62,8 +59,7 @@ class WebhookToolConverter:
             # Look up linked function to get schema
             func_result = await db.execute(
                 select(Function).where(
-                    Function.name == webhook.function_name,
-                    Function.user_id == user_id
+                    Function.name == webhook.function_name, Function.user_id == user_id
                 )
             )
             function = func_result.scalar_one_or_none()
@@ -78,7 +74,7 @@ class WebhookToolConverter:
 
         return tools
 
-    def _webhook_to_tool(self, webhook: Webhook, function: Function) -> Dict[str, Any]:
+    def _webhook_to_tool(self, webhook: Webhook, function: Function) -> dict[str, Any]:
         """
         Convert a webhook + function to OpenAI tool format.
 
@@ -90,7 +86,9 @@ class WebhookToolConverter:
             OpenAI tool dict
         """
         # Build description
-        description = webhook.description or function.description or f"Execute {webhook.function_name}"
+        description = (
+            webhook.description or function.description or f"Execute {webhook.function_name}"
+        )
         description += f" (Webhook: {webhook.http_method} /api/v1/h/{webhook.path})"
 
         # Extract parameters from function's input_schema
@@ -101,18 +99,18 @@ class WebhookToolConverter:
             "function": {
                 "name": webhook.function_name,
                 "description": description,
-                "parameters": parameters
-            }
+                "parameters": parameters,
+            },
         }
 
     async def execute_webhook_tool(
         self,
         db: AsyncSession,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         user_token: str,
-        chat_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        chat_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """
         Execute a webhook as a tool call.
 
@@ -131,10 +129,7 @@ class WebhookToolConverter:
         """
         # Find webhook by function_name
         result = await db.execute(
-            select(Webhook).where(
-                Webhook.function_name == tool_name,
-                Webhook.is_active == True
-            )
+            select(Webhook).where(Webhook.function_name == tool_name, Webhook.is_active == True)
         )
         webhook = result.scalar_one_or_none()
 
@@ -146,10 +141,7 @@ class WebhookToolConverter:
 
         # Execute webhook via HTTP
         async with httpx.AsyncClient(timeout=300.0) as client:
-            headers = {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {user_token}"
-            }
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {user_token}"}
 
             # Add chat_id header if provided
             if chat_id:
@@ -176,7 +168,7 @@ class WebhookToolConverter:
             if response.status_code >= 400:
                 return {
                     "error": f"Webhook execution failed: {response.status_code}",
-                    "details": response.text
+                    "details": response.text,
                 }
 
             try:
@@ -187,11 +179,11 @@ class WebhookToolConverter:
     async def get_tool_configuration(
         self,
         db: AsyncSession,
-        chat_enabled: Optional[List[str]] = None,
-        assistant_enabled: Optional[List[str]] = None,
-        message_enabled: Optional[List[str]] = None,
-        message_disabled: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
+        chat_enabled: Optional[list[str]] = None,
+        assistant_enabled: Optional[list[str]] = None,
+        message_enabled: Optional[list[str]] = None,
+        message_disabled: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
         """
         Determine final tool configuration based on hierarchy.
 
@@ -219,7 +211,4 @@ class WebhookToolConverter:
 
         disabled = message_disabled or []
 
-        return {
-            "enabled": enabled,
-            "disabled": disabled
-        }
+        return {"enabled": enabled, "disabled": disabled}

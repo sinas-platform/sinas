@@ -1,19 +1,18 @@
 """Worker executor - runs inside worker containers to execute functions."""
 import json
-import traceback
 import time
-from typing import Dict, Any
+import traceback
+from typing import Any
 
 
-def execute_function_in_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
+def execute_function_in_worker(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Execute function inside worker container.
 
     This runs in a separate worker container process.
     """
-    from datetime import datetime
     import uuid as uuid_module
-    from app.services.execution_engine import ASTInjector
+    from datetime import datetime
 
     execution_id = payload["execution_id"]
     function_namespace = payload["function_namespace"]
@@ -30,10 +29,11 @@ def execute_function_in_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
 
         with sync_session_maker() as db:
             # Get function
-            function = db.query(Function).filter(
-                Function.namespace == function_namespace,
-                Function.name == function_name
-            ).first()
+            function = (
+                db.query(Function)
+                .filter(Function.namespace == function_namespace, Function.name == function_name)
+                .first()
+            )
 
             if not function:
                 raise Exception(f"Function {function_namespace}/{function_name} not found")
@@ -47,7 +47,9 @@ def execute_function_in_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
             }
 
             # Compile and execute function code
-            compiled_code = compile(function.code, f"<function:{function_namespace}/{function_name}>", "exec")
+            compiled_code = compile(
+                function.code, f"<function:{function_namespace}/{function_name}>", "exec"
+            )
             exec(compiled_code, namespace)
 
             # Find the function
@@ -65,11 +67,7 @@ def execute_function_in_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
 
             duration_ms = int((time.time() - start_time) * 1000)
 
-            return {
-                "status": "success",
-                "result": result,
-                "duration_ms": duration_ms
-            }
+            return {"status": "success", "result": result, "duration_ms": duration_ms}
 
     except Exception as e:
         duration_ms = int((time.time() - start_time) * 1000)
@@ -77,5 +75,5 @@ def execute_function_in_worker(payload: Dict[str, Any]) -> Dict[str, Any]:
             "status": "failed",
             "error": str(e),
             "traceback": traceback.format_exc(),
-            "duration_ms": duration_ms
+            "duration_ms": duration_ms,
         }

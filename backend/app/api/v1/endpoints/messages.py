@@ -1,14 +1,14 @@
 """Messages API endpoints for analytics and insights."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, func
-from typing import List, Optional
-from datetime import datetime
+from typing import Optional
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
-from app.models import Message, Chat, User
+from app.models import Chat, Message, User
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -22,7 +22,7 @@ async def list_messages(
     limit: int = Query(100, ge=1, le=1000, description="Max messages to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     List messages with filters for analytics/insights.
@@ -58,12 +58,7 @@ async def list_messages(
     if agent:
         if "/" in agent:
             namespace, name = agent.split("/", 1)
-            query = query.where(
-                and_(
-                    Chat.agent_namespace == namespace,
-                    Chat.agent_name == name
-                )
-            )
+            query = query.where(and_(Chat.agent_namespace == namespace, Chat.agent_name == name))
         else:
             query = query.where(Chat.agent_name == agent)
 
@@ -84,10 +79,7 @@ async def list_messages(
         if "/" in agent:
             namespace, name = agent.split("/", 1)
             count_query = count_query.where(
-                and_(
-                    Chat.agent_namespace == namespace,
-                    Chat.agent_name == name
-                )
+                and_(Chat.agent_namespace == namespace, Chat.agent_name == name)
             )
     if role:
         count_query = count_query.where(Message.role == role)
@@ -108,39 +100,32 @@ async def list_messages(
     enriched_messages = []
     for msg in messages:
         # Get chat details
-        chat_result = await db.execute(
-            select(Chat).where(Chat.id == msg.chat_id)
-        )
+        chat_result = await db.execute(select(Chat).where(Chat.id == msg.chat_id))
         chat = chat_result.scalar_one_or_none()
 
         # Get user details if chat exists
         user_email = None
         if chat and chat.user_id:
-            user_result = await db.execute(
-                select(User.email).where(User.id == chat.user_id)
-            )
+            user_result = await db.execute(select(User.email).where(User.id == chat.user_id))
             user_email = user_result.scalar_one_or_none()
 
-        enriched_messages.append({
-            "id": str(msg.id),
-            "chat_id": str(msg.chat_id),
-            "role": msg.role,
-            "content": msg.content,
-            "tool_calls": msg.tool_calls,
-            "tool_call_id": msg.tool_call_id,
-            "created_at": msg.created_at.isoformat(),
-            "chat": {
-                "agent_namespace": chat.agent_namespace if chat else None,
-                "agent_name": chat.agent_name if chat else None,
-            } if chat else None,
-            "user": {
-                "email": user_email
-            } if user_email else None
-        })
+        enriched_messages.append(
+            {
+                "id": str(msg.id),
+                "chat_id": str(msg.chat_id),
+                "role": msg.role,
+                "content": msg.content,
+                "tool_calls": msg.tool_calls,
+                "tool_call_id": msg.tool_call_id,
+                "created_at": msg.created_at.isoformat(),
+                "chat": {
+                    "agent_namespace": chat.agent_namespace if chat else None,
+                    "agent_name": chat.agent_name if chat else None,
+                }
+                if chat
+                else None,
+                "user": {"email": user_email} if user_email else None,
+            }
+        )
 
-    return {
-        "messages": enriched_messages,
-        "total": total,
-        "limit": limit,
-        "offset": offset
-    }
+    return {"messages": enriched_messages, "total": total, "limit": limit, "offset": offset}

@@ -1,11 +1,11 @@
+import uuid
+from datetime import datetime
+from typing import Annotated
+
 from sqlalchemy import DateTime, func
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 from sqlalchemy.types import TypeDecorator
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-import uuid
-from typing import Annotated
-from datetime import datetime
 
 
 class GUID(TypeDecorator):
@@ -13,7 +13,7 @@ class GUID(TypeDecorator):
     cache_ok = True
 
     def load_dialect_impl(self, dialect):
-        if dialect.name == 'postgresql':
+        if dialect.name == "postgresql":
             return dialect.type_descriptor(PG_UUID(as_uuid=True))
         else:
             return dialect.type_descriptor(PG_UUID(as_uuid=True))
@@ -41,4 +41,6 @@ class Base(DeclarativeBase):
 
 uuid_pk = Annotated[uuid.UUID, mapped_column(GUID(), primary_key=True, default=uuid.uuid4)]
 created_at = Annotated[datetime, mapped_column(DateTime(timezone=True), server_default=func.now())]
-updated_at = Annotated[datetime, mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())]
+updated_at = Annotated[
+    datetime, mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+]

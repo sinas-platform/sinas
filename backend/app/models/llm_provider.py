@@ -1,10 +1,10 @@
-from sqlalchemy import String, Text, Boolean, JSON, select
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
-import uuid
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, Boolean, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class LLMProvider(Base):
@@ -12,6 +12,7 @@ class LLMProvider(Base):
     Stores LLM provider configurations (API keys, endpoints, etc.)
     Replaces environment variables for LLM configuration.
     """
+
     __tablename__ = "llm_providers"
 
     id: Mapped[uuid_pk]
@@ -22,10 +23,12 @@ class LLMProvider(Base):
     # API configuration (encrypted in database)
     api_key: Mapped[Optional[str]] = mapped_column(Text)  # Encrypted with ENCRYPTION_KEY
     api_endpoint: Mapped[Optional[str]] = mapped_column(String(500))  # For custom endpoints
-    default_model: Mapped[Optional[str]] = mapped_column(String(100))  # Default model if not specified
+    default_model: Mapped[Optional[str]] = mapped_column(
+        String(100)
+    )  # Default model if not specified
 
     # Additional configuration (rate limits, organization_id, etc.)
-    config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # Example: {"max_tokens": 128000, "organization_id": "org-..."}
 
     # Default provider for new assistants
@@ -43,7 +46,5 @@ class LLMProvider(Base):
     @classmethod
     async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["LLMProvider"]:
         """Get LLM provider by name."""
-        result = await db.execute(
-            select(cls).where(cls.name == name, cls.is_active == True)
-        )
+        result = await db.execute(select(cls).where(cls.name == name, cls.is_active == True))
         return result.scalar_one_or_none()

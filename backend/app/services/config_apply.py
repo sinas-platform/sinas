@@ -4,29 +4,28 @@ Handles idempotent application of declarative configuration
 """
 import hashlib
 import json
-from typing import Any, Dict, List, Optional, Tuple
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+import logging
 from datetime import datetime
+from typing import Any, Optional
 
-from app.models.user import User, Role, UserRole, RolePermission
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.encryption import EncryptionService
+from app.models.agent import Agent
+from app.models.function import Function, FunctionVersion
 from app.models.llm_provider import LLMProvider
 from app.models.mcp import MCPServer
-from app.models.function import Function, FunctionVersion
-from app.models.skill import Skill
-from app.models.agent import Agent
-from app.models.webhook import Webhook
 from app.models.schedule import ScheduledJob
-
+from app.models.skill import Skill
+from app.models.user import Role, RolePermission, User, UserRole
+from app.models.webhook import Webhook
 from app.schemas.config import (
-    SinasConfig,
     ConfigApplyResponse,
     ConfigApplySummary,
     ResourceChange,
+    SinasConfig,
 )
-from app.core.encryption import EncryptionService
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -38,44 +37,52 @@ class ConfigApplyService:
         self.db = db
         self.config_name = config_name
         self.summary = ConfigApplySummary()
-        self.changes: List[ResourceChange] = []
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
+        self.changes: list[ResourceChange] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
 
         # Resource lookup caches (name -> id)
-        self.group_ids: Dict[str, str] = {}
-        self.user_ids: Dict[str, str] = {}
-        self.datasource_ids: Dict[str, str] = {}
-        self.function_ids: Dict[str, str] = {}
-        self.agent_ids: Dict[str, str] = {}
-        self.llm_provider_ids: Dict[str, str] = {}
-        self.webhook_ids: Dict[str, str] = {}
-        self.collection_ids: Dict[str, str] = {}
-        self.folder_ids: Dict[str, str] = {}  # Alias for collection_ids
+        self.group_ids: dict[str, str] = {}
+        self.user_ids: dict[str, str] = {}
+        self.datasource_ids: dict[str, str] = {}
+        self.function_ids: dict[str, str] = {}
+        self.agent_ids: dict[str, str] = {}
+        self.llm_provider_ids: dict[str, str] = {}
+        self.webhook_ids: dict[str, str] = {}
+        self.collection_ids: dict[str, str] = {}
+        self.folder_ids: dict[str, str] = {}  # Alias for collection_ids
 
-    def _calculate_hash(self, data: Dict[str, Any]) -> str:
+    def _calculate_hash(self, data: dict[str, Any]) -> str:
         """Calculate hash for change detection"""
         # Create stable JSON string and hash it
         data_str = json.dumps(data, sort_keys=True)
         return hashlib.sha256(data_str.encode()).hexdigest()
 
-    def _track_change(self, action: str, resource_type: str, resource_name: str,
-                      details: Optional[str] = None, changes: Optional[Dict[str, Any]] = None):
+    def _track_change(
+        self,
+        action: str,
+        resource_type: str,
+        resource_name: str,
+        details: Optional[str] = None,
+        changes: Optional[dict[str, Any]] = None,
+    ):
         """Track a resource change"""
-        self.changes.append(ResourceChange(
-            action=action,
-            resourceType=resource_type,
-            resourceName=resource_name,
-            details=details,
-            changes=changes
-        ))
+        self.changes.append(
+            ResourceChange(
+                action=action,
+                resourceType=resource_type,
+                resourceName=resource_name,
+                details=details,
+                changes=changes,
+            )
+        )
 
         # Update summary - map action to summary field name
         action_field_map = {
             "create": "created",
             "update": "updated",
             "unchanged": "unchanged",
-            "delete": "deleted"
+            "delete": "deleted",
         }
         summary_field = action_field_map.get(action, action)
         summary_dict = getattr(self.summary, summary_field)
@@ -113,7 +120,7 @@ class ConfigApplyService:
                 summary=self.summary,
                 changes=self.changes,
                 errors=self.errors,
-                warnings=self.warnings
+                warnings=self.warnings,
             )
 
         except Exception as e:
@@ -124,7 +131,7 @@ class ConfigApplyService:
                 summary=self.summary,
                 changes=self.changes,
                 errors=[f"Fatal error: {str(e)}"],
-                warnings=self.warnings
+                warnings=self.warnings,
             )
 
     async def _apply_groups(self, groups, dry_run: bool):
@@ -137,11 +144,13 @@ class ConfigApplyService:
                 existing = result.scalar_one_or_none()
 
                 # Calculate hash
-                config_hash = self._calculate_hash({
-                    "name": group_config.name,
-                    "description": group_config.description,
-                    "email_domain": group_config.emailDomain,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "name": group_config.name,
+                        "description": group_config.description,
+                        "email_domain": group_config.emailDomain,
+                    }
+                )
 
                 if existing:
                     # Check if config-managed
@@ -166,8 +175,9 @@ class ConfigApplyService:
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
-                    self._track_change("update", "groups", group_config.name,
-                                       details="Updated group configuration")
+                    self._track_change(
+                        "update", "groups", group_config.name, details="Updated group configuration"
+                    )
                     self.group_ids[group_config.name] = str(existing.id)
 
                 else:
@@ -187,14 +197,14 @@ class ConfigApplyService:
                     else:
                         self.group_ids[group_config.name] = "dry-run-id"
 
-                    self._track_change("create", "groups", group_config.name,
-                                       details="Created new group")
+                    self._track_change(
+                        "create", "groups", group_config.name, details="Created new group"
+                    )
 
                 # Apply permissions
                 if not dry_run and group_config.permissions:
                     await self._apply_group_permissions(
-                        self.group_ids[group_config.name],
-                        group_config.permissions
+                        self.group_ids[group_config.name], group_config.permissions
                     )
 
             except Exception as e:
@@ -204,11 +214,9 @@ class ConfigApplyService:
         """Apply permissions to a group"""
         # Delete existing config-managed permissions
         from sqlalchemy import delete
+
         stmt = delete(RolePermission).where(
-            and_(
-                RolePermission.group_id == group_id,
-                RolePermission.managed_by == "config"
-            )
+            and_(RolePermission.group_id == group_id, RolePermission.managed_by == "config")
         )
         await self.db.execute(stmt)
 
@@ -231,11 +239,13 @@ class ConfigApplyService:
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
-                config_hash = self._calculate_hash({
-                    "email": user_config.email,
-                    "is_active": user_config.isActive,
-                    "groups": sorted(user_config.groups),
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "email": user_config.email,
+                        "is_active": user_config.isActive,
+                        "groups": sorted(user_config.groups),
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -279,22 +289,19 @@ class ConfigApplyService:
                 # Apply group memberships
                 if not dry_run and user_config.groups:
                     await self._apply_user_groups(
-                        self.user_ids[user_config.email],
-                        user_config.groups
+                        self.user_ids[user_config.email], user_config.groups
                     )
 
             except Exception as e:
                 self.errors.append(f"Error applying user '{user_config.email}': {str(e)}")
 
-    async def _apply_user_groups(self, user_id: str, group_names: List[str]):
+    async def _apply_user_groups(self, user_id: str, group_names: list[str]):
         """Apply group memberships to a user"""
         # Remove existing config-managed memberships
         from sqlalchemy import delete
+
         stmt = delete(UserRole).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.managed_by == "config"
-            )
+            and_(UserRole.user_id == user_id, UserRole.managed_by == "config")
         )
         await self.db.execute(stmt)
 
@@ -323,13 +330,15 @@ class ConfigApplyService:
                 existing = result.scalar_one_or_none()
 
                 # Don't include API key in hash (it's encrypted)
-                config_hash = self._calculate_hash({
-                    "name": provider_config.name,
-                    "type": provider_config.type,
-                    "endpoint": provider_config.endpoint,
-                    "models": sorted(provider_config.models),
-                    "is_active": provider_config.isActive,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "name": provider_config.name,
+                        "type": provider_config.type,
+                        "endpoint": provider_config.endpoint,
+                        "models": sorted(provider_config.models),
+                        "is_active": provider_config.isActive,
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -385,7 +394,9 @@ class ConfigApplyService:
                     self._track_change("create", "llmProviders", provider_config.name)
 
             except Exception as e:
-                self.errors.append(f"Error applying LLM provider '{provider_config.name}': {str(e)}")
+                self.errors.append(
+                    f"Error applying LLM provider '{provider_config.name}': {str(e)}"
+                )
 
     async def _apply_mcp_servers(self, servers, dry_run: bool):
         """Apply MCP server configurations"""
@@ -399,13 +410,15 @@ class ConfigApplyService:
                 group_id = self.group_ids.get(server_config.groupName)
 
                 # Don't include API key in hash (it's encrypted)
-                config_hash = self._calculate_hash({
-                    "name": server_config.name,
-                    "url": server_config.url,
-                    "protocol": server_config.protocol,
-                    "is_active": server_config.isActive,
-                    "group_name": server_config.groupName,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "name": server_config.name,
+                        "url": server_config.url,
+                        "protocol": server_config.protocol,
+                        "is_active": server_config.isActive,
+                        "group_name": server_config.groupName,
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -464,15 +477,19 @@ class ConfigApplyService:
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
-                config_hash = self._calculate_hash({
-                    "name": func_config.name,
-                    "description": func_config.description,
-                    "code": func_config.code,
-                    "input_schema": func_config.inputSchema,
-                    "output_schema": func_config.outputSchema,
-                    "requirements": sorted(func_config.requirements) if func_config.requirements else [],
-                    "tags": sorted(func_config.tags) if func_config.tags else [],
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "name": func_config.name,
+                        "description": func_config.description,
+                        "code": func_config.code,
+                        "input_schema": func_config.inputSchema,
+                        "output_schema": func_config.outputSchema,
+                        "requirements": sorted(func_config.requirements)
+                        if func_config.requirements
+                        else [],
+                        "tags": sorted(func_config.tags) if func_config.tags else [],
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -519,7 +536,9 @@ class ConfigApplyService:
                         # Get group for owner
                         group_id = self.group_ids.get(func_config.groupName)
                         if not group_id:
-                            self.errors.append(f"Group '{func_config.groupName}' not found for function '{func_config.name}'")
+                            self.errors.append(
+                                f"Group '{func_config.groupName}' not found for function '{func_config.name}'"
+                            )
                             continue
 
                         # Get a user from the group for created_by
@@ -527,7 +546,9 @@ class ConfigApplyService:
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
-                            self.errors.append(f"No users in group '{func_config.groupName}' for function '{func_config.name}'")
+                            self.errors.append(
+                                f"No users in group '{func_config.groupName}' for function '{func_config.name}'"
+                            )
                             continue
 
                         new_function = Function(
@@ -569,7 +590,7 @@ class ConfigApplyService:
             except Exception as e:
                 self.errors.append(f"Error applying function '{func_config.name}': {str(e)}")
 
-    def _normalize_function_references(self, function_names: List[str]) -> List[str]:
+    def _normalize_function_references(self, function_names: list[str]) -> list[str]:
         """
         Normalize function names to namespace/name format.
         If a function name doesn't contain '/', prepend 'default/' to it.
@@ -590,7 +611,7 @@ class ConfigApplyService:
                 normalized.append(func_name)
         return normalized
 
-    def _normalize_skill_references(self, skills: List[Any]) -> List[Dict[str, Any]]:
+    def _normalize_skill_references(self, skills: list[Any]) -> list[dict[str, Any]]:
         """
         Normalize skill references to dict format with skill and preload keys.
         Supports backward compatibility with string format.
@@ -614,19 +635,13 @@ class ConfigApplyService:
                 skill_ref = skill_item.get("skill", "")
                 if "/" not in skill_ref:
                     skill_ref = f"default/{skill_ref}"
-                normalized.append({
-                    "skill": skill_ref,
-                    "preload": skill_item.get("preload", False)
-                })
+                normalized.append({"skill": skill_ref, "preload": skill_item.get("preload", False)})
             else:
                 # Pydantic model (EnabledSkillConfigYaml)
                 skill_ref = skill_item.skill
                 if "/" not in skill_ref:
                     skill_ref = f"default/{skill_ref}"
-                normalized.append({
-                    "skill": skill_ref,
-                    "preload": skill_item.preload
-                })
+                normalized.append({"skill": skill_ref, "preload": skill_item.preload})
         return normalized
 
     async def _apply_skills(self, skills, dry_run: bool):
@@ -634,29 +649,34 @@ class ConfigApplyService:
         for skill_config in skills:
             try:
                 stmt = select(Skill).where(
-                    Skill.namespace == skill_config.namespace,
-                    Skill.name == skill_config.name
+                    Skill.namespace == skill_config.namespace, Skill.name == skill_config.name
                 )
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
-                config_hash = self._calculate_hash({
-                    "namespace": skill_config.namespace,
-                    "name": skill_config.name,
-                    "description": skill_config.description,
-                    "content": skill_config.content,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": skill_config.namespace,
+                        "name": skill_config.name,
+                        "description": skill_config.description,
+                        "content": skill_config.content,
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
                         self.warnings.append(
                             f"Skill '{skill_config.namespace}/{skill_config.name}' exists but is not config-managed. Skipping."
                         )
-                        self._track_change("unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                        self._track_change(
+                            "unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}"
+                        )
                         continue
 
                     if existing.config_checksum == config_hash:
-                        self._track_change("unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                        self._track_change(
+                            "unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}"
+                        )
                         continue
 
                     if not dry_run:
@@ -666,19 +686,24 @@ class ConfigApplyService:
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
-                    self._track_change("update", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                    self._track_change(
+                        "update", "skills", f"{skill_config.namespace}/{skill_config.name}"
+                    )
 
                 else:
                     if not dry_run:
                         # Get admin user for created_by (skills are typically system-wide)
                         # Use first admin user
                         from app.models.user import Role, UserRole
+
                         stmt = select(Role).where(Role.name == "Admins")
                         result = await self.db.execute(stmt)
                         admin_role = result.scalar_one_or_none()
 
                         if not admin_role:
-                            self.errors.append(f"Admins role not found for skill '{skill_config.namespace}/{skill_config.name}'")
+                            self.errors.append(
+                                f"Admins role not found for skill '{skill_config.namespace}/{skill_config.name}'"
+                            )
                             continue
 
                         stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
@@ -686,7 +711,9 @@ class ConfigApplyService:
                         admin_member = result.scalar_one_or_none()
 
                         if not admin_member:
-                            self.errors.append(f"No admin users found for skill '{skill_config.namespace}/{skill_config.name}'")
+                            self.errors.append(
+                                f"No admin users found for skill '{skill_config.namespace}/{skill_config.name}'"
+                            )
                             continue
 
                         new_skill = Skill(
@@ -702,49 +729,70 @@ class ConfigApplyService:
                         )
                         self.db.add(new_skill)
 
-                    self._track_change("create", "skills", f"{skill_config.namespace}/{skill_config.name}")
+                    self._track_change(
+                        "create", "skills", f"{skill_config.namespace}/{skill_config.name}"
+                    )
 
             except Exception as e:
-                self.errors.append(f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}")
+                self.errors.append(
+                    f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}"
+                )
 
     async def _apply_agents(self, agents, dry_run: bool):
         """Apply agent configurations"""
         for agent_config in agents:
             try:
                 stmt = select(Agent).where(
-                    Agent.namespace == agent_config.namespace,
-                    Agent.name == agent_config.name
+                    Agent.namespace == agent_config.namespace, Agent.name == agent_config.name
                 )
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
                 # Normalize function references to namespace/name format
-                normalized_functions = self._normalize_function_references(
-                    agent_config.enabledFunctions
-                ) if agent_config.enabledFunctions else []
+                normalized_functions = (
+                    self._normalize_function_references(agent_config.enabledFunctions)
+                    if agent_config.enabledFunctions
+                    else []
+                )
 
                 # Normalize skill references to dict format
-                normalized_skills = self._normalize_skill_references(
-                    agent_config.enabledSkills
-                ) if agent_config.enabledSkills else []
+                normalized_skills = (
+                    self._normalize_skill_references(agent_config.enabledSkills)
+                    if agent_config.enabledSkills
+                    else []
+                )
 
-                config_hash = self._calculate_hash({
-                    "namespace": agent_config.namespace,
-                    "name": agent_config.name,
-                    "description": agent_config.description,
-                    "llm_provider": agent_config.llmProviderName,
-                    "model": agent_config.model,
-                    "temperature": agent_config.temperature,
-                    "max_tokens": agent_config.maxTokens,
-                    "system_prompt": agent_config.systemPrompt,
-                    "enabled_functions": sorted(normalized_functions),
-                    "function_parameters": agent_config.functionParameters if agent_config.functionParameters else {},
-                    "enabled_mcp_tools": sorted(agent_config.enabledMcpTools) if agent_config.enabledMcpTools else [],
-                    "enabled_agents": sorted(agent_config.enabledAgents) if agent_config.enabledAgents else [],
-                    "enabled_skills": sorted(normalized_skills, key=lambda x: x["skill"]) if normalized_skills else [],
-                    "state_namespaces_readonly": sorted(agent_config.stateNamespacesReadonly) if agent_config.stateNamespacesReadonly else [],
-                    "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite) if agent_config.stateNamespacesReadwrite else [],
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": agent_config.namespace,
+                        "name": agent_config.name,
+                        "description": agent_config.description,
+                        "llm_provider": agent_config.llmProviderName,
+                        "model": agent_config.model,
+                        "temperature": agent_config.temperature,
+                        "max_tokens": agent_config.maxTokens,
+                        "system_prompt": agent_config.systemPrompt,
+                        "enabled_functions": sorted(normalized_functions),
+                        "function_parameters": agent_config.functionParameters
+                        if agent_config.functionParameters
+                        else {},
+                        "enabled_mcp_tools": sorted(agent_config.enabledMcpTools)
+                        if agent_config.enabledMcpTools
+                        else [],
+                        "enabled_agents": sorted(agent_config.enabledAgents)
+                        if agent_config.enabledAgents
+                        else [],
+                        "enabled_skills": sorted(normalized_skills, key=lambda x: x["skill"])
+                        if normalized_skills
+                        else [],
+                        "state_namespaces_readonly": sorted(agent_config.stateNamespacesReadonly)
+                        if agent_config.stateNamespacesReadonly
+                        else [],
+                        "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite)
+                        if agent_config.stateNamespacesReadwrite
+                        else [],
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -764,7 +812,9 @@ class ConfigApplyService:
                         # Get LLM provider ID (None if not specified = use default)
                         llm_provider_id = None
                         if agent_config.llmProviderName:
-                            llm_provider_id = self.llm_provider_ids.get(agent_config.llmProviderName)
+                            llm_provider_id = self.llm_provider_ids.get(
+                                agent_config.llmProviderName
+                            )
                         existing.llm_provider_id = llm_provider_id
 
                         existing.description = agent_config.description
@@ -789,7 +839,9 @@ class ConfigApplyService:
                     if not dry_run:
                         group_id = self.group_ids.get(agent_config.groupName)
                         if not group_id:
-                            self.errors.append(f"Group '{agent_config.groupName}' not found for agent '{agent_config.name}'")
+                            self.errors.append(
+                                f"Group '{agent_config.groupName}' not found for agent '{agent_config.name}'"
+                            )
                             continue
 
                         # Get user for created_by
@@ -797,13 +849,17 @@ class ConfigApplyService:
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
-                            self.errors.append(f"No users in group '{agent_config.groupName}' for agent '{agent_config.name}'")
+                            self.errors.append(
+                                f"No users in group '{agent_config.groupName}' for agent '{agent_config.name}'"
+                            )
                             continue
 
                         # Get LLM provider ID (None if not specified = use default)
                         llm_provider_id = None
                         if agent_config.llmProviderName:
-                            llm_provider_id = self.llm_provider_ids.get(agent_config.llmProviderName)
+                            llm_provider_id = self.llm_provider_ids.get(
+                                agent_config.llmProviderName
+                            )
 
                         new_agent = Agent(
                             namespace=agent_config.namespace,
@@ -847,14 +903,16 @@ class ConfigApplyService:
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
-                config_hash = self._calculate_hash({
-                    "path": webhook_config.path,
-                    "function_name": webhook_config.functionName,
-                    "http_method": webhook_config.httpMethod,
-                    "description": webhook_config.description,
-                    "requires_auth": webhook_config.requiresAuth,
-                    "default_values": webhook_config.defaultValues,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "path": webhook_config.path,
+                        "function_name": webhook_config.functionName,
+                        "http_method": webhook_config.httpMethod,
+                        "description": webhook_config.description,
+                        "requires_auth": webhook_config.requiresAuth,
+                        "default_values": webhook_config.defaultValues,
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -886,12 +944,16 @@ class ConfigApplyService:
                     if not dry_run:
                         function_id = self.function_ids.get(webhook_config.functionName)
                         if not function_id:
-                            self.errors.append(f"Function '{webhook_config.functionName}' not found for webhook '{webhook_config.path}'")
+                            self.errors.append(
+                                f"Function '{webhook_config.functionName}' not found for webhook '{webhook_config.path}'"
+                            )
                             continue
 
                         group_id = self.group_ids.get(webhook_config.groupName)
                         if not group_id:
-                            self.errors.append(f"Group '{webhook_config.groupName}' not found for webhook '{webhook_config.path}'")
+                            self.errors.append(
+                                f"Group '{webhook_config.groupName}' not found for webhook '{webhook_config.path}'"
+                            )
                             continue
 
                         # Get user for created_by
@@ -899,7 +961,9 @@ class ConfigApplyService:
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
-                            self.errors.append(f"No users in group '{webhook_config.groupName}' for webhook '{webhook_config.path}'")
+                            self.errors.append(
+                                f"No users in group '{webhook_config.groupName}' for webhook '{webhook_config.path}'"
+                            )
                             continue
 
                         new_webhook = Webhook(
@@ -923,7 +987,6 @@ class ConfigApplyService:
             except Exception as e:
                 self.errors.append(f"Error applying webhook '{webhook_config.path}': {str(e)}")
 
-
     async def _apply_schedules(self, schedules, dry_run: bool):
         """Apply schedule configurations"""
         for schedule_config in schedules:
@@ -932,14 +995,16 @@ class ConfigApplyService:
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
-                config_hash = self._calculate_hash({
-                    "name": schedule_config.name,
-                    "function_name": schedule_config.functionName,
-                    "cron_expression": schedule_config.cronExpression,
-                    "timezone": schedule_config.timezone,
-                    "input_data": schedule_config.inputData,
-                    "is_active": schedule_config.isActive,
-                })
+                config_hash = self._calculate_hash(
+                    {
+                        "name": schedule_config.name,
+                        "function_name": schedule_config.functionName,
+                        "cron_expression": schedule_config.cronExpression,
+                        "timezone": schedule_config.timezone,
+                        "input_data": schedule_config.inputData,
+                        "is_active": schedule_config.isActive,
+                    }
+                )
 
                 if existing:
                     if existing.managed_by != "config":
@@ -970,12 +1035,16 @@ class ConfigApplyService:
                     if not dry_run:
                         function_id = self.function_ids.get(schedule_config.functionName)
                         if not function_id:
-                            self.errors.append(f"Function '{schedule_config.functionName}' not found for schedule '{schedule_config.name}'")
+                            self.errors.append(
+                                f"Function '{schedule_config.functionName}' not found for schedule '{schedule_config.name}'"
+                            )
                             continue
 
                         group_id = self.group_ids.get(schedule_config.groupName)
                         if not group_id:
-                            self.errors.append(f"Group '{schedule_config.groupName}' not found for schedule '{schedule_config.name}'")
+                            self.errors.append(
+                                f"Group '{schedule_config.groupName}' not found for schedule '{schedule_config.name}'"
+                            )
                             continue
 
                         # Get user for created_by
@@ -983,7 +1052,9 @@ class ConfigApplyService:
                         result = await self.db.execute(stmt)
                         member = result.scalar_one_or_none()
                         if not member:
-                            self.errors.append(f"No users in group '{schedule_config.groupName}' for schedule '{schedule_config.name}'")
+                            self.errors.append(
+                                f"No users in group '{schedule_config.groupName}' for schedule '{schedule_config.name}'"
+                            )
                             continue
 
                         new_schedule = ScheduledJob(
@@ -1005,6 +1076,3 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying schedule '{schedule_config.name}': {str(e)}")
-
-
-

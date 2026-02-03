@@ -1,15 +1,14 @@
 """Schedules API endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
-from typing import List
-import uuid
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
 from app.models.schedule import ScheduledJob
-from app.schemas import ScheduledJobCreate, ScheduledJobUpdate, ScheduledJobResponse
+from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -19,7 +18,7 @@ async def create_schedule(
     request: Request,
     schedule_data: ScheduledJobCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new scheduled job."""
     user_id, permissions = current_user_data
@@ -34,31 +33,35 @@ async def create_schedule(
     # Check if schedule name already exists for this user
     result = await db.execute(
         select(ScheduledJob).where(
-            and_(
-                ScheduledJob.user_id == user_id,
-                ScheduledJob.name == schedule_data.name
-            )
+            and_(ScheduledJob.user_id == user_id, ScheduledJob.name == schedule_data.name)
         )
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Schedule '{schedule_data.name}' already exists")
+        raise HTTPException(
+            status_code=400, detail=f"Schedule '{schedule_data.name}' already exists"
+        )
 
     # Verify function exists
     from app.models.function import Function
-    function = await Function.get_by_name(db, schedule_data.function_namespace, schedule_data.function_name, user_id)
+
+    function = await Function.get_by_name(
+        db, schedule_data.function_namespace, schedule_data.function_name, user_id
+    )
     if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{schedule_data.function_namespace}/{schedule_data.function_name}' not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Function '{schedule_data.function_namespace}/{schedule_data.function_name}' not found",
+        )
     # Create schedule
     schedule = ScheduledJob(
         user_id=user_id,
-        
         name=schedule_data.name,
         function_namespace=schedule_data.function_namespace,
         function_name=schedule_data.function_name,
         description=schedule_data.description,
         cron_expression=schedule_data.cron_expression,
         timezone=schedule_data.timezone,
-        input_data=schedule_data.input_data
+        input_data=schedule_data.input_data,
     )
 
     db.add(schedule)
@@ -67,25 +70,24 @@ async def create_schedule(
 
     # TODO: Register job with scheduler
 
-    
     response = ScheduledJobResponse.model_validate(schedule)
 
     return response
 
 
-@router.get("", response_model=List[ScheduledJobResponse])
+@router.get("", response_model=list[ScheduledJobResponse])
 async def list_schedules(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List scheduled jobs (own and group-accessible)."""
     user_id, permissions = current_user_data
 
     # Build query based on permissions
-    if check_permission(permissions,"sinas.schedules.read:all"):
+    if check_permission(permissions, "sinas.schedules.read:all"):
         set_permission_used(request, "sinas.schedules.read:all")
         query = select(ScheduledJob)
     else:
@@ -104,7 +106,7 @@ async def get_schedule(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Get a specific scheduled job."""
     user_id, permissions = current_user_data
@@ -115,7 +117,7 @@ async def get_schedule(
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.schedules.read:all"):
+    if check_permission(permissions, "sinas.schedules.read:all"):
         set_permission_used(request, "sinas.schedules.read:all")
     else:
         if schedule.user_id != user_id:
@@ -123,7 +125,6 @@ async def get_schedule(
             raise HTTPException(status_code=403, detail="Not authorized to view this schedule")
         set_permission_used(request, "sinas.schedules.read:own")
 
-    
     response = ScheduledJobResponse.model_validate(schedule)
 
     return response
@@ -135,7 +136,7 @@ async def update_schedule(
     name: str,
     schedule_data: ScheduledJobUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a scheduled job."""
     user_id, permissions = current_user_data
@@ -146,7 +147,7 @@ async def update_schedule(
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.schedules.update:all"):
+    if check_permission(permissions, "sinas.schedules.update:all"):
         set_permission_used(request, "sinas.schedules.update:all")
     else:
         if schedule.user_id != user_id:
@@ -158,16 +159,16 @@ async def update_schedule(
     if schedule_data.function_name is not None:
         # Verify new function exists
         from app.models.function import Function
+
         result = await db.execute(
             select(Function).where(
-                and_(
-                    Function.user_id == user_id,
-                    Function.name == schedule_data.function_name
-                )
+                and_(Function.user_id == user_id, Function.name == schedule_data.function_name)
             )
         )
         if not result.scalar_one_or_none():
-            raise HTTPException(status_code=404, detail=f"Function '{schedule_data.function_name}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Function '{schedule_data.function_name}' not found"
+            )
         schedule.function_name = schedule_data.function_name
 
     if schedule_data.description is not None:
@@ -185,7 +186,6 @@ async def update_schedule(
 
     # TODO: Update job in scheduler
 
-    
     response = ScheduledJobResponse.model_validate(schedule)
 
     return response
@@ -196,7 +196,7 @@ async def delete_schedule(
     request: Request,
     name: str,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a scheduled job."""
     user_id, permissions = current_user_data
@@ -207,7 +207,7 @@ async def delete_schedule(
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
 
     # Check permissions
-    if check_permission(permissions,"sinas.schedules.delete:all"):
+    if check_permission(permissions, "sinas.schedules.delete:all"):
         set_permission_used(request, "sinas.schedules.delete:all")
     else:
         if schedule.user_id != user_id:

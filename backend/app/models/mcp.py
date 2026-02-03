@@ -1,10 +1,10 @@
-from sqlalchemy import String, Text, Boolean, DateTime, JSON, ForeignKey, select
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
-import uuid
+from typing import Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import Boolean, DateTime, String, Text, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class MCPServer(Base):
@@ -32,9 +32,5 @@ class MCPServer(Base):
     @classmethod
     async def get_by_name(cls, db: AsyncSession, name: str) -> Optional["MCPServer"]:
         """Get MCP server by name."""
-        result = await db.execute(
-            select(cls).where(cls.name == name, cls.is_active == True)
-        )
+        result = await db.execute(select(cls).where(cls.name == name, cls.is_active == True))
         return result.scalar_one_or_none()
-
-

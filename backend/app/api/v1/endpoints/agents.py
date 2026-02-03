@@ -1,17 +1,20 @@
 """Agent endpoints."""
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 
+from app.core.auth import (
+    get_current_user_with_permissions,
+    set_permission_used,
+)
 from app.core.database import get_db
-from app.core.auth import get_current_user, get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.permissions import check_permission
 from app.models import Agent
 from app.schemas.agent import (
     AgentCreate,
-    AgentUpdate,
     AgentResponse,
+    AgentUpdate,
 )
 
 router = APIRouter()
@@ -19,12 +22,13 @@ router = APIRouter()
 
 # Agent endpoints
 
+
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     req: Request,
     agent_data: AgentCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new agent."""
     user_id, permissions = current_user_data
@@ -38,19 +42,19 @@ async def create_agent(
 
     # Check if agent name already exists in this namespace
     from sqlalchemy import and_
+
     result = await db.execute(
         select(Agent).where(
-            and_(
-                Agent.namespace == agent_data.namespace,
-                Agent.name == agent_data.name
-            )
+            and_(Agent.namespace == agent_data.namespace, Agent.name == agent_data.name)
         )
     )
     if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists",
+        )
     agent = Agent(
         user_id=user_id,
-        
         namespace=agent_data.namespace,
         name=agent_data.name,
         description=agent_data.description,
@@ -65,29 +69,30 @@ async def create_agent(
         enabled_functions=agent_data.enabled_functions or [],
         enabled_mcp_tools=agent_data.enabled_mcp_tools or [],
         enabled_agents=agent_data.enabled_agents or [],
-        enabled_skills=[skill.model_dump() for skill in agent_data.enabled_skills] if agent_data.enabled_skills else [],
+        enabled_skills=[skill.model_dump() for skill in agent_data.enabled_skills]
+        if agent_data.enabled_skills
+        else [],
         function_parameters=agent_data.function_parameters or {},
         mcp_tool_parameters=agent_data.mcp_tool_parameters or {},
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
-        is_active=True
+        is_active=True,
     )
 
     db.add(agent)
     await db.commit()
     await db.refresh(agent)
 
-    
     response = AgentResponse.model_validate(agent)
 
     return response
 
 
-@router.get("", response_model=List[AgentResponse])
+@router.get("", response_model=list[AgentResponse])
 async def list_agents(
     req: Request,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List all agents accessible by the current user."""
     user_id, permissions = current_user_data
@@ -97,18 +102,15 @@ async def list_agents(
         set_permission_used(req, "sinas.agents.read:all", has_perm=True)
         # Return all agents
         result = await db.execute(
-            select(Agent).where(
-                Agent.is_active == True
-            ).order_by(Agent.created_at.desc())
+            select(Agent).where(Agent.is_active == True).order_by(Agent.created_at.desc())
         )
     else:
         set_permission_used(req, "sinas.agents.read:own", has_perm=True)
         # Return only user's own agents
         result = await db.execute(
-            select(Agent).where(
-                Agent.user_id == user_id,
-                Agent.is_active == True
-            ).order_by(Agent.created_at.desc())
+            select(Agent)
+            .where(Agent.user_id == user_id, Agent.is_active == True)
+            .order_by(Agent.created_at.desc())
         )
 
     agents = result.scalars().all()
@@ -122,7 +124,7 @@ async def get_agent(
     namespace: str,
     name: str,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a specific agent by namespace and name."""
     user_id, permissions = current_user_data
@@ -141,15 +143,13 @@ async def get_agent(
 
     if not agent:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{namespace}/{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{namespace}/{name}' not found"
         )
 
     # Additional ownership check for non-admin users
     if not has_all_permission and agent.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this agent")
 
-    
     response = AgentResponse.model_validate(agent)
 
     return response
@@ -162,7 +162,7 @@ async def update_agent(
     name: str,
     agent_data: AgentUpdate,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an agent."""
     user_id, permissions = current_user_data
@@ -181,8 +181,7 @@ async def update_agent(
 
     if not agent:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{namespace}/{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{namespace}/{name}' not found"
         )
 
     # Additional ownership check for non-admin users
@@ -233,7 +232,6 @@ async def update_agent(
     await db.commit()
     await db.refresh(agent)
 
-    
     response = AgentResponse.model_validate(agent)
 
     return response
@@ -245,7 +243,7 @@ async def delete_agent(
     namespace: str,
     name: str,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete an agent (soft delete)."""
     user_id, permissions = current_user_data
@@ -264,8 +262,7 @@ async def delete_agent(
 
     if not agent:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{namespace}/{name}' not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent '{namespace}/{name}' not found"
         )
 
     # Additional ownership check for non-admin users

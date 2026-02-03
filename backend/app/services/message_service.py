@@ -2,27 +2,27 @@
 import json
 import logging
 import time
-from typing import List, Dict, Any, Optional, AsyncIterator
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Any, Optional
 
+import jsonschema
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import jsonschema
 
-from app.models import Chat, Message, Agent
-from app.models.llm_provider import LLMProvider
+from app.models import Agent, Chat, Message
 from app.models.execution import Execution, ExecutionStatus
 from app.models.function import Function
+from app.models.llm_provider import LLMProvider
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
+from app.services.content_converter import ContentConverter
+from app.services.execution_engine import executor
 from app.services.function_tools import FunctionToolConverter
+from app.services.mcp import mcp_client
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
-from app.services.mcp import mcp_client
-from app.services.execution_engine import executor
-from app.services.content_converter import ContentConverter
 from app.services.template_renderer import render_template
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class MessageService:
         self.skill_converter = SkillToolConverter()
         self.context_tools = StateTools()
 
-    def _validate_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _validate_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Validate tool calls and filter out corrupted ones.
         Returns only valid tool calls.
@@ -71,11 +71,7 @@ class MessageService:
         return valid_tool_calls
 
     async def create_chat_with_agent(
-        self,
-        agent_id: str,
-        user_id: str,
-        input_data: Dict[str, Any],
-        name: Optional[str] = None
+        self, agent_id: str, user_id: str, input_data: dict[str, Any], name: Optional[str] = None
     ) -> Chat:
         """
         Create a chat with an agent using input validation and template rendering.
@@ -93,9 +89,7 @@ class MessageService:
             ValueError: If input validation fails
         """
         # Get agent
-        result = await self.db.execute(
-            select(Agent).where(Agent.id == agent_id)
-        )
+        result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
         agent = result.scalar_one_or_none()
         if not agent:
             raise ValueError("Agent not found")
@@ -104,6 +98,7 @@ class MessageService:
         if agent.input_schema:
             try:
                 from app.utils.schema import validate_with_coercion
+
                 input_data = validate_with_coercion(input_data, agent.input_schema)
             except jsonschema.ValidationError as e:
                 raise ValueError(f"Input validation failed: {e.message}")
@@ -115,7 +110,7 @@ class MessageService:
             user_id=user_id,
             agent_id=agent_id,
             title=name or f"Chat with {agent.name}",
-            chat_metadata={"agent_input": input_data} if input_data else None
+            chat_metadata={"agent_input": input_data} if input_data else None,
         )
         self.db.add(chat)
         await self.db.commit()
@@ -132,16 +127,11 @@ class MessageService:
                     except Exception as e:
                         logger.error(f"Failed to render initial message template: {e}")
 
-                message = Message(
-                    chat_id=chat.id,
-                    role=msg_data["role"],
-                    content=content
-                )
+                message = Message(chat_id=chat.id, role=msg_data["role"], content=content)
                 self.db.add(message)
             await self.db.commit()
 
         return chat
-
 
     async def _prepare_message_context(
         self,
@@ -151,15 +141,15 @@ class MessageService:
         provider: Optional[str],
         model: Optional[str],
         temperature: float,
-        enabled_functions: Optional[List[str]],
-        disabled_functions: Optional[List[str]],
-        enabled_mcp_tools: Optional[List[str]],
-        disabled_mcp_tools: Optional[List[str]],
+        enabled_functions: Optional[list[str]],
+        disabled_functions: Optional[list[str]],
+        enabled_mcp_tools: Optional[list[str]],
+        disabled_mcp_tools: Optional[list[str]],
         inject_context: bool,
-        state_namespaces: Optional[List[str]],
+        state_namespaces: Optional[list[str]],
         context_limit: int,
-        template_variables: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        template_variables: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
         """
         Prepare message context (shared logic for streaming and non-streaming).
 
@@ -178,6 +168,7 @@ class MessageService:
         agent = None
         if chat.agent_id:
             from sqlalchemy.orm import joinedload
+
             result = await self.db.execute(
                 select(Agent)
                 .options(joinedload(Agent.llm_provider))
@@ -207,7 +198,9 @@ class MessageService:
         if not final_model and agent and agent.llm_provider:
             final_model = agent.llm_provider.default_model
 
-        final_temperature = temperature if temperature != 0.7 else (agent.temperature if agent else 0.7)
+        final_temperature = (
+            temperature if temperature != 0.7 else (agent.temperature if agent else 0.7)
+        )
         final_max_tokens = agent.max_tokens if agent else None
 
         # Get provider type for content conversion (needed before building conversation history)
@@ -234,8 +227,7 @@ class MessageService:
         if not provider_type:
             result = await self.db.execute(
                 select(LLMProvider).where(
-                    LLMProvider.is_default == True,
-                    LLMProvider.is_active == True
+                    LLMProvider.is_default == True, LLMProvider.is_active == True
                 )
             )
             provider_config = result.scalar_one_or_none()
@@ -246,11 +238,7 @@ class MessageService:
                     final_model = provider_config.default_model
 
         # Save user message
-        user_message = Message(
-            chat_id=chat_id,
-            role="user",
-            content=content
-        )
+        user_message = Message(chat_id=chat_id, role="user", content=content)
         self.db.add(user_message)
         await self.db.commit()
         await self.db.refresh(user_message)
@@ -268,7 +256,7 @@ class MessageService:
             state_namespaces=state_namespaces,
             context_limit=context_limit,
             template_variables=final_template_variables,
-            provider_type=provider_type
+            provider_type=provider_type,
         )
 
         # Get available tools
@@ -278,7 +266,7 @@ class MessageService:
             message_enabled_functions=enabled_functions,
             message_disabled_functions=disabled_functions,
             message_enabled_mcp=enabled_mcp_tools,
-            message_disabled_mcp=disabled_mcp_tools
+            message_disabled_mcp=disabled_mcp_tools,
         )
 
         # Create LLM provider
@@ -290,15 +278,13 @@ class MessageService:
             if provider_name:
                 result = await self.db.execute(
                     select(LLMProvider).where(
-                        LLMProvider.name == provider_name,
-                        LLMProvider.is_active == True
+                        LLMProvider.name == provider_name, LLMProvider.is_active == True
                     )
                 )
             else:
                 result = await self.db.execute(
                     select(LLMProvider).where(
-                        LLMProvider.is_default == True,
-                        LLMProvider.is_active == True
+                        LLMProvider.is_default == True, LLMProvider.is_active == True
                     )
                 )
             provider_config = result.scalar_one_or_none()
@@ -318,8 +304,8 @@ class MessageService:
                 "json_schema": {
                     "name": f"{agent.name.lower().replace(' ', '_')}_response",
                     "strict": True,
-                    "schema": schema
-                }
+                    "schema": schema,
+                },
             }
 
         return {
@@ -332,15 +318,11 @@ class MessageService:
             "final_model": final_model,
             "final_temperature": final_temperature,
             "final_max_tokens": final_max_tokens,
-            "response_format": response_format
+            "response_format": response_format,
         }
 
     async def send_message(
-        self,
-        chat_id: str,
-        user_id: str,
-        user_token: str,
-        content: str
+        self, chat_id: str, user_id: str, user_token: str, content: str
     ) -> Message:
         """
         Send a message and get LLM response (non-streaming).
@@ -362,11 +344,11 @@ class MessageService:
             inject_context=True,
             state_namespaces=None,
             context_limit=5,
-            template_variables=None
+            template_variables=None,
         )
 
         # Get response from LLM (non-streaming)
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
 
         # Build kwargs for LLM provider
         llm_kwargs = {}
@@ -382,9 +364,9 @@ class MessageService:
             tools=clean_tools,
             temperature=prep["final_temperature"],
             max_tokens=prep["final_max_tokens"],
-            **llm_kwargs
+            **llm_kwargs,
         )
-        end_time = datetime.now(timezone.utc)
+        end_time = datetime.now(UTC)
 
         # Log request
         await self._log_request(
@@ -395,7 +377,7 @@ class MessageService:
             model=prep["final_model"],
             messages=prep["messages"],
             response=response,
-            latency_ms=int((end_time - start_time).total_seconds() * 1000)
+            latency_ms=int((end_time - start_time).total_seconds() * 1000),
         )
 
         # Handle tool calls if present
@@ -424,22 +406,23 @@ class MessageService:
                 model=prep["final_model"],
                 temperature=prep["final_temperature"],
                 max_tokens=prep["final_max_tokens"],
-                tools=prep["tools"]
+                tools=prep["tools"],
             ):
                 # In non-streaming mode, we just consume chunks but don't yield them
                 pass
 
             # After generator completes, return the final message from DB
             result = await self.db.execute(
-                select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at.desc()).limit(1)
+                select(Message)
+                .where(Message.chat_id == chat_id)
+                .order_by(Message.created_at.desc())
+                .limit(1)
             )
             return result.scalar_one()
 
         # Save assistant message
         assistant_message = Message(
-            chat_id=chat_id,
-            role="assistant",
-            content=response.get("content", "")
+            chat_id=chat_id, role="assistant", content=response.get("content", "")
         )
         self.db.add(assistant_message)
         await self.db.commit()
@@ -453,7 +436,7 @@ class MessageService:
         user_id: str,
         user_token: str,
         content: str,
-    ) -> AsyncIterator[Dict[str, Any]]:
+    ) -> AsyncIterator[dict[str, Any]]:
         """
         Send a message and stream LLM response.
 
@@ -477,7 +460,7 @@ class MessageService:
             inject_context=True,
             state_namespaces=None,
             context_limit=5,
-            template_variables=None
+            template_variables=None,
         )
 
         # Stream response
@@ -495,7 +478,9 @@ class MessageService:
         ):
             yield chunk
 
-    def _strip_tool_metadata(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    def _strip_tool_metadata(
+        self, tools: Optional[list[dict[str, Any]]]
+    ) -> Optional[list[dict[str, Any]]]:
         """
         Remove _metadata from tools before sending to LLM provider.
         LLM providers don't accept extra fields in tool definitions.
@@ -515,7 +500,9 @@ class MessageService:
             if "function" in clean_tool and "_metadata" in clean_tool["function"]:
                 clean_tool = {
                     **clean_tool,
-                    "function": {k: v for k, v in clean_tool["function"].items() if k != "_metadata"}
+                    "function": {
+                        k: v for k, v in clean_tool["function"].items() if k != "_metadata"
+                    },
                 }
             clean_tools.append(clean_tool)
         return clean_tools
@@ -523,16 +510,16 @@ class MessageService:
     async def _stream_response(
         self,
         llm_provider,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         final_model: Optional[str],
-        tools: Optional[List[Dict[str, Any]]],
+        tools: Optional[list[dict[str, Any]]],
         final_temperature: float,
         max_tokens: Optional[int],
         chat_id: str,
         user_id: str,
         user_token: str,
         provider_name: Optional[str],
-    ) -> AsyncIterator[Dict[str, Any]]:
+    ) -> AsyncIterator[dict[str, Any]]:
         """
         Stream LLM response.
 
@@ -551,7 +538,7 @@ class MessageService:
             model=final_model,
             tools=clean_tools,
             temperature=final_temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
         ):
             if chunk.get("content"):
                 full_content += chunk["content"]
@@ -581,14 +568,13 @@ class MessageService:
 
                     # Extend list if needed
                     while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append({
-                            "id": None,
-                            "type": "function",
-                            "function": {
-                                "name": "",
-                                "arguments": ""
+                        tool_calls_list.append(
+                            {
+                                "id": None,
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
                             }
-                        })
+                        )
 
                     # Update ID, type, name if provided (first chunk)
                     if tc.get("id"):
@@ -600,7 +586,9 @@ class MessageService:
 
                     # Accumulate arguments (all chunks)
                     if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"]["arguments"]
+                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
+                            "arguments"
+                        ]
 
             yield chunk
 
@@ -616,7 +604,7 @@ class MessageService:
             chat_id=chat_id,
             role="assistant",
             content=full_content if full_content else None,
-            tool_calls=tool_calls if tool_calls else None
+            tool_calls=tool_calls if tool_calls else None,
         )
         self.db.add(assistant_message)
         await self.db.commit()
@@ -635,7 +623,7 @@ class MessageService:
                 model=final_model,
                 temperature=final_temperature,
                 max_tokens=max_tokens,
-                tools=tools  # Pass tools with metadata for later execution
+                tools=tools,  # Pass tools with metadata for later execution
             )
 
             if approval_needed:
@@ -657,7 +645,9 @@ class MessageService:
                             "tool_call_id": tool_call["id"],
                             "function_namespace": namespace,
                             "function_name": name,
-                            "arguments": json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+                            "arguments": json.loads(arguments_str)
+                            if isinstance(arguments_str, str)
+                            else arguments_str,
                         }
 
                 # PAUSE - don't execute tools yet, wait for approval
@@ -674,7 +664,7 @@ class MessageService:
                 model=final_model,
                 temperature=final_temperature,
                 max_tokens=max_tokens,
-                tools=tools
+                tools=tools,
             ):
                 yield chunk
 
@@ -688,8 +678,13 @@ class MessageService:
             Tuple of (namespace, name) or (None, None) if not a function
         """
         # Skip non-function tools
-        if tool_name in ["save_context", "retrieve_context", "update_context", "delete_context",
-                         "continue_execution"] or tool_name.startswith("call_agent_"):
+        if tool_name in [
+            "save_context",
+            "retrieve_context",
+            "update_context",
+            "delete_context",
+            "continue_execution",
+        ] or tool_name.startswith("call_agent_"):
             return None, None
 
         # Convert namespace__name to namespace/name if needed
@@ -705,16 +700,16 @@ class MessageService:
 
     async def _check_approval_requirements(
         self,
-        tool_calls: List[Dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
         chat_id: str,
         user_id: str,
         message_id: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         provider: Optional[str],
         model: Optional[str],
         temperature: float,
         max_tokens: Optional[int],
-        tools: Optional[List[Dict[str, Any]]] = None
+        tools: Optional[list[dict[str, Any]]] = None,
     ) -> bool:
         """
         Check if any tool calls require user approval before execution.
@@ -752,7 +747,9 @@ class MessageService:
                 tool_call_id=tool_call["id"],
                 function_namespace=namespace,
                 function_name=name,
-                arguments=json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str,
+                arguments=json.loads(arguments_str)
+                if isinstance(arguments_str, str)
+                else arguments_str,
                 all_tool_calls=tool_calls,
                 conversation_context={
                     "provider": provider,
@@ -760,8 +757,8 @@ class MessageService:
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                     "messages": messages,
-                    "tools": tools  # Store tools list with metadata for resuming execution
-                }
+                    "tools": tools,  # Store tools list with metadata for resuming execution
+                },
             )
             self.db.add(pending_approval)
 
@@ -775,11 +772,11 @@ class MessageService:
         chat: Chat,
         inject_context: bool = False,
         user_id: Optional[str] = None,
-        state_namespaces: Optional[List[str]] = None,
+        state_namespaces: Optional[list[str]] = None,
         context_limit: int = 5,
-        template_variables: Optional[Dict[str, Any]] = None,
-        provider_type: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+        template_variables: Optional[dict[str, Any]] = None,
+        provider_type: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
         """
         Build conversation history for LLM with optional context injection.
 
@@ -799,9 +796,7 @@ class MessageService:
         # Add system prompt from agent if exists
         system_content = ""
         if chat.agent_id:
-            result = await self.db.execute(
-                select(Agent).where(Agent.id == chat.agent_id)
-            )
+            result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
             agent = result.scalar_one_or_none()
             if agent and agent.system_prompt:
                 # Render system prompt with Jinja2 if template_variables provided
@@ -817,8 +812,7 @@ class MessageService:
             # Inject preloaded skills content into system prompt
             if agent and agent.enabled_skills:
                 preloaded_content = await self.skill_converter.get_preloaded_skills_content(
-                    db=self.db,
-                    enabled_skills=agent.enabled_skills
+                    db=self.db, enabled_skills=agent.enabled_skills
                 )
                 if preloaded_content:
                     system_content += f"\n\n# Preloaded Skills\n\n{preloaded_content}"
@@ -836,13 +830,13 @@ class MessageService:
             # 2. Agent-level state_namespaces
             final_namespaces = state_namespaces
             if final_namespaces is None:
-                result = await self.db.execute(
-                    select(Agent).where(Agent.id == chat.agent_id)
-                )
+                result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
                 agent = result.scalar_one_or_none()
                 if agent:
                     # Combine readonly and readwrite namespaces for context injection
-                    final_namespaces = (agent.state_namespaces_readonly or []) + (agent.state_namespaces_readwrite or [])
+                    final_namespaces = (agent.state_namespaces_readonly or []) + (
+                        agent.state_namespaces_readwrite or []
+                    )
 
             # Context access is opt-in: None or [] means no access
             if final_namespaces is None or len(final_namespaces) == 0:
@@ -854,7 +848,7 @@ class MessageService:
                     user_id=user_id,
                     agent_id=str(chat.agent_id) if chat.agent_id else None,
                     namespaces=final_namespaces,
-                    limit=context_limit
+                    limit=context_limit,
                 )
 
                 if relevant_contexts:
@@ -874,10 +868,7 @@ class MessageService:
                         system_content = context_section.strip()
 
         if system_content:
-            messages.append({
-                "role": "system",
-                "content": system_content
-            })
+            messages.append({"role": "system", "content": system_content})
 
         # Add chat message history
         result = await self.db.execute(
@@ -896,7 +887,9 @@ class MessageService:
                     parsed_content = json.loads(content)
                     # If it's a list, it might be multimodal content
                     if isinstance(parsed_content, list):
-                        content = ContentConverter.convert_message_content(parsed_content, provider_type)
+                        content = ContentConverter.convert_message_content(
+                            parsed_content, provider_type
+                        )
                 except (json.JSONDecodeError, TypeError):
                     # Not JSON, treat as plain string (no conversion needed)
                     pass
@@ -917,14 +910,12 @@ class MessageService:
 
         return messages
 
-    async def _get_agent_tools(self, agent_ids: List[str]) -> List[Dict[str, Any]]:
+    async def _get_agent_tools(self, agent_ids: list[str]) -> list[dict[str, Any]]:
         """Get tool definitions for enabled agents."""
         tools = []
 
         for agent_id in agent_ids:
-            result = await self.db.execute(
-                select(Agent).where(Agent.id == agent_id)
-            )
+            result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
             agent = result.scalar_one_or_none()
 
             if not agent or not agent.is_active:
@@ -936,8 +927,10 @@ class MessageService:
                 "type": "function",
                 "function": {
                     "name": f"call_agent_{agent.name.lower().replace(' ', '_').replace('-', '_')}",
-                    "description": f"{agent.name}: {agent.description}" if agent.description else f"Call the {agent.name} agent"
-                }
+                    "description": f"{agent.name}: {agent.description}"
+                    if agent.description
+                    else f"Call the {agent.name} agent",
+                },
             }
 
             # Build parameters - always include agent_id as a hidden constant
@@ -949,7 +942,7 @@ class MessageService:
                 params["properties"]["_agent_id"] = {
                     "type": "string",
                     "description": "Internal agent identifier",
-                    "const": str(agent.id)  # Force this specific value
+                    "const": str(agent.id),  # Force this specific value
                 }
                 tool_def["function"]["parameters"] = params
             else:
@@ -959,15 +952,15 @@ class MessageService:
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "The prompt or query to send to the agent"
+                            "description": "The prompt or query to send to the agent",
                         },
                         "_agent_id": {
                             "type": "string",
                             "description": "Internal agent identifier",
-                            "const": str(agent.id)
-                        }
+                            "const": str(agent.id),
+                        },
                     },
-                    "required": ["prompt"]
+                    "required": ["prompt"],
                 }
 
             tools.append(tool_def)
@@ -978,11 +971,11 @@ class MessageService:
         self,
         user_id: str,
         chat: Chat,
-        message_enabled_functions: Optional[List[str]],
-        message_disabled_functions: Optional[List[str]],
-        message_enabled_mcp: Optional[List[str]],
-        message_disabled_mcp: Optional[List[str]]
-    ) -> List[Dict[str, Any]]:
+        message_enabled_functions: Optional[list[str]],
+        message_disabled_functions: Optional[list[str]],
+        message_enabled_mcp: Optional[list[str]],
+        message_disabled_mcp: Optional[list[str]],
+    ) -> list[dict[str, Any]]:
         """Get all available tools (functions + MCP + context + agents + execution continuation)."""
         tools = []
 
@@ -992,9 +985,7 @@ class MessageService:
 
         # Get agent configuration
         agent = None
-        result = await self.db.execute(
-            select(Agent).where(Agent.id == chat.agent_id)
-        )
+        result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
         agent = result.scalar_one_or_none()
         if not agent:
             return tools
@@ -1004,7 +995,7 @@ class MessageService:
             db=self.db,
             user_id=user_id,
             agent_state_namespaces_readonly=agent.state_namespaces_readonly,
-            agent_state_namespaces_readwrite=agent.state_namespaces_readwrite
+            agent_state_namespaces_readwrite=agent.state_namespaces_readwrite,
         )
         tools.extend(context_tool_defs)
 
@@ -1038,7 +1029,7 @@ class MessageService:
                 enabled_functions=function_enabled,
                 disabled_functions=function_disabled,
                 function_parameters=agent.function_parameters,
-                agent_input_context=agent_input_context
+                agent_input_context=agent_input_context,
             )
             tools.extend(function_tools)
 
@@ -1051,57 +1042,57 @@ class MessageService:
 
         # Get MCP tools (only if list has items - opt-in)
         if mcp_enabled and len(mcp_enabled) > 0:
-            mcp_tools = await mcp_client.get_available_tools(
-                enabled_tools=mcp_enabled
-            )
+            mcp_tools = await mcp_client.get_available_tools(enabled_tools=mcp_enabled)
             tools.extend(mcp_tools)
 
         # Get skill tools (only if list has items - opt-in)
         if agent.enabled_skills and len(agent.enabled_skills) > 0:
             skill_tools = await self.skill_converter.get_available_skills(
-                db=self.db,
-                enabled_skills=agent.enabled_skills
+                db=self.db, enabled_skills=agent.enabled_skills
             )
             tools.extend(skill_tools)
 
         # Check for paused executions belonging to this chat
         result = await self.db.execute(
-            select(Execution).where(
-                Execution.chat_id == chat.id,
-                Execution.status == ExecutionStatus.AWAITING_INPUT
-            ).limit(10)
+            select(Execution)
+            .where(Execution.chat_id == chat.id, Execution.status == ExecutionStatus.AWAITING_INPUT)
+            .limit(10)
         )
         paused_executions = result.scalars().all()
 
         if paused_executions:
             # Add continue_execution tool with details about paused executions
-            execution_list = "\n".join([
-                f"- {ex.execution_id}: {ex.function_name} - {ex.input_prompt}"
-                for ex in paused_executions
-            ])
+            execution_list = "\n".join(
+                [
+                    f"- {ex.execution_id}: {ex.function_name} - {ex.input_prompt}"
+                    for ex in paused_executions
+                ]
+            )
 
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "continue_execution",
-                    "description": f"Continue a paused function execution by providing required input. Currently paused executions:\n{execution_list}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "execution_id": {
-                                "type": "string",
-                                "description": "The execution ID to continue",
-                                "enum": [ex.execution_id for ex in paused_executions]
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "continue_execution",
+                        "description": f"Continue a paused function execution by providing required input. Currently paused executions:\n{execution_list}",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "execution_id": {
+                                    "type": "string",
+                                    "description": "The execution ID to continue",
+                                    "enum": [ex.execution_id for ex in paused_executions],
+                                },
+                                "input": {
+                                    "type": "object",
+                                    "description": "Input data to provide to the paused execution",
+                                },
                             },
-                            "input": {
-                                "type": "object",
-                                "description": "Input data to provide to the paused execution"
-                            }
+                            "required": ["execution_id", "input"],
                         },
-                        "required": ["execution_id", "input"]
-                    }
+                    },
                 }
-            })
+            )
 
         return tools
 
@@ -1111,23 +1102,21 @@ class MessageService:
         user_id: str,
         user_token: str,
         tool_name: str,
-        arguments: Dict[str, Any],
-        enabled_agent_ids: List[str]
-    ) -> Dict[str, Any]:
+        arguments: dict[str, Any],
+        enabled_agent_ids: list[str],
+    ) -> dict[str, Any]:
         """Execute an agent tool call by creating a new chat and getting a response."""
         # Extract agent ID from arguments (passed as _agent_id parameter)
         agent_id_str = arguments.get("_agent_id")
         if not agent_id_str:
-            return {"error": f"Missing _agent_id in agent tool call"}
+            return {"error": "Missing _agent_id in agent tool call"}
 
         # Verify this agent ID is in enabled list
         if agent_id_str not in enabled_agent_ids:
             return {"error": f"Agent {agent_id_str} not enabled for this agent"}
 
         # Load agent
-        result = await self.db.execute(
-            select(Agent).where(Agent.id == agent_id_str)
-        )
+        result = await self.db.execute(select(Agent).where(Agent.id == agent_id_str))
         agent = result.scalar_one_or_none()
 
         if not agent:
@@ -1154,7 +1143,7 @@ class MessageService:
                 agent_id=str(agent.id),
                 user_id=user_id,
                 input_data=input_data,
-                name=f"Sub-chat: {agent.name}"
+                name=f"Sub-chat: {agent.name}",
             )
 
             # Send message to the agent
@@ -1164,14 +1153,14 @@ class MessageService:
                 user_id=user_id,
                 user_token=user_token,
                 content=content,
-                template_variables=input_data
+                template_variables=input_data,
             )
 
             # Return the agent's response
             return {
                 "agent_name": agent.name,
                 "response": response_message.content,
-                "chat_id": str(sub_chat.id)
+                "chat_id": str(sub_chat.id),
             }
 
         except Exception as e:
@@ -1183,19 +1172,20 @@ class MessageService:
         chat_id: str,
         user_id: str,
         user_token: str,
-        messages: List[Dict[str, Any]],
-        tool_calls: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
         provider: Optional[str],
         model: Optional[str],
         temperature: float,
         max_tokens: Optional[int],
-        tools: List[Dict[str, Any]],
-        permissions: Optional[Dict[str, bool]] = None
+        tools: list[dict[str, Any]],
+        permissions: Optional[dict[str, bool]] = None,
     ) -> Message:
         """Execute tool calls and get final response."""
         # Get permissions if not provided
         if permissions is None:
             from app.core.auth import get_user_permissions
+
             permissions = await get_user_permissions(self.db, user_id)
 
         # Check if assistant message with these tool calls already exists (e.g., from approval flow)
@@ -1205,24 +1195,26 @@ class MessageService:
 
         if first_tool_call_id:
             result = await self.db.execute(
-                select(Message).where(
+                select(Message)
+                .where(
                     Message.chat_id == chat_id,
                     Message.role == "assistant",
-                    Message.tool_calls.isnot(None)
-                ).order_by(Message.created_at.desc()).limit(10)
+                    Message.tool_calls.isnot(None),
+                )
+                .order_by(Message.created_at.desc())
+                .limit(10)
             )
             for msg in result.scalars().all():
-                if msg.tool_calls and any(tc.get("id") == first_tool_call_id for tc in msg.tool_calls):
+                if msg.tool_calls and any(
+                    tc.get("id") == first_tool_call_id for tc in msg.tool_calls
+                ):
                     existing_message = msg
                     break
 
         # Only create assistant message if it doesn't already exist
         if not existing_message:
             assistant_message = Message(
-                chat_id=chat_id,
-                role="assistant",
-                content=None,
-                tool_calls=tool_calls
+                chat_id=chat_id, role="assistant", content=None, tool_calls=tool_calls
             )
             self.db.add(assistant_message)
             await self.db.commit()
@@ -1231,17 +1223,22 @@ class MessageService:
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
             arguments_str = tool_call["function"]["arguments"]
-            arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+            arguments = (
+                json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+            )
 
             # Execute tool (context, webhook, MCP, or execution continuation)
             try:
                 # Get chat for context
-                result_chat = await self.db.execute(
-                    select(Chat).where(Chat.id == chat_id)
-                )
+                result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
                 chat = result_chat.scalar_one_or_none()
 
-                if tool_name in ["save_context", "retrieve_context", "update_context", "delete_context"]:
+                if tool_name in [
+                    "save_context",
+                    "retrieve_context",
+                    "update_context",
+                    "delete_context",
+                ]:
                     # Handle context tools
                     result = await StateTools.execute_tool(
                         db=self.db,
@@ -1249,7 +1246,7 @@ class MessageService:
                         arguments=arguments,
                         user_id=user_id,
                         chat_id=str(chat_id),
-                        agent_id=str(chat.agent_id) if chat and chat.agent_id else None
+                        agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
                     )
                 # Ontology tools removed - extracted to sinas-ontology project
                 elif tool_name == "continue_execution":
@@ -1261,7 +1258,7 @@ class MessageService:
                         trigger_type="",  # Not needed for resume
                         trigger_id="",  # Not needed for resume
                         user_id=user_id,
-                        resume_data=arguments["input"]
+                        resume_data=arguments["input"],
                     )
                 elif tool_name.startswith("call_agent_"):
                     # Handle agent tool calls - get enabled agents from chat's agent
@@ -1280,16 +1277,14 @@ class MessageService:
                         user_token=user_token,
                         tool_name=tool_name,
                         arguments=arguments,
-                        enabled_agent_ids=enabled_agent_ids
+                        enabled_agent_ids=enabled_agent_ids,
                     )
                 elif tool_name.startswith("get_skill_"):
                     # Handle skill tool calls - return skill content (markdown instructions)
                     start_time = time.time()
                     print(f"⏱️  [TIMING] Starting skill retrieval: {tool_name}")
                     result = await self.skill_converter.handle_skill_tool_call(
-                        db=self.db,
-                        tool_name=tool_name,
-                        arguments=arguments
+                        db=self.db, tool_name=tool_name, arguments=arguments
                     )
                     elapsed = time.time() - start_time
                     print(f"⏱️  [TIMING] Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
@@ -1305,7 +1300,11 @@ class MessageService:
                     prefilled_params = {}
                     for tool in tools:
                         if tool.get("function", {}).get("name") == tool_name:
-                            prefilled_params = tool.get("function", {}).get("_metadata", {}).get("prefilled_params", {})
+                            prefilled_params = (
+                                tool.get("function", {})
+                                .get("_metadata", {})
+                                .get("prefilled_params", {})
+                            )
                             break
 
                     result = await self.function_converter.execute_function_tool(
@@ -1315,15 +1314,18 @@ class MessageService:
                         user_id=user_id,
                         user_token=user_token,
                         chat_id=str(chat_id),
-                        prefilled_params=prefilled_params
+                        prefilled_params=prefilled_params,
                     )
                     elapsed = time.time() - start_time
-                    print(f"⏱️  [TIMING] Function execution completed in {elapsed:.3f}s: {tool_name}")
+                    print(
+                        f"⏱️  [TIMING] Function execution completed in {elapsed:.3f}s: {tool_name}"
+                    )
 
                 result_content = json.dumps(result) if not isinstance(result, str) else result
 
             except Exception as e:
                 import traceback
+
                 logger.error(f"Tool execution failed: {e}")
                 logger.error(f"Traceback: {traceback.format_exc()}")
                 result_content = json.dumps({"error": str(e)})
@@ -1334,7 +1336,7 @@ class MessageService:
                 role="tool",
                 content=result_content,
                 tool_call_id=tool_call["id"],
-                name=tool_name
+                name=tool_name,
             )
             self.db.add(tool_message)
 
@@ -1342,18 +1344,14 @@ class MessageService:
 
         # Get final response from LLM with tool results
         # First, rebuild system prompt with template variables
-        result_chat = await self.db.execute(
-            select(Chat).where(Chat.id == chat_id)
-        )
+        result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
         chat = result_chat.scalar_one_or_none()
 
         updated_messages = []
 
         # Add system prompt from agent if exists
         if chat and chat.agent_id:
-            result_agent = await self.db.execute(
-                select(Agent).where(Agent.id == chat.agent_id)
-            )
+            result_agent = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
             agent = result_agent.scalar_one_or_none()
             if agent and agent.system_prompt:
                 # Render system prompt with template variables from chat metadata
@@ -1361,8 +1359,7 @@ class MessageService:
                 if chat.chat_metadata and "agent_input" in chat.chat_metadata:
                     try:
                         system_content = render_template(
-                            agent.system_prompt,
-                            chat.chat_metadata["agent_input"]
+                            agent.system_prompt, chat.chat_metadata["agent_input"]
                         )
                     except Exception as e:
                         logger.error(f"Failed to render system prompt template: {e}")
@@ -1372,10 +1369,7 @@ class MessageService:
                     schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
                     system_content += schema_instruction
 
-                updated_messages.append({
-                    "role": "system",
-                    "content": system_content
-                })
+                updated_messages.append({"role": "system", "content": system_content})
 
         # Rebuild messages with tool results
         result = await self.db.execute(
@@ -1414,7 +1408,7 @@ class MessageService:
             model=model,
             tools=clean_tools,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
         ):
             if chunk.get("content"):
                 full_content += chunk["content"]
@@ -1442,14 +1436,13 @@ class MessageService:
 
                     # Extend list if needed
                     while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append({
-                            "id": None,
-                            "type": "function",
-                            "function": {
-                                "name": "",
-                                "arguments": ""
+                        tool_calls_list.append(
+                            {
+                                "id": None,
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
                             }
-                        })
+                        )
 
                     # Update ID, type, name if provided (first chunk)
                     if tc.get("id"):
@@ -1461,7 +1454,9 @@ class MessageService:
 
                     # Accumulate arguments (all chunks)
                     if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"]["arguments"]
+                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
+                            "arguments"
+                        ]
 
             # Yield the chunk for streaming
             yield chunk
@@ -1481,16 +1476,14 @@ class MessageService:
                 model=model,
                 temperature=temperature,
                 max_tokens=max_tokens,
-                tools=tools
+                tools=tools,
             ):
                 yield result_chunk
             return
 
         # Save final assistant message
         final_message = Message(
-            chat_id=chat_id,
-            role="assistant",
-            content=full_content if full_content else None
+            chat_id=chat_id, role="assistant", content=full_content if full_content else None
         )
         self.db.add(final_message)
         await self.db.commit()
@@ -1504,9 +1497,9 @@ class MessageService:
         message_id: str,
         provider: str,
         model: str,
-        messages: List[Dict[str, Any]],
-        response: Dict[str, Any],
-        latency_ms: int
+        messages: list[dict[str, Any]],
+        response: dict[str, Any],
+        latency_ms: int,
     ):
         """
         Log LLM request for analytics.

@@ -1,24 +1,32 @@
 """API Key schemas."""
-from pydantic import BaseModel, Field
-from typing import Optional, Dict
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
 
 
 class APIKeyCreate(BaseModel):
     """Request to create a new API key."""
-    name: str = Field(..., min_length=1, max_length=255, description="Friendly name for the API key")
-    permissions: Dict[str, bool] = Field(default_factory=dict, description="Permission overrides (empty = inherit from user's groups)")
+
+    name: str = Field(
+        ..., min_length=1, max_length=255, description="Friendly name for the API key"
+    )
+    permissions: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Permission overrides (empty = inherit from user's groups)",
+    )
     expires_at: Optional[datetime] = Field(None, description="Optional expiration date")
 
 
 class APIKeyResponse(BaseModel):
     """API key information (without the actual key)."""
+
     id: uuid.UUID
     user_id: uuid.UUID
     name: str
     key_prefix: str  # e.g., "sk-abc..."
-    permissions: Dict[str, bool]
+    permissions: dict[str, bool]
     is_active: bool
     last_used_at: Optional[datetime]
     expires_at: Optional[datetime]
@@ -31,11 +39,12 @@ class APIKeyResponse(BaseModel):
 
 class APIKeyCreated(BaseModel):
     """Response when API key is created (includes the plain key - shown only once)."""
+
     id: uuid.UUID
     name: str
     key: str  # Plain API key - only returned once on creation
     key_prefix: str
-    permissions: Dict[str, bool]
+    permissions: dict[str, bool]
     expires_at: Optional[datetime]
     created_at: datetime
 

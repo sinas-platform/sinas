@@ -1,11 +1,13 @@
 """Request log schemas for API responses."""
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel
 
 
 class RequestLogResponse(BaseModel):
     """Response schema for request log entries."""
+
     request_id: str
     timestamp: datetime
     user_id: str
@@ -35,6 +37,7 @@ class RequestLogResponse(BaseModel):
 
 class RequestLogQueryParams(BaseModel):
     """Query parameters for filtering request logs."""
+
     user_id: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
@@ -47,6 +50,7 @@ class RequestLogQueryParams(BaseModel):
 
 class RequestLogStatsResponse(BaseModel):
     """Aggregated statistics for request logs."""
+
     total_requests: int
     unique_users: int
     avg_response_time_ms: float

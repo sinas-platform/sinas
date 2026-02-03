@@ -1,36 +1,30 @@
 """Template endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, and_, or_
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
 import uuid
 
-from app.core.database import get_db
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Template
 from app.models.user import UserRole
 from app.schemas.template import (
     TemplateCreate,
-    TemplateUpdate,
-    TemplateResponse,
     TemplateRenderRequest,
     TemplateRenderResponse,
+    TemplateResponse,
+    TemplateUpdate,
 )
-from app.services.template_service import template_service
 
 router = APIRouter()
 
 
-async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> List[uuid.UUID]:
+async def get_user_group_ids(db: AsyncSession, user_id: uuid.UUID) -> list[uuid.UUID]:
     """Get all group IDs that the user is a member of."""
     result = await db.execute(
-        select(UserRole.role_id).where(
-            and_(
-                UserRole.user_id == user_id,
-                UserRole.active == True
-            )
-        )
+        select(UserRole.role_id).where(and_(UserRole.user_id == user_id, UserRole.active == True))
     )
     return [row[0] for row in result.all()]
 
@@ -40,7 +34,7 @@ async def create_template(
     req: Request,
     template_data: TemplateCreate,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new template."""
     user_id, permissions = current_user_data
@@ -71,16 +65,13 @@ async def create_template(
     # Check if template namespace+name already exists
     result = await db.execute(
         select(Template).where(
-            and_(
-                Template.namespace == template_data.namespace,
-                Template.name == template_data.name
-            )
+            and_(Template.namespace == template_data.namespace, Template.name == template_data.name)
         )
     )
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=400,
-            detail=f"Template '{template_data.namespace}/{template_data.name}' already exists"
+            detail=f"Template '{template_data.namespace}/{template_data.name}' already exists",
         )
 
     template = Template(
@@ -105,11 +96,11 @@ async def create_template(
     return TemplateResponse.model_validate(template)
 
 
-@router.get("", response_model=List[TemplateResponse])
+@router.get("", response_model=list[TemplateResponse])
 async def list_templates(
     req: Request,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List templates accessible to the current user."""
     user_id, permissions = current_user_data
@@ -123,9 +114,11 @@ async def list_templates(
     else:
         set_permission_used(req, "sinas.templates.read:own")
         # Own templates only
-        query = select(Template).where(
-            Template.user_id == user_uuid
-        ).order_by(Template.created_at.desc())
+        query = (
+            select(Template)
+            .where(Template.user_id == user_uuid)
+            .order_by(Template.created_at.desc())
+        )
 
     result = await db.execute(query)
     templates = result.scalars().all()
@@ -138,15 +131,13 @@ async def get_template(
     template_id: uuid.UUID,
     req: Request,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a template by ID."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
-    result = await db.execute(
-        select(Template).where(Template.id == template_id)
-    )
+    result = await db.execute(select(Template).where(Template.id == template_id))
     template = result.scalar_one_or_none()
 
     if not template:
@@ -187,19 +178,14 @@ async def get_template_by_name(
     name: str,
     req: Request,
     current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a template by namespace and name."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
     result = await db.execute(
-        select(Template).where(
-            and_(
-                Template.namespace == namespace,
-                Template.name == name
-            )
-        )
+        select(Template).where(and_(Template.namespace == namespace, Template.name == name))
     )
     template = result.scalar_one_or_none()
 
@@ -241,15 +227,13 @@ async def update_template(
     template_data: TemplateUpdate,
     req: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a template."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
-    result = await db.execute(
-        select(Template).where(Template.id == template_id)
-    )
+    result = await db.execute(select(Template).where(Template.id == template_id))
     template = result.scalar_one_or_none()
 
     if not template:
@@ -280,20 +264,19 @@ async def update_template(
     # Check for namespace/name conflict if renaming
     new_namespace = template_data.namespace or template.namespace
     new_name = template_data.name or template.name
-    if (new_namespace != template.namespace or new_name != template.name):
+    if new_namespace != template.namespace or new_name != template.name:
         result = await db.execute(
             select(Template).where(
                 and_(
                     Template.namespace == new_namespace,
                     Template.name == new_name,
-                    Template.id != template_id
+                    Template.id != template_id,
                 )
             )
         )
         if result.scalar_one_or_none():
             raise HTTPException(
-                status_code=400,
-                detail=f"Template '{new_namespace}/{new_name}' already exists"
+                status_code=400, detail=f"Template '{new_namespace}/{new_name}' already exists"
             )
 
     # Update fields
@@ -313,15 +296,13 @@ async def delete_template(
     template_id: uuid.UUID,
     req: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Delete a template."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
-    result = await db.execute(
-        select(Template).where(Template.id == template_id)
-    )
+    result = await db.execute(select(Template).where(Template.id == template_id))
     template = result.scalar_one_or_none()
 
     if not template:
@@ -359,16 +340,14 @@ async def render_template_preview(
     render_request: TemplateRenderRequest,
     req: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_data = Depends(get_current_user_with_permissions)
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Render a template with given variables (preview for testing)."""
     user_id, permissions = current_user_data
     user_uuid = uuid.UUID(user_id)
 
     # Get template
-    result = await db.execute(
-        select(Template).where(Template.id == template_id)
-    )
+    result = await db.execute(select(Template).where(Template.id == template_id))
     template = result.scalar_one_or_none()
 
     if not template:
@@ -392,7 +371,9 @@ async def render_template_preview(
                 set_permission_used(req, f"{perm_base}:group")
             else:
                 set_permission_used(req, f"{perm_base}:group", has_perm=False)
-                raise HTTPException(status_code=403, detail="Not authorized to render this template")
+                raise HTTPException(
+                    status_code=403, detail="Not authorized to render this template"
+                )
         else:
             set_permission_used(req, f"{perm_base}:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to render this template")
@@ -407,10 +388,13 @@ async def render_template_preview(
         # Validate variables against schema if defined
         if template.variable_schema:
             import jsonschema
+
             try:
                 jsonschema.validate(render_request.variables, template.variable_schema)
             except jsonschema.ValidationError as e:
-                raise HTTPException(status_code=400, detail=f"Variable validation failed: {e.message}")
+                raise HTTPException(
+                    status_code=400, detail=f"Variable validation failed: {e.message}"
+                )
 
         # Render title
         rendered_title = None
@@ -426,9 +410,7 @@ async def render_template_preview(
             rendered_text = render_template(template.text_content, render_request.variables)
 
         return TemplateRenderResponse(
-            title=rendered_title,
-            html_content=rendered_html,
-            text_content=rendered_text
+            title=rendered_title, html_content=rendered_html, text_content=rendered_text
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Template rendering failed: {str(e)}")

@@ -1,8 +1,9 @@
 """ClickHouse logger service for comprehensive request logging."""
 import json
 import uuid
-from typing import Any, Dict, Optional
 from datetime import datetime
+from typing import Any, Optional
+
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
@@ -24,7 +25,7 @@ class ClickHouseLogger:
                 port=settings.clickhouse_port,
                 username=settings.clickhouse_user,
                 password=settings.clickhouse_password,
-                database=settings.clickhouse_database
+                database=settings.clickhouse_database,
             )
         except Exception as e:
             print(f"Failed to initialize ClickHouse client: {e}")
@@ -39,8 +40,8 @@ class ClickHouseLogger:
         has_permission: bool,
         method: str,
         path: str,
-        query_params: Dict[str, Any],
-        request_body: Optional[Dict[str, Any]],
+        query_params: dict[str, Any],
+        request_body: Optional[dict[str, Any]],
         user_agent: Optional[str],
         referer: Optional[str],
         ip_address: Optional[str],
@@ -52,7 +53,7 @@ class ClickHouseLogger:
         group_id: Optional[str] = None,
         error_message: Optional[str] = None,
         error_type: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[dict[str, Any]] = None,
     ):
         """
         Log a request to ClickHouse.
@@ -92,38 +93,56 @@ class ClickHouseLogger:
             # Insert log entry
             self.client.insert(
                 "request_logs",
-                [[
-                    request_id,
-                    datetime.utcnow(),
-                    user_id or "",
-                    user_email or "",
-                    permission_used or "",
-                    has_permission,
-                    method,
-                    path,
-                    query_params_str,
-                    request_body_str,
-                    user_agent or "",
-                    referer or "",
-                    ip_address or "",
-                    status_code,
-                    response_time_ms,
-                    response_size_bytes,
-                    resource_type or "",
-                    resource_id or "",
-                    group_id or "",
-                    error_message or "",
-                    error_type or "",
-                    metadata_str
-                ]],
+                [
+                    [
+                        request_id,
+                        datetime.utcnow(),
+                        user_id or "",
+                        user_email or "",
+                        permission_used or "",
+                        has_permission,
+                        method,
+                        path,
+                        query_params_str,
+                        request_body_str,
+                        user_agent or "",
+                        referer or "",
+                        ip_address or "",
+                        status_code,
+                        response_time_ms,
+                        response_size_bytes,
+                        resource_type or "",
+                        resource_id or "",
+                        group_id or "",
+                        error_message or "",
+                        error_type or "",
+                        metadata_str,
+                    ]
+                ],
                 column_names=[
-                    "request_id", "timestamp", "user_id", "user_email",
-                    "permission_used", "has_permission", "method", "path",
-                    "query_params", "request_body", "user_agent", "referer",
-                    "ip_address", "status_code", "response_time_ms",
-                    "response_size_bytes", "resource_type", "resource_id",
-                    "group_id", "error_message", "error_type", "metadata"
-                ]
+                    "request_id",
+                    "timestamp",
+                    "user_id",
+                    "user_email",
+                    "permission_used",
+                    "has_permission",
+                    "method",
+                    "path",
+                    "query_params",
+                    "request_body",
+                    "user_agent",
+                    "referer",
+                    "ip_address",
+                    "status_code",
+                    "response_time_ms",
+                    "response_size_bytes",
+                    "resource_type",
+                    "resource_id",
+                    "group_id",
+                    "error_message",
+                    "error_type",
+                    "metadata",
+                ],
             )
         except Exception as e:
             # Silently fail - logging should never crash the app
@@ -140,7 +159,7 @@ class ClickHouseLogger:
         path_pattern: Optional[str] = None,
         status_code: Optional[int] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
     ) -> list:
         """
         Query request logs with filters.
@@ -195,10 +214,7 @@ class ClickHouseLogger:
             return []
 
     async def log_execution_start(
-        self,
-        execution_id: str,
-        function_name: str,
-        input_data: Dict[str, Any]
+        self, execution_id: str, function_name: str, input_data: dict[str, Any]
     ):
         """Log execution start event."""
         if not self.client:
@@ -207,24 +223,34 @@ class ClickHouseLogger:
         try:
             self.client.insert(
                 "execution_logs",
-                [[
-                    str(uuid.uuid4()),
-                    datetime.utcnow(),
-                    execution_id,
-                    "execution_started",
-                    function_name,
-                    "",  # step_id
-                    json.dumps(input_data) if input_data else "",
-                    "",  # output_data
-                    "",  # error
-                    0,   # duration_ms
-                    ""   # status
-                ]],
+                [
+                    [
+                        str(uuid.uuid4()),
+                        datetime.utcnow(),
+                        execution_id,
+                        "execution_started",
+                        function_name,
+                        "",  # step_id
+                        json.dumps(input_data) if input_data else "",
+                        "",  # output_data
+                        "",  # error
+                        0,  # duration_ms
+                        "",  # status
+                    ]
+                ],
                 column_names=[
-                    "log_id", "timestamp", "execution_id", "event",
-                    "function_name", "step_id", "input_data", "output_data",
-                    "error", "duration_ms", "status"
-                ]
+                    "log_id",
+                    "timestamp",
+                    "execution_id",
+                    "event",
+                    "function_name",
+                    "step_id",
+                    "input_data",
+                    "output_data",
+                    "error",
+                    "duration_ms",
+                    "status",
+                ],
             )
         except Exception as e:
             if settings.debug:
@@ -234,9 +260,9 @@ class ClickHouseLogger:
         self,
         execution_id: str,
         status: str,
-        output_data: Optional[Dict[str, Any]] = None,
+        output_data: Optional[dict[str, Any]] = None,
         error: Optional[str] = None,
-        duration_ms: Optional[int] = None
+        duration_ms: Optional[int] = None,
     ):
         """Log execution end event."""
         if not self.client:
@@ -245,35 +271,41 @@ class ClickHouseLogger:
         try:
             self.client.insert(
                 "execution_logs",
-                [[
-                    str(uuid.uuid4()),
-                    datetime.utcnow(),
-                    execution_id,
-                    "execution_completed",
-                    "",  # function_name
-                    "",  # step_id
-                    "",  # input_data
-                    json.dumps(output_data) if output_data else "",
-                    error or "",
-                    duration_ms or 0,
-                    status
-                ]],
+                [
+                    [
+                        str(uuid.uuid4()),
+                        datetime.utcnow(),
+                        execution_id,
+                        "execution_completed",
+                        "",  # function_name
+                        "",  # step_id
+                        "",  # input_data
+                        json.dumps(output_data) if output_data else "",
+                        error or "",
+                        duration_ms or 0,
+                        status,
+                    ]
+                ],
                 column_names=[
-                    "log_id", "timestamp", "execution_id", "event",
-                    "function_name", "step_id", "input_data", "output_data",
-                    "error", "duration_ms", "status"
-                ]
+                    "log_id",
+                    "timestamp",
+                    "execution_id",
+                    "event",
+                    "function_name",
+                    "step_id",
+                    "input_data",
+                    "output_data",
+                    "error",
+                    "duration_ms",
+                    "status",
+                ],
             )
         except Exception as e:
             if settings.debug:
                 print(f"Failed to log execution end: {e}")
 
     async def log_function_call(
-        self,
-        execution_id: str,
-        function_name: str,
-        step_id: str,
-        input_data: Dict[str, Any]
+        self, execution_id: str, function_name: str, step_id: str, input_data: dict[str, Any]
     ):
         """Log function call within an execution."""
         if not self.client:
@@ -282,24 +314,34 @@ class ClickHouseLogger:
         try:
             self.client.insert(
                 "execution_logs",
-                [[
-                    str(uuid.uuid4()),
-                    datetime.utcnow(),
-                    execution_id,
-                    "function_called",
-                    function_name,
-                    step_id,
-                    json.dumps(input_data) if input_data else "",
-                    "",  # output_data
-                    "",  # error
-                    0,   # duration_ms
-                    ""   # status
-                ]],
+                [
+                    [
+                        str(uuid.uuid4()),
+                        datetime.utcnow(),
+                        execution_id,
+                        "function_called",
+                        function_name,
+                        step_id,
+                        json.dumps(input_data) if input_data else "",
+                        "",  # output_data
+                        "",  # error
+                        0,  # duration_ms
+                        "",  # status
+                    ]
+                ],
                 column_names=[
-                    "log_id", "timestamp", "execution_id", "event",
-                    "function_name", "step_id", "input_data", "output_data",
-                    "error", "duration_ms", "status"
-                ]
+                    "log_id",
+                    "timestamp",
+                    "execution_id",
+                    "event",
+                    "function_name",
+                    "step_id",
+                    "input_data",
+                    "output_data",
+                    "error",
+                    "duration_ms",
+                    "status",
+                ],
             )
         except Exception as e:
             if settings.debug:
@@ -310,9 +352,9 @@ class ClickHouseLogger:
         execution_id: str,
         function_name: str,
         step_id: str,
-        output_data: Optional[Dict[str, Any]] = None,
+        output_data: Optional[dict[str, Any]] = None,
         error: Optional[str] = None,
-        duration_ms: Optional[int] = None
+        duration_ms: Optional[int] = None,
     ):
         """Log function result within an execution."""
         if not self.client:
@@ -321,34 +363,40 @@ class ClickHouseLogger:
         try:
             self.client.insert(
                 "execution_logs",
-                [[
-                    str(uuid.uuid4()),
-                    datetime.utcnow(),
-                    execution_id,
-                    "function_completed",
-                    function_name,
-                    step_id,
-                    "",  # input_data
-                    json.dumps(output_data) if output_data else "",
-                    error or "",
-                    duration_ms or 0,
-                    ""   # status
-                ]],
+                [
+                    [
+                        str(uuid.uuid4()),
+                        datetime.utcnow(),
+                        execution_id,
+                        "function_completed",
+                        function_name,
+                        step_id,
+                        "",  # input_data
+                        json.dumps(output_data) if output_data else "",
+                        error or "",
+                        duration_ms or 0,
+                        "",  # status
+                    ]
+                ],
                 column_names=[
-                    "log_id", "timestamp", "execution_id", "event",
-                    "function_name", "step_id", "input_data", "output_data",
-                    "error", "duration_ms", "status"
-                ]
+                    "log_id",
+                    "timestamp",
+                    "execution_id",
+                    "event",
+                    "function_name",
+                    "step_id",
+                    "input_data",
+                    "output_data",
+                    "error",
+                    "duration_ms",
+                    "status",
+                ],
             )
         except Exception as e:
             if settings.debug:
                 print(f"Failed to log function result: {e}")
 
-    async def get_execution_logs(
-        self,
-        execution_id: str,
-        limit: int = 1000
-    ) -> list:
+    async def get_execution_logs(self, execution_id: str, limit: int = 1000) -> list:
         """Get logs for a specific execution."""
         if not self.client:
             return []

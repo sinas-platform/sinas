@@ -1,7 +1,7 @@
 """Runtime API - Data Plane for execution, authentication, and runtime state."""
 from fastapi import APIRouter
 
-from app.api.runtime.endpoints import authentication, chats, webhooks, states, executions, templates
+from app.api.runtime.endpoints import authentication, chats, executions, states, templates, webhooks
 
 runtime_router = APIRouter()
 

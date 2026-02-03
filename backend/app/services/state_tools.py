@@ -1,9 +1,9 @@
 """Context store tools for LLM to save/retrieve context."""
-from typing import List, Dict, Any, Optional
-from datetime import datetime
 import uuid as uuid_lib
+from datetime import datetime
+from typing import Any, Optional
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.state import State
@@ -16,9 +16,9 @@ class StateTools:
     async def get_tool_definitions(
         db: Optional[AsyncSession] = None,
         user_id: Optional[str] = None,
-        agent_state_namespaces_readonly: Optional[List[str]] = None,
-        agent_state_namespaces_readwrite: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        agent_state_namespaces_readonly: Optional[list[str]] = None,
+        agent_state_namespaces_readwrite: Optional[list[str]] = None,
+    ) -> list[dict[str, Any]]:
         """
         Get OpenAI-compatible tool definitions for state operations.
 
@@ -46,8 +46,12 @@ class StateTools:
             return []
 
         # Build namespace info for allowed namespaces
-        readonly_ns_list = ", ".join([f"'{ns}'" for ns in readonly_namespaces]) if readonly_namespaces else ""
-        readwrite_ns_list = ", ".join([f"'{ns}'" for ns in readwrite_namespaces]) if readwrite_namespaces else ""
+        readonly_ns_list = (
+            ", ".join([f"'{ns}'" for ns in readonly_namespaces]) if readonly_namespaces else ""
+        )
+        readwrite_ns_list = (
+            ", ".join([f"'{ns}'" for ns in readwrite_namespaces]) if readwrite_namespaces else ""
+        )
 
         namespace_info = ""
         if readwrite_namespaces:
@@ -75,155 +79,160 @@ class StateTools:
         tools = []
 
         # Always include retrieve_context for all namespaces (readonly + readwrite)
-        tools.append({
-            "type": "function",
-            "function": {
-                "name": "retrieve_context",
-                "description": retrieve_description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "namespace": {
-                            "type": "string",
-                            "description": "Filter by namespace (e.g., 'preferences', 'facts')"
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "retrieve_context",
+                    "description": retrieve_description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "namespace": {
+                                "type": "string",
+                                "description": "Filter by namespace (e.g., 'preferences', 'facts')",
+                            },
+                            "key": {
+                                "type": "string",
+                                "description": "Specific key to retrieve (optional, omit to get all in namespace)",
+                            },
+                            "search": {
+                                "type": "string",
+                                "description": "Search term to find in keys and descriptions",
+                            },
+                            "tags": {
+                                "type": "string",
+                                "description": "Comma-separated tags to filter by",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Maximum number of results to return",
+                                "default": 10,
+                            },
                         },
-                        "key": {
-                            "type": "string",
-                            "description": "Specific key to retrieve (optional, omit to get all in namespace)"
-                        },
-                        "search": {
-                            "type": "string",
-                            "description": "Search term to find in keys and descriptions"
-                        },
-                        "tags": {
-                            "type": "string",
-                            "description": "Comma-separated tags to filter by"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results to return",
-                            "default": 10
-                        }
-                    }
-                }
+                    },
+                },
             }
-        })
+        )
 
         # Only include write tools if there are readwrite namespaces
         if readwrite_namespaces:
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "save_context",
-                    "description": save_description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {
-                                "type": "string",
-                                "description": (
-                                    "Category/namespace for organization. Use one of the read-write namespaces."
-                                ),
-                                "enum": readwrite_namespaces  # Only allow readwrite namespaces
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "save_context",
+                        "description": save_description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "namespace": {
+                                    "type": "string",
+                                    "description": (
+                                        "Category/namespace for organization. Use one of the read-write namespaces."
+                                    ),
+                                    "enum": readwrite_namespaces,  # Only allow readwrite namespaces
+                                },
+                                "key": {
+                                    "type": "string",
+                                    "description": "Unique identifier within the namespace (e.g., 'timezone', 'favorite_language')",
+                                },
+                                "value": {
+                                    "type": "object",
+                                    "description": "Data to store (as JSON object)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Human-readable description of what this context contains",
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Tags for categorization and search",
+                                },
+                                "visibility": {
+                                    "type": "string",
+                                    "enum": ["private", "shared"],
+                                    "description": "Who can access this context: 'private' (user only) or 'group' (permitted users)",
+                                    "default": "private",
+                                },
                             },
-                            "key": {
-                                "type": "string",
-                                "description": "Unique identifier within the namespace (e.g., 'timezone', 'favorite_language')"
-                            },
-                            "value": {
-                                "type": "object",
-                                "description": "Data to store (as JSON object)"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "Human-readable description of what this context contains"
-                            },
-                            "tags": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Tags for categorization and search"
-                            },
-                            "visibility": {
-                                "type": "string",
-                                "enum": ["private", "shared"],
-                                "description": "Who can access this context: 'private' (user only) or 'group' (permitted users)",
-                                "default": "private"
-                            }
+                            "required": ["namespace", "key", "value"],
                         },
-                        "required": ["namespace", "key", "value"]
-                    }
+                    },
                 }
-            })
+            )
 
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "update_context",
-                    "description": (
-                        "Update existing context entry. Use this to modify previously saved information "
-                        "when new details are learned or preferences change."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {
-                                "type": "string",
-                                "description": "Namespace of the context to update",
-                                "enum": readwrite_namespaces
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "update_context",
+                        "description": (
+                            "Update existing context entry. Use this to modify previously saved information "
+                            "when new details are learned or preferences change."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "namespace": {
+                                    "type": "string",
+                                    "description": "Namespace of the context to update",
+                                    "enum": readwrite_namespaces,
+                                },
+                                "key": {
+                                    "type": "string",
+                                    "description": "Key of the context to update",
+                                },
+                                "value": {
+                                    "type": "object",
+                                    "description": "New value to store (replaces existing)",
+                                },
+                                "description": {
+                                    "type": "string",
+                                    "description": "Updated description",
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "Updated tags",
+                                },
                             },
-                            "key": {
-                                "type": "string",
-                                "description": "Key of the context to update"
-                            },
-                            "value": {
-                                "type": "object",
-                                "description": "New value to store (replaces existing)"
-                            },
-                            "description": {
-                                "type": "string",
-                                "description": "Updated description"
-                            },
-                            "tags": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "Updated tags"
-                            }
+                            "required": ["namespace", "key"],
                         },
-                        "required": ["namespace", "key"]
-                    }
+                    },
                 }
-            })
+            )
 
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": "delete_context",
-                    "description": "Delete a context entry when it's no longer needed or is outdated.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "namespace": {
-                                "type": "string",
-                                "description": "Namespace of the context to delete",
-                                "enum": readwrite_namespaces
+            tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "delete_context",
+                        "description": "Delete a context entry when it's no longer needed or is outdated.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "namespace": {
+                                    "type": "string",
+                                    "description": "Namespace of the context to delete",
+                                    "enum": readwrite_namespaces,
+                                },
+                                "key": {
+                                    "type": "string",
+                                    "description": "Key of the context to delete",
+                                },
                             },
-                            "key": {
-                                "type": "string",
-                                "description": "Key of the context to delete"
-                            }
+                            "required": ["namespace", "key"],
                         },
-                        "required": ["namespace", "key"]
-                    }
+                    },
                 }
-            })
+            )
 
         return tools
 
     @staticmethod
-    async def _get_available_keys_description(
-        db: AsyncSession,
-        user_id: str
-    ) -> str:
+    async def _get_available_keys_description(db: AsyncSession, user_id: str) -> str:
         """
         Get a summary of available context keys for this user.
 
@@ -237,22 +246,19 @@ class StateTools:
         user_uuid = uuid_lib.UUID(user_id)
 
         # Query all available contexts
-        query = select(
-            State.namespace,
-            State.key,
-            State.description
-        ).where(
-            and_(
-                or_(
-                    State.expires_at == None,
-                    State.expires_at > datetime.utcnow()
-                ),
-                or_(
-                    State.user_id == user_uuid,
-                    State.visibility == "shared"  # TODO: Add namespace permission check
+        query = (
+            select(State.namespace, State.key, State.description)
+            .where(
+                and_(
+                    or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
+                    or_(
+                        State.user_id == user_uuid,
+                        State.visibility == "shared",  # TODO: Add namespace permission check
+                    ),
                 )
             )
-        ).order_by(State.namespace, State.key)
+            .order_by(State.namespace, State.key)
+        )
 
         result = await db.execute(query)
         contexts = result.all()
@@ -261,7 +267,7 @@ class StateTools:
             return ""
 
         # Group by namespace
-        by_namespace: Dict[str, List[tuple]] = {}
+        by_namespace: dict[str, list[tuple]] = {}
         for namespace, key, description in contexts:
             if namespace not in by_namespace:
                 by_namespace[namespace] = []
@@ -280,11 +286,11 @@ class StateTools:
     async def execute_tool(
         db: AsyncSession,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         user_id: str,
         chat_id: Optional[str] = None,
-                agent_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        agent_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """
         Execute a context tool.
 
@@ -303,9 +309,8 @@ class StateTools:
         allowed_namespaces = None
         if agent_id:
             from app.models.agent import Agent
-            result = await db.execute(
-                select(Agent).where(Agent.id == uuid_lib.UUID(agent_id))
-            )
+
+            result = await db.execute(select(Agent).where(Agent.id == uuid_lib.UUID(agent_id)))
             agent = result.scalar_one_or_none()
             if agent:
                 # For write operations, only readwrite namespaces are allowed
@@ -317,24 +322,21 @@ class StateTools:
             if not requested_namespace or requested_namespace not in allowed_namespaces:
                 return {
                     "error": f"Agent not authorized to write to namespace '{requested_namespace}'",
-                    "allowed_namespaces": allowed_namespaces if allowed_namespaces else []
+                    "allowed_namespaces": allowed_namespaces if allowed_namespaces else [],
                 }
 
         if tool_name == "save_context":
             return await StateTools._save_context(
-                db, user_id, arguments,             )
+                db,
+                user_id,
+                arguments,
+            )
         elif tool_name == "retrieve_context":
-            return await StateTools._retrieve_context(
-                db, user_id, arguments
-            )
+            return await StateTools._retrieve_context(db, user_id, arguments)
         elif tool_name == "update_context":
-            return await StateTools._update_context(
-                db, user_id, arguments
-            )
+            return await StateTools._update_context(db, user_id, arguments)
         elif tool_name == "delete_context":
-            return await StateTools._delete_context(
-                db, user_id, arguments
-            )
+            return await StateTools._delete_context(db, user_id, arguments)
         else:
             return {"error": f"Unknown context tool: {tool_name}"}
 
@@ -342,8 +344,8 @@ class StateTools:
     async def _save_context(
         db: AsyncSession,
         user_id: str,
-        args: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
         """Save context to store."""
         user_uuid = uuid_lib.UUID(user_id)
 
@@ -353,7 +355,7 @@ class StateTools:
                 and_(
                     State.user_id == user_uuid,
                     State.namespace == args["namespace"],
-                    State.key == args["key"]
+                    State.key == args["key"],
                 )
             )
         )
@@ -362,7 +364,7 @@ class StateTools:
         if existing:
             return {
                 "error": f"Context already exists for namespace '{args['namespace']}' and key '{args['key']}'. Use update_context to modify it.",
-                "existing_value": existing.value
+                "existing_value": existing.value,
             }
 
         # Validate visibility
@@ -378,7 +380,7 @@ class StateTools:
             visibility=visibility,
             description=args.get("description"),
             tags=args.get("tags", []),
-            relevance_score=1.0
+            relevance_score=1.0,
         )
 
         db.add(context)
@@ -389,29 +391,24 @@ class StateTools:
             "success": True,
             "message": f"Saved context: {args['namespace']}/{args['key']}",
             "context_id": str(context.id),
-            "value": context.value
+            "value": context.value,
         }
 
     @staticmethod
     async def _retrieve_context(
-        db: AsyncSession,
-        user_id: str,
-        args: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        db: AsyncSession, user_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
         """Retrieve context from store."""
         user_uuid = uuid_lib.UUID(user_id)
 
         # Build query - user's own contexts + group contexts
         query = select(State).where(
             and_(
-                or_(
-                    State.expires_at == None,
-                    State.expires_at > datetime.utcnow()
-                ),
+                or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
                 or_(
                     State.user_id == user_uuid,
-                    State.visibility == "shared"  # TODO: Add namespace permission check
-                )
+                    State.visibility == "shared",  # TODO: Add namespace permission check
+                ),
             )
         )
 
@@ -425,14 +422,11 @@ class StateTools:
         if "search" in args and args["search"]:
             search_pattern = f"%{args['search']}%"
             query = query.where(
-                or_(
-                    State.key.ilike(search_pattern),
-                    State.description.ilike(search_pattern)
-                )
+                or_(State.key.ilike(search_pattern), State.description.ilike(search_pattern))
             )
 
         if "tags" in args and args["tags"]:
-            tag_list = [tag.strip() for tag in args["tags"].split(',')]
+            tag_list = [tag.strip() for tag in args["tags"].split(",")]
             for tag in tag_list:
                 query = query.where(State.tags.contains([tag]))
 
@@ -445,11 +439,7 @@ class StateTools:
         contexts = result.scalars().all()
 
         if not contexts:
-            return {
-                "success": True,
-                "message": "No matching contexts found",
-                "contexts": []
-            }
+            return {"success": True, "message": "No matching contexts found", "contexts": []}
 
         return {
             "success": True,
@@ -463,18 +453,16 @@ class StateTools:
                     "tags": ctx.tags,
                     "visibility": ctx.visibility,
                     "created_at": ctx.created_at.isoformat(),
-                    "updated_at": ctx.updated_at.isoformat()
+                    "updated_at": ctx.updated_at.isoformat(),
                 }
                 for ctx in contexts
-            ]
+            ],
         }
 
     @staticmethod
     async def _update_context(
-        db: AsyncSession,
-        user_id: str,
-        args: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        db: AsyncSession, user_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
         """Update existing context."""
         user_uuid = uuid_lib.UUID(user_id)
 
@@ -484,7 +472,7 @@ class StateTools:
                 and_(
                     State.user_id == user_uuid,
                     State.namespace == args["namespace"],
-                    State.key == args["key"]
+                    State.key == args["key"],
                 )
             )
         )
@@ -493,7 +481,7 @@ class StateTools:
         if not context:
             return {
                 "error": f"Context not found for namespace '{args['namespace']}' and key '{args['key']}'",
-                "suggestion": "Use save_context to create a new context entry"
+                "suggestion": "Use save_context to create a new context entry",
             }
 
         # Update fields
@@ -510,15 +498,13 @@ class StateTools:
         return {
             "success": True,
             "message": f"Updated context: {args['namespace']}/{args['key']}",
-            "value": context.value
+            "value": context.value,
         }
 
     @staticmethod
     async def _delete_context(
-        db: AsyncSession,
-        user_id: str,
-        args: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        db: AsyncSession, user_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
         """Delete context."""
         user_uuid = uuid_lib.UUID(user_id)
 
@@ -528,7 +514,7 @@ class StateTools:
                 and_(
                     State.user_id == user_uuid,
                     State.namespace == args["namespace"],
-                    State.key == args["key"]
+                    State.key == args["key"],
                 )
             )
         )
@@ -542,19 +528,16 @@ class StateTools:
         await db.delete(context)
         await db.commit()
 
-        return {
-            "success": True,
-            "message": f"Deleted context: {args['namespace']}/{args['key']}"
-        }
+        return {"success": True, "message": f"Deleted context: {args['namespace']}/{args['key']}"}
 
     @staticmethod
     async def get_relevant_contexts(
         db: AsyncSession,
         user_id: str,
         agent_id: Optional[str] = None,
-                namespaces: Optional[List[str]] = None,
-        limit: int = 5
-    ) -> List[State]:
+        namespaces: Optional[list[str]] = None,
+        limit: int = 5,
+    ) -> list[State]:
         """
         Get relevant contexts for auto-injection into prompts.
 
@@ -573,14 +556,11 @@ class StateTools:
         # Build query
         query = select(State).where(
             and_(
-                or_(
-                    State.expires_at == None,
-                    State.expires_at > datetime.utcnow()
-                ),
+                or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
                 or_(
                     State.user_id == user_uuid,
-                    State.visibility == "shared"  # TODO: Add namespace permission check
-                )
+                    State.visibility == "shared",  # TODO: Add namespace permission check
+                ),
             )
         )
 

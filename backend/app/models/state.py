@@ -1,15 +1,17 @@
 """State store model for agent/function/workflow state management."""
-from sqlalchemy import String, Text, Boolean, ForeignKey, JSON, Float, Index
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from typing import Optional, List, Dict, Any
 import uuid as uuid_lib
 from datetime import datetime
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at, updated_at
+from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class State(Base):
     """Flexible key-value store for agent states, function states, workflow states, and preferences."""
+
     __tablename__ = "states"
 
     id: Mapped[uuid_pk]
@@ -20,7 +22,7 @@ class State(Base):
     # Core key-value structure
     namespace: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    value: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
     # Sharing control
     visibility: Mapped[str] = mapped_column(
@@ -30,7 +32,7 @@ class State(Base):
 
     # Metadata
     description: Mapped[Optional[str]] = mapped_column(Text)
-    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Ranking and lifecycle
     relevance_score: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
@@ -44,11 +46,7 @@ class State(Base):
 
     __table_args__ = (
         # Unique constraint: one key per user/namespace combination
-        Index(
-            "uq_state_user_namespace_key",
-            "user_id", "namespace", "key",
-            unique=True
-        ),
+        Index("uq_state_user_namespace_key", "user_id", "namespace", "key", unique=True),
         # Performance indexes
         Index("ix_states_namespace_visibility", "namespace", "visibility"),
         Index("ix_states_expires_at", "expires_at"),

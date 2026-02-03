@@ -1,18 +1,17 @@
-from sqlalchemy import String, Text, Boolean, JSON, DateTime, ForeignKey, UniqueConstraint, select
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional, Dict, Any
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Optional
 
-from .base import Base, uuid_pk, created_at
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from .base import Base, created_at, uuid_pk
 
 
 class ScheduledJob(Base):
     __tablename__ = "scheduled_jobs"
-    __table_args__ = (
-        UniqueConstraint('user_id', 'name', name='uix_schedule_user_name'),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uix_schedule_user_name"),)
 
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
@@ -22,7 +21,7 @@ class ScheduledJob(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     cron_expression: Mapped[str] = mapped_column(String(255), nullable=False)
     timezone: Mapped[str] = mapped_column(String(50), default="UTC", nullable=False)
-    input_data: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+    input_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -32,7 +31,9 @@ class ScheduledJob(Base):
     user: Mapped["User"] = relationship("User")
 
     @classmethod
-    async def get_by_name(cls, db: AsyncSession, name: str, user_id: Optional[uuid.UUID] = None) -> Optional["ScheduledJob"]:
+    async def get_by_name(
+        cls, db: AsyncSession, name: str, user_id: Optional[uuid.UUID] = None
+    ) -> Optional["ScheduledJob"]:
         """Get schedule by name, optionally filtered by user_id for ownership."""
         query = select(cls).where(cls.name == name, cls.is_active == True)
         if user_id is not None:

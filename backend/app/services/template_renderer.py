@@ -6,20 +6,20 @@ Used for:
 
 Security: Uses sandboxed Jinja2 environment with autoescape enabled.
 """
-from jinja2 import Environment, StrictUndefined, select_autoescape
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 
+from jinja2 import Environment, StrictUndefined, select_autoescape
 
 # Sandboxed Jinja2 environment for security
 _jinja_env = Environment(
     undefined=StrictUndefined,  # Fail on undefined variables
     autoescape=select_autoescape(default_for_string=True, default=True),  # XSS protection
     trim_blocks=True,
-    lstrip_blocks=True
+    lstrip_blocks=True,
 )
 
 
-def render_template(template_str: str, context: Dict[str, Any]) -> str:
+def render_template(template_str: str, context: dict[str, Any]) -> str:
     """
     Render a Jinja2 template with given context.
 
@@ -38,9 +38,8 @@ def render_template(template_str: str, context: Dict[str, Any]) -> str:
 
 
 def render_function_parameters(
-    function_params: Dict[str, Any],
-    context: Dict[str, Any]
-) -> Dict[str, Any]:
+    function_params: dict[str, Any], context: dict[str, Any]
+) -> dict[str, Any]:
     """
     Render function parameters, parsing Jinja2 templates in values.
 
@@ -68,8 +67,7 @@ def render_function_parameters(
         elif isinstance(value, list):
             # Render list items
             rendered[key] = [
-                render_template(item, context) if isinstance(item, str) else item
-                for item in value
+                render_template(item, context) if isinstance(item, str) else item for item in value
             ]
         else:
             # Pass through non-string values (int, float, bool, None)

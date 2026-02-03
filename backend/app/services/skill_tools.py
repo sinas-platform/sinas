@@ -1,8 +1,7 @@
 """Skill-to-tool converter for LLM tool calling."""
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.skill import Skill
@@ -14,10 +13,8 @@ class SkillToolConverter:
     """Converts skills to OpenAI tool format and manages retrieval."""
 
     async def get_available_skills(
-        self,
-        db: AsyncSession,
-        enabled_skills: Optional[List[Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
+        self, db: AsyncSession, enabled_skills: Optional[list[dict[str, Any]]] = None
+    ) -> list[dict[str, Any]]:
         """
         Get skills and convert to OpenAI tools format.
 
@@ -68,9 +65,7 @@ class SkillToolConverter:
         return tools
 
     async def get_preloaded_skills_content(
-        self,
-        db: AsyncSession,
-        enabled_skills: Optional[List[Dict[str, Any]]] = None
+        self, db: AsyncSession, enabled_skills: Optional[list[dict[str, Any]]] = None
     ) -> str:
         """
         Get content for preloaded skills to inject into system prompt.
@@ -119,7 +114,7 @@ class SkillToolConverter:
 
         return "\n\n---\n\n".join(contents)
 
-    def skill_to_tool(self, skill: Skill) -> Dict[str, Any]:
+    def skill_to_tool(self, skill: Skill) -> dict[str, Any]:
         """
         Convert a skill to OpenAI tool format.
 
@@ -141,19 +136,12 @@ class SkillToolConverter:
             "function": {
                 "name": safe_name,
                 "description": skill.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            }
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
         }
 
     async def handle_skill_tool_call(
-        self,
-        db: AsyncSession,
-        tool_name: str,
-        arguments: Dict[str, Any]
+        self, db: AsyncSession, tool_name: str, arguments: dict[str, Any]
     ) -> Optional[str]:
         """
         Handle a skill tool call by returning the skill's content.
@@ -173,7 +161,7 @@ class SkillToolConverter:
             return None
 
         # Remove prefix and split
-        skill_id = tool_name[len("get_skill_"):]
+        skill_id = tool_name[len("get_skill_") :]
         parts = skill_id.split("_", 1)
 
         if len(parts) != 2:
