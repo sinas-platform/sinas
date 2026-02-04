@@ -378,7 +378,7 @@ class APIClient {
   }
 
   async deleteRolePermission(roleName: string, permissionKey: string): Promise<void> {
-    await this.configClient.delete(`/roles/${roleName}/permissions/${permissionKey}`);
+    await this.configClient.delete(`/roles/${roleName}/permissions/${encodeURIComponent(permissionKey)}`);
   }
 
   // Users
