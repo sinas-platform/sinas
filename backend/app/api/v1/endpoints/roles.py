@@ -464,11 +464,11 @@ async def set_role_permission(
     return new_permission
 
 
-@router.delete("/{name}/permissions/{permission_key}")
+@router.delete("/{name}/permissions")
 async def delete_role_permission(
     request: Request,
     name: str,
-    permission_key: str,
+    permission_key: str = Query(..., description="Permission key to delete"),
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):

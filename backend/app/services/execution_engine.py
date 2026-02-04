@@ -174,14 +174,17 @@ class FunctionExecutor:
     async def load_function(
         self, db: AsyncSession, function_namespace: str, function_name: str, user_id: str
     ) -> Function:
-        """Load function from database with caching."""
-        cache_key = f"{user_id}:{function_namespace}:{function_name}"
+        """Load function from database with caching.
+
+        Note: No permission checks here - permissions should be validated at entry points
+        (agent tool execution, webhook validation, schedule authorization).
+        """
+        cache_key = f"{function_namespace}:{function_name}"
         if cache_key in self.functions_cache:
             return self.functions_cache[cache_key]
 
         result = await db.execute(
             select(Function).where(
-                Function.user_id == user_id,
                 Function.namespace == function_namespace,
                 Function.name == function_name,
                 Function.is_active == True,

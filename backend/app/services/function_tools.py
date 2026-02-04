@@ -10,6 +10,9 @@ from app.core.permissions import check_permission
 from app.models.function import Function
 from app.services.template_renderer import render_function_parameters
 
+from app.models.execution import TriggerType
+from app.services.execution_engine import FunctionExecutionError, executor
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +80,6 @@ class FunctionToolConverter:
                         )
                     except Exception as e:
                         # Log error but don't fail - just skip pre-filling
-                        import logging
 
                         logger = logging.getLogger(__name__)
                         logger.warning(
@@ -211,9 +213,6 @@ class FunctionToolConverter:
         # Prefilled params take precedence (handle None arguments as empty dict)
         final_input = {**(arguments or {}), **(prefilled_params or {})}
 
-        # Execute function directly via execution engine
-        from app.models.execution import TriggerType
-        from app.services.execution_engine import FunctionExecutionError, executor
 
         # Generate execution ID
         execution_id = str(uuid.uuid4())
