@@ -159,12 +159,22 @@ async def send_message(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    # Verify ownership - only the chat owner can send messages
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    # Data filtering: verify ownership (users can only send to their own chats)
     if str(chat.user_id) != user_id:
-        set_permission_used(http_request, "sinas.chats.write:own", has_perm=False)
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
         raise HTTPException(403, "Not authorized to send messages in this chat")
 
-    set_permission_used(http_request, "sinas.chats.write:own")
+    set_permission_used(http_request, agent_chat_perm)
 
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
@@ -208,12 +218,22 @@ async def stream_message(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    # Verify ownership - only the chat owner can send messages
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    # Data filtering: verify ownership (users can only send to their own chats)
     if str(chat.user_id) != user_id:
-        set_permission_used(http_request, "sinas.chats.write:own", has_perm=False)
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
         raise HTTPException(403, "Not authorized to send messages in this chat")
 
-    set_permission_used(http_request, "sinas.chats.write:own")
+    set_permission_used(http_request, agent_chat_perm)
 
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
@@ -323,12 +343,22 @@ async def approve_tool_call(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    # Verify ownership
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    # Data filtering: verify ownership (users can only approve in their own chats)
     if str(chat.user_id) != user_id:
-        set_permission_used(http_request, "sinas.chats.write:own", has_perm=False)
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
         raise HTTPException(403, "Not authorized to approve tools in this chat")
 
-    set_permission_used(http_request, "sinas.chats.write:own")
+    set_permission_used(http_request, agent_chat_perm)
 
     # Load pending approval
     result = await db.execute(
@@ -488,9 +518,9 @@ async def list_chats(
     current_user_data: tuple = Depends(get_current_user_with_permissions),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all chats for the current user."""
+    """List all chats for the current user. Always filtered by user ownership."""
     user_id, permissions = current_user_data
-    set_permission_used(request, "sinas.chats.get:own")
+    # No permission check needed - always filtered by user_id below
 
     # Subquery for last message timestamp
     last_message_subq = (
@@ -539,9 +569,8 @@ async def get_chat(
 ):
     """Get a chat with all messages."""
     user_id, permissions = current_user_data
-    set_permission_used(request, "sinas.chats.get:own")
 
-    # Get chat with user email
+    # Get chat with user email (filtered by user_id for data privacy)
     result = await db.execute(
         select(Chat, User.email)
         .join(User, Chat.user_id == User.id)
@@ -553,6 +582,18 @@ async def get_chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
 
     chat, user_email = row
+
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    set_permission_used(request, agent_chat_perm)
 
     # Get messages
     result = await db.execute(
@@ -588,13 +629,25 @@ async def update_chat(
 ):
     """Update a chat."""
     user_id, permissions = current_user_data
-    set_permission_used(http_request, "sinas.chats.put:own")
 
+    # Get chat (filtered by user_id for data privacy)
     result = await db.execute(select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id))
     chat = result.scalar_one_or_none()
 
     if not chat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    set_permission_used(http_request, agent_chat_perm)
 
     if request.title is not None:
         chat.title = request.title
@@ -635,13 +688,25 @@ async def delete_chat(
 ):
     """Delete a chat and all its messages."""
     user_id, permissions = current_user_data
-    set_permission_used(http_request, "sinas.chats.delete:own")
 
+    # Get chat (filtered by user_id for data privacy)
     result = await db.execute(select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id))
     chat = result.scalar_one_or_none()
 
     if not chat:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+
+    # Check agent chat permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    has_permission = check_permission(permissions, agent_chat_perm)
+
+    if not has_permission:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+
+    set_permission_used(http_request, agent_chat_perm)
 
     await db.delete(chat)
     await db.commit()

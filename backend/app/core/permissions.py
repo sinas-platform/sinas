@@ -261,11 +261,11 @@ DEFAULT_ROLE_PERMISSIONS = {
     "Users": {
         # Agents (namespaced: namespace/name)
         # Note: Chats are always linked to agents, permissions checked via agents
-        "sinas.agents.create:own": True,
-        "sinas.agents.read:own": True,
-        "sinas.agents.update:own": True,
-        "sinas.agents.delete:own": True,
-        "sinas.agents/*/*.chat:own": True,  # Chat with specific agents
+        "sinas.agents.create:own": True,  # Create agents (I own them)
+        "sinas.agents.read:all": True,  # Read all agents (discover available agents)
+        "sinas.agents.update:own": True,  # Update only MY agents
+        "sinas.agents.delete:own": True,  # Delete only MY agents
+        "sinas.agents/*/*.chat:all": True,  # Chat with ANY agent in any namespace
         # Functions (namespaced: namespace/name)
         "sinas.functions.create:own": True,
         "sinas.functions.read:own": True,
