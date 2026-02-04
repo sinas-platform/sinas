@@ -242,10 +242,10 @@ class PermissionMixin:
 
         Args:
             permissions: User's permission dictionary
-            action: Action being performed
+            action: Action being performed (e.g., "read", "execute", "update")
 
         Returns:
-            Set of namespace strings user can access
+            Set of namespace strings user can access for this specific action
         """
         accessible = set()
 
@@ -258,9 +258,19 @@ class PermissionMixin:
                 continue
 
             if perm_key.startswith(prefix):
-                # Extract namespace
-                # "sinas.functions/marketing/*.execute:all" -> "marketing"
+                # Extract action from permission to ensure it matches
+                # "sinas.functions/marketing/*.execute:all" -> action is "execute"
                 try:
+                    # Remove scope suffix (:all/:own)
+                    perm_without_scope = perm_key.split(":")[0]
+                    # Extract action (last part after final dot)
+                    perm_action = perm_without_scope.split(".")[-1]
+
+                    # Only include if action matches OR is wildcard
+                    if perm_action != action and perm_action != "*":
+                        continue
+
+                    # Extract namespace
                     after_prefix = perm_key[len(prefix) :]
                     namespace_part = after_prefix.split("/")[0]
 

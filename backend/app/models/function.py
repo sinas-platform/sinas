@@ -6,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
+from .mixins import PermissionMixin
 
 
-class Function(Base):
+class Function(Base, PermissionMixin):
     __tablename__ = "functions"
     __table_args__ = (UniqueConstraint("namespace", "name", name="uix_function_namespace_name"),)
 

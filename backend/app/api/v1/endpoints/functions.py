@@ -133,19 +133,17 @@ async def list_functions(
     """List functions (own or all based on permissions)."""
     user_id, permissions = current_user_data
 
-    # Build query based on permissions
-    if check_permission(permissions, "sinas.functions.read:all"):
-        set_permission_used(request, "sinas.functions.read:all")
-        # Admin - see all functions
-        query = select(Function)
-    else:
-        set_permission_used(request, "sinas.functions.read:own")
-        # Own functions only
-        query = select(Function).where(Function.user_id == user_id)
+    # Use mixin for permission-aware filtering
+    functions = await Function.list_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        skip=skip,
+        limit=limit,
+    )
 
-    query = query.offset(skip).limit(limit)
-    result = await db.execute(query)
-    functions = result.scalars().all()
+    set_permission_used(request, "sinas.functions.read")
 
     return [FunctionResponse.model_validate(f) for f in functions]
 
@@ -161,18 +159,17 @@ async def get_function(
     """Get a specific function."""
     user_id, permissions = current_user_data
 
-    function = await Function.get_by_name(db, namespace, name, user_id)
+    # Use mixin for permission-aware get
+    function = await Function.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        namespace=namespace,
+        name=name,
+    )
 
-    if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
-
-    # Check permissions
-    permission = f"sinas.functions/{namespace}/{name}.read:own"
-    if check_permission(permissions, permission):
-        set_permission_used(request, permission)
-    else:
-        set_permission_used(request, permission, has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to view this function")
+    set_permission_used(request, f"sinas.functions/{namespace}/{name}.read")
 
     return FunctionResponse.model_validate(function)
 
@@ -189,18 +186,17 @@ async def update_function(
     """Update a function."""
     user_id, permissions = current_user_data
 
-    function = await Function.get_by_name(db, namespace, name, user_id)
+    # Use mixin for permission-aware get
+    function = await Function.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="update",
+        namespace=namespace,
+        name=name,
+    )
 
-    if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
-
-    # Check permissions
-    permission = f"sinas.functions/{namespace}/{name}.update:own"
-    if check_permission(permissions, permission):
-        set_permission_used(request, permission)
-    else:
-        set_permission_used(request, permission, has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to update this function")
+    set_permission_used(request, f"sinas.functions/{namespace}/{name}.update")
 
     # Check shared_pool permission (admin-only) if trying to enable it
     if function_data.shared_pool is not None and function_data.shared_pool:
@@ -299,18 +295,17 @@ async def delete_function(
     """Delete a function."""
     user_id, permissions = current_user_data
 
-    function = await Function.get_by_name(db, namespace, name, user_id)
+    # Use mixin for permission-aware get
+    function = await Function.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="delete",
+        namespace=namespace,
+        name=name,
+    )
 
-    if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{namespace}/{name}' not found")
-
-    # Check permissions
-    permission = f"sinas.functions/{namespace}/{name}.delete:own"
-    if check_permission(permissions, permission):
-        set_permission_used(request, permission)
-    else:
-        set_permission_used(request, permission, has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to delete this function")
+    set_permission_used(request, f"sinas.functions/{namespace}/{name}.delete")
 
     await db.delete(function)
     await db.commit()
