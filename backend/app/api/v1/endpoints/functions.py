@@ -11,6 +11,7 @@ from app.core.permissions import check_permission
 from app.models.function import Function, FunctionVersion
 from app.models.package import InstalledPackage
 from app.schemas import FunctionCreate, FunctionResponse, FunctionUpdate, FunctionVersionResponse
+from app.services.execution_engine import executor
 
 router = APIRouter(prefix="/functions", tags=["functions"])
 
@@ -281,6 +282,9 @@ async def update_function(
     await db.commit()
     await db.refresh(function)
 
+    # Clear execution engine cache to ensure updated code is used
+    executor.clear_cache()
+
     return FunctionResponse.model_validate(function)
 
 
@@ -309,6 +313,9 @@ async def delete_function(
 
     await db.delete(function)
     await db.commit()
+
+    # Clear execution engine cache
+    executor.clear_cache()
 
     return {"message": f"Function '{namespace}/{name}' deleted successfully"}
 
@@ -377,7 +384,6 @@ async def execute_function(
     from app.core.auth import create_access_token
     from app.models.execution import TriggerType
     from app.models.user import User
-    from app.services.execution_engine import executor
 
     # Get user info for context
     user_result = await db.execute(select(User).where(User.id == user_id))

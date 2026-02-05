@@ -307,7 +307,7 @@ class UserContainerManager:
 import sys
 import json
 import time
-payload = {json.dumps(payload)}
+payload = json.loads({json.dumps(json.dumps(payload))})
 # Write execution request
 with open("/tmp/exec_request.json", "w") as f:
     json.dump(payload, f)
@@ -445,7 +445,7 @@ sys.exit(1)
                     f"""
 import sys
 import json
-payload = {json.dumps(payload)}
+payload = json.loads({json.dumps(json.dumps(payload))})
 # Write execution request
 with open("/tmp/exec_request.json", "w") as f:
     json.dump(payload, f)
