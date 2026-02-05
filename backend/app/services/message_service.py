@@ -1296,26 +1296,54 @@ class MessageService:
                     # Default: execute as function tool
                     start_time = time.time()
                     print(f"⏱️  [TIMING] Starting function execution: {tool_name}")
-                    # Extract prefilled params from tool metadata (if available)
-                    prefilled_params = {}
+
+                    # SECURITY: Validate tool is in the approved tools list
+                    tool_found = False
+                    locked_params = {}
+                    overridable_params = {}
+
                     for tool in tools:
                         if tool.get("function", {}).get("name") == tool_name:
-                            prefilled_params = (
-                                tool.get("function", {})
-                                .get("_metadata", {})
-                                .get("prefilled_params", {})
-                            )
+                            tool_found = True
+                            # Extract locked and overridable params from metadata
+                            metadata = tool.get("function", {}).get("_metadata", {})
+                            locked_params = metadata.get("locked_params", {})
+                            overridable_params = metadata.get("overridable_params", {})
                             break
 
-                    result = await self.function_converter.execute_function_tool(
-                        db=self.db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        user_token=user_token,
-                        chat_id=str(chat_id),
-                        prefilled_params=prefilled_params,
-                    )
+                    if not tool_found:
+                        # SECURITY: Tool not in approved list - reject execution
+                        logger.warning(
+                            f"Security: Tool '{tool_name}' was not in approved tools list. "
+                            f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
+                        )
+                        result = {
+                            "error": "Unauthorized tool call",
+                            "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
+                        }
+                    else:
+                        # Get enabled functions list from agent for validation
+                        enabled_function_list = []
+                        if chat and chat.agent_id:
+                            result_agent = await self.db.execute(
+                                select(Agent).where(Agent.id == chat.agent_id)
+                            )
+                            chat_agent = result_agent.scalar_one_or_none()
+                            if chat_agent:
+                                enabled_function_list = chat_agent.enabled_functions or []
+
+                        result = await self.function_converter.execute_function_tool(
+                            db=self.db,
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            user_id=user_id,
+                            user_token=user_token,
+                            chat_id=str(chat_id),
+                            locked_params=locked_params,
+                            overridable_params=overridable_params,
+                            enabled_functions=enabled_function_list,
+                        )
+
                     elapsed = time.time() - start_time
                     print(
                         f"⏱️  [TIMING] Function execution completed in {elapsed:.3f}s: {tool_name}"

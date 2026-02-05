@@ -648,17 +648,24 @@ export function AgentDetail() {
                               {/* Parameter Configuration */}
                               {isEnabled && isExpanded && hasParameters && (
                                 <div className="mt-3 space-y-3 pl-4 border-l-2 border-primary-200">
-                                  <p className="text-xs text-gray-500 italic">
-                                    Tip: Use Jinja2 templates like {'{{'} variable_name {'}}'}  to reference agent input variables
-                                  </p>
+                                  <div className="text-xs text-gray-500 italic space-y-1 mb-2">
+                                    <p>Tip: Use Jinja2 templates like {'{{'} variable_name {'}}'}  to reference agent input variables</p>
+                                    <p>Locked parameters are hidden from the LLM and cannot be overridden (useful for API keys, sender emails, etc.)</p>
+                                    <p>Unlocked parameters are shown to the LLM as defaults and can be overridden</p>
+                                  </div>
                                   {Object.entries(properties).map(([paramName, paramDef]: [string, any]) => {
                                     const currentParams = formData.function_parameters || agent.function_parameters || {};
                                     const funcParams = currentParams[funcIdentifier] || {};
-                                    const paramValue = funcParams[paramName] || '';
+                                    const paramConfig = funcParams[paramName];
+
+                                    // Support both legacy format (string) and new format ({value, locked})
+                                    const isNewFormat = paramConfig && typeof paramConfig === 'object' && 'value' in paramConfig;
+                                    const paramValue = isNewFormat ? paramConfig.value : (paramConfig || '');
+                                    const isLocked = isNewFormat ? (paramConfig.locked ?? false) : false;
 
                                     return (
-                                      <div key={paramName}>
-                                        <label className="block text-xs font-medium text-gray-700 mb-1">
+                                      <div key={paramName} className="space-y-1">
+                                        <label className="block text-xs font-medium text-gray-700">
                                           {paramName}
                                           {paramDef.type && (
                                             <span className="ml-1 text-gray-500">({paramDef.type})</span>
@@ -673,7 +680,11 @@ export function AgentDetail() {
                                               newFunctionParams[funcIdentifier] = {};
                                             }
                                             if (e.target.value) {
-                                              newFunctionParams[funcIdentifier][paramName] = e.target.value;
+                                              // Preserve locked status if using new format
+                                              newFunctionParams[funcIdentifier][paramName] = {
+                                                value: e.target.value,
+                                                locked: isLocked
+                                              };
                                             } else {
                                               delete newFunctionParams[funcIdentifier][paramName];
                                               if (Object.keys(newFunctionParams[funcIdentifier]).length === 0) {
@@ -685,6 +696,34 @@ export function AgentDetail() {
                                           placeholder={paramDef.description || `Default value for ${paramName}`}
                                           className="input text-xs font-mono"
                                         />
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={isLocked}
+                                            onChange={(e) => {
+                                              const newFunctionParams = { ...formData.function_parameters || agent.function_parameters || {} };
+                                              if (!newFunctionParams[funcIdentifier]) {
+                                                newFunctionParams[funcIdentifier] = {};
+                                              }
+                                              if (paramValue || e.target.checked) {
+                                                newFunctionParams[funcIdentifier][paramName] = {
+                                                  value: paramValue,
+                                                  locked: e.target.checked
+                                                };
+                                              } else {
+                                                delete newFunctionParams[funcIdentifier][paramName];
+                                                if (Object.keys(newFunctionParams[funcIdentifier]).length === 0) {
+                                                  delete newFunctionParams[funcIdentifier];
+                                                }
+                                              }
+                                              setFormData({ ...formData, function_parameters: newFunctionParams });
+                                            }}
+                                            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                          />
+                                          <span className="text-xs text-gray-600">
+                                            Locked
+                                          </span>
+                                        </label>
                                         {paramDef.description && (
                                           <p className="text-xs text-gray-500 mt-0.5">{paramDef.description}</p>
                                         )}

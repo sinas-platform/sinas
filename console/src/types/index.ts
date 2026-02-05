@@ -152,6 +152,16 @@ export interface EnabledSkillConfig {
   preload: boolean;  // If true, inject into system prompt instead of exposing as tool
 }
 
+// Function parameter configuration (supports both legacy and new format)
+export type FunctionParameterValue =
+  | string  // Legacy format: simple string value (treated as overridable)
+  | {       // New format: object with value and locked flag
+      value: string;
+      locked: boolean;  // If true, hidden from LLM and cannot be overridden
+    };
+
+export type FunctionParameters = Record<string, Record<string, FunctionParameterValue>>;
+
 // Agents
 export interface Agent {
   id: string;
@@ -171,7 +181,7 @@ export interface Agent {
   enabled_mcp_tools: string[];
   enabled_agents: string[];
   enabled_skills: EnabledSkillConfig[];
-  function_parameters: Record<string, any>;
+  function_parameters: FunctionParameters;
   mcp_tool_parameters: Record<string, any>;
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
@@ -196,7 +206,7 @@ export interface AgentCreate {
   enabled_mcp_tools?: string[];
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
-  function_parameters?: Record<string, any>;
+  function_parameters?: FunctionParameters;
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
@@ -218,7 +228,7 @@ export interface AgentUpdate {
   enabled_mcp_tools?: string[];
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
-  function_parameters?: Record<string, any>;
+  function_parameters?: FunctionParameters;
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
