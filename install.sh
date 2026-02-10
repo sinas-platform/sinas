@@ -14,9 +14,18 @@ echo "║     SINAS Core Platform Installer      ║"
 echo "╚════════════════════════════════════════╝"
 echo -e "${NC}"
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-   echo -e "${RED}This script must be run as root (use sudo)${NC}"
+# Detect OS
+OS_TYPE="unknown"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS_TYPE="macos"
+    echo -e "${YELLOW}Detected macOS - skipping systemctl and package manager commands${NC}"
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    OS_TYPE="linux"
+fi
+
+# Check if running as root (Linux only)
+if [[ "$OS_TYPE" == "linux" ]] && [[ $EUID -ne 0 ]]; then
+   echo -e "${RED}This script must be run as root on Linux (use sudo)${NC}"
    exit 1
 fi
 
@@ -25,36 +34,50 @@ echo -e "${YELLOW}Checking prerequisites...${NC}"
 
 # Check Docker
 if ! command -v docker &> /dev/null; then
-    echo -e "${YELLOW}Docker not found. Installing...${NC}"
-    curl -fsSL https://get.docker.com | sh
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "${RED}Docker not found. Please install Docker Desktop for Mac:${NC}"
+        echo -e "${YELLOW}https://www.docker.com/products/docker-desktop/${NC}"
+        exit 1
+    else
+        echo -e "${YELLOW}Docker not found. Installing...${NC}"
+        curl -fsSL https://get.docker.com | sh
 
-    # Start and enable Docker service
-    systemctl start docker
-    systemctl enable docker
+        # Start and enable Docker service (Linux only)
+        systemctl start docker
+        systemctl enable docker
 
-    # Wait for Docker to be ready
-    echo -e "${YELLOW}Waiting for Docker to initialize...${NC}"
-    sleep 3
+        # Wait for Docker to be ready
+        echo -e "${YELLOW}Waiting for Docker to initialize...${NC}"
+        sleep 3
 
-    echo -e "${GREEN}✓ Docker installed and started${NC}"
+        echo -e "${GREEN}✓ Docker installed and started${NC}"
+    fi
 else
     echo -e "${GREEN}✓ Docker found${NC}"
 
-    # Ensure Docker is running
-    if ! systemctl is-active --quiet docker; then
-        echo -e "${YELLOW}Starting Docker service...${NC}"
-        systemctl start docker
-        systemctl enable docker
-        echo -e "${GREEN}✓ Docker service started${NC}"
+    # Ensure Docker is running (Linux only)
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        if ! systemctl is-active --quiet docker; then
+            echo -e "${YELLOW}Starting Docker service...${NC}"
+            systemctl start docker
+            systemctl enable docker
+            echo -e "${GREEN}✓ Docker service started${NC}"
+        fi
     fi
 fi
 
 # Check Docker Compose
 if ! docker compose version &> /dev/null; then
-    echo -e "${YELLOW}Docker Compose not found. Installing...${NC}"
-    apt-get update
-    apt-get install -y docker-compose-plugin
-    echo -e "${GREEN}✓ Docker Compose installed${NC}"
+    if [[ "$OS_TYPE" == "macos" ]]; then
+        echo -e "${RED}Docker Compose not found. Please ensure Docker Desktop is installed:${NC}"
+        echo -e "${YELLOW}https://www.docker.com/products/docker-desktop/${NC}"
+        exit 1
+    else
+        echo -e "${YELLOW}Docker Compose not found. Installing...${NC}"
+        apt-get update
+        apt-get install -y docker-compose-plugin
+        echo -e "${GREEN}✓ Docker Compose installed${NC}"
+    fi
 else
     echo -e "${GREEN}✓ Docker Compose found${NC}"
 fi
@@ -72,7 +95,9 @@ ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Ferne
 
 if [ -z "$ENCRYPTION_KEY" ]; then
     echo -e "${YELLOW}Installing cryptography for key generation...${NC}"
-    apt-get install -y python3-pip
+    if [[ "$OS_TYPE" == "linux" ]]; then
+        apt-get install -y python3-pip
+    fi
     pip3 install cryptography
     ENCRYPTION_KEY=$(python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
 fi
@@ -181,29 +206,31 @@ EOF
 
 echo -e "${GREEN}✓ .env file created${NC}"
 
-# Setup firewall (optional)
-echo ""
-read -p "Configure firewall (UFW)? [Y/n]: " SETUP_FIREWALL
-SETUP_FIREWALL=${SETUP_FIREWALL:-Y}
+# Setup firewall (optional, Linux only)
+if [[ "$OS_TYPE" == "linux" ]]; then
+    echo ""
+    read -p "Configure firewall (UFW)? [Y/n]: " SETUP_FIREWALL
+    SETUP_FIREWALL=${SETUP_FIREWALL:-Y}
 
-if [[ "$SETUP_FIREWALL" =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}Configuring firewall...${NC}"
+    if [[ "$SETUP_FIREWALL" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}Configuring firewall...${NC}"
 
-    # Check if UFW is installed
-    if ! command -v ufw &> /dev/null; then
-        apt-get install -y ufw
+        # Check if UFW is installed
+        if ! command -v ufw &> /dev/null; then
+            apt-get install -y ufw
+        fi
+
+        # Configure UFW
+        ufw --force reset
+        ufw default deny incoming
+        ufw default allow outgoing
+        ufw allow 22/tcp   # SSH
+        ufw allow 80/tcp   # HTTP
+        ufw allow 443/tcp  # HTTPS
+        ufw --force enable
+
+        echo -e "${GREEN}✓ Firewall configured${NC}"
     fi
-
-    # Configure UFW
-    ufw --force reset
-    ufw default deny incoming
-    ufw default allow outgoing
-    ufw allow 22/tcp   # SSH
-    ufw allow 80/tcp   # HTTP
-    ufw allow 443/tcp  # HTTPS
-    ufw --force enable
-
-    echo -e "${GREEN}✓ Firewall configured${NC}"
 fi
 
 # Start services
@@ -217,7 +244,11 @@ if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
     # Verify Docker is running before starting services
     if ! docker info &> /dev/null; then
         echo -e "${RED}Error: Docker daemon is not running${NC}"
-        echo -e "${YELLOW}Try running: systemctl start docker${NC}"
+        if [[ "$OS_TYPE" == "macos" ]]; then
+            echo -e "${YELLOW}Please start Docker Desktop${NC}"
+        else
+            echo -e "${YELLOW}Try running: systemctl start docker${NC}"
+        fi
         exit 1
     fi
 
