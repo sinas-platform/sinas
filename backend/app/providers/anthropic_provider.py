@@ -30,7 +30,7 @@ class AnthropicProvider(BaseLLMProvider):
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature,
+            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,  # Anthropic requires max_tokens
         }
 
@@ -85,7 +85,7 @@ class AnthropicProvider(BaseLLMProvider):
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature,
+            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,
         }
 
@@ -146,6 +146,11 @@ class AnthropicProvider(BaseLLMProvider):
     ) -> tuple[Optional[str], list[dict[str, Any]]]:
         """Convert OpenAI-style messages to Anthropic format.
 
+        Anthropic requires:
+        - Strict user/assistant alternation
+        - First message must be user
+        - No consecutive same-role messages
+
         Returns:
             Tuple of (system_message, converted_messages)
         """
@@ -164,7 +169,7 @@ class AnthropicProvider(BaseLLMProvider):
 
             # Convert tool role to user with tool_result content
             if role == "tool":
-                converted_messages.append({
+                new_msg = {
                     "role": "user",
                     "content": [
                         {
@@ -173,7 +178,8 @@ class AnthropicProvider(BaseLLMProvider):
                             "content": msg.get("content", ""),
                         }
                     ],
-                })
+                }
+                converted_messages.append(new_msg)
                 continue
 
             # Convert assistant messages with tool_calls
@@ -210,15 +216,49 @@ class AnthropicProvider(BaseLLMProvider):
             if role in ["user", "assistant"]:
                 content = msg.get("content")
 
+                # Skip empty messages
+                if not content:
+                    continue
+
                 # Handle multimodal content (list of content blocks)
                 if isinstance(content, list):
-                    converted_messages.append({"role": role, "content": content})
+                    new_msg = {"role": role, "content": content}
                 else:
                     # Plain text content
-                    converted_messages.append({"role": role, "content": content or ""})
+                    new_msg = {"role": role, "content": content}
+
+                converted_messages.append(new_msg)
                 continue
 
-        return system_message, converted_messages
+        # Merge consecutive messages with same role (Anthropic requires alternation)
+        merged_messages = []
+        for msg in converted_messages:
+            if merged_messages and merged_messages[-1]["role"] == msg["role"]:
+                # Merge with previous message
+                prev_content = merged_messages[-1]["content"]
+                curr_content = msg["content"]
+
+                # Convert both to list format for merging
+                if isinstance(prev_content, str):
+                    prev_content = [{"type": "text", "text": prev_content}]
+                elif not isinstance(prev_content, list):
+                    prev_content = [{"type": "text", "text": str(prev_content)}]
+
+                if isinstance(curr_content, str):
+                    curr_content = [{"type": "text", "text": curr_content}]
+                elif not isinstance(curr_content, list):
+                    curr_content = [{"type": "text", "text": str(curr_content)}]
+
+                # Merge content blocks
+                merged_messages[-1]["content"] = prev_content + curr_content
+            else:
+                merged_messages.append(msg)
+
+        # Ensure first message is user (Anthropic requirement)
+        if merged_messages and merged_messages[0]["role"] != "user":
+            merged_messages.insert(0, {"role": "user", "content": "Continue the conversation."})
+
+        return system_message, merged_messages
 
     def _convert_tools_to_anthropic(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert OpenAI tool format to Anthropic format."""
