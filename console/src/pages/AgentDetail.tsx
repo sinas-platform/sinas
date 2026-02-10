@@ -252,9 +252,9 @@ export function AgentDetail() {
                 </label>
                 <select
                   id="llm_provider_id"
-                  value={formData.llm_provider_id ?? agent.llm_provider_id ?? ''}
+                  value={formData.llm_provider_id !== undefined ? formData.llm_provider_id ?? '' : agent.llm_provider_id ?? ''}
                   onChange={(e) => {
-                    const providerId = e.target.value || undefined;
+                    const providerId = e.target.value || null;
                     setFormData({
                       ...formData,
                       llm_provider_id: providerId,
