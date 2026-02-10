@@ -11,7 +11,7 @@ import { ChatDetail } from './pages/ChatDetail';
 import { Agents } from './pages/Agents';
 import { AgentDetail } from './pages/AgentDetail';
 import { MCPServers } from './pages/MCPServers';
-import { UsersNew as Users } from './pages/UsersNew';
+import { Users } from './pages/Users';
 import { APIKeys } from './pages/APIKeys';
 import { Functions } from './pages/Functions';
 import { FunctionEditor } from './pages/FunctionEditor';
