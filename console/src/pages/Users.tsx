@@ -5,7 +5,7 @@ import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus } 
 
 type Tab = 'users' | 'roles';
 
-export function UsersNew() {
+export function Users() {
   const [activeTab, setActiveTab] = useState<Tab>('users');
 
   return (
