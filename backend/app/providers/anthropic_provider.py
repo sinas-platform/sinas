@@ -24,14 +24,8 @@ class AnthropicProvider(BaseLLMProvider):
         **kwargs,
     ) -> dict[str, Any]:
         """Generate a completion using Anthropic API."""
-        # Extract system message (Anthropic uses separate system parameter)
-        system_message = None
-        filtered_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_message = msg["content"]
-            else:
-                filtered_messages.append(msg)
+        # Convert OpenAI-style messages to Anthropic format
+        system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
         params = {
             "model": model,
@@ -85,14 +79,8 @@ class AnthropicProvider(BaseLLMProvider):
         **kwargs,
     ) -> AsyncIterator[dict[str, Any]]:
         """Generate a streaming completion using Anthropic API."""
-        # Extract system message
-        system_message = None
-        filtered_messages = []
-        for msg in messages:
-            if msg["role"] == "system":
-                system_message = msg["content"]
-            else:
-                filtered_messages.append(msg)
+        # Convert OpenAI-style messages to Anthropic format
+        system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
         params = {
             "model": model,
@@ -152,6 +140,85 @@ class AnthropicProvider(BaseLLMProvider):
                     chunk_data["finish_reason"] = "stop"
 
                 yield chunk_data
+
+    def _convert_messages_to_anthropic(
+        self, messages: list[dict[str, Any]]
+    ) -> tuple[Optional[str], list[dict[str, Any]]]:
+        """Convert OpenAI-style messages to Anthropic format.
+
+        Returns:
+            Tuple of (system_message, converted_messages)
+        """
+        import json
+
+        system_message = None
+        converted_messages = []
+
+        for msg in messages:
+            role = msg.get("role")
+
+            # Extract system message
+            if role == "system":
+                system_message = msg["content"]
+                continue
+
+            # Convert tool role to user with tool_result content
+            if role == "tool":
+                converted_messages.append({
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": msg.get("tool_call_id"),
+                            "content": msg.get("content", ""),
+                        }
+                    ],
+                })
+                continue
+
+            # Convert assistant messages with tool_calls
+            if role == "assistant" and msg.get("tool_calls"):
+                content_blocks = []
+
+                # Add text content if present
+                if msg.get("content"):
+                    content_blocks.append({"type": "text", "text": msg["content"]})
+
+                # Add tool_use blocks
+                for tool_call in msg["tool_calls"]:
+                    function = tool_call.get("function", {})
+                    arguments = function.get("arguments", "{}")
+
+                    # Parse arguments if string
+                    if isinstance(arguments, str):
+                        try:
+                            arguments = json.loads(arguments)
+                        except json.JSONDecodeError:
+                            arguments = {}
+
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tool_call.get("id"),
+                        "name": function.get("name"),
+                        "input": arguments,
+                    })
+
+                converted_messages.append({"role": "assistant", "content": content_blocks})
+                continue
+
+            # Handle regular user/assistant messages
+            if role in ["user", "assistant"]:
+                content = msg.get("content")
+
+                # Handle multimodal content (list of content blocks)
+                if isinstance(content, list):
+                    converted_messages.append({"role": role, "content": content})
+                else:
+                    # Plain text content
+                    converted_messages.append({"role": role, "content": content or ""})
+                continue
+
+        return system_message, converted_messages
 
     def _convert_tools_to_anthropic(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert OpenAI tool format to Anthropic format."""
