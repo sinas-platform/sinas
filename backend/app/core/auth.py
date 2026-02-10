@@ -743,8 +743,8 @@ async def initialize_superadmin(db: AsyncSession):
     existing_membership = result.scalar_one_or_none()
 
     if not existing_membership:
-        # Add user to Admins group
-        membership = UserRole(role_id=admins_role.id, user_id=user.id, role="admin", active=True)
+        # Add user to Admins role
+        membership = UserRole(role_id=admins_role.id, user_id=user.id, active=True)
         db.add(membership)
         await db.commit()
 
