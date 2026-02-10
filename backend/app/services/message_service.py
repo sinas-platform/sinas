@@ -109,6 +109,8 @@ class MessageService:
         chat = Chat(
             user_id=user_id,
             agent_id=agent_id,
+            agent_namespace=agent.namespace,
+            agent_name=agent.name,
             title=name or f"Chat with {agent.name}",
             chat_metadata={"agent_input": input_data} if input_data else None,
         )
