@@ -24,6 +24,7 @@ class APIKeyResponse(BaseModel):
 
     id: uuid.UUID
     user_id: uuid.UUID
+    user_email: Optional[str] = None  # Owner's email (only shown to admins with :all scope)
     name: str
     key_prefix: str  # e.g., "sk-abc..."
     permissions: dict[str, bool]

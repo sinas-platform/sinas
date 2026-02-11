@@ -9,9 +9,10 @@ export function APIKeys() {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createdKey, setCreatedKey] = useState<{ id: string; api_key: string } | null>(null);
+  const [createdKey, setCreatedKey] = useState<{ id: string; key: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [customPermission, setCustomPermission] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
   const [formData, setFormData] = useState<APIKeyCreate>({
     name: '',
     permissions: {},
@@ -23,11 +24,31 @@ export function APIKeys() {
     retry: false,
   });
 
+  const filteredApiKeys = apiKeys?.filter(key => showInactive || key.is_active);
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-GB'); // European format (dd/MM/yyyy)
+  };
+
+  const isExpired = (dateString: string | null) => {
+    if (!dateString) return false;
+    return new Date(dateString) < new Date();
+  };
+
+  const isExpiringSoon = (dateString: string | null) => {
+    if (!dateString) return false;
+    const expiryDate = new Date(dateString);
+    const now = new Date();
+    const daysUntilExpiry = (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+    return daysUntilExpiry > 0 && daysUntilExpiry <= 7;
+  };
+
   const createMutation = useMutation({
     mutationFn: (data: APIKeyCreate) => apiClient.createAPIKey(data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
-      setCreatedKey({ id: data.id, api_key: data.api_key });
+      setCreatedKey({ id: data.id, key: data.key });
       setShowCreateModal(false);
       setFormData({ name: '', permissions: {} });
     },
@@ -156,41 +177,65 @@ export function APIKeys() {
           <h1 className="text-3xl font-bold text-gray-900">API Keys</h1>
           <p className="text-gray-600 mt-1">Manage your API keys for programmatic access</p>
         </div>
-        <button
-          onClick={() => setShowCreateModal(true)}
-          className="btn btn-primary flex items-center"
-        >
-          <Plus className="w-5 h-5 mr-2" />
-          Create API Key
-        </button>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+            />
+            Show inactive
+          </label>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="btn btn-primary flex items-center"
+          >
+            <Plus className="w-5 h-5 mr-2" />
+            Create API Key
+          </button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
         </div>
-      ) : apiKeys && apiKeys.length > 0 ? (
+      ) : filteredApiKeys && filteredApiKeys.length > 0 ? (
         <div className="grid gap-4">
-          {apiKeys.map((key) => (
+          {filteredApiKeys.map((key) => (
             <div key={key.id} className="card">
               <div className="flex items-start justify-between">
                 <div className="flex items-start flex-1">
                   <Key className="w-6 h-6 text-primary-600 mr-3 flex-shrink-0 mt-1" />
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-gray-900">{key.name}</h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-gray-900">{key.name}</h3>
+                      {key.user_email && (
+                        <span className="text-xs text-gray-500">({key.user_email})</span>
+                      )}
+                    </div>
                     <p className="text-sm text-gray-600 font-mono mt-1">{key.key_prefix}***</p>
                     <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                      <span>Created: {new Date(key.created_at).toLocaleDateString()}</span>
+                      <span>Created: {formatDate(key.created_at)}</span>
                       {key.last_used_at && (
                         <>
                           <span className="text-gray-300">•</span>
-                          <span>Last used: {new Date(key.last_used_at).toLocaleDateString()}</span>
+                          <span>Last used: {formatDate(key.last_used_at)}</span>
                         </>
                       )}
                       {key.expires_at && (
                         <>
                           <span className="text-gray-300">•</span>
-                          <span>Expires: {new Date(key.expires_at).toLocaleDateString()}</span>
+                          <span className={
+                            isExpired(key.expires_at)
+                              ? 'text-red-600 font-medium'
+                              : isExpiringSoon(key.expires_at)
+                              ? 'text-orange-600 font-medium'
+                              : ''
+                          }>
+                            {isExpired(key.expires_at) ? 'Expired: ' : 'Expires: '}{formatDate(key.expires_at)}
+                          </span>
                         </>
                       )}
                     </div>
@@ -218,6 +263,16 @@ export function APIKeys() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 ml-4">
+                  {isExpired(key.expires_at) && (
+                    <span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap bg-red-100 text-red-800">
+                      Expired
+                    </span>
+                  )}
+                  {isExpiringSoon(key.expires_at) && !isExpired(key.expires_at) && (
+                    <span className="px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap bg-orange-100 text-orange-800">
+                      Expiring Soon
+                    </span>
+                  )}
                   <span
                     className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
                       key.is_active
@@ -243,6 +298,14 @@ export function APIKeys() {
               </div>
             </div>
           ))}
+        </div>
+      ) : apiKeys && apiKeys.length > 0 ? (
+        <div className="text-center py-12 card">
+          <Key className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No active API keys</h3>
+          <p className="text-gray-600 mb-4">
+            {showInactive ? 'All API keys are filtered out' : 'Enable "Show inactive" to see inactive keys'}
+          </p>
         </div>
       ) : (
         <div className="text-center py-12 card">
@@ -300,6 +363,23 @@ export function APIKeys() {
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   A descriptive name to identify this API key
+                </p>
+              </div>
+
+              <div>
+                <label htmlFor="expires_at" className="block text-sm font-medium text-gray-700 mb-2">
+                  Expiry Date (Optional)
+                </label>
+                <input
+                  id="expires_at"
+                  type="date"
+                  value={formData.expires_at || ''}
+                  onChange={(e) => setFormData({ ...formData, expires_at: e.target.value || undefined })}
+                  min={new Date().toISOString().split('T')[0]}
+                  className="input"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Leave empty for no expiration. Key will be automatically revoked after this date.
                 </p>
               </div>
 
@@ -446,14 +526,14 @@ export function APIKeys() {
               <label className="block text-xs font-medium text-gray-700 mb-2">Your API Key</label>
               <div className="flex items-center gap-2">
                 <code className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded text-sm font-mono break-all">
-                  {createdKey.api_key}
+                  {createdKey.key}
                 </code>
                 <button
-                  onClick={() => handleCopyKey(createdKey.api_key)}
+                  onClick={() => handleCopyKey(createdKey.key)}
                   className="btn btn-secondary flex-shrink-0"
                   title="Copy to clipboard"
                 >
-                  {copiedKey === createdKey.api_key ? (
+                  {copiedKey === createdKey.key ? (
                     <Check className="w-5 h-5 text-green-600" />
                   ) : (
                     <Copy className="w-5 h-5" />

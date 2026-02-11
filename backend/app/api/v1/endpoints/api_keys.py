@@ -66,17 +66,51 @@ async def list_api_keys(
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
-    List all API keys for the current user.
+    List all API keys accessible to the user.
+
+    - Users with :own scope see their own keys
+    - Users with :all scope see all keys
     """
     user_id, permissions = current_user_data
-    set_permission_used(http_request, "sinas.api_keys.read:own")
 
-    result = await db.execute(
-        select(APIKey).where(APIKey.user_id == user_id).order_by(APIKey.created_at.desc())
+    # Use PermissionMixin for permission-aware filtering
+    from sqlalchemy.orm import selectinload
+
+    api_keys = await APIKey.list_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        additional_filters=None,
+        skip=0,
+        limit=1000,
     )
-    api_keys = result.scalars().all()
 
-    return [APIKeyResponse.model_validate(key) for key in api_keys]
+    # Eagerly load user relationship for all keys
+    key_ids = [key.id for key in api_keys]
+    if key_ids:
+        result = await db.execute(
+            select(APIKey).where(APIKey.id.in_(key_ids)).options(selectinload(APIKey.user))
+        )
+        loaded_keys = {str(k.id): k for k in result.scalars().all()}
+        # Replace keys with loaded versions that have user relationship
+        api_keys = [loaded_keys[str(k.id)] for k in api_keys if str(k.id) in loaded_keys]
+
+    set_permission_used(http_request, "sinas.api_keys.read")
+
+    # Sort by created_at desc
+    api_keys_sorted = sorted(api_keys, key=lambda k: k.created_at, reverse=True)
+
+    # Build response with user email for admins
+    responses = []
+    for key in api_keys_sorted:
+        response_data = APIKeyResponse.model_validate(key).model_dump()
+        # Add user email if viewing with :all scope (admin)
+        if key.user:
+            response_data["user_email"] = key.user.email
+        responses.append(APIKeyResponse(**response_data))
+
+    return responses
 
 
 @router.get("/api-keys/{key_id}", response_model=APIKeyResponse)
@@ -87,15 +121,23 @@ async def get_api_key(
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
-    Get details of a specific API key.
+    Get details of a specific API key (own or all if admin).
     """
     user_id, permissions = current_user_data
-    set_permission_used(http_request, "sinas.api_keys.read:own")
 
-    api_key = await db.get(APIKey, key_id)
+    # Use PermissionMixin for permission-aware get
+    api_key = await APIKey.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        resource_id=key_id,
+    )
 
-    if not api_key or str(api_key.user_id) != user_id:
+    if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+
+    set_permission_used(http_request, "sinas.api_keys.read")
 
     return APIKeyResponse.model_validate(api_key)
 
@@ -108,15 +150,23 @@ async def revoke_api_key(
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
     """
-    Revoke (soft delete) an API key.
+    Revoke (soft delete) an API key (own or all if admin).
     """
     user_id, permissions = current_user_data
-    set_permission_used(http_request, "sinas.api_keys.delete:own")
 
-    api_key = await db.get(APIKey, key_id)
+    # Use PermissionMixin for permission-aware get
+    api_key = await APIKey.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="delete",
+        resource_id=key_id,
+    )
 
-    if not api_key or str(api_key.user_id) != user_id:
+    if not api_key:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+
+    set_permission_used(http_request, "sinas.api_keys.delete")
 
     # Soft delete: mark as revoked
     api_key.is_active = False

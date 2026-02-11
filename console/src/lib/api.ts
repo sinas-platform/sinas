@@ -223,17 +223,17 @@ class APIClient {
 
   // API Keys
   async listAPIKeys(): Promise<APIKey[]> {
-    const response = await this.configClient.get('/auth/api-keys');
+    const response = await this.configClient.get('/api-keys');
     return response.data;
   }
 
   async createAPIKey(data: APIKeyCreate): Promise<APIKeyCreatedResponse> {
-    const response = await this.configClient.post('/auth/api-keys', data);
+    const response = await this.configClient.post('/api-keys', data);
     return response.data;
   }
 
   async revokeAPIKey(keyId: string): Promise<void> {
-    await this.configClient.delete(`/auth/api-keys/${keyId}`);
+    await this.configClient.delete(`/api-keys/${keyId}`);
   }
 
   // Chats (Runtime API)

@@ -37,6 +37,8 @@ export interface OTPVerifyResponse {
 // API Keys
 export interface APIKey {
   id: string;
+  user_id: string;
+  user_email?: string;  // Owner's email (only for admins)
   name: string;
   key_prefix: string;
   permissions: Record<string, boolean>;
@@ -53,7 +55,7 @@ export interface APIKeyCreate {
 }
 
 export interface APIKeyCreatedResponse extends APIKey {
-  api_key: string;
+  key: string;
 }
 
 // Chats

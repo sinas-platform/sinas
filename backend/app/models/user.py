@@ -137,7 +137,7 @@ class OTPSession(Base):
     created_at: Mapped[created_at]
 
 
-class APIKey(Base):
+class APIKey(Base, PermissionMixin):
     __tablename__ = "api_keys"
 
     id: Mapped[uuid_pk]
