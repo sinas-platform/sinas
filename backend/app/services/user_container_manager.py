@@ -126,32 +126,50 @@ class UserContainerManager:
         # Get container image from settings (default to sinas-executor - minimal image with executor.py)
         image = getattr(settings, "function_container_image", "sinas-executor")
 
-        # Create container with executor as main process (run in thread pool to avoid blocking)
-        container = await asyncio.to_thread(
-            self.client.containers.run,
-            image,
-            detach=True,
-            name=f"sinas-user-{user_id}",
-            mem_limit=f"{settings.max_function_memory}m",
-            nano_cpus=int(settings.max_function_cpu * 1_000_000_000),  # Convert cores to nanocpus
-            storage_opt={"size": settings.max_function_storage},
-            network_mode="bridge",
-            cap_drop=["ALL"],  # Drop all capabilities for security
-            cap_add=["CHOWN", "SETUID", "SETGID"],  # Only essential capabilities
-            security_opt=["no-new-privileges:true"],  # Prevent privilege escalation
-            read_only=False,  # Allow writes to /tmp (needed for Python)
-            tmpfs={"/tmp": "size=100m,mode=1777"},  # Temp storage
-            environment={
+        # Prepare container config
+        container_config = {
+            "image": image,
+            "detach": True,
+            "name": f"sinas-user-{user_id}",
+            "mem_limit": f"{settings.max_function_memory}m",
+            "nano_cpus": int(settings.max_function_cpu * 1_000_000_000),
+            "network_mode": "bridge",
+            "cap_drop": ["ALL"],
+            "cap_add": ["CHOWN", "SETUID", "SETGID"],
+            "security_opt": ["no-new-privileges:true"],
+            "read_only": False,
+            "tmpfs": {"/tmp": "size=100m,mode=1777"},
+            "environment": {
                 "PYTHONUNBUFFERED": "1",
                 "USER_ID": user_id,
             },
-            labels={
+            "labels": {
                 "sinas.user_id": user_id,
                 "sinas.type": "function-executor",
             },
-            stdin_open=True,
-            tty=False,
-        )
+            "stdin_open": True,
+            "tty": False,
+        }
+
+        # Try with storage_opt first (works on Linux with supported drivers)
+        try:
+            container = await asyncio.to_thread(
+                self.client.containers.run,
+                **container_config,
+                storage_opt={"size": settings.max_function_storage},
+            )
+        except Exception as e:
+            # If storage_opt fails (e.g., macOS Docker Desktop), retry without it
+            if "storage-opt" in str(e).lower() or "storage driver" in str(e).lower():
+                logger.warning(
+                    f"Storage limits not supported on this Docker configuration, continuing without storage_opt: {e}"
+                )
+                container = await asyncio.to_thread(
+                    self.client.containers.run,
+                    **container_config,
+                )
+            else:
+                raise
 
         # Wait for container to be ready
         await asyncio.sleep(1)
