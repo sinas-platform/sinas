@@ -266,22 +266,32 @@ DEFAULT_ROLE_PERMISSIONS = {
     "Users": {
         # Agents (namespaced: namespace/name)
         # Note: Chats are always linked to agents, permissions checked via agents
-        "sinas.agents.create:own": True,  # Create agents (I own them)
+        "sinas.agents/*/*.create:own": True,  # Create agents in any namespace
         "sinas.agents.read:all": True,  # Read all agents (discover available agents)
-        "sinas.agents.update:own": True,  # Update only MY agents
-        "sinas.agents.delete:own": True,  # Delete only MY agents
+        "sinas.agents/*/*.update:own": True,  # Update only MY agents
+        "sinas.agents/*/*.delete:own": True,  # Delete only MY agents
         "sinas.agents/*/*.chat:all": True,  # Chat with ANY agent in any namespace
         # Functions (namespaced: namespace/name)
-        "sinas.functions.create:own": True,
+        "sinas.functions/*/*.create:own": True,  # Create functions in any namespace
         "sinas.functions.read:own": True,
-        "sinas.functions.update:own": True,
-        "sinas.functions.delete:own": True,
+        "sinas.functions/*/*.update:own": True,
+        "sinas.functions/*/*.delete:own": True,
         "sinas.functions/*/*.execute:own": True,  # Execute specific functions
         # Skills (namespaced: namespace/name)
-        "sinas.skills.create:own": True,
+        "sinas.skills/*/*.create:own": True,  # Create skills in any namespace
         "sinas.skills.read:own": True,
-        "sinas.skills.update:own": True,
-        "sinas.skills.delete:own": True,
+        "sinas.skills/*/*.update:own": True,
+        "sinas.skills/*/*.delete:own": True,
+        # Collections (namespaced: namespace/name) - File storage
+        "sinas.collections/*/*.create:own": True,  # Create collections in any namespace
+        "sinas.collections.read:own": True,
+        "sinas.collections/*/*.update:own": True,
+        "sinas.collections/*/*.delete:own": True,
+        # File operations within collections
+        "sinas.collections/*/*.upload:own": True,  # Upload files
+        "sinas.collections/*/*.download:own": True,  # Download files
+        "sinas.collections/*/*.list:own": True,  # List files
+        "sinas.collections/*/*.delete_files:own": True,  # Delete files
         # Webhooks (non-namespaced)
         "sinas.webhooks.create:own": True,
         "sinas.webhooks.read:own": True,
@@ -311,10 +321,10 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.states/*.delete:own": True,
         # Common namespaces: preferences, memory, etc.
         # Templates (namespaced: namespace/name)
-        "sinas.templates.create:own": True,
+        "sinas.templates/*/*.create:own": True,  # Create templates in any namespace
         "sinas.templates.read:own": True,
-        "sinas.templates.update:own": True,
-        "sinas.templates.delete:own": True,
+        "sinas.templates/*/*.update:own": True,
+        "sinas.templates/*/*.delete:own": True,
         "sinas.templates/*/*.render:own": True,  # Render specific templates
         "sinas.templates/*/*.send:own": True,  # Send with specific templates
         # Request Logs (non-namespaced)
