@@ -103,9 +103,12 @@ class OpenAIProvider(BaseLLMProvider):
         """Convert OpenAI tool calls to standard format (already in correct format)."""
         formatted = []
 
-        for tc in tool_calls:
+        for idx, tc in enumerate(tool_calls):
+            # Get ID or generate fallback
+            call_id = tc.id if hasattr(tc, "id") and tc.id else f"call_{idx}"
+
             tool_call_dict = {
-                "id": tc.id if hasattr(tc, "id") else None,
+                "id": call_id,
                 "type": tc.type if hasattr(tc, "type") else "function",
                 "function": {
                     "name": tc.function.name if hasattr(tc.function, "name") else None,

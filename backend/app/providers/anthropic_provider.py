@@ -47,12 +47,14 @@ class AnthropicProvider(BaseLLMProvider):
         content = ""
         tool_calls = []
 
-        for block in response.content:
+        for idx, block in enumerate(response.content):
             if block.type == "text":
                 content += block.text
             elif block.type == "tool_use":
+                # Generate fallback ID if not provided
+                call_id = block.id if block.id else f"toolu_{idx}"
                 tool_calls.append({
-                    "id": block.id,
+                    "id": call_id,
                     "type": "function",
                     "function": {
                         "name": block.name,
@@ -115,8 +117,10 @@ class AnthropicProvider(BaseLLMProvider):
                     elif event.content_block.type == "tool_use":
                         # Start tracking a new tool call
                         idx = event.index
+                        # Generate fallback ID if not provided
+                        call_id = event.content_block.id if event.content_block.id else f"toolu_{idx}"
                         current_tool_calls[idx] = {
-                            "id": event.content_block.id,
+                            "id": call_id,
                             "type": "function",
                             "function": {
                                 "name": event.content_block.name,
@@ -195,12 +199,17 @@ class AnthropicProvider(BaseLLMProvider):
 
             # Convert tool role to user with tool_result content
             if role == "tool":
+                tool_call_id = msg.get("tool_call_id")
+                # Skip tool results without valid tool_call_id (Anthropic requirement)
+                if not tool_call_id or not isinstance(tool_call_id, str):
+                    continue
+
                 new_msg = {
                     "role": "user",
                     "content": [
                         {
                             "type": "tool_result",
-                            "tool_use_id": msg.get("tool_call_id"),
+                            "tool_use_id": tool_call_id,
                             "content": msg.get("content", ""),
                         }
                     ],

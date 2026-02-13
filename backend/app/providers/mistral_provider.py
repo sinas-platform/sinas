@@ -118,8 +118,10 @@ class MistralProvider(BaseLLMProvider):
                 for tool_call in delta.tool_calls:
                     idx = tool_call.index
                     if idx not in tool_calls_buffer:
+                        # Generate fallback ID if not provided
+                        call_id = tool_call.id if tool_call.id else f"call_{idx}"
                         tool_calls_buffer[idx] = {
-                            "id": tool_call.id or "",
+                            "id": call_id,
                             "type": "function",
                             "function": {"name": "", "arguments": ""},
                         }
@@ -144,10 +146,12 @@ class MistralProvider(BaseLLMProvider):
     def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
         """Convert Mistral/OpenAI tool call format to standard format."""
         result = []
-        for tool_call in tool_calls:
+        for idx, tool_call in enumerate(tool_calls):
+            # Generate fallback ID if not provided
+            call_id = tool_call.id if tool_call.id else f"call_{idx}"
             result.append(
                 {
-                    "id": tool_call.id,
+                    "id": call_id,
                     "type": "function",
                     "function": {
                         "name": tool_call.function.name,

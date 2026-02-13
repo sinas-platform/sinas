@@ -676,59 +676,19 @@ class MessageService:
                 return
 
             # No approval needed - execute tools immediately and stream the response
-            try:
-                async for chunk in self._handle_tool_calls(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    user_token=user_token,
-                    messages=messages,
-                    tool_calls=tool_calls,
-                    provider=provider_name,
-                    model=final_model,
-                    temperature=final_temperature,
-                    max_tokens=max_tokens,
-                    tools=tools,
-                ):
-                    yield chunk
-            except Exception as e:
-                # Tool execution failed - let LLM respond to the error
-                logger.error(f"Tool execution failed, recovering gracefully: {e}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-
-                # Create error message for the LLM to see
-                error_msg = Message(
-                    chat_id=chat_id,
-                    role="user",
-                    content=f"The tool execution encountered an error and could not complete. Error: {str(e)[:200]}. Please respond to the user explaining that you're unable to complete this action right now.",
-                )
-                self.db.add(error_msg)
-                await self.db.commit()
-
-                # Get LLM recovery response
-                messages.append({"role": "user", "content": error_msg.content})
-
-                llm_provider = await create_provider(provider_name, final_model, self.db)
-                recovery_content = ""
-                async for chunk in llm_provider.stream(
-                    messages=messages,
-                    model=final_model,
-                    tools=None,  # No tools - just generate text response
-                    temperature=final_temperature,
-                    max_tokens=max_tokens,
-                ):
-                    if chunk.get("content"):
-                        recovery_content += chunk["content"]
-                    yield chunk
-
-                # Save the recovery message
-                if recovery_content:
-                    recovery_msg = Message(
-                        chat_id=chat_id,
-                        role="assistant",
-                        content=recovery_content,
-                    )
-                    self.db.add(recovery_msg)
-                    await self.db.commit()
+            async for chunk in self._handle_tool_calls(
+                chat_id=chat_id,
+                user_id=user_id,
+                user_token=user_token,
+                messages=messages,
+                tool_calls=tool_calls,
+                provider=provider_name,
+                model=final_model,
+                temperature=final_temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+            ):
+                yield chunk
 
     def _parse_function_name(self, tool_name: str) -> tuple[Optional[str], Optional[str]]:
         """
@@ -1294,6 +1254,11 @@ class MessageService:
 
         # Execute each tool call
         for tool_call in tool_calls:
+            # Skip tool calls without valid ID (should have been filtered by validation)
+            if not tool_call.get("id"):
+                logger.warning(f"Skipping tool call without ID: {tool_call}")
+                continue
+
             tool_name = tool_call["function"]["name"]
             arguments_str = tool_call["function"]["arguments"]
 
