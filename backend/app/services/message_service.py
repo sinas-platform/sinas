@@ -658,14 +658,17 @@ class MessageService:
                     # Check if this specific function requires approval
                     function = await Function.get_by_name(self.db, namespace, name)
                     if function and function.requires_approval:
+                        # Parse arguments safely - handle empty strings
+                        parsed_args = arguments_str
+                        if isinstance(arguments_str, str):
+                            parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
+
                         yield {
                             "type": "approval_required",
                             "tool_call_id": tool_call["id"],
                             "function_namespace": namespace,
                             "function_name": name,
-                            "arguments": json.loads(arguments_str)
-                            if isinstance(arguments_str, str)
-                            else arguments_str,
+                            "arguments": parsed_args,
                         }
 
                 # PAUSE - don't execute tools yet, wait for approval
@@ -757,6 +760,11 @@ class MessageService:
             # This function requires approval
             requires_approval = True
 
+            # Parse arguments safely - handle empty strings
+            parsed_args = arguments_str
+            if isinstance(arguments_str, str):
+                parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
+
             # Create PendingToolApproval record
             pending_approval = PendingToolApproval(
                 chat_id=chat_id,
@@ -765,9 +773,7 @@ class MessageService:
                 tool_call_id=tool_call["id"],
                 function_namespace=namespace,
                 function_name=name,
-                arguments=json.loads(arguments_str)
-                if isinstance(arguments_str, str)
-                else arguments_str,
+                arguments=parsed_args,
                 all_tool_calls=tool_calls,
                 conversation_context={
                     "provider": provider,
@@ -1249,9 +1255,30 @@ class MessageService:
         for tool_call in tool_calls:
             tool_name = tool_call["function"]["name"]
             arguments_str = tool_call["function"]["arguments"]
-            arguments = (
-                json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
-            )
+
+            # Handle arguments parsing - empty strings should be treated as {}
+            try:
+                if isinstance(arguments_str, str):
+                    arguments = json.loads(arguments_str) if arguments_str.strip() else {}
+                else:
+                    arguments = arguments_str
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse tool arguments for {tool_name}: {e}")
+                logger.error(f"Arguments string: {repr(arguments_str[:500])}")
+                # Create error result and skip to next tool
+                result_content = json.dumps({
+                    "error": f"Invalid JSON arguments: {str(e)}",
+                    "raw_arguments": arguments_str[:200] if isinstance(arguments_str, str) else str(arguments_str)[:200]
+                })
+                tool_message = Message(
+                    chat_id=chat_id,
+                    role="tool",
+                    content=result_content,
+                    tool_call_id=tool_call["id"],
+                    name=tool_name,
+                )
+                self.db.add(tool_message)
+                continue
 
             # Execute tool (context, webhook, MCP, or execution continuation)
             try:

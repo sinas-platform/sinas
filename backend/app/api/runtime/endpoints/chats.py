@@ -303,7 +303,34 @@ async def stream_message(
                     print(f"⚠️  Failed to save partial message: {save_error}")
 
         except Exception as e:
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
+            # Log the full error for debugging
+            logger.error(f"Error during message streaming: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+            # Save partial message if any content was generated
+            if accumulated_content["content"]:
+                try:
+                    async with AsyncSessionLocal() as new_db:
+                        partial_msg = Message(
+                            chat_id=str(chat.id),
+                            role="assistant",
+                            content=accumulated_content["content"],
+                            tool_calls=None,
+                        )
+                        new_db.add(partial_msg)
+                        await new_db.commit()
+                        logger.info(f"Saved partial message before error: {partial_msg.id}")
+                except Exception as save_error:
+                    logger.error(f"Failed to save partial message after error: {save_error}")
+
+            # Send user-friendly error message
+            yield {
+                "event": "error",
+                "data": json.dumps({
+                    "error": "An error occurred while processing your message. Please try again.",
+                    "details": str(e) if logger.level <= logging.DEBUG else None,
+                })
+            }
 
     return EventSourceResponse(event_generator())
 
