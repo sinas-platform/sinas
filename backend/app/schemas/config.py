@@ -112,6 +112,7 @@ class AgentConfig(BaseModel):
     )  # List of skill configs (string for backward compat, dict for preload)
     stateNamespacesReadonly: list[str] = Field(default_factory=list)  # Readonly state namespaces
     stateNamespacesReadwrite: list[str] = Field(default_factory=list)  # Read-write state namespaces
+    enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
 
 
 class WebhookConfig(BaseModel):

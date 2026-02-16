@@ -7,12 +7,15 @@ import uuid as uuid_lib
 from typing import Optional
 
 import jsonschema
+from jose import JWTError, jwt
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
@@ -36,6 +39,62 @@ from app.services.file_storage import FileStorage, get_storage
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+@router.get("/serve/{token}")
+async def serve_file(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Serve a file via a signed JWT token (unauthenticated).
+
+    The token contains the file_id, version, and expiry. No auth header needed.
+    """
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired file token")
+
+    if payload.get("purpose") != "file_serve":
+        raise HTTPException(status_code=401, detail="Invalid token purpose")
+
+    file_id = payload.get("file_id")
+    version = payload.get("version")
+    if not file_id or version is None:
+        raise HTTPException(status_code=400, detail="Invalid token payload")
+
+    # Look up file
+    result = await db.execute(select(File).where(File.id == file_id))
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Look up version
+    result = await db.execute(
+        select(FileVersion).where(
+            and_(
+                FileVersion.file_id == file_record.id,
+                FileVersion.version_number == version,
+            )
+        )
+    )
+    file_version = result.scalar_one_or_none()
+    if not file_version:
+        raise HTTPException(status_code=404, detail="File version not found")
+
+    # Read content
+    storage: FileStorage = get_storage()
+    try:
+        content = await storage.read(file_version.storage_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File content not found in storage")
+
+    return Response(
+        content=content,
+        media_type=file_record.content_type,
+        headers={"Content-Disposition": f'inline; filename="{file_record.name}"'},
+    )
 
 
 @router.post("/{namespace}/{collection}", response_model=FileResponse, status_code=status.HTTP_201_CREATED)

@@ -41,6 +41,7 @@ class AgentCreate(BaseModel):
     mcp_tool_parameters: Optional[dict[str, Any]] = None
     state_namespaces_readonly: Optional[list[str]] = None  # Readonly state namespaces
     state_namespaces_readwrite: Optional[list[str]] = None  # Read-write state namespaces
+    enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
 
 
 class AgentUpdate(BaseModel):
@@ -71,6 +72,7 @@ class AgentUpdate(BaseModel):
     mcp_tool_parameters: Optional[dict[str, Any]] = None
     state_namespaces_readonly: Optional[list[str]] = None
     state_namespaces_readwrite: Optional[list[str]] = None
+    enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
     is_active: Optional[bool] = None
 
 
@@ -96,6 +98,7 @@ class AgentResponse(BaseModel):
     mcp_tool_parameters: dict[str, Any]
     state_namespaces_readonly: list[str]
     state_namespaces_readwrite: list[str]
+    enabled_collections: list[str]
     is_active: bool
     created_at: datetime
     updated_at: datetime

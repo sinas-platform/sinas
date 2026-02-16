@@ -79,6 +79,11 @@ class Agent(Base, PermissionMixin):
         JSON, default=list
     )  # Read-write state namespaces
 
+    # Collection access
+    enabled_collections: Mapped[list[str]] = mapped_column(
+        JSON, default=list
+    )  # List of "namespace/name" collection references
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]

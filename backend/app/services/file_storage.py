@@ -1,9 +1,13 @@
 """File storage abstraction layer."""
+import base64
 import hashlib
 import os
 from abc import ABC, abstractmethod
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+
+from jose import jwt
 
 
 class FileStorage(ABC):
@@ -194,3 +198,40 @@ def get_storage() -> FileStorage:
             raise ValueError(f"Unknown storage backend: {storage_backend}")
 
     return _storage
+
+
+def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> Optional[str]:
+    """
+    Generate a temporary signed URL for serving a file.
+
+    Returns None if DOMAIN is localhost or not set (caller should fall back to data URL).
+    """
+    from app.core.config import settings
+
+    domain = settings.domain
+    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
+        return None
+
+    expire = datetime.now(UTC) + timedelta(seconds=expires_in)
+    payload = {
+        "file_id": str(file_id),
+        "version": version,
+        "purpose": "file_serve",
+        "exp": int(expire.timestamp()),
+    }
+    token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+    return f"https://{domain}/api/runtime/files/serve/{token}"
+
+
+def generate_file_data_url(storage_path: str, content_type: str) -> str:
+    """
+    Read a file from storage and return a base64 data URL.
+
+    Used as fallback when DOMAIN is localhost (LLM providers can't reach the server).
+    """
+    storage = get_storage()
+    # Use synchronous read for LocalFileStorage
+    full_path = storage._get_full_path(storage_path)
+    data = full_path.read_bytes()
+    b64 = base64.b64encode(data).decode("utf-8")
+    return f"data:{content_type};base64,{b64}"

@@ -97,6 +97,9 @@ class ConfigParser:
         skill_names = {
             f"{s.get('namespace', 'default')}/{s['name']}" for s in spec.get("skills", [])
         }
+        collection_names = {
+            f"{c.get('namespace', 'default')}/{c['name']}" for c in spec.get("collections", [])
+        }
         llm_provider_names = {p["name"] for p in spec.get("llmProviders", [])}
         mcp_server_names = {s["name"] for s in spec.get("mcpServers", [])}
 
@@ -105,11 +108,13 @@ class ConfigParser:
         db_function_names: set[str] = set()
         db_agent_names: set[str] = set()
         db_skill_names: set[str] = set()
+        db_collection_names: set[str] = set()
         db_llm_provider_names: set[str] = set()
         db_mcp_server_names: set[str] = set()
 
         if db:
             from app.models.agent import Agent
+            from app.models.file import Collection
             from app.models.function import Function
             from app.models.llm_provider import LLMProvider
             from app.models.mcp import MCPServer
@@ -120,7 +125,7 @@ class ConfigParser:
             result = await db.execute(select(Role.name))
             db_group_names = {name for (name,) in result.fetchall()}
 
-            # Functions, agents, and skills use namespace/name format
+            # Functions, agents, skills, and collections use namespace/name format
             result = await db.execute(select(Function.namespace, Function.name))
             db_function_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
 
@@ -129,6 +134,9 @@ class ConfigParser:
 
             result = await db.execute(select(Skill.namespace, Skill.name))
             db_skill_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
+
+            result = await db.execute(select(Collection.namespace, Collection.name))
+            db_collection_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
 
             result = await db.execute(select(LLMProvider.name))
             db_llm_provider_names = {name for (name,) in result.fetchall()}
@@ -141,6 +149,7 @@ class ConfigParser:
         all_function_names = function_names | db_function_names
         all_agent_names = agent_names | db_agent_names
         all_skill_names = skill_names | db_skill_names
+        all_collection_names = collection_names | db_collection_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
         all_mcp_server_names = mcp_server_names | db_mcp_server_names
 
@@ -222,6 +231,17 @@ class ConfigParser:
                                     message=f"Referenced MCP server '{server_name}' not defined",
                                 )
                             )
+
+            # Validate enabled collection references
+            if "enabledCollections" in agent and agent["enabledCollections"]:
+                for coll_ref in agent["enabledCollections"]:
+                    if coll_ref not in all_collection_names:
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledCollections",
+                                message=f"Referenced collection '{coll_ref}' not defined",
+                            )
+                        )
 
         # Validate collection references
         for i, coll in enumerate(spec.get("collections", [])):

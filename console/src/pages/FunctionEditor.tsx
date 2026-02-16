@@ -6,6 +6,57 @@ import { ArrowLeft, Save, Trash2, Package, ChevronDown, ChevronRight, Filter, Up
 import CodeEditor from '@uiw/react-textarea-code-editor';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
+const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }> = {
+  'pre-upload-filter': {
+    label: 'Pre-upload filter',
+    input: {
+      type: "object",
+      properties: {
+        content_base64: { type: "string", description: "Base64-encoded file content" },
+        namespace: { type: "string", description: "Collection namespace" },
+        collection: { type: "string", description: "Collection name" },
+        filename: { type: "string", description: "Uploaded file name" },
+        content_type: { type: "string", description: "MIME type" },
+        size_bytes: { type: "integer", description: "File size in bytes" },
+        user_metadata: { type: "object", description: "Metadata provided by uploader" },
+        user_id: { type: "string", description: "Uploader's user ID" },
+      },
+      required: ["content_base64", "namespace", "collection", "filename", "content_type", "size_bytes"],
+    },
+    output: {
+      type: "object",
+      properties: {
+        approved: { type: "boolean", description: "Whether the file is approved" },
+        reason: { type: "string", description: "Rejection reason (if not approved)" },
+        modified_content: { type: "string", description: "Base64-encoded replacement content (optional)" },
+        metadata: { type: "object", description: "Additional metadata to merge (optional)" },
+      },
+      required: ["approved"],
+    },
+  },
+  'post-upload': {
+    label: 'Post-upload',
+    input: {
+      type: "object",
+      properties: {
+        file_id: { type: "string", description: "UUID of the stored file" },
+        namespace: { type: "string", description: "Collection namespace" },
+        collection: { type: "string", description: "Collection name" },
+        filename: { type: "string", description: "File name" },
+        version: { type: "integer", description: "Version number" },
+        file_path: { type: "string", description: "Storage path" },
+        user_id: { type: "string", description: "Uploader's user ID" },
+        metadata: { type: "object", description: "Final file metadata" },
+      },
+      required: ["file_id", "namespace", "collection", "filename", "version"],
+    },
+    output: {
+      type: "object",
+      properties: {},
+    },
+  },
+};
+
 export function FunctionEditor() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
   const navigate = useNavigate();
@@ -42,13 +93,7 @@ export function FunctionEditor() {
     return {"result": "success"}`,
     input_schema: {
       type: "object",
-      properties: {
-        message: {
-          type: "string",
-          description: "Input message"
-        }
-      },
-      required: ["message"]
+      properties: {},
     } as any,
     output_schema: {
       type: "object",
@@ -503,6 +548,22 @@ export function FunctionEditor() {
             value={formData.input_schema}
             onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
           />
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500">Load preset:</span>
+            <select
+              className="input text-xs py-1 w-auto"
+              value=""
+              onChange={(e) => {
+                const preset = SCHEMA_PRESETS[e.target.value];
+                if (preset) setFormData({ ...formData, input_schema: preset.input });
+              }}
+            >
+              <option value="">Select...</option>
+              {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
+                <option key={key} value={key}>{preset.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Output Schema */}
@@ -513,6 +574,22 @@ export function FunctionEditor() {
             value={formData.output_schema}
             onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
           />
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500">Load preset:</span>
+            <select
+              className="input text-xs py-1 w-auto"
+              value=""
+              onChange={(e) => {
+                const preset = SCHEMA_PRESETS[e.target.value];
+                if (preset) setFormData({ ...formData, output_schema: preset.output });
+              }}
+            >
+              <option value="">Select...</option>
+              {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
+                <option key={key} value={key}>{preset.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Requirements */}

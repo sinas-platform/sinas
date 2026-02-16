@@ -892,6 +892,9 @@ class ConfigApplyService:
                         "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite)
                         if agent_config.stateNamespacesReadwrite
                         else [],
+                        "enabled_collections": sorted(agent_config.enabledCollections)
+                        if agent_config.enabledCollections
+                        else [],
                     }
                 )
 
@@ -930,6 +933,7 @@ class ConfigApplyService:
                         existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
                         existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
+                        existing.enabled_collections = agent_config.enabledCollections
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -978,6 +982,7 @@ class ConfigApplyService:
                             enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,
                             state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
+                            enabled_collections=agent_config.enabledCollections,
                             user_id=member.user_id,
                             group_id=group_id,
                             is_active=True,

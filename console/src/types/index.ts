@@ -187,6 +187,7 @@ export interface Agent {
   mcp_tool_parameters: Record<string, any>;
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
+  enabled_collections: string[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -212,6 +213,7 @@ export interface AgentCreate {
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
+  enabled_collections?: string[];
 }
 
 export interface AgentUpdate {
@@ -234,6 +236,7 @@ export interface AgentUpdate {
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
+  enabled_collections?: string[];
   is_active?: boolean;
 }
 

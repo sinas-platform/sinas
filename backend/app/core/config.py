@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     # Superadmin
     superadmin_email: Optional[str] = None  # Email for superadmin user
 
+    # Domain (for generating external URLs, e.g., temp file URLs)
+    domain: Optional[str] = None  # FQDN like "app.example.com"; localhost or None = no external URLs
+
     # Declarative Configuration
     config_file: Optional[str] = None  # Path to YAML config file
     auto_apply_config: bool = False  # Auto-apply config file on startup
