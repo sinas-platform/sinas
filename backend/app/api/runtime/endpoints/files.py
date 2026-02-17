@@ -494,6 +494,91 @@ async def download_file(
     )
 
 
+@router.post("/{namespace}/{collection}/{filename}/url")
+async def generate_temp_url(
+    namespace: str,
+    collection: str,
+    filename: str,
+    version: Optional[int] = None,
+    expires_in: int = 3600,
+    http_request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Generate a temporary public URL for a file.
+
+    The URL is signed with a JWT and does not require authentication to access.
+    Returns a data URL (base64) if DOMAIN is not configured (localhost dev).
+    """
+    user_id, permissions = current_user_data
+
+    # Reuse download permission
+    perm = f"sinas.collections/{namespace}/{collection}.download:own"
+    if not check_permission(permissions, perm):
+        set_permission_used(http_request, perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to access files in this collection")
+    set_permission_used(http_request, perm)
+
+    # Clamp expires_in to reasonable bounds
+    expires_in = max(60, min(expires_in, 86400))  # 1 min to 24 hours
+
+    # Get collection
+    coll = await Collection.get_by_name(db, namespace, collection)
+    if not coll:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # Get file
+    result = await db.execute(
+        select(File).where(
+            and_(
+                File.collection_id == coll.id,
+                File.name == filename,
+            )
+        )
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Check visibility
+    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.download:all")
+    if file_record.visibility == "private" and str(file_record.user_id) != user_id and not has_all_perm:
+        raise HTTPException(status_code=403, detail="Not authorized to access this private file")
+
+    # Determine version
+    version_number = version or file_record.current_version
+
+    # Verify version exists
+    ver_result = await db.execute(
+        select(FileVersion).where(
+            and_(
+                FileVersion.file_id == file_record.id,
+                FileVersion.version_number == version_number,
+            )
+        )
+    )
+    file_version = ver_result.scalar_one_or_none()
+    if not file_version:
+        raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
+
+    # Generate URL
+    from app.services.file_storage import generate_file_data_url, generate_file_url
+
+    url = generate_file_url(str(file_record.id), version_number, expires_in=expires_in)
+    if not url:
+        # Fallback to data URL for localhost
+        url = generate_file_data_url(file_version.storage_path, file_record.content_type)
+
+    return {
+        "url": url,
+        "filename": file_record.name,
+        "content_type": file_record.content_type,
+        "version": version_number,
+        "expires_in": expires_in,
+    }
+
+
 @router.get("/{namespace}/{collection}", response_model=list[FileWithVersions])
 async def list_files(
     namespace: str,
