@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.llm_provider import LLMProvider
 from app.models.mcp import MCPServer
@@ -108,6 +109,7 @@ class ConfigApplyService:
 
             await self._apply_functions(config.spec.functions, dry_run)
             await self._apply_skills(config.spec.skills, dry_run)
+            await self._apply_collections(config.spec.collections, dry_run)
             await self._apply_agents(config.spec.agents, dry_run)
             await self._apply_webhooks(config.spec.webhooks, dry_run)
             await self._apply_schedules(config.spec.schedules, dry_run)
@@ -738,6 +740,105 @@ class ConfigApplyService:
                     f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}"
                 )
 
+    async def _apply_collections(self, collections, dry_run: bool):
+        """Apply collection configurations"""
+        for coll_config in collections:
+            resource_name = f"{coll_config.namespace}/{coll_config.name}"
+            try:
+                stmt = select(Collection).where(
+                    Collection.namespace == coll_config.namespace,
+                    Collection.name == coll_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": coll_config.namespace,
+                        "name": coll_config.name,
+                        "metadata_schema": coll_config.metadataSchema or {},
+                        "content_filter_function": coll_config.contentFilterFunction,
+                        "post_upload_function": coll_config.postUploadFunction,
+                        "max_file_size_mb": coll_config.maxFileSizeMb,
+                        "max_total_size_gb": coll_config.maxTotalSizeGb,
+                        "allow_shared_files": coll_config.allowSharedFiles,
+                        "allow_private_files": coll_config.allowPrivateFiles,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"Collection '{resource_name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change("unchanged", "collections", resource_name)
+                        self.collection_ids[resource_name] = str(existing.id)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "collections", resource_name)
+                        self.collection_ids[resource_name] = str(existing.id)
+                        continue
+
+                    if not dry_run:
+                        existing.metadata_schema = coll_config.metadataSchema or {}
+                        existing.content_filter_function = coll_config.contentFilterFunction
+                        existing.post_upload_function = coll_config.postUploadFunction
+                        existing.max_file_size_mb = coll_config.maxFileSizeMb
+                        existing.max_total_size_gb = coll_config.maxTotalSizeGb
+                        existing.allow_shared_files = coll_config.allowSharedFiles
+                        existing.allow_private_files = coll_config.allowPrivateFiles
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "collections", resource_name)
+                    self.collection_ids[resource_name] = str(existing.id)
+
+                else:
+                    if not dry_run:
+                        group_id = self.group_ids.get(coll_config.groupName)
+                        if not group_id:
+                            self.errors.append(
+                                f"Group '{coll_config.groupName}' not found for collection '{resource_name}'"
+                            )
+                            continue
+
+                        # Get user from the group for ownership
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
+                        result = await self.db.execute(stmt)
+                        member = result.scalar_one_or_none()
+                        if not member:
+                            self.errors.append(
+                                f"No users in group '{coll_config.groupName}' for collection '{resource_name}'"
+                            )
+                            continue
+
+                        new_collection = Collection(
+                            namespace=coll_config.namespace,
+                            name=coll_config.name,
+                            user_id=member.user_id,
+                            metadata_schema=coll_config.metadataSchema or {},
+                            content_filter_function=coll_config.contentFilterFunction,
+                            post_upload_function=coll_config.postUploadFunction,
+                            max_file_size_mb=coll_config.maxFileSizeMb,
+                            max_total_size_gb=coll_config.maxTotalSizeGb,
+                            allow_shared_files=coll_config.allowSharedFiles,
+                            allow_private_files=coll_config.allowPrivateFiles,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_collection)
+                        await self.db.flush()
+                        self.collection_ids[resource_name] = str(new_collection.id)
+                    else:
+                        self.collection_ids[resource_name] = "dry-run-id"
+
+                    self._track_change("create", "collections", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying collection '{resource_name}': {str(e)}")
+
     async def _apply_agents(self, agents, dry_run: bool):
         """Apply agent configurations"""
         for agent_config in agents:
@@ -791,6 +892,9 @@ class ConfigApplyService:
                         "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite)
                         if agent_config.stateNamespacesReadwrite
                         else [],
+                        "enabled_collections": sorted(agent_config.enabledCollections)
+                        if agent_config.enabledCollections
+                        else [],
                     }
                 )
 
@@ -829,6 +933,7 @@ class ConfigApplyService:
                         existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
                         existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
+                        existing.enabled_collections = agent_config.enabledCollections
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -877,6 +982,7 @@ class ConfigApplyService:
                             enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,
                             state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
+                            enabled_collections=agent_config.enabledCollections,
                             user_id=member.user_id,
                             group_id=group_id,
                             is_active=True,

@@ -58,6 +58,7 @@ services:
     volumes:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
     env_file:
       - .env
     deploy:
@@ -130,6 +131,7 @@ services:
 volumes:
   postgres_data:
   clickhouse_data:
+  file_storage:
   caddy_data:
   caddy_config:
   caddy_logs:

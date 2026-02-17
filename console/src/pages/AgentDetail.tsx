@@ -53,8 +53,14 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: collections } = useQuery({
+    queryKey: ['collections'],
+    queryFn: () => apiClient.listCollections(),
+    retry: false,
+  });
+
   const [formData, setFormData] = useState<AgentUpdate>({});
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'mcp' | 'states'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'mcp' | 'states' | 'collections'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
 
   // Initialize form data when agent loads
@@ -81,6 +87,7 @@ export function AgentDetail() {
         mcp_tool_parameters: agent.mcp_tool_parameters || {},
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
+        enabled_collections: agent.enabled_collections || [],
       });
     }
   }, [agent]);
@@ -440,6 +447,17 @@ export function AgentDetail() {
               }`}
             >
               States
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('collections')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'collections'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Collections
             </button>
           </div>
 
@@ -882,6 +900,48 @@ export function AgentDetail() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Collections Tab */}
+            {toolsTab === 'collections' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable file collections for this agent to search and retrieve files
+                </p>
+                {collections && collections.length > 0 ? (
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    {collections.map((coll: any) => {
+                      const collRef = `${coll.namespace}/${coll.name}`;
+                      return (
+                        <label
+                          key={collRef}
+                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(formData.enabled_collections || agent.enabled_collections || []).includes(collRef)}
+                            onChange={(e) => {
+                              const current = formData.enabled_collections || agent.enabled_collections || [];
+                              const updated = e.target.checked
+                                ? [...current, collRef]
+                                : current.filter((ref: string) => ref !== collRef);
+                              setFormData({ ...formData, enabled_collections: updated });
+                            }}
+                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                          />
+                          <div className="ml-3 flex-1">
+                            <span className="text-sm font-medium text-gray-900 font-mono">{collRef}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <p className="text-sm text-gray-500">No collections available. Create collections first.</p>
+                  </div>
+                )}
               </div>
             )}
           </div>

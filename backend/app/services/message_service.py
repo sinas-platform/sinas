@@ -17,6 +17,7 @@ from app.models.function import Function
 from app.models.llm_provider import LLMProvider
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
+from app.services.collection_tools import CollectionToolConverter
 from app.services.content_converter import ContentConverter
 from app.services.execution_engine import executor
 from app.services.function_tools import FunctionToolConverter
@@ -35,6 +36,7 @@ class MessageService:
         self.db = db
         self.function_converter = FunctionToolConverter()
         self.skill_converter = SkillToolConverter()
+        self.collection_converter = CollectionToolConverter()
         self.context_tools = StateTools()
 
     def _validate_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -706,7 +708,7 @@ class MessageService:
             "update_context",
             "delete_context",
             "continue_execution",
-        ] or tool_name.startswith("call_agent_"):
+        ] or tool_name.startswith("call_agent_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
             return None, None
 
         # Convert namespace__name to namespace/name if needed
@@ -1084,6 +1086,13 @@ class MessageService:
             )
             tools.extend(skill_tools)
 
+        # Get collection tools (only if list has items - opt-in)
+        if agent.enabled_collections and len(agent.enabled_collections) > 0:
+            collection_tools = await self.collection_converter.get_available_collections(
+                db=self.db, user_id=user_id, enabled_collections=agent.enabled_collections
+            )
+            tools.extend(collection_tools)
+
         # Check for paused executions belonging to this chat
         result = await self.db.execute(
             select(Execution)
@@ -1349,6 +1358,25 @@ class MessageService:
                     print(f"⏱️  [TIMING] Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
                     if result is None:
                         result = {"error": f"Skill not found for tool: {tool_name}"}
+                elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
+                    # Handle collection tool calls
+                    start_time = time.time()
+                    print(f"⏱️  [TIMING] Starting collection tool: {tool_name}")
+                    # Find tool metadata from approved tools list
+                    tool_metadata = {}
+                    for tool in tools:
+                        if tool.get("function", {}).get("name") == tool_name:
+                            tool_metadata = tool.get("function", {}).get("_metadata", {})
+                            break
+                    result = await self.collection_converter.execute_tool(
+                        db=self.db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        metadata=tool_metadata,
+                    )
+                    elapsed = time.time() - start_time
+                    print(f"⏱️  [TIMING] Collection tool completed in {elapsed:.3f}s: {tool_name}")
                 elif tool_name in mcp_client.tools:
                     result = await mcp_client.execute_tool(tool_name, arguments)
                 else:

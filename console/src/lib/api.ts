@@ -42,6 +42,15 @@ import type {
   Skill,
   SkillCreate,
   SkillUpdate,
+  Collection,
+  CollectionCreate,
+  CollectionUpdate,
+  FileInfo,
+  FileWithVersions,
+  FileUploadRequest,
+  FileDownloadResponse,
+  FileSearchRequest,
+  FileSearchResult,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -701,6 +710,70 @@ class APIClient {
     offset?: number;
   }): Promise<any> {
     const response = await this.configClient.get('/messages', { params });
+    return response.data;
+  }
+
+  // Collections
+  async listCollections(params?: { namespace?: string }): Promise<Collection[]> {
+    const response = await this.configClient.get('/collections', { params });
+    return response.data;
+  }
+
+  async getCollection(namespace: string, name: string): Promise<Collection> {
+    const response = await this.configClient.get(`/collections/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createCollection(data: CollectionCreate): Promise<Collection> {
+    const response = await this.configClient.post('/collections', data);
+    return response.data;
+  }
+
+  async updateCollection(namespace: string, name: string, data: CollectionUpdate): Promise<Collection> {
+    const response = await this.configClient.put(`/collections/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteCollection(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/collections/${namespace}/${name}`);
+  }
+
+  // Files (Runtime API)
+  async listFiles(namespace: string, collection: string): Promise<FileWithVersions[]> {
+    const response = await this.runtimeClient.get(`/files/${namespace}/${collection}`);
+    return response.data;
+  }
+
+  async uploadFile(namespace: string, collection: string, data: FileUploadRequest): Promise<FileInfo> {
+    const response = await this.runtimeClient.post(`/files/${namespace}/${collection}`, data);
+    return response.data;
+  }
+
+  async downloadFile(namespace: string, collection: string, filename: string, version?: number): Promise<FileDownloadResponse> {
+    const params = version ? { version } : {};
+    const response = await this.runtimeClient.get(`/files/${namespace}/${collection}/${filename}`, { params });
+    return response.data;
+  }
+
+  async deleteFile(namespace: string, collection: string, filename: string): Promise<void> {
+    await this.runtimeClient.delete(`/files/${namespace}/${collection}/${filename}`);
+  }
+
+  async updateFileMetadata(namespace: string, collection: string, filename: string, metadata: Record<string, any>): Promise<FileInfo> {
+    const response = await this.runtimeClient.patch(`/files/${namespace}/${collection}/${filename}`, { file_metadata: metadata });
+    return response.data;
+  }
+
+  async searchFiles(namespace: string, collection: string, request: FileSearchRequest): Promise<FileSearchResult[]> {
+    const response = await this.runtimeClient.post(`/files/${namespace}/${collection}/search`, request);
+    return response.data;
+  }
+
+  async generateFileUrl(namespace: string, collection: string, filename: string, version?: number, expiresIn?: number): Promise<{ url: string; filename: string; content_type: string; version: number; expires_in: number }> {
+    const params: Record<string, any> = {};
+    if (version) params.version = version;
+    if (expiresIn) params.expires_in = expiresIn;
+    const response = await this.runtimeClient.post(`/files/${namespace}/${collection}/${filename}/url`, null, { params });
     return response.data;
   }
 }
