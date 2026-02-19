@@ -52,27 +52,47 @@ async def create_schedule(
             status_code=400, detail=f"Schedule '{schedule_data.name}' already exists"
         )
 
-    # Verify function exists
-    from app.models.function import Function
+    # Verify target exists based on schedule_type
+    if schedule_data.schedule_type == "function":
+        from app.models.function import Function
 
-    function = await Function.get_by_name(
-        db, schedule_data.function_namespace, schedule_data.function_name, user_id
-    )
-    if not function:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Function '{schedule_data.function_namespace}/{schedule_data.function_name}' not found",
+        target = await Function.get_by_name(
+            db, schedule_data.target_namespace, schedule_data.target_name, user_id
         )
+        if not target:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Function '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
+            )
+    else:
+        from app.models.agent import Agent
+
+        result = await db.execute(
+            select(Agent).where(
+                and_(
+                    Agent.namespace == schedule_data.target_namespace,
+                    Agent.name == schedule_data.target_name,
+                )
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Agent '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
+            )
+
     # Create schedule
     schedule = ScheduledJob(
         user_id=user_id,
         name=schedule_data.name,
-        function_namespace=schedule_data.function_namespace,
-        function_name=schedule_data.function_name,
+        schedule_type=schedule_data.schedule_type,
+        target_namespace=schedule_data.target_namespace,
+        target_name=schedule_data.target_name,
         description=schedule_data.description,
         cron_expression=schedule_data.cron_expression,
         timezone=schedule_data.timezone,
         input_data=schedule_data.input_data,
+        content=schedule_data.content,
     )
 
     db.add(schedule)
@@ -167,20 +187,46 @@ async def update_schedule(
         set_permission_used(request, "sinas.schedules.update:own")
 
     # Update fields
-    if schedule_data.function_name is not None:
-        # Verify new function exists
-        from app.models.function import Function
+    if schedule_data.name is not None:
+        schedule.name = schedule_data.name
+    if schedule_data.schedule_type is not None:
+        schedule.schedule_type = schedule_data.schedule_type
+    if schedule_data.target_namespace is not None:
+        schedule.target_namespace = schedule_data.target_namespace
 
-        result = await db.execute(
-            select(Function).where(
-                and_(Function.user_id == user_id, Function.name == schedule_data.function_name)
+    if schedule_data.target_name is not None:
+        # Verify new target exists
+        effective_type = schedule_data.schedule_type or schedule.schedule_type
+        effective_ns = schedule_data.target_namespace or schedule.target_namespace
+
+        if effective_type == "function":
+            from app.models.function import Function
+
+            target = await Function.get_by_name(
+                db, effective_ns, schedule_data.target_name, user_id
             )
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=404, detail=f"Function '{schedule_data.function_name}' not found"
+            if not target:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Function '{effective_ns}/{schedule_data.target_name}' not found",
+                )
+        else:
+            from app.models.agent import Agent
+
+            result = await db.execute(
+                select(Agent).where(
+                    and_(
+                        Agent.namespace == effective_ns,
+                        Agent.name == schedule_data.target_name,
+                    )
+                )
             )
-        schedule.function_name = schedule_data.function_name
+            if not result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Agent '{effective_ns}/{schedule_data.target_name}' not found",
+                )
+        schedule.target_name = schedule_data.target_name
 
     if schedule_data.description is not None:
         schedule.description = schedule_data.description
@@ -190,6 +236,8 @@ async def update_schedule(
         schedule.timezone = schedule_data.timezone
     if schedule_data.input_data is not None:
         schedule.input_data = schedule_data.input_data
+    if schedule_data.content is not None:
+        schedule.content = schedule_data.content
     if schedule_data.is_active is not None:
         schedule.is_active = schedule_data.is_active
     await db.commit()

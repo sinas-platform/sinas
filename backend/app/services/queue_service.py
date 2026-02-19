@@ -56,6 +56,7 @@ class QueueService:
                 "execution_id": execution_id,
                 "queue": "functions",
                 "function": fn_label,
+                "trigger_type": trigger_type,
                 "enqueued_at": time.time(),
             }),
             ex=JOB_TTL,
@@ -181,6 +182,7 @@ class QueueService:
         content: str,
         channel_id: str,
         agent: Optional[str] = None,
+        trigger_type: Optional[str] = None,
     ) -> str:
         """Enqueue an agent message processing job."""
         pool = await get_arq_pool()
@@ -198,6 +200,8 @@ class QueueService:
         }
         if agent:
             status_data["agent"] = agent
+        if trigger_type:
+            status_data["trigger_type"] = trigger_type
 
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
@@ -346,6 +350,7 @@ class QueueService:
                             "function": data.get("function"),
                             "agent": data.get("agent"),
                             "type": data.get("type"),
+                            "trigger_type": data.get("trigger_type"),
                             "chat_id": data.get("chat_id"),
                             "execution_id": data.get("execution_id"),
                             "channel_id": data.get("channel_id"),

@@ -62,12 +62,15 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         f"(job={job_id}, execution={execution_id})"
     )
 
-    # Read enqueued_at from initial status to preserve across updates
+    # Read fields from initial status to preserve across updates
     enqueued_at = None
+    trigger_type_val = None
     raw = await redis.get(f"{JOB_STATUS_PREFIX}{job_id}")
     if raw:
         try:
-            enqueued_at = json.loads(raw).get("enqueued_at")
+            initial = json.loads(raw)
+            enqueued_at = initial.get("enqueued_at")
+            trigger_type_val = initial.get("trigger_type")
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -77,6 +80,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         "execution_id": execution_id,
         "queue": "functions",
         "function": fn_label,
+        "trigger_type": trigger_type_val,
         "enqueued_at": enqueued_at,
     }
 

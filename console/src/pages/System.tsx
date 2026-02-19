@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { useState } from 'react';
-import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, Cpu } from 'lucide-react';
+import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box } from 'lucide-react';
 
 function formatAge(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -214,65 +214,28 @@ export function System() {
         </div>
       </div>
 
-      {/* Workers */}
-      <div className="card">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Workers</h2>
-            <p className="text-sm text-gray-600 mt-1">
-              Job processors that pull from queues. Each worker handles up to N concurrent jobs.
-            </p>
-          </div>
-          <button
-            onClick={() => queryClient.invalidateQueries({ queryKey: ['queue-workers'] })}
-            className="btn btn-secondary flex items-center"
-            title="Refresh"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
+      {/* Workers — compact row */}
+      {queueWorkers && queueWorkers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-gray-500 font-medium">Workers</span>
+          {queueWorkers.map((w: any) => (
+            <span
+              key={w.worker_id}
+              className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
+                w.queue === 'functions'
+                  ? 'bg-purple-50 border-purple-200 text-purple-700'
+                  : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+              }`}
+            >
+              <span className="font-mono">{w.worker_id.slice(0, 8)}</span>
+              <span className="text-gray-400">|</span>
+              <span>{w.queue === 'functions' ? 'fn' : 'agent'} &times;{w.max_jobs}</span>
+              <span className="text-gray-400">|</span>
+              <span className="text-gray-500">{w.started_at ? formatUptime(w.started_at) : '-'}</span>
+            </span>
+          ))}
         </div>
-
-        {!queueWorkers || queueWorkers.length === 0 ? (
-          <div className="text-center py-8">
-            <Cpu className="w-10 h-10 text-gray-400 mx-auto mb-2" />
-            <p className="text-gray-500 text-sm">No workers reporting</p>
-            <p className="text-gray-400 text-xs mt-1">Workers need to be restarted to enable heartbeats</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200">
-                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Worker</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Queue</th>
-                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Concurrency</th>
-                  <th className="text-left py-2 font-medium text-gray-500">Uptime</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {queueWorkers.map((w: any) => (
-                  <tr key={w.worker_id} className="hover:bg-gray-50">
-                    <td className="py-2 pr-4 font-mono text-xs text-gray-700">
-                      {w.worker_id.slice(0, 8)}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
-                        w.queue === 'functions' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'
-                      }`}>
-                        {w.queue}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4 text-gray-600">{w.max_jobs} slots</td>
-                    <td className="py-2 text-gray-600 text-xs">
-                      {w.started_at ? formatUptime(w.started_at) : '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Sandbox Pool & Shared Pool — side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -498,6 +461,7 @@ export function System() {
                       {job.queue === 'agents' && job.type === 'resume' && (
                         <span className="text-xs text-gray-400 ml-1">(resume)</span>
                       )}
+                      <span className="text-xs text-gray-400 ml-1">via {(job.trigger_type || (job.queue === 'agents' ? 'agent' : 'api')).toLowerCase()}</span>
                       {job.chat_id && (
                         <span className="text-xs text-gray-400 ml-1">chat:{job.chat_id.slice(0, 8)}</span>
                       )}

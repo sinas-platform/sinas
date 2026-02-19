@@ -533,7 +533,7 @@ class APIClient {
   }
 
   async getSchedule(scheduleId: string): Promise<any> {
-    const response = await this.configClient.get(`/schedules/${scheduleId}`);
+    const response = await this.configClient.get(`/schedules/${encodeURIComponent(scheduleId)}`);
     return response.data;
   }
 
@@ -543,12 +543,12 @@ class APIClient {
   }
 
   async updateSchedule(scheduleId: string, data: any): Promise<any> {
-    const response = await this.configClient.patch(`/schedules/${scheduleId}`, data);
+    const response = await this.configClient.patch(`/schedules/${encodeURIComponent(scheduleId)}`, data);
     return response.data;
   }
 
   async deleteSchedule(scheduleId: string): Promise<void> {
-    await this.configClient.delete(`/schedules/${scheduleId}`);
+    await this.configClient.delete(`/schedules/${encodeURIComponent(scheduleId)}`);
   }
 
   // Executions

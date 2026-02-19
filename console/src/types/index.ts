@@ -388,11 +388,18 @@ export interface WebhookUpdate {
 export interface Schedule {
   id: string;
   name: string;
+  schedule_type: string;
+  target_namespace: string;
+  target_name: string;
+  description: string | null;
   cron_expression: string;
-  function_id: string;
+  timezone: string;
+  input_data: Record<string, any>;
+  content: string | null;
   is_active: boolean;
+  last_run: string | null;
+  next_run: string | null;
   created_at: string;
-  updated_at: string;
 }
 
 export interface ScheduleCreate {

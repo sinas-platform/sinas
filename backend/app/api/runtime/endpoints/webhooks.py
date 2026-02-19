@@ -1,6 +1,6 @@
 """Runtime webhook endpoints - execute functions via HTTP."""
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, select
@@ -15,47 +15,6 @@ from app.models.webhook import Webhook
 
 router = APIRouter()
 
-
-async def extract_request_data(request: Request) -> dict[str, Any]:
-    """Extract all request data (body, headers, query params) into a structured format."""
-    body = {}
-    content_type = request.headers.get("content-type", "")
-
-    if "application/json" in content_type:
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-    elif "application/x-www-form-urlencoded" in content_type:
-        try:
-            form_data = await request.form()
-            body = dict(form_data)
-        except Exception:
-            body = {}
-    else:
-        try:
-            raw_body = await request.body()
-            body = {"raw": raw_body.decode("utf-8")} if raw_body else {}
-        except Exception:
-            body = {}
-
-    headers = {
-        k: v
-        for k, v in request.headers.items()
-        if not k.lower().startswith(("host", "user-agent", "accept-encoding"))
-    }
-    query = dict(request.query_params)
-    path_params = dict(request.path_params)
-
-    return {
-        "body": body,
-        "headers": headers,
-        "query": query,
-        "path_params": path_params,
-        "method": request.method,
-        "url": str(request.url),
-        "path": request.url.path,
-    }
 
 
 @router.api_route(
@@ -122,12 +81,23 @@ async def execute_webhook(
         set_permission_used(request, f"webhook.public:{webhook.path}")
 
     try:
-        request_data = await extract_request_data(request)
-
-        if webhook.default_values:
-            final_input = {**webhook.default_values, **request_data}
+        # Extract the request body as function input
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                input_data = await request.json()
+            except Exception:
+                input_data = {}
+        elif request.method == "GET":
+            input_data = dict(request.query_params)
         else:
-            final_input = request_data
+            input_data = {}
+
+        # Merge default values (body overrides defaults)
+        if webhook.default_values:
+            final_input = {**webhook.default_values, **(input_data if isinstance(input_data, dict) else {"input": input_data})}
+        else:
+            final_input = input_data
 
         execution_id = str(uuid.uuid4())
         chat_id = request.headers.get("x-chat-id")
