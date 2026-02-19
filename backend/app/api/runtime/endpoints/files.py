@@ -34,7 +34,9 @@ from app.schemas.file import (
     FileWithVersions,
 )
 
-from app.services.file_storage import FileStorage, get_storage
+from app.services.file_storage import FileStorage, get_storage, generate_file_data_url, generate_file_url
+from app.services.queue_service import queue_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +219,6 @@ async def upload_file(
 
         try:
             # Execute content filter function via queue
-            from app.services.queue_service import queue_service
 
             filter_result = await queue_service.enqueue_and_wait(
                 function_namespace=filter_namespace,
@@ -393,7 +394,6 @@ async def upload_file(
             post_execution_id = str(uuid_lib.uuid4())
 
             try:
-                from app.services.queue_service import queue_service
 
                 await queue_service.enqueue_function(
                     function_namespace=post_namespace,
@@ -563,9 +563,6 @@ async def generate_temp_url(
     file_version = ver_result.scalar_one_or_none()
     if not file_version:
         raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
-
-    # Generate URL
-    from app.services.file_storage import generate_file_data_url, generate_file_url
 
     url = generate_file_url(str(file_record.id), version_number, expires_in=expires_in)
     if not url:

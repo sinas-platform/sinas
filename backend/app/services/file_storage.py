@@ -219,7 +219,7 @@ def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> Opt
         "exp": int(expire.timestamp()),
     }
     token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
-    return f"https://{domain}/api/runtime/files/serve/{token}"
+    return f"https://{domain}/files/serve/{token}"
 
 
 async def generate_file_data_url(storage_path: str, content_type: str) -> str:
