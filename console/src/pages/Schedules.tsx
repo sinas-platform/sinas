@@ -32,7 +32,7 @@ export function Schedules() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Scheduled Jobs</h1>
-          <p className="text-gray-600 mt-1">Schedule functions to run automatically on a cron schedule</p>
+          <p className="text-gray-600 mt-1">Schedule functions and agents to run automatically on a cron schedule</p>
         </div>
         <Link to="/schedules/new" className="btn btn-primary flex items-center">
           <Plus className="w-5 h-5 mr-2" />
@@ -56,6 +56,15 @@ export function Schedules() {
                       <h3 className="font-semibold text-gray-900">{schedule.name}</h3>
                       <span
                         className={`px-2 py-0.5 text-xs font-medium rounded ${
+                          schedule.schedule_type === 'agent'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-blue-100 text-blue-800'
+                        }`}
+                      >
+                        {schedule.schedule_type === 'agent' ? 'agent' : 'fn'}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 text-xs font-medium rounded ${
                           schedule.is_active
                             ? 'bg-green-100 text-green-800'
                             : 'bg-gray-100 text-gray-800'
@@ -67,7 +76,8 @@ export function Schedules() {
                     <p className="text-sm text-gray-600 mt-1">{schedule.description || 'No description'}</p>
                     <div className="flex items-center gap-4 mt-2">
                       <p className="text-xs text-gray-500">
-                        Function: <span className="font-mono">{schedule.function_name}</span>
+                        {schedule.schedule_type === 'agent' ? 'Agent' : 'Function'}:{' '}
+                        <span className="font-mono">{schedule.target_namespace}/{schedule.target_name}</span>
                       </p>
                       <p className="text-xs text-gray-500">
                         Schedule: <span className="font-mono">{schedule.cron_expression}</span>
@@ -92,7 +102,7 @@ export function Schedules() {
                   <button
                     onClick={() =>
                       toggleActiveMutation.mutate({
-                        id: schedule.id,
+                        id: schedule.name,
                         is_active: !schedule.is_active,
                       })
                     }
@@ -111,7 +121,7 @@ export function Schedules() {
                     )}
                   </button>
                   <Link
-                    to={`/schedules/${schedule.id}`}
+                    to={`/schedules/${schedule.name}`}
                     className="text-primary-600 hover:text-primary-700"
                   >
                     <Edit2 className="w-5 h-5" />
@@ -119,7 +129,7 @@ export function Schedules() {
                   <button
                     onClick={() => {
                       if (confirm('Are you sure you want to delete this schedule?')) {
-                        deleteMutation.mutate(schedule.id);
+                        deleteMutation.mutate(schedule.name);
                       }
                     }}
                     className="text-red-600 hover:text-red-700"
@@ -136,7 +146,7 @@ export function Schedules() {
         <div className="text-center py-12 card">
           <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-900 mb-2">No schedules configured</h3>
-          <p className="text-gray-600 mb-4">Create schedules to run functions automatically</p>
+          <p className="text-gray-600 mb-4">Create schedules to run functions and agents automatically</p>
           <Link to="/schedules/new" className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Schedule

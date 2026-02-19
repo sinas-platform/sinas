@@ -380,22 +380,14 @@ async def execute_function(
 
     set_permission_used(request, permission)
 
-    # Execute function via execution engine
-    from app.core.auth import create_access_token
+    # Execute function via queue (shows up in Jobs, runs on worker)
     from app.models.execution import TriggerType
-    from app.models.user import User
+    from app.services.queue_service import queue_service
 
-    # Get user info for context
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
-    user_email = user.email if user else "unknown@unknown.com"
-
-    # Generate execution ID and access token
     execution_id = str(uuid.uuid4())
-    access_token = create_access_token(user_id, user_email)
 
     try:
-        result = await executor.execute_function(
+        result = await queue_service.enqueue_and_wait(
             function_namespace=namespace,
             function_name=name,
             input_data=input_data,
@@ -403,7 +395,6 @@ async def execute_function(
             trigger_type=TriggerType.MANUAL.value,
             trigger_id="management-ui",
             user_id=user_id,
-            chat_id=None,
         )
 
         return {"status": "success", "execution_id": execution_id, "result": result}

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { ArrowLeft, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, Code } from 'lucide-react';
+import { SchemaFormField } from '../components/SchemaFormField';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 
 export function ScheduleEditor() {
@@ -13,13 +14,18 @@ export function ScheduleEditor() {
 
   const [formData, setFormData] = useState({
     name: '',
-    function_name: '',
+    schedule_type: 'function' as 'function' | 'agent',
+    target_namespace: 'default',
+    target_name: '',
     description: '',
     cron_expression: '0 0 * * *',
     timezone: 'UTC',
     input_data: '{}',
+    content: '',
     is_active: true,
   });
+
+  const [rawMode, setRawMode] = useState(false);
 
   const { data: schedule, isLoading } = useQuery({
     queryKey: ['schedule', scheduleId],
@@ -33,26 +39,74 @@ export function ScheduleEditor() {
     retry: false,
   });
 
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => apiClient.listAgents(),
+    retry: false,
+  });
+
   // Load schedule data when available
-  useState(() => {
+  useEffect(() => {
     if (schedule && !isNew) {
       setFormData({
         name: schedule.name || '',
-        function_name: schedule.function_name || '',
+        schedule_type: schedule.schedule_type || 'function',
+        target_namespace: schedule.target_namespace || 'default',
+        target_name: schedule.target_name || '',
         description: schedule.description || '',
         cron_expression: schedule.cron_expression || '0 0 * * *',
         timezone: schedule.timezone || 'UTC',
         input_data: JSON.stringify(schedule.input_data || {}, null, 2),
+        content: schedule.content || '',
         is_active: schedule.is_active ?? true,
       });
     }
-  });
+  }, [schedule, isNew]);
+
+  // Find selected target to get its input_schema
+  const selectedTarget = useMemo(() => {
+    if (!formData.target_name) return null;
+    if (formData.schedule_type === 'function') {
+      if (!functions) return null;
+      return functions.find((f: any) =>
+        f.namespace === formData.target_namespace && f.name === formData.target_name
+      ) || null;
+    } else {
+      if (!agents) return null;
+      return agents.find((a: any) =>
+        a.namespace === formData.target_namespace && a.name === formData.target_name
+      ) || null;
+    }
+  }, [functions, agents, formData.schedule_type, formData.target_namespace, formData.target_name]);
+
+  const inputSchema = selectedTarget?.input_schema;
+  const schemaProperties = inputSchema?.properties || {};
+  const hasSchemaFields = Object.keys(schemaProperties).length > 0;
+
+  // Parse input_data for schema form
+  const inputParams = useMemo(() => {
+    try {
+      return JSON.parse(formData.input_data);
+    } catch {
+      return {};
+    }
+  }, [formData.input_data]);
+
+  const updateInputParam = (key: string, value: any) => {
+    const updated = { ...inputParams, [key]: value };
+    // Remove keys with empty string values
+    if (value === '' || value === undefined) {
+      delete updated[key];
+    }
+    setFormData({ ...formData, input_data: JSON.stringify(updated, null, 2) });
+  };
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => {
       const payload = {
         ...data,
         input_data: JSON.parse(data.input_data),
+        content: data.content || null,
       };
       return isNew
         ? apiClient.createSchedule(payload)
@@ -61,8 +115,8 @@ export function ScheduleEditor() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       queryClient.invalidateQueries({ queryKey: ['schedule', scheduleId] });
-      if (isNew) {
-        navigate(`/schedules/${data.id}`);
+      if (isNew || data.name !== scheduleId) {
+        navigate(`/schedules/${data.name}`, { replace: true });
       }
     },
   });
@@ -106,7 +160,7 @@ export function ScheduleEditor() {
               {isNew ? 'New Schedule' : formData.name || 'Edit Schedule'}
             </h1>
             <p className="text-gray-600 mt-1">
-              {isNew ? 'Schedule a function to run automatically' : 'Edit scheduled job configuration'}
+              {isNew ? 'Schedule a function or agent to run automatically' : 'Edit scheduled job configuration'}
             </p>
           </div>
         </div>
@@ -155,24 +209,111 @@ export function ScheduleEditor() {
               />
             </div>
 
+            {/* Schedule Type Toggle */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Function to Execute *
+                Type
               </label>
-              <select
-                value={formData.function_name}
-                onChange={(e) => setFormData({ ...formData, function_name: e.target.value })}
-                required
-                className="input"
-              >
-                <option value="">Select a function...</option>
-                {functions?.map((func: any) => (
-                  <option key={func.id} value={func.name}>
-                    {func.name} {func.description ? `- ${func.description}` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="flex rounded-lg border border-gray-300 overflow-hidden w-fit">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, schedule_type: 'function', target_namespace: 'default', target_name: '', content: '' })}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    formData.schedule_type === 'function'
+                      ? 'bg-[#2563eb] text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  Function
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, schedule_type: 'agent', target_namespace: 'default', target_name: '', content: '' })}
+                  className={`px-4 py-2 text-sm font-medium border-l border-gray-300 ${
+                    formData.schedule_type === 'agent'
+                      ? 'bg-[#2563eb] text-white'
+                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  Agent
+                </button>
+              </div>
             </div>
+
+            {/* Target Selection */}
+            {formData.schedule_type === 'function' ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Function to Execute *
+                </label>
+                <select
+                  value={formData.target_name ? `${formData.target_namespace}/${formData.target_name}` : ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      const [ns, ...rest] = val.split('/');
+                      setFormData({ ...formData, target_namespace: ns, target_name: rest.join('/') });
+                    } else {
+                      setFormData({ ...formData, target_namespace: 'default', target_name: '' });
+                    }
+                  }}
+                  required
+                  className="input"
+                >
+                  <option value="">Select a function...</option>
+                  {functions?.map((func: any) => (
+                    <option key={func.id} value={`${func.namespace}/${func.name}`}>
+                      {func.namespace}/{func.name} {func.description ? `- ${func.description}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Agent *
+                  </label>
+                  <select
+                    value={formData.target_name ? `${formData.target_namespace}/${formData.target_name}` : ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val) {
+                        const [ns, ...rest] = val.split('/');
+                        setFormData({ ...formData, target_namespace: ns, target_name: rest.join('/') });
+                      } else {
+                        setFormData({ ...formData, target_namespace: 'default', target_name: '' });
+                      }
+                    }}
+                    required
+                    className="input"
+                  >
+                    <option value="">Select an agent...</option>
+                    {agents?.map((agent: any) => (
+                      <option key={agent.id} value={`${agent.namespace}/${agent.name}`}>
+                        {agent.namespace}/{agent.name} {agent.description ? `- ${agent.description}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Message Content *
+                  </label>
+                  <textarea
+                    value={formData.content}
+                    onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                    placeholder="The message to send to the agent on each run..."
+                    rows={4}
+                    required
+                    className="input"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    A new chat is created for each scheduled run
+                  </p>
+                </div>
+              </>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -241,26 +382,60 @@ export function ScheduleEditor() {
 
         {/* Input Data */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Function Input Data</h2>
-          <p className="text-sm text-gray-600 mb-4">
-            JSON object that will be passed to the function on each execution
-          </p>
-          <div className="border border-gray-300 rounded-lg overflow-hidden">
-            <CodeEditor
-              value={formData.input_data}
-              language="json"
-              placeholder='{}'
-              onChange={(e) => setFormData({ ...formData, input_data: e.target.value })}
-              padding={15}
-              style={{
-                fontSize: 14,
-                backgroundColor: '#fafafa',
-                color: '#1f2937',
-                fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
-                minHeight: '200px',
-              }}
-            />
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">
+                {formData.schedule_type === 'function' ? 'Function Input Data' : 'Agent Input Variables'}
+              </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                {formData.schedule_type === 'function'
+                  ? 'Parameters passed to the function on each execution'
+                  : 'Input variables for the agent (used in system prompt templates)'}
+              </p>
+            </div>
+            {hasSchemaFields && (
+              <button
+                type="button"
+                onClick={() => setRawMode(!rawMode)}
+                className="btn btn-secondary text-xs flex items-center gap-1"
+              >
+                <Code className="w-3.5 h-3.5" />
+                {rawMode ? 'Form' : 'JSON'}
+              </button>
+            )}
           </div>
+
+          {!hasSchemaFields || rawMode ? (
+            <div className="border border-gray-300 rounded-lg overflow-hidden">
+              <CodeEditor
+                value={formData.input_data}
+                language="json"
+                placeholder='{}'
+                onChange={(e) => setFormData({ ...formData, input_data: e.target.value })}
+                padding={15}
+                style={{
+                  fontSize: 14,
+                  backgroundColor: '#fafafa',
+                  color: '#1f2937',
+                  fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
+                  minHeight: '150px',
+                }}
+              />
+            </div>
+          ) : (
+            <div>
+              {Object.entries(schemaProperties).map(([key, prop]: [string, any]) => (
+                <SchemaFormField
+                  key={key}
+                  name={key}
+                  schema={prop}
+                  value={inputParams[key]}
+                  onChange={(value) => updateInputParam(key, value)}
+                  required={inputSchema?.required?.includes(key)}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {saveMutation.isError && (

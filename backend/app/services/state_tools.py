@@ -31,15 +31,17 @@ class StateTools:
         Returns:
             List of tool definitions
         """
-        # Get available context keys if db and user_id provided
-        available_keys_info = ""
-        if db and user_id:
-            available_keys_info = await StateTools._get_available_keys_description(db, user_id)
-
         # Normalize inputs
         readonly_namespaces = agent_state_namespaces_readonly or []
         readwrite_namespaces = agent_state_namespaces_readwrite or []
         all_namespaces = readonly_namespaces + readwrite_namespaces
+
+        # Get available context keys if db and user_id provided
+        available_keys_info = ""
+        if db and user_id:
+            available_keys_info = await StateTools._get_available_keys_description(
+                db, user_id, allowed_namespaces=all_namespaces or None
+            )
 
         # Opt-in: if no namespaces at all, return no tools
         if len(all_namespaces) == 0:
@@ -232,29 +234,38 @@ class StateTools:
         return tools
 
     @staticmethod
-    async def _get_available_keys_description(db: AsyncSession, user_id: str) -> str:
+    async def _get_available_keys_description(
+        db: AsyncSession,
+        user_id: str,
+        allowed_namespaces: Optional[list[str]] = None,
+    ) -> str:
         """
         Get a summary of available context keys for this user.
 
         Args:
             db: Database session
             user_id: User ID
+            allowed_namespaces: Namespaces the agent may access (restricts shared state visibility)
 
         Returns:
             Formatted string describing available context keys
         """
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Query all available contexts
+        # Own states are always visible; shared states only in allowed namespaces
+        visibility_filter = State.user_id == user_uuid
+        if allowed_namespaces:
+            visibility_filter = or_(
+                visibility_filter,
+                and_(State.visibility == "shared", State.namespace.in_(allowed_namespaces)),
+            )
+
         query = (
             select(State.namespace, State.key, State.description)
             .where(
                 and_(
                     or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
-                    or_(
-                        State.user_id == user_uuid,
-                        State.visibility == "shared",  # TODO: Add namespace permission check
-                    ),
+                    visibility_filter,
                 )
             )
             .order_by(State.namespace, State.key)
@@ -306,23 +317,26 @@ class StateTools:
             Tool execution result
         """
         # Get agent's allowed context namespaces for validation
-        allowed_namespaces = None
+        write_namespaces = None
+        all_allowed_namespaces = None
         if agent_id:
             from app.models.agent import Agent
 
             result = await db.execute(select(Agent).where(Agent.id == uuid_lib.UUID(agent_id)))
             agent = result.scalar_one_or_none()
             if agent:
-                # For write operations, only readwrite namespaces are allowed
-                allowed_namespaces = agent.state_namespaces_readwrite
+                write_namespaces = agent.state_namespaces_readwrite
+                all_allowed_namespaces = (agent.state_namespaces_readonly or []) + (
+                    agent.state_namespaces_readwrite or []
+                ) or None
 
         # Check namespace access for write operations
-        if tool_name in ["save_context", "update_context"] and allowed_namespaces is not None:
+        if tool_name in ["save_context", "update_context"] and write_namespaces is not None:
             requested_namespace = arguments.get("namespace")
-            if not requested_namespace or requested_namespace not in allowed_namespaces:
+            if not requested_namespace or requested_namespace not in write_namespaces:
                 return {
                     "error": f"Agent not authorized to write to namespace '{requested_namespace}'",
-                    "allowed_namespaces": allowed_namespaces if allowed_namespaces else [],
+                    "allowed_namespaces": write_namespaces if write_namespaces else [],
                 }
 
         if tool_name == "save_context":
@@ -332,7 +346,9 @@ class StateTools:
                 arguments,
             )
         elif tool_name == "retrieve_context":
-            return await StateTools._retrieve_context(db, user_id, arguments)
+            return await StateTools._retrieve_context(
+                db, user_id, arguments, allowed_namespaces=all_allowed_namespaces
+            )
         elif tool_name == "update_context":
             return await StateTools._update_context(db, user_id, arguments)
         elif tool_name == "delete_context":
@@ -396,19 +412,26 @@ class StateTools:
 
     @staticmethod
     async def _retrieve_context(
-        db: AsyncSession, user_id: str, args: dict[str, Any]
+        db: AsyncSession,
+        user_id: str,
+        args: dict[str, Any],
+        allowed_namespaces: Optional[list[str]] = None,
     ) -> dict[str, Any]:
         """Retrieve context from store."""
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Build query - user's own contexts + group contexts
+        # Own states always visible; shared states only in allowed namespaces
+        visibility_filter = State.user_id == user_uuid
+        if allowed_namespaces:
+            visibility_filter = or_(
+                visibility_filter,
+                and_(State.visibility == "shared", State.namespace.in_(allowed_namespaces)),
+            )
+
         query = select(State).where(
             and_(
                 or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
-                or_(
-                    State.user_id == user_uuid,
-                    State.visibility == "shared",  # TODO: Add namespace permission check
-                ),
+                visibility_filter,
             )
         )
 
@@ -553,18 +576,20 @@ class StateTools:
         """
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Build query
+        # Own states always visible; shared states only in allowed namespaces
+        visibility_filter = State.user_id == user_uuid
+        if namespaces:
+            visibility_filter = or_(
+                visibility_filter,
+                and_(State.visibility == "shared", State.namespace.in_(namespaces)),
+            )
+
         query = select(State).where(
             and_(
                 or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
-                or_(
-                    State.user_id == user_uuid,
-                    State.visibility == "shared",  # TODO: Add namespace permission check
-                ),
+                visibility_filter,
             )
         )
-
-        # Note: agent_id filtering removed - context is user/group scoped, not agent scoped
 
         # Filter by namespaces if provided
         if namespaces:

@@ -188,7 +188,6 @@ def get_storage() -> FileStorage:
     global _storage
     if _storage is None:
         # Initialize with default local storage
-        # TODO: Make configurable via environment variables
         storage_backend = os.getenv("FILE_STORAGE_BACKEND", "local")
 
         if storage_backend == "local":

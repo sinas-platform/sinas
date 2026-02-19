@@ -131,13 +131,27 @@ class ScheduleConfig(BaseModel):
     """Schedule configuration"""
 
     name: str
-    functionName: str
+    scheduleType: str = "function"  # "function" or "agent"
+    functionName: Optional[str] = None  # for function schedules
+    agentName: Optional[str] = None  # for agent schedules (namespace/name)
+    content: Optional[str] = None  # message content for agent schedules
     description: Optional[str] = None
     cronExpression: str
     timezone: str = "UTC"
     groupName: str
     inputData: dict[str, Any] = Field(default_factory=dict)
     isActive: bool = True
+
+    @validator("isActive", always=True)
+    def validate_target(cls, v, values):
+        schedule_type = values.get("scheduleType", "function")
+        if schedule_type == "function" and not values.get("functionName"):
+            raise ValueError("functionName is required for function schedules")
+        if schedule_type == "agent" and not values.get("agentName"):
+            raise ValueError("agentName is required for agent schedules")
+        if schedule_type == "agent" and not values.get("content"):
+            raise ValueError("content is required for agent schedules")
+        return v
 
 
 class MCPServerConfig(BaseModel):

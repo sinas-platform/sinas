@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 
+WORKER_EXEC_COUNT_KEY = "sinas:worker:executions"
+
 
 class SharedWorkerManager:
     """
@@ -58,6 +60,8 @@ class SharedWorkerManager:
         """
         Initialize worker manager on startup.
         Re-discovers existing worker containers and scales to default count.
+
+        Only called by the backend process (main.py), not by queue workers.
         """
         if self._initialized:
             return
@@ -121,8 +125,20 @@ class SharedWorkerManager:
         """Get current number of workers."""
         return len(self.workers)
 
-    def list_workers(self) -> list[dict[str, Any]]:
-        """List all workers with status."""
+    async def list_workers(self) -> list[dict[str, Any]]:
+        """List all workers with status and execution counts from Redis."""
+        # Read execution counts from Redis (shared across processes)
+        exec_counts: dict[str, int] = {}
+        try:
+            from redis.asyncio import Redis
+
+            redis = Redis.from_url(settings.redis_url, decode_responses=True)
+            raw = await redis.hgetall(WORKER_EXEC_COUNT_KEY)
+            exec_counts = {k: int(v) for k, v in raw.items()}
+            await redis.aclose()
+        except Exception:
+            pass
+
         workers = []
         for worker_id, info in self.workers.items():
             try:
@@ -133,18 +149,17 @@ class SharedWorkerManager:
                         "container_name": info["container_name"],
                         "status": container.status,
                         "created_at": info["created_at"],
-                        "executions": info.get("executions", 0),
+                        "executions": exec_counts.get(worker_id, 0),
                     }
                 )
             except docker.errors.NotFound:
-                # Container was removed
                 workers.append(
                     {
                         "id": worker_id,
                         "container_name": info["container_name"],
                         "status": "missing",
                         "created_at": info["created_at"],
-                        "executions": info.get("executions", 0),
+                        "executions": exec_counts.get(worker_id, 0),
                     }
                 )
         return workers
@@ -471,11 +486,15 @@ sys.exit(1)
             if exec_result.exit_code == 0:
                 result = json.loads(stdout_str)
 
-                # Track execution count
-                async with self._lock:
-                    self.workers[worker_id]["executions"] = (
-                        self.workers[worker_id].get("executions", 0) + 1
-                    )
+                # Track execution count in Redis (shared across processes)
+                try:
+                    from redis.asyncio import Redis
+
+                    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+                    await redis.hincrby(WORKER_EXEC_COUNT_KEY, worker_id, 1)
+                    await redis.aclose()
+                except Exception:
+                    pass  # Non-critical — don't fail execution over counter
 
                 return result
             else:

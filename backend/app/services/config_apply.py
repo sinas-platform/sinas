@@ -1101,10 +1101,28 @@ class ConfigApplyService:
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
+                # Determine target namespace and name
+                schedule_type = schedule_config.scheduleType
+                if schedule_type == "agent":
+                    agent_ref = schedule_config.agentName or ""
+                    if "/" in agent_ref:
+                        target_namespace, target_name = agent_ref.split("/", 1)
+                    else:
+                        target_namespace, target_name = "default", agent_ref
+                else:
+                    func_ref = schedule_config.functionName or ""
+                    if "/" in func_ref:
+                        target_namespace, target_name = func_ref.split("/", 1)
+                    else:
+                        target_namespace, target_name = "default", func_ref
+
                 config_hash = self._calculate_hash(
                     {
                         "name": schedule_config.name,
-                        "function_name": schedule_config.functionName,
+                        "schedule_type": schedule_type,
+                        "target_namespace": target_namespace,
+                        "target_name": target_name,
+                        "content": schedule_config.content,
                         "cron_expression": schedule_config.cronExpression,
                         "timezone": schedule_config.timezone,
                         "input_data": schedule_config.inputData,
@@ -1125,10 +1143,10 @@ class ConfigApplyService:
                         continue
 
                     if not dry_run:
-                        function_id = self.function_ids.get(schedule_config.functionName)
-                        if function_id:
-                            existing.function_id = function_id
-
+                        existing.schedule_type = schedule_type
+                        existing.target_namespace = target_namespace
+                        existing.target_name = target_name
+                        existing.content = schedule_config.content
                         existing.cron_expression = schedule_config.cronExpression
                         existing.timezone = schedule_config.timezone
                         existing.input_data = schedule_config.inputData
@@ -1139,13 +1157,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        function_id = self.function_ids.get(schedule_config.functionName)
-                        if not function_id:
-                            self.errors.append(
-                                f"Function '{schedule_config.functionName}' not found for schedule '{schedule_config.name}'"
-                            )
-                            continue
-
                         group_id = self.group_ids.get(schedule_config.groupName)
                         if not group_id:
                             self.errors.append(
@@ -1165,13 +1176,15 @@ class ConfigApplyService:
 
                         new_schedule = ScheduledJob(
                             name=schedule_config.name,
-                            function_id=function_id,
+                            schedule_type=schedule_type,
+                            target_namespace=target_namespace,
+                            target_name=target_name,
+                            content=schedule_config.content,
                             cron_expression=schedule_config.cronExpression,
                             timezone=schedule_config.timezone,
                             input_data=schedule_config.inputData,
                             is_active=schedule_config.isActive,
-                            created_by=member.user_id,
-                            group_id=group_id,
+                            user_id=member.user_id,
                             managed_by="config",
                             config_name=self.config_name,
                             config_checksum=config_hash,

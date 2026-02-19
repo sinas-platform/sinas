@@ -15,7 +15,7 @@ from app.schemas import (
     ExecutionResponse,
     StepExecutionResponse,
 )
-from app.services.execution_engine import executor
+
 
 router = APIRouter(prefix="/executions")
 
@@ -148,10 +148,25 @@ async def continue_execution(
     if execution.status != ExecutionStatus.AWAITING_INPUT:
         raise HTTPException(status_code=400, detail="Execution is not awaiting input")
 
-    # Continue execution
+    # Look up function namespace (execution record only stores bare name)
+    from app.models.function import Function
+    from app.services.queue_service import queue_service
+
+    fn_result = await db.execute(
+        select(Function).where(
+            Function.name == execution.function_name,
+            Function.is_active == True,
+        )
+    )
+    function = fn_result.scalar_one_or_none()
+    if not function:
+        raise HTTPException(status_code=404, detail=f"Function '{execution.function_name}' not found")
+
+    # Continue execution via queue
     try:
-        result = await executor.execute_function(
-            function_name=execution.function_name,
+        result = await queue_service.enqueue_and_wait(
+            function_namespace=function.namespace,
+            function_name=function.name,
             input_data=request.input,
             execution_id=execution_id,
             trigger_type=execution.trigger_type,

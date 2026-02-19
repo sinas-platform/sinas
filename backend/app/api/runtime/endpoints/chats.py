@@ -3,9 +3,11 @@ import asyncio
 import json
 import logging
 import traceback
+import uuid
 
 import jsonschema
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -30,6 +32,8 @@ from app.schemas.chat import (
     ToolApprovalResponse,
 )
 from app.services.message_service import MessageService
+from app.services.queue_service import queue_service
+from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
 from app.utils.schema import validate_with_coercion
 
@@ -232,7 +236,7 @@ async def stream_message(
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
 
-    # Use message service
+    # Use message service directly (no queue — interactive chat needs low latency)
     message_service = MessageService(db)
 
     # Handle Union[str, List[Dict]] content - convert to string if needed
@@ -252,18 +256,11 @@ async def stream_message(
                 if chunk.get("content"):
                     accumulated_content["content"] += chunk["content"]
 
-                # Try to yield - this will raise exception if client disconnected
                 try:
-                    # Ensure chunk is properly formatted
                     if not isinstance(chunk, dict):
-                        print(
-                            f"⚠️  WARNING: Chunk is not a dict: {type(chunk)} - {repr(chunk)[:200]}"
-                        )
                         chunk = {"content": str(chunk)}
-
                     yield {"event": "message", "data": json.dumps(chunk)}
                 except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
-                    # Client disconnected while yielding - save partial and exit
                     if accumulated_content["content"]:
                         try:
                             async with AsyncSessionLocal() as new_db:
@@ -276,17 +273,14 @@ async def stream_message(
                                 new_db.add(partial_msg)
                                 await new_db.commit()
                         except Exception as save_error:
-                            print(f"⚠️  Failed to save partial message: {save_error}")
+                            logger.error(f"Failed to save partial message: {save_error}")
                     return
 
-            # Stream completed normally
             yield {"event": "done", "data": json.dumps({"status": "completed"})}
 
         except asyncio.CancelledError:
-            # Request cancelled - save partial message (shielded from cancellation)
             if accumulated_content["content"]:
                 try:
-
                     async def save_partial():
                         async with AsyncSessionLocal() as new_db:
                             partial_msg = Message(
@@ -297,17 +291,14 @@ async def stream_message(
                             )
                             new_db.add(partial_msg)
                             await new_db.commit()
-
                     await asyncio.shield(save_partial())
                 except Exception as save_error:
-                    print(f"⚠️  Failed to save partial message: {save_error}")
+                    logger.error(f"Failed to save partial message: {save_error}")
 
         except Exception as e:
-            # Log the full error for debugging
             logger.error(f"Error during message streaming: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
 
-            # Save partial message if any content was generated
             if accumulated_content["content"]:
                 try:
                     async with AsyncSessionLocal() as new_db:
@@ -319,11 +310,9 @@ async def stream_message(
                         )
                         new_db.add(partial_msg)
                         await new_db.commit()
-                        logger.info(f"Saved partial message before error: {partial_msg.id}")
                 except Exception as save_error:
                     logger.error(f"Failed to save partial message after error: {save_error}")
 
-            # Send user-friendly error message
             yield {
                 "event": "error",
                 "data": json.dumps({
@@ -335,7 +324,59 @@ async def stream_message(
     return EventSourceResponse(event_generator())
 
 
-@router.post("/chats/{chat_id}/approve-tool/{tool_call_id}", response_model=ToolApprovalResponse)
+@router.get("/chats/{chat_id}/stream/{channel_id}")
+async def reconnect_stream(
+    chat_id: str,
+    channel_id: str,
+    http_request: Request,
+    last_id: str = Query(default="0", description="Last received Redis stream entry ID"),
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Reconnect to an existing stream channel.
+
+    Use the channel_id from the X-Stream-Channel header and last_id from the
+    last received event to resume without losing messages.
+    """
+    user_id, permissions = current_user_data
+
+    # Verify chat ownership
+    chat = await db.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found")
+
+    if str(chat.user_id) != user_id:
+        raise HTTPException(403, "Not authorized")
+
+    # Check agent permission
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    if not check_permission(permissions, agent_chat_perm):
+        raise HTTPException(403, "Not authorized")
+
+    async def event_generator():
+        try:
+            async for event in stream_relay.subscribe(channel_id, last_id=last_id):
+                event_type = event.get("type", "message")
+
+                if event_type == "done":
+                    yield {"event": "done", "data": json.dumps({"status": "completed"})}
+                    return
+                elif event_type == "error":
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"error": event.get("error", "An error occurred")}),
+                    }
+                    return
+                else:
+                    yield {"event": "message", "data": json.dumps(event)}
+        except asyncio.CancelledError:
+            return
+
+    return EventSourceResponse(event_generator())
+
+
+@router.post("/chats/{chat_id}/approve-tool/{tool_call_id}")
 async def approve_tool_call(
     chat_id: str,
     tool_call_id: str,
@@ -349,13 +390,11 @@ async def approve_tool_call(
 
     When a function with requires_approval=True is called by the LLM,
     execution pauses and an approval_required event is yielded.
-    This endpoint allows the user to approve or reject the execution.
+    This endpoint enqueues the resume job and returns a channel_id
+    for the client to connect to a new SSE stream.
 
-    - Loads pending approval by tool_call_id
-    - Verifies chat ownership
-    - Updates approval status
-    - If approved, resumes execution
-    - Returns result
+    Returns:
+        JSON with status, tool_call_id, channel_id for stream reconnection
     """
     user_id, permissions = current_user_data
 
@@ -374,7 +413,7 @@ async def approve_tool_call(
             403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
         )
 
-    # Data filtering: verify ownership (users can only approve in their own chats)
+    # Data filtering: verify ownership
     if str(chat.user_id) != user_id:
         set_permission_used(http_request, agent_chat_perm, has_perm=False)
         raise HTTPException(403, "Not authorized to approve tools in this chat")
@@ -398,139 +437,29 @@ async def approve_tool_call(
     pending_approval.approved = request.approved
     await db.commit()
 
-    if not request.approved:
-        # Rejected - send error as tool result and let LLM respond
-        user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
-        message_service = MessageService(db)
-
-        # Create error tool result
-        error_message = f"Tool call rejected by user: {pending_approval.function_namespace}/{pending_approval.function_name}"
-        tool_message = Message(
-            chat_id=chat_id,
-            role="tool",
-            content=json.dumps({"error": error_message}),
-            tool_call_id=tool_call_id,
-            name=f"{pending_approval.function_namespace}__{pending_approval.function_name}",
-        )
-        db.add(tool_message)
-        await db.commit()
-
-        # Get LLM response to the rejection
-        try:
-            # Rebuild conversation with rejection
-            # First, add system prompt with template variables
-            result_chat = await db.execute(select(Chat).where(Chat.id == chat_id))
-            chat = result_chat.scalar_one_or_none()
-
-            updated_messages = []
-
-            # Add system prompt from agent if exists
-            if chat and chat.agent_id:
-                result_agent = await db.execute(select(Agent).where(Agent.id == chat.agent_id))
-                agent = result_agent.scalar_one_or_none()
-                if agent and agent.system_prompt:
-                    # Render system prompt with template variables from chat metadata
-                    system_content = agent.system_prompt
-                    if chat.chat_metadata and "agent_input" in chat.chat_metadata:
-                        try:
-                            system_content = render_template(
-                                agent.system_prompt, chat.chat_metadata["agent_input"]
-                            )
-                        except Exception as e:
-                            logger.error(f"Failed to render system prompt template: {e}")
-
-                    # Add output schema instruction if agent has one
-                    if agent.output_schema and agent.output_schema.get("properties"):
-                        schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
-                        system_content += schema_instruction
-
-                    updated_messages.append({"role": "system", "content": system_content})
-
-            # Add chat messages
-            result = await db.execute(
-                select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
-            )
-            for msg in result.scalars().all():
-                message_dict = {"role": msg.role}
-                if msg.content:
-                    message_dict["content"] = msg.content
-                if msg.tool_calls:
-                    message_dict["tool_calls"] = msg.tool_calls
-                if msg.tool_call_id:
-                    message_dict["tool_call_id"] = msg.tool_call_id
-                if msg.name:
-                    message_dict["name"] = msg.name
-                updated_messages.append(message_dict)
-
-            llm_provider = await create_provider(
-                pending_approval.conversation_context.get("provider"),
-                pending_approval.conversation_context.get("model"),
-                db,
-            )
-
-            # Get response from LLM about the rejection
-            response = await llm_provider.complete(
-                messages=updated_messages,
-                model=pending_approval.conversation_context.get("model"),
-                tools=None,
-                temperature=pending_approval.conversation_context.get("temperature", 0.7),
-                max_tokens=pending_approval.conversation_context.get("max_tokens"),
-            )
-
-            # Save assistant's response
-            final_message = Message(
-                chat_id=chat_id, role="assistant", content=response.get("content", "")
-            )
-            db.add(final_message)
-            await db.commit()
-
-            return ToolApprovalResponse(
-                status="rejected",
-                tool_call_id=tool_call_id,
-                message=f"Tool call rejected. LLM responded with message ID: {final_message.id}",
-            )
-        except Exception as e:
-            logger.error(f"Failed to get LLM response after rejection: {e}")
-            return ToolApprovalResponse(
-                status="rejected",
-                tool_call_id=tool_call_id,
-                message=f"Tool call rejected but failed to get LLM response: {str(e)}",
-            )
-
-    # Approved - resume execution
-    # Extract token for auth
+    # Extract token and enqueue resume job
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
+    channel_id = str(uuid.uuid4())
 
-    # Use message service to execute the tool calls
-    message_service = MessageService(db)
+    await queue_service.enqueue_agent_resume(
+        chat_id=chat_id,
+        user_id=user_id,
+        user_token=user_token,
+        pending_approval_id=str(pending_approval.id),
+        approved=request.approved,
+        channel_id=channel_id,
+        agent=f"{chat.agent_namespace}/{chat.agent_name}",
+    )
 
-    try:
-        # Execute tool calls using stored context
-        result_message = await message_service._handle_tool_calls(
-            chat_id=chat_id,
-            user_id=user_id,
-            user_token=user_token,
-            messages=pending_approval.conversation_context["messages"],
-            tool_calls=pending_approval.all_tool_calls,
-            provider=pending_approval.conversation_context.get("provider"),
-            model=pending_approval.conversation_context.get("model"),
-            temperature=pending_approval.conversation_context.get("temperature", 0.7),
-            max_tokens=pending_approval.conversation_context.get("max_tokens"),
-            tools=pending_approval.conversation_context.get(
-                "tools", []
-            ),  # Restore tools with metadata
-        )
-
-        return ToolApprovalResponse(
-            status="approved",
-            tool_call_id=tool_call_id,
-            message=f"Tool call executed successfully. Result message ID: {result_message.id}",
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to execute approved tool call: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(500, f"Failed to execute approved tool call: {str(e)}")
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "approved" if request.approved else "rejected",
+            "tool_call_id": tool_call_id,
+            "channel_id": channel_id,
+            "message": f"Resume job enqueued. Connect to /chats/{chat_id}/stream/{channel_id} for results.",
+        },
+    )
 
 
 @router.get("/chats", response_model=list[ChatResponse])

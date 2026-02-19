@@ -68,6 +68,7 @@ export function ChatDetail() {
         ? 'http://localhost:8000'
         : `${window.location.protocol}//${window.location.hostname}`;
 
+      // POST approval — returns 202 with channel_id for streaming results
       const response = await fetch(`${baseUrl}/chats/${chatId}/approve-tool/${approval.tool_call_id}`, {
         method: 'POST',
         headers: {
@@ -81,15 +82,95 @@ export function ChatDetail() {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      const result = await response.json();
+
       // Remove from pending approvals
       setPendingApprovals(prev => prev.filter(a => a.tool_call_id !== approval.tool_call_id));
 
-      // Refresh chat to show execution results
+      // Connect to the stream channel to get the worker's response
+      if (result.channel_id) {
+        setIsStreaming(true);
+        setStreamingContent('');
+
+        const streamResponse = await fetch(
+          `${baseUrl}/chats/${chatId}/stream/${result.channel_id}`,
+          {
+            headers: { 'Authorization': `Bearer ${token}` },
+          }
+        );
+
+        if (!streamResponse.ok) {
+          throw new Error(`Stream connection failed: ${streamResponse.status}`);
+        }
+
+        const reader = streamResponse.body?.getReader();
+        if (!reader) throw new Error('No stream body');
+
+        streamReaderRef.current = reader;
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          let eventType = '';
+          for (const line of lines) {
+            if (line.startsWith('event:')) {
+              eventType = line.substring(6).trim();
+            } else if (line.startsWith('data:')) {
+              const data = line.substring(5).trim();
+              if (!data) continue;
+
+              try {
+                const parsed = JSON.parse(data);
+
+                if (eventType === 'message') {
+                  if (parsed.content) {
+                    setStreamingContent(prev => prev + parsed.content);
+                  }
+                  if (parsed.type === 'approval_required') {
+                    setPendingApprovals(prev => [...prev, parsed]);
+                  }
+                } else if (eventType === 'done') {
+                  setIsStreaming(false);
+                  setStreamingContent('');
+                  streamReaderRef.current = null;
+                  queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
+                  return;
+                } else if (eventType === 'error') {
+                  console.error('Approval stream error:', parsed.error);
+                  setIsStreaming(false);
+                  setStreamingContent('');
+                  streamReaderRef.current = null;
+                  queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
+                  return;
+                }
+              } catch (e) {
+                console.error('Failed to parse SSE data:', data, e);
+              }
+            }
+          }
+        }
+
+        setIsStreaming(false);
+        setStreamingContent('');
+        streamReaderRef.current = null;
+      }
+
       queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
 
     } catch (error) {
       console.error('Approval error:', error);
+      setIsStreaming(false);
+      setStreamingContent('');
+      streamReaderRef.current = null;
       alert('Failed to process approval. Please try again.');
+      queryClient.invalidateQueries({ queryKey: ['chat', chatId] });
     } finally {
       setProcessingApproval(null);
     }

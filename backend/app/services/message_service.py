@@ -1,8 +1,10 @@
 """Message service for chat processing with tool calling."""
+import asyncio
 import json
 import logging
 import time
 import traceback
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Optional
@@ -19,11 +21,13 @@ from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
 from app.services.content_converter import ContentConverter
-from app.services.execution_engine import executor
+
 from app.services.function_tools import FunctionToolConverter
 from app.services.mcp import mcp_client
+from app.services.queue_service import queue_service
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
+from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
 
 logger = logging.getLogger(__name__)
@@ -897,11 +901,47 @@ class MessageService:
         if system_content:
             messages.append({"role": "system", "content": system_content})
 
-        # Add chat message history
+        # Add chat message history (with windowing for long conversations)
+        from app.core.config import settings
+
         result = await self.db.execute(
             select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)
         )
-        chat_messages = result.scalars().all()
+        all_messages = result.scalars().all()
+
+        # Apply windowing if conversation exceeds max_history_messages
+        if len(all_messages) > settings.max_history_messages:
+            chat_messages = all_messages[-settings.max_history_messages:]
+
+            # Ensure tool call/result pairs aren't split by the window boundary.
+            # Walk backwards from the start of the window to include any orphaned
+            # assistant messages that contain tool_calls referenced by tool results
+            # at the start of the window, and vice versa.
+            window_start_idx = len(all_messages) - settings.max_history_messages
+            prepend = []
+
+            # Collect tool_call_ids referenced by tool messages at the start of the window
+            referenced_tc_ids = set()
+            for msg in chat_messages:
+                if msg.role == "tool" and msg.tool_call_id:
+                    referenced_tc_ids.add(msg.tool_call_id)
+                elif msg.role != "tool":
+                    break  # Stop once we hit non-tool messages
+
+            if referenced_tc_ids:
+                # Scan messages before the window for assistant messages with matching tool_calls
+                for msg in reversed(all_messages[:window_start_idx]):
+                    if msg.tool_calls:
+                        msg_tc_ids = {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
+                        if msg_tc_ids & referenced_tc_ids:
+                            prepend.insert(0, msg)
+                            referenced_tc_ids -= msg_tc_ids
+                    if not referenced_tc_ids:
+                        break
+
+            chat_messages = prepend + list(chat_messages)
+        else:
+            chat_messages = all_messages
 
         for msg in chat_messages:
             message_dict = {"role": msg.role}
@@ -960,18 +1000,27 @@ class MessageService:
                 },
             }
 
+            # Hidden parameters included in all agent tools
+            _hidden = {
+                "_agent_id": {
+                    "type": "string",
+                    "description": "Internal agent identifier",
+                    "const": str(agent.id),
+                    "default": str(agent.id),
+                },
+                "_chat_id": {
+                    "type": "string",
+                    "description": "Optional chat ID to resume a previous conversation with this agent instead of starting a new one. Use a chat_id returned from a previous call to continue that conversation.",
+                },
+            }
+
             # Build parameters - always include agent_id as a hidden constant
             if agent.input_schema and agent.input_schema.get("properties"):
-                # Merge input_schema with agent_id
+                # Merge input_schema with hidden params
                 params = dict(agent.input_schema)
                 if "properties" not in params:
                     params["properties"] = {}
-                params["properties"]["_agent_id"] = {
-                    "type": "string",
-                    "description": "Internal agent identifier",
-                    "const": str(agent.id),  # Force this specific value
-                    "default": str(agent.id),  # Provide default for LLMs that don't respect const
-                }
+                params["properties"].update(_hidden)
                 # Make _agent_id required
                 if "required" not in params:
                     params["required"] = []
@@ -979,7 +1028,7 @@ class MessageService:
                     params["required"].append("_agent_id")
                 tool_def["function"]["parameters"] = params
             else:
-                # Default: simple prompt + hidden agent_id
+                # Default: simple prompt + hidden params
                 tool_def["function"]["parameters"] = {
                     "type": "object",
                     "properties": {
@@ -987,12 +1036,7 @@ class MessageService:
                             "type": "string",
                             "description": "The prompt or query to send to the agent",
                         },
-                        "_agent_id": {
-                            "type": "string",
-                            "description": "Internal agent identifier",
-                            "const": str(agent.id),
-                            "default": str(agent.id),  # Provide default for LLMs that don't respect const
-                        },
+                        **_hidden,
                     },
                     "required": ["prompt", "_agent_id"],
                 }
@@ -1146,7 +1190,7 @@ class MessageService:
         arguments: dict[str, Any],
         enabled_agent_ids: list[str],
     ) -> dict[str, Any]:
-        """Execute an agent tool call by creating a new chat and getting a response."""
+        """Execute an agent tool call by creating or resuming a chat."""
         # Extract agent ID from arguments (passed as _agent_id parameter)
         agent_id_str = arguments.get("_agent_id")
         if not agent_id_str:
@@ -1164,7 +1208,7 @@ class MessageService:
             return {"error": f"Agent not found: {agent_id_str}"}
 
         # Prepare input data for the agent
-        # Filter out internal _agent_id parameter
+        # Filter out internal _* parameters
         user_arguments = {k: v for k, v in arguments.items() if not k.startswith("_")}
 
         # If arguments contain just "prompt", send as message content
@@ -1178,36 +1222,259 @@ class MessageService:
             input_data = user_arguments
             content = json.dumps(user_arguments)
 
-        # Create a new chat for this agent call
+        # Resume existing chat or create a new one
+        resume_chat_id = arguments.get("_chat_id")
         try:
-            sub_chat = await self.create_chat_with_agent(
-                agent_id=str(agent.id),
-                user_id=user_id,
-                input_data=input_data,
-                name=f"Sub-chat: {agent.name}",
-            )
+            if resume_chat_id:
+                # Verify the chat exists, belongs to this user and agent
+                result = await self.db.execute(
+                    select(Chat).where(
+                        Chat.id == resume_chat_id,
+                        Chat.user_id == user_id,
+                        Chat.agent_id == agent_id_str,
+                    )
+                )
+                sub_chat = result.scalar_one_or_none()
+                if not sub_chat:
+                    return {"error": f"Chat {resume_chat_id} not found or does not belong to this agent"}
+                logger.info(f"Resuming sub-agent chat {sub_chat.id} with {agent.namespace}/{agent.name}")
+            else:
+                sub_chat = await self.create_chat_with_agent(
+                    agent_id=str(agent.id),
+                    user_id=user_id,
+                    input_data=input_data,
+                    name=f"Sub-chat: {agent.name}",
+                )
 
-            # Send message to the agent
-            # Output schema enforcement happens automatically in send_message
-            # Note: input_data is already stored in chat.chat_metadata['agent_input']
-            # by create_chat_with_agent(), so template rendering will work automatically
-            response_message = await self.send_message(
+            # Route agent-to-agent calls through the queue so each sub-agent
+            # runs in its own worker — enables agent swarms without recursive blocking.
+            channel_id = str(uuid.uuid4())
+
+            await queue_service.enqueue_agent_message(
                 chat_id=str(sub_chat.id),
                 user_id=user_id,
                 user_token=user_token,
                 content=content,
+                channel_id=channel_id,
+                agent=f"{agent.namespace}/{agent.name}",
             )
 
-            # Return the agent's response
+            # Wait for the sub-agent to finish by reading the Redis stream
+            final_content = ""
+            async for event in stream_relay.subscribe(channel_id):
+                if event.get("content"):
+                    final_content += event["content"]
+                if event.get("type") in ("done", "error"):
+                    if event.get("type") == "error":
+                        return {
+                            "agent_name": agent.name,
+                            "error": event.get("error", "Sub-agent failed"),
+                            "chat_id": str(sub_chat.id),
+                        }
+                    break
+
             return {
                 "agent_name": agent.name,
-                "response": response_message.content,
+                "response": final_content,
                 "chat_id": str(sub_chat.id),
             }
 
         except Exception as e:
             logger.error(f"Failed to execute agent tool {tool_name}: {e}")
             return {"error": str(e)}
+
+    def _is_sequential_tool(self, tool_name: str) -> bool:
+        """Check if a tool must be executed sequentially (not parallelizable)."""
+        return tool_name.startswith("call_agent_") or tool_name == "continue_execution"
+
+    async def _execute_single_tool(
+        self,
+        tool_call: dict[str, Any],
+        chat_id: str,
+        user_id: str,
+        user_token: str,
+        tools: list[dict[str, Any]],
+    ) -> tuple[str, str, str]:
+        """
+        Execute a single tool call. Uses its own DB session for parallel safety.
+
+        Returns:
+            Tuple of (tool_call_id, tool_name, result_content)
+        """
+        from app.core.database import AsyncSessionLocal
+
+        tool_name = tool_call["function"]["name"]
+        arguments_str = tool_call["function"]["arguments"]
+
+        # Handle arguments parsing
+        try:
+            if isinstance(arguments_str, str):
+                arguments = json.loads(arguments_str) if arguments_str.strip() else {}
+            else:
+                arguments = arguments_str
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse tool arguments for {tool_name}: {e}")
+            result_content = json.dumps({
+                "error": f"Invalid JSON arguments: {str(e)}",
+                "raw_arguments": arguments_str[:200] if isinstance(arguments_str, str) else str(arguments_str)[:200]
+            })
+            return (tool_call["id"], tool_name, result_content)
+
+        # Execute tool with its own session
+        try:
+            async with AsyncSessionLocal() as db:
+                # Get chat for context
+                result_chat = await db.execute(select(Chat).where(Chat.id == chat_id))
+                chat = result_chat.scalar_one_or_none()
+
+                if tool_name in [
+                    "save_context",
+                    "retrieve_context",
+                    "update_context",
+                    "delete_context",
+                ]:
+                    result = await StateTools.execute_tool(
+                        db=db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        chat_id=str(chat_id),
+                        agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
+                    )
+                elif tool_name == "continue_execution":
+                    # Look up function namespace from execution record
+                    from app.models.execution import Execution as ExecModel
+                    from app.models.function import Function as FuncModel
+
+                    exec_res = await db.execute(
+                        select(ExecModel).where(ExecModel.execution_id == arguments["execution_id"])
+                    )
+                    exec_record = exec_res.scalar_one_or_none()
+                    fn_ns, fn_name = "", ""
+                    if exec_record:
+                        fn_res = await db.execute(
+                            select(FuncModel).where(
+                                FuncModel.name == exec_record.function_name,
+                                FuncModel.is_active == True,
+                            )
+                        )
+                        fn = fn_res.scalar_one_or_none()
+                        if fn:
+                            fn_ns, fn_name = fn.namespace, fn.name
+
+                    result = await queue_service.enqueue_and_wait(
+                        function_namespace=fn_ns,
+                        function_name=fn_name,
+                        input_data=arguments["input"],
+                        execution_id=arguments["execution_id"],
+                        trigger_type=exec_record.trigger_type if exec_record else "",
+                        trigger_id=str(exec_record.trigger_id) if exec_record else "",
+                        user_id=user_id,
+                        resume_data=arguments["input"],
+                    )
+                elif tool_name.startswith("call_agent_"):
+                    enabled_agent_ids = []
+                    if chat and chat.agent_id:
+                        result_agent = await db.execute(
+                            select(Agent).where(Agent.id == chat.agent_id)
+                        )
+                        chat_agent = result_agent.scalar_one_or_none()
+                        if chat_agent:
+                            enabled_agent_ids = chat_agent.enabled_agents or []
+
+                    result = await self._execute_agent_tool(
+                        chat=chat,
+                        user_id=user_id,
+                        user_token=user_token,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        enabled_agent_ids=enabled_agent_ids,
+                    )
+                elif tool_name.startswith("get_skill_"):
+                    start_time = time.time()
+                    result = await self.skill_converter.handle_skill_tool_call(
+                        db=db, tool_name=tool_name, arguments=arguments
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
+                    if result is None:
+                        result = {"error": f"Skill not found for tool: {tool_name}"}
+                elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
+                    start_time = time.time()
+                    tool_metadata = {}
+                    for tool in tools:
+                        if tool.get("function", {}).get("name") == tool_name:
+                            tool_metadata = tool.get("function", {}).get("_metadata", {})
+                            break
+                    result = await self.collection_converter.execute_tool(
+                        db=db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        metadata=tool_metadata,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Collection tool completed in {elapsed:.3f}s: {tool_name}")
+                elif tool_name in mcp_client.tools:
+                    result = await mcp_client.execute_tool(tool_name, arguments)
+                else:
+                    # Default: execute as function tool
+                    start_time = time.time()
+
+                    tool_found = False
+                    locked_params = {}
+                    overridable_params = {}
+
+                    for tool in tools:
+                        if tool.get("function", {}).get("name") == tool_name:
+                            tool_found = True
+                            metadata = tool.get("function", {}).get("_metadata", {})
+                            locked_params = metadata.get("locked_params", {})
+                            overridable_params = metadata.get("overridable_params", {})
+                            break
+
+                    if not tool_found:
+                        logger.warning(
+                            f"Security: Tool '{tool_name}' was not in approved tools list. "
+                            f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
+                        )
+                        result = {
+                            "error": "Unauthorized tool call",
+                            "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
+                        }
+                    else:
+                        enabled_function_list = []
+                        if chat and chat.agent_id:
+                            result_agent = await db.execute(
+                                select(Agent).where(Agent.id == chat.agent_id)
+                            )
+                            chat_agent = result_agent.scalar_one_or_none()
+                            if chat_agent:
+                                enabled_function_list = chat_agent.enabled_functions or []
+
+                        result = await self.function_converter.execute_function_tool(
+                            db=db,
+                            tool_name=tool_name,
+                            arguments=arguments,
+                            user_id=user_id,
+                            user_token=user_token,
+                            chat_id=str(chat_id),
+                            locked_params=locked_params,
+                            overridable_params=overridable_params,
+                            enabled_functions=enabled_function_list,
+                        )
+
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Function execution completed in {elapsed:.3f}s: {tool_name}")
+
+                result_content = json.dumps(result) if not isinstance(result, str) else result
+
+        except Exception as e:
+            logger.error(f"Tool execution failed: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            result_content = json.dumps({"error": str(e)})
+
+        return (tool_call["id"], tool_name, result_content)
 
     async def _handle_tool_calls(
         self,
@@ -1222,8 +1489,8 @@ class MessageService:
         max_tokens: Optional[int],
         tools: list[dict[str, Any]],
         permissions: Optional[dict[str, bool]] = None,
-    ) -> Message:
-        """Execute tool calls and get final response."""
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Execute tool calls, stream LLM follow-up response, and save final message."""
         # Get permissions if not provided
         if permissions is None:
             from app.core.auth import get_user_permissions
@@ -1231,7 +1498,6 @@ class MessageService:
             permissions = await get_user_permissions(self.db, user_id)
 
         # Check if assistant message with these tool calls already exists (e.g., from approval flow)
-        # Get the first tool call ID to check
         first_tool_call_id = tool_calls[0]["id"] if tool_calls else None
         existing_message = None
 
@@ -1261,195 +1527,54 @@ class MessageService:
             self.db.add(assistant_message)
             await self.db.commit()
 
-        # Execute each tool call
-        for tool_call in tool_calls:
-            # Skip tool calls without valid ID (should have been filtered by validation)
-            if not tool_call.get("id"):
-                logger.warning(f"Skipping tool call without ID: {tool_call}")
-                continue
+        # Separate tool calls into parallel and sequential groups
+        valid_tool_calls = [tc for tc in tool_calls if tc.get("id")]
+        parallel_calls = []
+        sequential_calls = []
 
-            tool_name = tool_call["function"]["name"]
-            arguments_str = tool_call["function"]["arguments"]
+        for tc in valid_tool_calls:
+            tool_name = tc["function"]["name"]
+            if self._is_sequential_tool(tool_name):
+                sequential_calls.append(tc)
+            else:
+                parallel_calls.append(tc)
 
-            # Handle arguments parsing - empty strings should be treated as {}
-            try:
-                if isinstance(arguments_str, str):
-                    arguments = json.loads(arguments_str) if arguments_str.strip() else {}
+        # Collect all results preserving original order
+        tool_results: dict[str, tuple[str, str, str]] = {}  # tool_call_id -> (id, name, content)
+
+        # Execute parallel tools concurrently
+        if parallel_calls:
+            parallel_tasks = [
+                self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
+                for tc in parallel_calls
+            ]
+            parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+            for i, res in enumerate(parallel_results):
+                tc = parallel_calls[i]
+                if isinstance(res, Exception):
+                    logger.error(f"Parallel tool execution failed: {res}")
+                    tool_results[tc["id"]] = (
+                        tc["id"],
+                        tc["function"]["name"],
+                        json.dumps({"error": str(res)}),
+                    )
                 else:
-                    arguments = arguments_str
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse tool arguments for {tool_name}: {e}")
-                logger.error(f"Arguments string: {repr(arguments_str[:500])}")
-                # Create error result and skip to next tool
-                result_content = json.dumps({
-                    "error": f"Invalid JSON arguments: {str(e)}",
-                    "raw_arguments": arguments_str[:200] if isinstance(arguments_str, str) else str(arguments_str)[:200]
-                })
-                tool_message = Message(
-                    chat_id=chat_id,
-                    role="tool",
-                    content=result_content,
-                    tool_call_id=tool_call["id"],
-                    name=tool_name,
-                )
-                self.db.add(tool_message)
-                continue
+                    tool_results[tc["id"]] = res
 
-            # Execute tool (context, webhook, MCP, or execution continuation)
-            try:
-                # Get chat for context
-                result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
-                chat = result_chat.scalar_one_or_none()
+        # Execute sequential tools one by one
+        for tc in sequential_calls:
+            res = await self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
+            tool_results[tc["id"]] = res
 
-                if tool_name in [
-                    "save_context",
-                    "retrieve_context",
-                    "update_context",
-                    "delete_context",
-                ]:
-                    # Handle context tools
-                    result = await StateTools.execute_tool(
-                        db=self.db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        chat_id=str(chat_id),
-                        agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
-                    )
-                # Ontology tools removed - extracted to sinas-ontology project
-                elif tool_name == "continue_execution":
-                    # Handle execution continuation
-                    result = await executor.execute_function(
-                        function_name="",  # Not needed for resume
-                        input_data=arguments["input"],
-                        execution_id=arguments["execution_id"],
-                        trigger_type="",  # Not needed for resume
-                        trigger_id="",  # Not needed for resume
-                        user_id=user_id,
-                        resume_data=arguments["input"],
-                    )
-                elif tool_name.startswith("call_agent_"):
-                    # Handle agent tool calls - get enabled agents from chat's agent
-                    enabled_agent_ids = []
-                    if chat and chat.agent_id:
-                        result_agent = await self.db.execute(
-                            select(Agent).where(Agent.id == chat.agent_id)
-                        )
-                        chat_agent = result_agent.scalar_one_or_none()
-                        if chat_agent:
-                            enabled_agent_ids = chat_agent.enabled_agents or []
-
-                    result = await self._execute_agent_tool(
-                        chat=chat,
-                        user_id=user_id,
-                        user_token=user_token,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        enabled_agent_ids=enabled_agent_ids,
-                    )
-                elif tool_name.startswith("get_skill_"):
-                    # Handle skill tool calls - return skill content (markdown instructions)
-                    start_time = time.time()
-                    print(f"⏱️  [TIMING] Starting skill retrieval: {tool_name}")
-                    result = await self.skill_converter.handle_skill_tool_call(
-                        db=self.db, tool_name=tool_name, arguments=arguments
-                    )
-                    elapsed = time.time() - start_time
-                    print(f"⏱️  [TIMING] Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
-                    if result is None:
-                        result = {"error": f"Skill not found for tool: {tool_name}"}
-                elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
-                    # Handle collection tool calls
-                    start_time = time.time()
-                    print(f"⏱️  [TIMING] Starting collection tool: {tool_name}")
-                    # Find tool metadata from approved tools list
-                    tool_metadata = {}
-                    for tool in tools:
-                        if tool.get("function", {}).get("name") == tool_name:
-                            tool_metadata = tool.get("function", {}).get("_metadata", {})
-                            break
-                    result = await self.collection_converter.execute_tool(
-                        db=self.db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        metadata=tool_metadata,
-                    )
-                    elapsed = time.time() - start_time
-                    print(f"⏱️  [TIMING] Collection tool completed in {elapsed:.3f}s: {tool_name}")
-                elif tool_name in mcp_client.tools:
-                    result = await mcp_client.execute_tool(tool_name, arguments)
-                else:
-                    # Default: execute as function tool
-                    start_time = time.time()
-                    print(f"⏱️  [TIMING] Starting function execution: {tool_name}")
-
-                    # SECURITY: Validate tool is in the approved tools list
-                    tool_found = False
-                    locked_params = {}
-                    overridable_params = {}
-
-                    for tool in tools:
-                        if tool.get("function", {}).get("name") == tool_name:
-                            tool_found = True
-                            # Extract locked and overridable params from metadata
-                            metadata = tool.get("function", {}).get("_metadata", {})
-                            locked_params = metadata.get("locked_params", {})
-                            overridable_params = metadata.get("overridable_params", {})
-                            break
-
-                    if not tool_found:
-                        # SECURITY: Tool not in approved list - reject execution
-                        logger.warning(
-                            f"Security: Tool '{tool_name}' was not in approved tools list. "
-                            f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
-                        )
-                        result = {
-                            "error": "Unauthorized tool call",
-                            "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
-                        }
-                    else:
-                        # Get enabled functions list from agent for validation
-                        enabled_function_list = []
-                        if chat and chat.agent_id:
-                            result_agent = await self.db.execute(
-                                select(Agent).where(Agent.id == chat.agent_id)
-                            )
-                            chat_agent = result_agent.scalar_one_or_none()
-                            if chat_agent:
-                                enabled_function_list = chat_agent.enabled_functions or []
-
-                        result = await self.function_converter.execute_function_tool(
-                            db=self.db,
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            user_id=user_id,
-                            user_token=user_token,
-                            chat_id=str(chat_id),
-                            locked_params=locked_params,
-                            overridable_params=overridable_params,
-                            enabled_functions=enabled_function_list,
-                        )
-
-                    elapsed = time.time() - start_time
-                    print(
-                        f"⏱️  [TIMING] Function execution completed in {elapsed:.3f}s: {tool_name}"
-                    )
-
-                result_content = json.dumps(result) if not isinstance(result, str) else result
-
-            except Exception as e:
-                logger.error(f"Tool execution failed: {e}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                result_content = json.dumps({"error": str(e)})
-
-            # Save tool result message
+        # Save all tool result messages in original order
+        for tc in valid_tool_calls:
+            tc_id, tc_name, tc_content = tool_results[tc["id"]]
             tool_message = Message(
                 chat_id=chat_id,
                 role="tool",
-                content=result_content,
-                tool_call_id=tool_call["id"],
-                name=tool_name,
+                content=tc_content,
+                tool_call_id=tc_id,
+                name=tc_name,
             )
             self.db.add(tool_message)
 

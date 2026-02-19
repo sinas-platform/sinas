@@ -1,5 +1,5 @@
 """File runtime endpoints - upload, download, list, delete, search."""
-import asyncio
+
 import base64
 import logging
 import re
@@ -33,7 +33,7 @@ from app.schemas.file import (
     FileVersionResponse,
     FileWithVersions,
 )
-from app.services.execution_engine import executor
+
 from app.services.file_storage import FileStorage, get_storage
 
 logger = logging.getLogger(__name__)
@@ -216,8 +216,10 @@ async def upload_file(
         filter_execution_id = str(uuid_lib.uuid4())
 
         try:
-            # Execute content filter function
-            filter_result = await executor.execute_function(
+            # Execute content filter function via queue
+            from app.services.queue_service import queue_service
+
+            filter_result = await queue_service.enqueue_and_wait(
                 function_namespace=filter_namespace,
                 function_name=filter_name,
                 input_data=filter_input,
@@ -391,16 +393,16 @@ async def upload_file(
             post_execution_id = str(uuid_lib.uuid4())
 
             try:
-                asyncio.create_task(
-                    executor.execute_function(
-                        function_namespace=post_namespace,
-                        function_name=post_name,
-                        input_data=post_input,
-                        execution_id=post_execution_id,
-                        trigger_type=TriggerType.MANUAL.value,
-                        trigger_id=f"post_upload:{namespace}/{collection}",
-                        user_id=user_id,
-                    )
+                from app.services.queue_service import queue_service
+
+                await queue_service.enqueue_function(
+                    function_namespace=post_namespace,
+                    function_name=post_name,
+                    input_data=post_input,
+                    execution_id=post_execution_id,
+                    trigger_type=TriggerType.MANUAL.value,
+                    trigger_id=f"post_upload:{namespace}/{collection}",
+                    user_id=user_id,
                 )
             except Exception:
                 # Don't fail upload if post-upload trigger fails

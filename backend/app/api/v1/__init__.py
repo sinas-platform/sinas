@@ -12,6 +12,7 @@ from .endpoints import (
     mcp_servers,
     messages,
     packages,
+    queue,
     request_logs,
     roles,
     schedules,
@@ -48,6 +49,7 @@ router.include_router(request_logs.router)
 # System routes
 router.include_router(containers.router)
 router.include_router(workers.router)
+router.include_router(queue.router)
 
 # Configuration routes
 router.include_router(config.router, prefix="/config", tags=["config"])

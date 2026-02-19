@@ -370,6 +370,9 @@ DEFAULT_ROLE_PERMISSIONS = {
         # Advanced Executions (admin-only)
         # "sinas.executions.read:all"
         # "sinas.executions.update:all"
+        # System (admin-only - queues, infrastructure)
+        # "sinas.system.read:all"
+        # "sinas.system.update:all"
         # Advanced States (admin-only, namespace-based)
         # "sinas.states/*.read:all" - Read all states in any namespace
         # "sinas.states/*.create:all" - Create states in any namespace

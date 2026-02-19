@@ -24,6 +24,18 @@ services:
       retries: 10
       start_period: 30s
 
+  redis:
+    image: redis:7-alpine
+    container_name: sinas-redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+
   postgres:
     image: postgres:16-alpine
     container_name: sinas-postgres
@@ -35,6 +47,26 @@ services:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: sinas-pgbouncer
+    environment:
+      DATABASE_URL: postgres://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-sinas}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 50
+      MIN_POOL_SIZE: 10
+      RESERVE_POOL_SIZE: 10
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -52,7 +84,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: sinas-backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -62,6 +93,7 @@ services:
     env_file:
       - .env
     deploy:
+      replicas: ${BACKEND_REPLICAS:-1}
       resources:
         limits:
           cpus: '${APP_CPU_LIMIT:-2.0}'
@@ -71,9 +103,11 @@ services:
           memory: ${APP_MEMORY_RESERVATION:-512M}
     environment:
       DATABASE_USER: ${DATABASE_USER:-postgres}
-      DATABASE_HOST: ${DATABASE_HOST:-postgres}
-      DATABASE_PORT: ${DATABASE_PORT:-5432}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
       DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      DATABASE_DIRECT_HOST: postgres
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
@@ -94,12 +128,116 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       clickhouse:
         condition: service_healthy
-      postgres:
+      pgbouncer:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  queue-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m arq app.queue.worker.WorkerSettings
+    deploy:
+      replicas: ${QUEUE_WORKER_REPLICAS:-2}
+
+  queue-agent:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m arq app.queue.worker.AgentWorkerSettings
+    deploy:
+      replicas: ${QUEUE_AGENT_REPLICAS:-2}
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m app.scheduler.service
+    deploy:
+      replicas: 1
 
   console:
     build:
@@ -131,6 +269,7 @@ services:
 volumes:
   postgres_data:
   clickhouse_data:
+  redis_data:
   file_storage:
   caddy_data:
   caddy_config:
