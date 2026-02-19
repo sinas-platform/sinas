@@ -24,11 +24,13 @@ import { States } from './pages/States';
 import { LLMProviders } from './pages/LLMProviders';
 import { ConfigManager } from './pages/ConfigManager';
 import { Permissions } from './pages/Permissions';
-import { Workers } from './pages/Workers';
+import { System } from './pages/System';
 import { Templates } from './pages/Templates';
 import { Skills } from './pages/Skills';
 import { Messages } from './pages/Messages';
 import { FunctionExecute } from './pages/FunctionExecute';
+import { Collections } from './pages/Collections';
+import { CollectionDetail } from './pages/CollectionDetail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -115,11 +117,13 @@ function App() {
               <Route path="mcp" element={<MCPServers />} />
               <Route path="llm-providers" element={<LLMProviders />} />
               <Route path="skills" element={<Skills />} />
+              <Route path="collections" element={<Collections />} />
+              <Route path="collections/:namespace/:name" element={<CollectionDetail />} />
               <Route path="templates" element={<Templates />} />
               <Route path="config" element={<ConfigManager />} />
               <Route path="states" element={<States />} />
               <Route path="logs" element={<RequestLogs />} />
-              <Route path="workers" element={<Workers />} />
+              <Route path="system" element={<System />} />
               <Route path="users" element={<Users />} />
               <Route path="permissions" element={<Permissions />} />
               <Route path="api-keys" element={<APIKeys />} />

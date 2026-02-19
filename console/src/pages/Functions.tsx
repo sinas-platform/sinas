@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Code, Plus, Trash2, Edit2, Package, ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { Code, Plus, Trash2, Edit2, Package, ChevronDown, ChevronRight, Search, Filter, Upload } from 'lucide-react';
 import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -22,6 +22,30 @@ export function Functions() {
     queryFn: () => apiClient.listPackages(),
     retry: false,
   });
+
+  const { data: collections } = useQuery({
+    queryKey: ['collections'],
+    queryFn: () => apiClient.listCollections(),
+    retry: false,
+  });
+
+  // Build lookup: function identifier -> collection trigger roles
+  const functionTriggerRoles = useMemo(() => {
+    const roles: Record<string, { contentFilter: string[]; postUpload: string[] }> = {};
+    if (!collections) return roles;
+    for (const coll of collections) {
+      const collName = `${coll.namespace}/${coll.name}`;
+      if (coll.content_filter_function) {
+        if (!roles[coll.content_filter_function]) roles[coll.content_filter_function] = { contentFilter: [], postUpload: [] };
+        roles[coll.content_filter_function].contentFilter.push(collName);
+      }
+      if (coll.post_upload_function) {
+        if (!roles[coll.post_upload_function]) roles[coll.post_upload_function] = { contentFilter: [], postUpload: [] };
+        roles[coll.post_upload_function].postUpload.push(collName);
+      }
+    }
+    return roles;
+  }, [collections]);
 
   const deleteMutation = useMutation({
     mutationFn: ({ namespace, name }: { namespace: string; name: string }) => apiClient.deleteFunction(namespace, name),
@@ -190,6 +214,18 @@ export function Functions() {
                       {func.requires_approval && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
                           Requires Approval
+                        </span>
+                      )}
+                      {functionTriggerRoles[`${func.namespace}/${func.name}`]?.contentFilter.length > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800" title={`Content filter for: ${functionTriggerRoles[`${func.namespace}/${func.name}`].contentFilter.join(', ')}`}>
+                          <Filter className="w-3 h-3 mr-1" />
+                          Content Filter
+                        </span>
+                      )}
+                      {functionTriggerRoles[`${func.namespace}/${func.name}`]?.postUpload.length > 0 && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title={`Post-upload for: ${functionTriggerRoles[`${func.namespace}/${func.name}`].postUpload.join(', ')}`}>
+                          <Upload className="w-3 h-3 mr-1" />
+                          Post-Upload
                         </span>
                       )}
                     </div>

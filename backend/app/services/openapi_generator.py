@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.file import Collection
 from app.models.function import Function
+from app.models.template import Template
 from app.models.webhook import Webhook
 
 
@@ -160,6 +162,206 @@ async def generate_runtime_openapi(db: AsyncSession) -> dict[str, Any]:
                 },
                 "security": [],  # Optional auth
             }
+        }
+
+    # Add dynamic collection upload endpoints (database-driven)
+    collection_result = await db.execute(select(Collection))
+    collections = collection_result.scalars().all()
+
+    for coll in collections:
+        path = f"/files/{coll.namespace}/{coll.name}"
+
+        # Build file_metadata schema from collection's metadata_schema
+        metadata_schema = coll.metadata_schema if coll.metadata_schema else {"type": "object"}
+
+        upload_schema = {
+            "type": "object",
+            "required": ["name", "content_base64", "content_type"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Filename (must be unique within collection)",
+                },
+                "content_base64": {
+                    "type": "string",
+                    "description": "File content encoded as base64",
+                },
+                "content_type": {
+                    "type": "string",
+                    "description": "MIME type (e.g., image/png, text/plain)",
+                },
+                "visibility": {
+                    "type": "string",
+                    "enum": ["private", "shared"],
+                    "default": "private",
+                    "description": "File visibility",
+                },
+                "file_metadata": {
+                    **metadata_schema,
+                    "description": "File metadata (validated against collection schema)",
+                },
+            },
+        }
+
+        op_id = f"upload_to_{coll.namespace}_{coll.name}".replace("-", "_").replace(".", "_")
+
+        base_spec["paths"][path] = {
+            "post": {
+                "summary": f"Upload file to {coll.namespace}/{coll.name}",
+                "description": f"Upload a file to the {coll.namespace}/{coll.name} collection. "
+                f"Max file size: {coll.max_file_size_mb}MB.",
+                "tags": ["runtime-files"],
+                "operationId": op_id,
+                "requestBody": {
+                    "required": True,
+                    "content": {"application/json": {"schema": upload_schema}},
+                },
+                "responses": {
+                    "201": {
+                        "description": "File uploaded successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {"type": "string", "format": "uuid"},
+                                        "namespace": {"type": "string"},
+                                        "name": {"type": "string"},
+                                        "content_type": {"type": "string"},
+                                        "current_version": {"type": "integer"},
+                                        "file_metadata": metadata_schema,
+                                        "visibility": {"type": "string"},
+                                        "created_at": {"type": "string", "format": "date-time"},
+                                        "updated_at": {"type": "string", "format": "date-time"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "400": {"description": "Validation failed (metadata, content filter)"},
+                    "403": {"description": "Not authorized"},
+                    "413": {"description": "File too large or storage quota exceeded"},
+                },
+                "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+            },
+        }
+
+    # Add dynamic template render + email endpoints (database-driven)
+    template_result = await db.execute(select(Template).where(Template.is_active == True))
+    templates = template_result.scalars().all()
+
+    for tmpl in templates:
+        variables_schema = tmpl.variable_schema if tmpl.variable_schema else {"type": "object"}
+        safe_name = f"{tmpl.namespace}_{tmpl.name}".replace("-", "_").replace(".", "_")
+
+        # Render endpoint
+        render_path = f"/templates/{tmpl.namespace}/{tmpl.name}/render"
+        base_spec["paths"][render_path] = {
+            "post": {
+                "summary": f"Render template {tmpl.namespace}/{tmpl.name}",
+                "description": tmpl.description or f"Render the {tmpl.namespace}/{tmpl.name} template with variables.",
+                "tags": ["runtime-templates"],
+                "operationId": f"render_template_{safe_name}",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["variables"],
+                                "properties": {
+                                    "variables": {
+                                        **variables_schema,
+                                        "description": "Template variables",
+                                    },
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Template rendered successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "title": {"type": "string", "nullable": True},
+                                        "html_content": {"type": "string"},
+                                        "text_content": {"type": "string", "nullable": True},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "400": {"description": "Variable validation or rendering failed"},
+                    "403": {"description": "Not authorized"},
+                    "404": {"description": "Template not found"},
+                },
+                "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+            },
+        }
+
+        # Email endpoint
+        email_path = f"/templates/{tmpl.namespace}/{tmpl.name}/email"
+        base_spec["paths"][email_path] = {
+            "post": {
+                "summary": f"Send email with {tmpl.namespace}/{tmpl.name}",
+                "description": f"Send an email using the {tmpl.namespace}/{tmpl.name} template.",
+                "tags": ["runtime-templates"],
+                "operationId": f"send_email_{safe_name}",
+                "requestBody": {
+                    "required": True,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "required": ["to", "variables"],
+                                "properties": {
+                                    "to": {
+                                        "type": "string",
+                                        "format": "email",
+                                        "description": "Recipient email address",
+                                    },
+                                    "from_alias": {
+                                        "type": "string",
+                                        "description": "From address alias (e.g., 'support' -> support@domain.com)",
+                                    },
+                                    "from_name": {
+                                        "type": "string",
+                                        "description": "Display name for sender (e.g., 'SINAS Support')",
+                                    },
+                                    "variables": {
+                                        **variables_schema,
+                                        "description": "Template variables",
+                                    },
+                                },
+                            }
+                        }
+                    },
+                },
+                "responses": {
+                    "200": {
+                        "description": "Email sent successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "message": {"type": "string"},
+                                        "to": {"type": "string"},
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "400": {"description": "Variable validation or rendering failed"},
+                    "403": {"description": "Not authorized"},
+                    "503": {"description": "Email service not configured"},
+                },
+                "security": [{"BearerAuth": []}, {"ApiKeyAuth": []}],
+            },
         }
 
     # All other endpoints (chats, auth, states, executions) are auto-generated by FastAPI

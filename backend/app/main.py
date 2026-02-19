@@ -10,20 +10,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.runtime import runtime_router
 from app.api.v1 import router as api_v1_router
 from app.core.auth import initialize_default_roles, initialize_superadmin
-from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.templates import initialize_default_templates
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.mcp import mcp_client
 from app.services.openapi_generator import generate_runtime_openapi
-from app.services.scheduler import scheduler
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await scheduler.start()
+    # Startup - Redis connection
+    from app.core.redis import close_redis, get_redis
+
+    redis = await get_redis()
+    await redis.ping()
+    print("✅ Redis connection established")
+
+    # --- Idempotent tasks: safe on all replicas ---
 
     # Initialize default roles
     async with AsyncSessionLocal() as db:
@@ -37,79 +43,40 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await initialize_default_templates(db)
 
-    # Initialize MCP client
+    # Initialize MCP client (each replica needs its own connections)
     async with AsyncSessionLocal() as db:
         await mcp_client.initialize(db)
 
-    # Apply declarative configuration (if enabled)
-    if settings.config_file and settings.auto_apply_config:
-        logger = logging.getLogger(__name__)
-        logger.info(f"🔧 AUTO_APPLY_CONFIG enabled, applying config from {settings.config_file}...")
-        async with AsyncSessionLocal() as db:
-            from app.services.config_apply import ConfigApplyService
-            from app.services.config_parser import ConfigParser
+    # Discover existing Docker containers so /api/v1/containers and /workers
+    # endpoints can report accurate state.  The workers/pool are *created* by
+    # the arq worker process or explicit scale calls; here we only discover.
+    try:
+        from app.services.container_pool import container_pool
 
-            try:
-                # Read config file
-                with open(settings.config_file) as f:
-                    config_yaml = f.read()
+        await container_pool._discover_existing_containers()
+        container_pool._initialized = True
+        print(
+            f"✅ Discovered {len(container_pool.idle)} pool containers"
+        )
+    except Exception as e:
+        print(f"⚠️  Container pool discovery skipped: {e}")
 
-                # Parse and validate (with database-aware checking)
-                config, validation = await ConfigParser.parse_and_validate(
-                    config_yaml, db=db, strict=False
-                )
+    try:
+        from app.services.shared_worker_manager import shared_worker_manager
 
-                if not validation.valid:
-                    logger.error("❌ Config validation failed:")
-                    for error in validation.errors:
-                        logger.error(f"  - {error.path}: {error.message}")
-                    raise RuntimeError("Config validation failed")
-
-                if validation.warnings:
-                    logger.warning("⚠️  Config validation warnings:")
-                    for warning in validation.warnings:
-                        logger.warning(f"  - {warning.path}: {warning.message}")
-
-                # Apply configuration
-                apply_service = ConfigApplyService(db, config.metadata.name)
-                result = await apply_service.apply_config(config, dry_run=False)
-
-                if not result.success:
-                    logger.error("❌ Config application failed:")
-                    for error in result.errors:
-                        logger.error(f"  - {error}")
-                    raise RuntimeError("Config application failed")
-
-                # Log summary
-                logger.info("✅ Config applied successfully!")
-                if result.summary.created:
-                    logger.info(f"  Created: {dict(result.summary.created)}")
-                if result.summary.updated:
-                    logger.info(f"  Updated: {dict(result.summary.updated)}")
-                if result.summary.unchanged:
-                    logger.info(f"  Unchanged: {dict(result.summary.unchanged)}")
-
-            except FileNotFoundError:
-                logger.error(f"❌ Config file not found: {settings.config_file}")
-                raise
-            except Exception as e:
-                logger.error(f"❌ Failed to apply config: {e}", exc_info=True)
-                raise
-
-    # Start container manager cleanup task
-    from app.services.user_container_manager import container_manager
-
-    await container_manager.start_cleanup_task()
-
-    # Initialize shared worker manager
-    from app.services.shared_worker_manager import shared_worker_manager
-
-    await shared_worker_manager.initialize()
+        await shared_worker_manager._discover_existing_workers()
+        shared_worker_manager._initialized = True
+        print(
+            f"✅ Discovered {len(shared_worker_manager.workers)} shared workers"
+        )
+    except Exception as e:
+        print(f"⚠️  Shared worker discovery skipped: {e}")
 
     yield
+
     # Shutdown
-    await scheduler.stop()
     clickhouse_logger.close()
+    await close_redis()
 
 
 # Create main application with runtime API documentation
@@ -172,11 +139,6 @@ async def get_runtime_docs():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
-
-
-@app.get("/scheduler/status")
-async def scheduler_status():
-    return scheduler.get_scheduler_status()
 
 
 if __name__ == "__main__":

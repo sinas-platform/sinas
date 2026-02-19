@@ -112,6 +112,7 @@ class AgentConfig(BaseModel):
     )  # List of skill configs (string for backward compat, dict for preload)
     stateNamespacesReadonly: list[str] = Field(default_factory=list)  # Readonly state namespaces
     stateNamespacesReadwrite: list[str] = Field(default_factory=list)  # Read-write state namespaces
+    enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
 
 
 class WebhookConfig(BaseModel):
@@ -130,13 +131,27 @@ class ScheduleConfig(BaseModel):
     """Schedule configuration"""
 
     name: str
-    functionName: str
+    scheduleType: str = "function"  # "function" or "agent"
+    functionName: Optional[str] = None  # for function schedules
+    agentName: Optional[str] = None  # for agent schedules (namespace/name)
+    content: Optional[str] = None  # message content for agent schedules
     description: Optional[str] = None
     cronExpression: str
     timezone: str = "UTC"
     groupName: str
     inputData: dict[str, Any] = Field(default_factory=dict)
     isActive: bool = True
+
+    @validator("isActive", always=True)
+    def validate_target(cls, v, values):
+        schedule_type = values.get("scheduleType", "function")
+        if schedule_type == "function" and not values.get("functionName"):
+            raise ValueError("functionName is required for function schedules")
+        if schedule_type == "agent" and not values.get("agentName"):
+            raise ValueError("agentName is required for agent schedules")
+        if schedule_type == "agent" and not values.get("content"):
+            raise ValueError("content is required for agent schedules")
+        return v
 
 
 class MCPServerConfig(BaseModel):
@@ -150,6 +165,21 @@ class MCPServerConfig(BaseModel):
     groupName: str
 
 
+class CollectionConfig(BaseModel):
+    """Collection configuration"""
+
+    namespace: str = "default"
+    name: str
+    groupName: str
+    metadataSchema: Optional[dict[str, Any]] = None
+    contentFilterFunction: Optional[str] = None  # "namespace/name" format
+    postUploadFunction: Optional[str] = None  # "namespace/name" format
+    maxFileSizeMb: int = 100
+    maxTotalSizeGb: int = 10
+    allowSharedFiles: bool = True
+    allowPrivateFiles: bool = True
+
+
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
@@ -159,6 +189,7 @@ class ConfigSpec(BaseModel):
     mcpServers: list[MCPServerConfig] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
     functions: list[FunctionConfig] = Field(default_factory=list)
+    collections: list[CollectionConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)
     schedules: list[ScheduleConfig] = Field(default_factory=list)

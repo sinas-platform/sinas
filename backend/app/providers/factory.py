@@ -65,14 +65,15 @@ async def create_provider(
 
     # Create provider instance based on type
     provider_type = provider_config.provider_type.lower()
+    base_url = provider_config.api_endpoint or None
 
     if provider_type == "openai":
-        return OpenAIProvider(api_key=api_key, base_url=provider_config.api_endpoint)
+        return OpenAIProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "mistral":
-        return MistralProvider(api_key=api_key, base_url=provider_config.api_endpoint)
+        return MistralProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "anthropic":
-        return AnthropicProvider(api_key=api_key, base_url=provider_config.api_endpoint)
+        return AnthropicProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "ollama":
-        return OllamaProvider(base_url=provider_config.api_endpoint or "http://localhost:11434")
+        return OllamaProvider(base_url=base_url or "http://localhost:11434")
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")

@@ -2,6 +2,7 @@ from .agent import Agent
 from .base import Base
 from .chat import Chat, Message
 from .execution import Execution, StepExecution
+from .file import Collection, ContentFilterEvaluation, File, FileVersion
 from .function import Function, FunctionVersion
 from .llm_provider import LLMProvider
 from .mcp import MCPServer
@@ -39,4 +40,8 @@ __all__ = [
     "PendingToolApproval",
     "Template",
     "Skill",
+    "Collection",
+    "File",
+    "FileVersion",
+    "ContentFilterEvaluation",
 ]

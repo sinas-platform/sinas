@@ -292,7 +292,10 @@ class FunctionToolConverter:
         execution_id = str(uuid.uuid4())
 
         try:
-            result = await executor.execute_function(
+            # Enqueue function and wait for result via queue
+            from app.services.queue_service import queue_service
+
+            result = await queue_service.enqueue_and_wait(
                 function_namespace=namespace,
                 function_name=name,
                 input_data=final_input,
@@ -309,5 +312,11 @@ class FunctionToolConverter:
 
         except FunctionExecutionError as e:
             # Function execution failed - return error
+            logger.error(f"Function execution failed: {e}")
+            return {"error": "Function execution failed", "message": str(e)}
+        except TimeoutError as e:
+            logger.error(f"Function execution timed out: {e}")
+            return {"error": "Function execution timed out", "message": str(e)}
+        except Exception as e:
             logger.error(f"Function execution failed: {e}")
             return {"error": "Function execution failed", "message": str(e)}

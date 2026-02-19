@@ -1,57 +1,56 @@
-"""Container management endpoints."""
+"""Container pool management endpoints."""
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_permission
-from app.core.config import settings
+from app.core.database import get_db
 
 router = APIRouter(prefix="/containers", tags=["containers"])
+
+
+class ScaleRequest(BaseModel):
+    target: int
 
 
 @router.get("/stats")
 async def get_container_stats(
     user_id: str = Depends(require_permission("sinas.containers.read:all")),
-) -> list[dict[str, Any]]:
-    """Get stats for all user containers. Admin only."""
-    if settings.function_execution_mode != "docker":
-        raise HTTPException(status_code=400, detail="Docker execution mode not enabled")
+) -> dict[str, Any]:
+    """Get pool container stats. Admin only."""
+    from app.services.container_pool import container_pool
 
-    from app.services.user_container_manager import container_manager
-
-    stats = await container_manager.get_container_stats()
-    return stats
+    return container_pool.get_stats()
 
 
 @router.post("/reload")
-async def reload_all_containers(
+async def reload_pool_packages(
     current_user_id: str = Depends(require_permission("sinas.containers.update:all")),
+    db: AsyncSession = Depends(get_db),
 ):
     """
-    Reload all user containers by stopping them.
-    They will be recreated on next execution with fresh packages.
+    Reinstall all approved packages in idle pool containers.
     Admin only.
     """
-    if settings.function_execution_mode != "docker":
-        raise HTTPException(status_code=400, detail="Docker execution mode not enabled")
+    from app.services.container_pool import container_pool
 
-    from app.services.user_container_manager import container_manager
-
-    result = await container_manager.reload_all_containers()
-
-    return {"status": "reloaded", **result}
+    result = await container_pool.reload_packages(db)
+    return result
 
 
-@router.delete("/{user_id}")
-async def stop_user_container(
-    user_id: str, current_user_id: str = Depends(require_permission("sinas.containers.delete:all"))
+@router.post("/scale")
+async def scale_pool(
+    body: ScaleRequest,
+    current_user_id: str = Depends(require_permission("sinas.containers.update:all")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Stop and remove user's container. Admin only."""
-    if settings.function_execution_mode != "docker":
-        raise HTTPException(status_code=400, detail="Docker execution mode not enabled")
+    """Scale the container pool to a target size. Admin only."""
+    from app.services.container_pool import container_pool
 
-    from app.services.user_container_manager import container_manager
+    if body.target < 0:
+        raise HTTPException(status_code=400, detail="Target must be non-negative")
 
-    await container_manager.stop_container(user_id)
-
-    return {"status": "stopped", "user_id": user_id}
+    result = await container_pool.scale(body.target, db)
+    return result

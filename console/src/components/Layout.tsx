@@ -21,6 +21,7 @@ import {
   FileText,
   Lightbulb,
   Play,
+  Archive,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -46,6 +47,7 @@ const navigationSections = [
       { name: 'Functions', href: '/functions', icon: Code },
       { name: 'Templates', href: '/templates', icon: FileText },
       { name: 'Webhooks', href: '/webhooks', icon: Webhook },
+      { name: 'Collections', href: '/collections', icon: Archive },
       { name: 'States', href: '/states', icon: Database },
       { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
       { name: 'MCP Servers', href: '/mcp', icon: Server },
@@ -65,7 +67,7 @@ const navigationSections = [
     items: [
       { name: 'Messages', href: '/messages', icon: Activity },
       { name: 'Request Logs', href: '/logs', icon: Activity },
-      { name: 'Workers', href: '/workers', icon: Server },
+      { name: 'System', href: '/system', icon: Server },
       { name: 'Config Manager', href: '/config', icon: Settings },
     ],
   },

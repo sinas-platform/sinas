@@ -74,6 +74,7 @@ async def create_agent(
         mcp_tool_parameters=agent_data.mcp_tool_parameters or {},
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
+        enabled_collections=agent_data.enabled_collections or [],
         is_active=True,
     )
 
@@ -207,6 +208,8 @@ async def update_agent(
         agent.state_namespaces_readonly = agent_data.state_namespaces_readonly
     if agent_data.state_namespaces_readwrite is not None:
         agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
+    if agent_data.enabled_collections is not None:
+        agent.enabled_collections = agent_data.enabled_collections
     if agent_data.is_active is not None:
         agent.is_active = agent_data.is_active
     await db.commit()

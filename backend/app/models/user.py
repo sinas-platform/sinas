@@ -38,6 +38,8 @@ class User(Base, PermissionMixin):
     chats: Mapped[list["Chat"]] = relationship("Chat", back_populates="user")
     agents: Mapped[list["Agent"]] = relationship("Agent", back_populates="user")
     states: Mapped[list["State"]] = relationship("State", back_populates="user")
+    collections: Mapped[list["Collection"]] = relationship("Collection", back_populates="user")
+    files: Mapped[list["File"]] = relationship("File", back_populates="user")
 
     def can_user_access(
         self,

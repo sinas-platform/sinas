@@ -187,6 +187,7 @@ export interface Agent {
   mcp_tool_parameters: Record<string, any>;
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
+  enabled_collections: string[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -212,6 +213,7 @@ export interface AgentCreate {
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
+  enabled_collections?: string[];
 }
 
 export interface AgentUpdate {
@@ -234,6 +236,7 @@ export interface AgentUpdate {
   mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
+  enabled_collections?: string[];
   is_active?: boolean;
 }
 
@@ -385,11 +388,18 @@ export interface WebhookUpdate {
 export interface Schedule {
   id: string;
   name: string;
+  schedule_type: string;
+  target_namespace: string;
+  target_name: string;
+  description: string | null;
   cron_expression: string;
-  function_id: string;
+  timezone: string;
+  input_data: Record<string, any>;
+  content: string | null;
   is_active: boolean;
+  last_run: string | null;
+  next_run: string | null;
   created_at: string;
-  updated_at: string;
 }
 
 export interface ScheduleCreate {
@@ -550,4 +560,108 @@ export interface SkillUpdate {
   description?: string;
   content?: string;
   is_active?: boolean;
+}
+
+// Collections
+export interface Collection {
+  id: string;
+  namespace: string;
+  name: string;
+  user_id: string;
+  metadata_schema: Record<string, any>;
+  content_filter_function: string | null;
+  post_upload_function: string | null;
+  max_file_size_mb: number;
+  max_total_size_gb: number;
+  allow_shared_files: boolean;
+  allow_private_files: boolean;
+  managed_by?: string | null;
+  config_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionCreate {
+  namespace?: string;
+  name: string;
+  metadata_schema?: Record<string, any>;
+  content_filter_function?: string;
+  post_upload_function?: string;
+  max_file_size_mb?: number;
+  max_total_size_gb?: number;
+  allow_shared_files?: boolean;
+  allow_private_files?: boolean;
+}
+
+export interface CollectionUpdate {
+  metadata_schema?: Record<string, any>;
+  content_filter_function?: string | null;
+  post_upload_function?: string | null;
+  max_file_size_mb?: number;
+  max_total_size_gb?: number;
+  allow_shared_files?: boolean;
+  allow_private_files?: boolean;
+}
+
+// Files
+export interface FileVersion {
+  id: string;
+  file_id: string;
+  version_number: number;
+  size_bytes: number;
+  hash_sha256: string;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface FileInfo {
+  id: string;
+  namespace: string;
+  name: string;
+  user_id: string;
+  content_type: string;
+  current_version: number;
+  file_metadata: Record<string, any>;
+  visibility: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FileWithVersions extends FileInfo {
+  versions: FileVersion[];
+}
+
+export interface FileUploadRequest {
+  name: string;
+  content_base64: string;
+  content_type: string;
+  visibility?: string;
+  file_metadata?: Record<string, any>;
+}
+
+export interface FileDownloadResponse {
+  content_base64: string;
+  content_type: string;
+  file_metadata: Record<string, any>;
+  version: number;
+}
+
+// File Search
+export interface FileSearchRequest {
+  query?: string;
+  metadata_filter?: Record<string, any>;
+  limit?: number;
+}
+
+export interface FileSearchMatch {
+  line: number;
+  text: string;
+  context: string[];
+}
+
+export interface FileSearchResult {
+  file_id: string;
+  filename: string;
+  version: number;
+  matches: FileSearchMatch[];
 }

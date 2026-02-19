@@ -59,8 +59,7 @@ async def list_workers(
 
     set_permission_used(request, permission)
 
-    # Get workers from manager
-    workers = shared_worker_manager.list_workers()
+    workers = await shared_worker_manager.list_workers()
 
     return workers
 

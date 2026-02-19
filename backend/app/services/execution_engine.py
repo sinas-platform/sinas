@@ -104,16 +104,16 @@ class FunctionExecutor:
     def __init__(self):
         self.functions_cache: dict[str, Function] = {}
         self.namespace_cache: dict[str, dict[str, Any]] = {}
-        self._container_manager = None
+        self._container_pool = None
 
     @property
-    def container_manager(self):
-        """Lazy load container manager (always enabled for security)."""
-        if self._container_manager is None:
-            from app.services.user_container_manager import container_manager
+    def container_pool(self):
+        """Lazy load container pool (replaces per-user containers)."""
+        if self._container_pool is None:
+            from app.services.container_pool import container_pool
 
-            self._container_manager = container_manager
-        return self._container_manager
+            self._container_pool = container_pool
+        return self._container_pool
 
     @property
     def worker_manager(self):
@@ -401,15 +401,12 @@ class FunctionExecutor:
                     elapsed = time.time() - start_time
                     print(f"⏱️  [TIMING] Shared pool execution completed in {elapsed:.3f}s")
                 else:
-                    # Execute in isolated Docker container (per-user, untrusted code)
+                    # Execute in pooled Docker container (untrusted code)
                     print(
-                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in isolated container for user {user_id}"
-                    )
-                    print(
-                        f"🐳 CONTAINER: Executing {function_namespace}/{function_name} in isolated container for user {user_id}"
+                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in pool container"
                     )
                     container_start = time.time()
-                    exec_result = await self.container_manager.execute_function(
+                    exec_result = await self.container_pool.execute_function(
                         user_id=user_id,
                         user_email=user_email,
                         access_token=access_token,
@@ -423,7 +420,7 @@ class FunctionExecutor:
                         db=db,
                     )
                     container_elapsed = time.time() - container_start
-                    print(f"⏱️  [TIMING] Container execution completed in {container_elapsed:.3f}s")
+                    print(f"⏱️  [TIMING] Pool container execution completed in {container_elapsed:.3f}s")
 
                 if exec_result.get("status") == "failed":
                     raise FunctionExecutionError(exec_result.get("error", "Unknown error"))
@@ -536,6 +533,58 @@ class FunctionExecutor:
             "execution_id": execution.execution_id,
             "prompt": execution.input_prompt,
             "schema": execution.input_schema,
+        }
+
+    async def enqueue_function(
+        self,
+        function_namespace: str,
+        function_name: str,
+        input_data: dict[str, Any],
+        execution_id: str,
+        trigger_type: str,
+        trigger_id: str,
+        user_id: str,
+        chat_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Enqueue a function for execution via the job queue.
+
+        Creates an Execution record with PENDING status and dispatches to the queue.
+        Returns immediately with job_id and execution_id.
+        """
+        from app.services.queue_service import queue_service
+
+        # Create Execution record with PENDING status
+        async with AsyncSessionLocal() as db:
+            execution = Execution(
+                user_id=user_id,
+                execution_id=execution_id,
+                function_name=function_name,
+                trigger_type=trigger_type,
+                trigger_id=trigger_id,
+                chat_id=chat_id,
+                status=ExecutionStatus.PENDING,
+                input_data=input_data,
+            )
+            db.add(execution)
+            await db.commit()
+
+        # Enqueue via queue service
+        job_id = await queue_service.enqueue_function(
+            function_namespace=function_namespace,
+            function_name=function_name,
+            input_data=input_data,
+            execution_id=execution_id,
+            trigger_type=trigger_type,
+            trigger_id=trigger_id,
+            user_id=user_id,
+            chat_id=chat_id,
+        )
+
+        return {
+            "status": "queued",
+            "execution_id": execution_id,
+            "job_id": job_id,
         }
 
     def clear_cache(self):

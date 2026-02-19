@@ -13,7 +13,12 @@ if database_url.startswith("postgres://"):
 
 # Async engine for FastAPI
 async_database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-async_engine = create_async_engine(async_database_url, echo=settings.debug)
+async_engine = create_async_engine(
+    async_database_url,
+    echo=settings.debug,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+)
 AsyncSessionLocal = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
 
 # Sync engine for Alembic migrations
