@@ -72,13 +72,8 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "resource": "executions",
-        "description": "Function execution history",
+        "description": "Execution & message history",
         "actions": ["read", "update"],
-    },
-    {
-        "resource": "messages",
-        "description": "Chat message history",
-        "actions": ["read"],
     },
     # --- User / auth resources ---
     {
@@ -118,24 +113,12 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
     {
         "resource": "config",
         "description": "Declarative YAML configuration",
-        "actions": ["validate", "apply", "export"],
-        "adminOnly": True,
-    },
-    {
-        "resource": "containers",
-        "description": "Execution container pool",
-        "actions": ["read", "update"],
-        "adminOnly": True,
-    },
-    {
-        "resource": "workers",
-        "description": "Queue worker processes",
-        "actions": ["read", "scale", "put"],
+        "actions": ["validate", "apply", "read"],
         "adminOnly": True,
     },
     {
         "resource": "system",
-        "description": "Queue & system internals",
+        "description": "Infrastructure (queues, workers, containers)",
         "actions": ["read", "update"],
         "adminOnly": True,
     },

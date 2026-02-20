@@ -28,17 +28,17 @@ async def list_messages(
     List messages with filters for analytics/insights.
 
     Permissions:
-    - sinas.messages.read:all - View all messages
-    - sinas.messages.read:own - View only own messages
+    - sinas.executions.read:all - View all messages
+    - sinas.executions.read:own - View only own messages
     """
     user_id, permissions = current_user_data
 
     # Check permissions
-    has_all_permission = check_permission(permissions, "sinas.messages.read:all")
-    has_own_permission = check_permission(permissions, "sinas.messages.read:own")
+    has_all_permission = check_permission(permissions, "sinas.executions.read:all")
+    has_own_permission = check_permission(permissions, "sinas.executions.read:own")
 
     if not has_all_permission and not has_own_permission:
-        set_permission_used(request, "sinas.messages.read:own", has_perm=False)
+        set_permission_used(request, "sinas.executions.read:own", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view messages")
 
     # Build query
@@ -48,11 +48,11 @@ async def list_messages(
     if not has_all_permission:
         # User can only see their own messages
         query = query.join(User, Chat.user_id == User.id).where(Chat.user_id == user_id)
-        set_permission_used(request, "sinas.messages.read:own")
+        set_permission_used(request, "sinas.executions.read:own")
     else:
         # Admin can see all
         query = query.join(User, Chat.user_id == User.id, isouter=True)
-        set_permission_used(request, "sinas.messages.read:all")
+        set_permission_used(request, "sinas.executions.read:all")
 
     # Apply filters
     if agent:

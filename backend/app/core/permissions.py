@@ -302,10 +302,8 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.schedules.read:own": True,
         "sinas.schedules.update:own": True,
         "sinas.schedules.delete:own": True,
-        # Executions (runtime - non-namespaced)
+        # Executions & messages (runtime - non-namespaced)
         "sinas.executions.read:own": True,
-        # Messages (observability - non-namespaced)
-        "sinas.messages.read:own": True,
         # Users (non-namespaced)
         "sinas.users.read:own": True,
         "sinas.users.update:own": True,
@@ -350,20 +348,11 @@ DEFAULT_ROLE_PERMISSIONS = {
         # Config (admin-only)
         # "sinas.config.validate:all"
         # "sinas.config.apply:all"
-        # "sinas.config.export:all"
-        # Containers (admin-only)
-        # "sinas.containers.read:all"
-        # "sinas.containers.update:all"
-        # "sinas.containers.delete:all"
-        # Workers (admin-only)
-        # "sinas.workers.read:all"
-        # "sinas.workers.create:all"
-        # "sinas.workers.update:all"
-        # "sinas.workers.delete:all"
-        # Advanced Executions (admin-only)
+        # "sinas.config.read:all"
+        # Executions (admin-only)
         # "sinas.executions.read:all"
         # "sinas.executions.update:all"
-        # System (admin-only - queues, infrastructure)
+        # System (admin-only - queues, workers, containers)
         # "sinas.system.read:all"
         # "sinas.system.update:all"
         # Advanced States (admin-only, namespace-based)
