@@ -154,6 +154,26 @@ class ScheduleConfig(BaseModel):
         return v
 
 
+class AppResourceRef(BaseModel):
+    """Resource reference in app config"""
+
+    type: str = Field(..., description="Resource type: agent, function, skill, collection")
+    namespace: str = "default"
+    name: str
+
+
+class AppConfig(BaseModel):
+    """App registration configuration"""
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    requiredResources: list[AppResourceRef] = Field(default_factory=list)
+    requiredPermissions: list[str] = Field(default_factory=list)
+    optionalPermissions: list[str] = Field(default_factory=list)
+    exposedNamespaces: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class CollectionConfig(BaseModel):
     """Collection configuration"""
 
@@ -179,6 +199,7 @@ class ConfigSpec(BaseModel):
     skills: list[SkillConfig] = Field(default_factory=list)
     functions: list[FunctionConfig] = Field(default_factory=list)
     collections: list[CollectionConfig] = Field(default_factory=list)
+    apps: list[AppConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)
     schedules: list[ScheduleConfig] = Field(default_factory=list)

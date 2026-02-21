@@ -143,6 +143,39 @@ class ConfigParser:
         all_skill_names = skill_names | db_skill_names
         all_collection_names = collection_names | db_collection_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
+        # Validate app resource references
+        valid_resource_types = {"agent", "function", "skill", "collection"}
+        for i, app in enumerate(spec.get("apps", [])):
+            for j, res in enumerate(app.get("requiredResources", [])):
+                res_type = res.get("type", "")
+                if res_type not in valid_resource_types:
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.apps[{i}].requiredResources[{j}].type",
+                            message=f"Unsupported resource type '{res_type}'. Must be one of: {', '.join(sorted(valid_resource_types))}",
+                        )
+                    )
+                    continue
+
+                res_ns = res.get("namespace", "default")
+                res_name = res.get("name", "")
+                res_ref = f"{res_ns}/{res_name}"
+
+                # Check if the referenced resource exists in config or DB
+                lookup = {
+                    "agent": all_agent_names,
+                    "function": all_function_names,
+                    "skill": all_skill_names,
+                    "collection": all_collection_names,
+                }
+                if res_ref not in lookup.get(res_type, set()):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.apps[{i}].requiredResources[{j}]",
+                            message=f"Referenced {res_type} '{res_ref}' not defined",
+                        )
+                    )
+
         # Validate function references
         for i, func in enumerate(spec.get("functions", [])):
             if func["groupName"] not in all_group_names:

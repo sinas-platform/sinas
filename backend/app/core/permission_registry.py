@@ -49,6 +49,12 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "note": "Namespaced by state namespace only (no /name)",
     },
     {
+        "resource": "apps",
+        "description": "Registered applications",
+        "actions": ["create", "read", "update", "delete"],
+        "namespaced": True,
+    },
+    {
         "resource": "collections",
         "description": "File collections",
         "actions": ["create", "read", "update", "delete", "upload", "download", "list", "delete_files"],

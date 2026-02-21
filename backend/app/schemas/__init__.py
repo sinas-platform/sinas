@@ -1,5 +1,6 @@
 from .agent import *
 from .api_key import *
+from .app import *
 from .auth import *
 from .chat import *
 from .execution import *

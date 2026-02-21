@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.llm_provider import LLMProvider
@@ -110,6 +111,7 @@ class ConfigApplyService:
             await self._apply_functions(config.spec.functions, dry_run)
             await self._apply_skills(config.spec.skills, dry_run)
             await self._apply_collections(config.spec.collections, dry_run)
+            await self._apply_apps(config.spec.apps, dry_run)
             await self._apply_agents(config.spec.agents, dry_run)
             await self._apply_webhooks(config.spec.webhooks, dry_run)
             await self._apply_schedules(config.spec.schedules, dry_run)
@@ -767,6 +769,110 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying collection '{resource_name}': {str(e)}")
+
+    async def _apply_apps(self, apps, dry_run: bool):
+        """Apply app registration configurations"""
+        for app_config in apps:
+            resource_name = f"{app_config.namespace}/{app_config.name}"
+            try:
+                stmt = select(App).where(
+                    App.namespace == app_config.namespace,
+                    App.name == app_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": app_config.namespace,
+                        "name": app_config.name,
+                        "description": app_config.description,
+                        "required_resources": [
+                            {"type": r.type, "namespace": r.namespace, "name": r.name}
+                            for r in app_config.requiredResources
+                        ],
+                        "required_permissions": sorted(app_config.requiredPermissions),
+                        "optional_permissions": sorted(app_config.optionalPermissions),
+                        "exposed_namespaces": {
+                            k: sorted(v) for k, v in sorted(app_config.exposedNamespaces.items())
+                        },
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"App '{resource_name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change("unchanged", "apps", resource_name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "apps", resource_name)
+                        continue
+
+                    if not dry_run:
+                        existing.description = app_config.description
+                        existing.required_resources = [
+                            {"type": r.type, "namespace": r.namespace, "name": r.name}
+                            for r in app_config.requiredResources
+                        ]
+                        existing.required_permissions = app_config.requiredPermissions
+                        existing.optional_permissions = app_config.optionalPermissions
+                        existing.exposed_namespaces = app_config.exposedNamespaces
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "apps", resource_name)
+
+                else:
+                    if not dry_run:
+                        # Get admin user for ownership
+                        from app.models.user import Role, UserRole
+
+                        stmt = select(Role).where(Role.name == "Admins")
+                        result = await self.db.execute(stmt)
+                        admin_role = result.scalar_one_or_none()
+
+                        if not admin_role:
+                            self.errors.append(
+                                f"Admins role not found for app '{resource_name}'"
+                            )
+                            continue
+
+                        stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
+                        result = await self.db.execute(stmt)
+                        admin_member = result.scalar_one_or_none()
+
+                        if not admin_member:
+                            self.errors.append(
+                                f"No admin users found for app '{resource_name}'"
+                            )
+                            continue
+
+                        new_app = App(
+                            namespace=app_config.namespace,
+                            name=app_config.name,
+                            description=app_config.description,
+                            required_resources=[
+                                {"type": r.type, "namespace": r.namespace, "name": r.name}
+                                for r in app_config.requiredResources
+                            ],
+                            required_permissions=app_config.requiredPermissions,
+                            optional_permissions=app_config.optionalPermissions,
+                            exposed_namespaces=app_config.exposedNamespaces,
+                            user_id=admin_member.user_id,
+                            is_active=True,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_app)
+
+                    self._track_change("create", "apps", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying app '{resource_name}': {str(e)}")
 
     async def _apply_agents(self, agents, dry_run: bool):
         """Apply agent configurations"""

@@ -282,6 +282,11 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.skills.read:own": True,
         "sinas.skills/*/*.update:own": True,
         "sinas.skills/*/*.delete:own": True,
+        # Apps (namespaced: namespace/name) - Registered applications
+        "sinas.apps/*/*.create:own": True,
+        "sinas.apps.read:all": True,  # Apps should be discoverable
+        "sinas.apps/*/*.update:own": True,
+        "sinas.apps/*/*.delete:own": True,
         # Collections (namespaced: namespace/name) - File storage
         "sinas.collections/*/*.create:own": True,  # Create collections in any namespace
         "sinas.collections.read:own": True,

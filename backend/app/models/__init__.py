@@ -1,4 +1,5 @@
 from .agent import Agent
+from .app import App
 from .base import Base
 from .chat import Chat, Message
 from .execution import Execution, StepExecution
@@ -34,6 +35,7 @@ __all__ = [
     "Chat",
     "Message",
     "Agent",
+    "App",
     "LLMProvider",
 
     "State",
