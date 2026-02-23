@@ -30,6 +30,13 @@ async def generate_runtime_openapi(db: AsyncSession) -> dict[str, Any]:
         routes=runtime_router.routes,
     )
 
+    # Add servers list for Swagger dropdown navigation
+    base_spec["servers"] = [
+        {"url": "/", "description": "Runtime API"},
+        {"url": "/api/v1", "description": "Management API"},
+        {"url": "/adapters/openai", "description": "OpenAI Adapter"},
+    ]
+
     # Ensure we have the paths dict
     if "paths" not in base_spec:
         base_spec["paths"] = {}

@@ -12,7 +12,7 @@ from app.core.encryption import EncryptionService
 from app.models.agent import Agent
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
-from app.models.mcp import MCPServer
+
 from app.models.schedule import ScheduledJob
 from app.models.user import Role, RolePermission, User
 from app.models.webhook import Webhook
@@ -52,7 +52,7 @@ class ConfigExportService:
         config_dict["spec"]["groups"] = await self._export_groups()
         config_dict["spec"]["users"] = await self._export_users()
         config_dict["spec"]["llmProviders"] = await self._export_llm_providers()
-        config_dict["spec"]["mcpServers"] = await self._export_mcp_servers()
+
 
         config_dict["spec"]["functions"] = await self._export_functions()
         config_dict["spec"]["agents"] = await self._export_agents()
@@ -152,46 +152,6 @@ class ConfigExportService:
 
         return exported
 
-    async def _export_mcp_servers(self) -> list[dict]:
-        """Export MCP servers"""
-        stmt = select(MCPServer)
-        if self.managed_only:
-            stmt = stmt.where(MCPServer.managed_by == "config")
-
-        result = await self.db.execute(stmt)
-        servers = result.scalars().all()
-
-        # Get default group (Admins) for servers without group_id
-        default_group_stmt = select(Role).where(Role.name == "Admins")
-        default_group_result = await self.db.execute(default_group_stmt)
-        default_group = default_group_result.scalar_one_or_none()
-
-        exported = []
-        for server in servers:
-            group = None
-            if server.group_id:
-                group_stmt = select(Role).where(Role.id == server.group_id)
-                group_result = await self.db.execute(group_stmt)
-                group = group_result.scalar_one_or_none()
-
-            server_dict = {
-                "name": server.name,
-                "url": server.url,
-                "protocol": server.protocol,
-                "isActive": server.is_active,
-                "groupName": group.name
-                if group
-                else (default_group.name if default_group else "Admins"),
-            }
-
-            # Include API key if exporting secrets
-            if self.include_secrets and server.api_key:
-                server_dict["apiKey"] = EncryptionService.decrypt(server.api_key)
-
-            exported.append(_remove_none_values(server_dict))
-
-        return exported
-
     async def _export_functions(self) -> list[dict]:
         """Export functions"""
         stmt = select(Function)
@@ -278,7 +238,6 @@ class ConfigExportService:
                 "functionParameters": agent.function_parameters
                 if agent.function_parameters
                 else None,
-                "enabledMcpTools": agent.enabled_mcp_tools if agent.enabled_mcp_tools else None,
                 "enabledAgents": agent.enabled_agents if agent.enabled_agents else None,
                 "stateNamespacesReadonly": agent.state_namespaces_readonly
                 if agent.state_namespaces_readonly

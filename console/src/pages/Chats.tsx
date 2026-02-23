@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Search } from 'lucide-react';
+import { Plus, Trash2, Search, Bot } from 'lucide-react';
 import { useState } from 'react';
 import type { ChatCreate } from '../types';
 import { SchemaFormField } from '../components/SchemaFormField';
@@ -111,7 +111,20 @@ export function Chats() {
           </div>
         ) : !filteredChats || filteredChats.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
-            {searchQuery ? 'No chats match your search' : 'No chats yet. Create one to get started.'}
+            {searchQuery ? (
+              'No chats match your search'
+            ) : !assistants || assistants.length === 0 ? (
+              <div>
+                <Bot className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                <p className="text-gray-900 font-medium mb-1">Create an agent first to start chatting</p>
+                <p className="text-sm text-gray-500 mb-4">You need at least one agent before you can start a conversation</p>
+                <Link to="/agents" className="btn btn-primary">
+                  Go to Agents
+                </Link>
+              </div>
+            ) : (
+              'No chats yet. Create one to get started.'
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">

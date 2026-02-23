@@ -98,8 +98,19 @@ class SharedWorkerManager:
                         # Start container if it's stopped
                         if container.status != "running":
                             print(f"🔄 Starting stopped worker: {container_name}")
-                            container.start()
-                            container.reload()  # Refresh status
+                            try:
+                                container.start()
+                                container.reload()  # Refresh status
+                            except docker.errors.APIError as start_err:
+                                # Container is marked for removal or otherwise unrecoverable
+                                print(
+                                    f"⚠️  Cannot start {container_name}, removing: {start_err}"
+                                )
+                                try:
+                                    container.remove(force=True)
+                                except Exception:
+                                    pass
+                                continue
 
                         # Get container creation time
                         container_info = container.attrs
@@ -208,10 +219,25 @@ class SharedWorkerManager:
             else:
                 return {"action": "no_change", "current_count": current_count}
 
+    def _next_worker_number(self) -> int:
+        """Find the next available worker number that doesn't collide with existing workers."""
+        existing_numbers = set()
+        for wid in self.workers:
+            # worker IDs are "worker-N"
+            try:
+                existing_numbers.add(int(wid.split("-", 1)[1]))
+            except (IndexError, ValueError):
+                pass
+        n = 1
+        while n in existing_numbers:
+            n += 1
+        return n
+
     async def _create_worker(self, db: AsyncSession) -> Optional[str]:
         """Create a new worker container."""
-        worker_id = f"worker-{len(self.workers) + 1}"
-        container_name = f"sinas-worker-{len(self.workers) + 1}"
+        num = self._next_worker_number()
+        worker_id = f"worker-{num}"
+        container_name = f"sinas-worker-{num}"
 
         try:
             # Create worker container (same security model as user containers)

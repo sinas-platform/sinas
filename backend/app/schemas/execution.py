@@ -13,7 +13,7 @@ class ExecutionResponse(BaseModel):
     execution_id: str
     function_name: str
     trigger_type: TriggerType
-    trigger_id: uuid.UUID
+    trigger_id: str
     status: ExecutionStatus
     input_data: dict[str, Any]
     output_data: Optional[Any]

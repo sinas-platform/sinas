@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Brain, Plus, Trash2, Edit2, Star } from 'lucide-react';
+import { Brain, Plus, Trash2, Edit2 } from 'lucide-react';
 import { useState } from 'react';
 import type { LLMProvider, LLMProviderCreate, LLMProviderUpdate } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
@@ -131,7 +131,7 @@ export function LLMProviders() {
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-900">{provider.name}</h3>
                       {provider.is_default && (
-                        <Star className="w-5 h-5 text-yellow-500 fill-yellow-500" />
+                        <span className="text-xs font-medium bg-primary-100 text-primary-700 px-2 py-0.5 rounded">Default</span>
                       )}
                       {provider.is_active ? (
                         <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs font-medium rounded">Active</span>

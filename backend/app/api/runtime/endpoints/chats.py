@@ -21,6 +21,7 @@ from app.models.chat import Chat
 from app.models.pending_approval import PendingToolApproval
 from app.models.user import User
 from app.providers.factory import create_provider
+from app.schemas.agent import AgentResponse
 from app.schemas.chat import (
     AgentChatCreateRequest,
     ChatResponse,
@@ -39,6 +40,31 @@ from app.utils.schema import validate_with_coercion
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@router.get("/agents/default", response_model=AgentResponse)
+async def get_default_agent(
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Get the default agent."""
+    user_id, permissions = current_user_data
+
+    result = await db.execute(
+        select(Agent).where(Agent.is_default == True, Agent.is_active == True)
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(404, "No default agent configured")
+
+    agent_perm = f"sinas.agents/{agent.namespace}/{agent.name}.read:own"
+    if not check_permission(permissions, agent_perm):
+        set_permission_used(http_request, agent_perm, has_perm=False)
+        raise HTTPException(403, "Not authorized to access the default agent")
+
+    set_permission_used(http_request, agent_perm)
+    return AgentResponse.model_validate(agent)
 
 
 @router.post("/agents/{namespace}/{agent_name}/chats", response_model=ChatResponse)
@@ -180,9 +206,11 @@ async def send_message(
     # Use message service
     message_service = MessageService(db)
 
-    # Handle Union[str, List[Dict]] content - convert to string if needed
+    # Handle Union[str, list[ContentPart]] content - convert to string if needed
     content_str = (
-        request.content if isinstance(request.content, str) else json.dumps(request.content)
+        request.content
+        if isinstance(request.content, str)
+        else json.dumps([part.model_dump(exclude_none=True) for part in request.content])
     )
 
     response_message = await message_service.send_message(
@@ -239,9 +267,11 @@ async def stream_message(
     # Use message service directly (no queue — interactive chat needs low latency)
     message_service = MessageService(db)
 
-    # Handle Union[str, List[Dict]] content - convert to string if needed
+    # Handle Union[str, list[ContentPart]] content - convert to string if needed
     content_str = (
-        request.content if isinstance(request.content, str) else json.dumps(request.content)
+        request.content
+        if isinstance(request.content, str)
+        else json.dumps([part.model_dump(exclude_none=True) for part in request.content])
     )
 
     # Track accumulated content for partial save

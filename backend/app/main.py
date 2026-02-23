@@ -14,7 +14,6 @@ from app.core.database import AsyncSessionLocal, get_db
 from app.core.templates import initialize_default_templates
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
-from app.services.mcp import mcp_client
 from app.services.openapi_generator import generate_runtime_openapi
 
 logger = logging.getLogger(__name__)
@@ -43,10 +42,6 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await initialize_default_templates(db)
 
-    # Initialize MCP client (each replica needs its own connections)
-    async with AsyncSessionLocal() as db:
-        await mcp_client.initialize(db)
-
     # Discover existing Docker containers so /api/v1/containers and /workers
     # endpoints can report accurate state.  The workers/pool are *created* by
     # the arq worker process or explicit scale calls; here we only discover.
@@ -71,6 +66,12 @@ async def lifespan(app: FastAPI):
         )
     except Exception as e:
         print(f"⚠️  Shared worker discovery skipped: {e}")
+
+    # Apply ClickHouse storage/TTL migration
+    try:
+        clickhouse_logger.apply_storage_migration()
+    except Exception as e:
+        print(f"⚠️  ClickHouse storage migration skipped: {e}")
 
     yield
 
@@ -100,6 +101,12 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggerMiddleware)
 
+_servers = [
+    {"url": "/", "description": "Runtime API"},
+    {"url": "/api/v1", "description": "Management API"},
+    {"url": "/adapters/openai", "description": "OpenAI Adapter"},
+]
+
 # Create management API sub-application
 management_app = FastAPI(
     title="SINAS Management API",
@@ -107,6 +114,7 @@ management_app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     openapi_url="/openapi.json",
+    servers=_servers,
 )
 
 # Include management routes in sub-app
@@ -114,6 +122,31 @@ management_app.include_router(api_v1_router)
 
 # Mount management app at /api/v1
 app.mount("/api/v1", management_app)
+
+# Create OpenAI adapter sub-application
+adapters_openai_app = FastAPI(
+    title="SINAS OpenAI Adapter",
+    description="OpenAI SDK-compatible API for SINAS agents and LLM providers",
+    version="1.0.0",
+    docs_url="/docs",
+    openapi_url="/openapi.json",
+    servers=_servers,
+)
+
+adapters_openai_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from app.adapters.openai.endpoints import router as openai_adapter_router
+
+adapters_openai_app.include_router(openai_adapter_router)
+
+# Mount adapter app at /adapters/openai
+app.mount("/adapters/openai", adapters_openai_app)
 
 # Include runtime API routes (root level)
 app.include_router(runtime_router)

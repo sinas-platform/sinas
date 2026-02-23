@@ -18,9 +18,6 @@ import type {
   Agent,
   AgentCreate,
   AgentUpdate,
-  MCPServer,
-  MCPServerCreate,
-  MCPServerUpdate,
   Role,
   RoleCreate,
   UserRole,
@@ -51,6 +48,10 @@ import type {
   FileDownloadResponse,
   FileSearchRequest,
   FileSearchResult,
+  App,
+  AppCreate,
+  AppUpdate,
+  AppStatus,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -305,36 +306,6 @@ class APIClient {
     await this.configClient.delete(`/agents/${namespace}/${name}`);
   }
 
-  // MCP Servers
-  async listMCPServers(): Promise<MCPServer[]> {
-    const response = await this.configClient.get('/mcp/servers');
-    return response.data;
-  }
-
-  async getMCPServer(serverId: string): Promise<MCPServer> {
-    const response = await this.configClient.get(`/mcp/servers/${serverId}`);
-    return response.data;
-  }
-
-  async createMCPServer(data: MCPServerCreate): Promise<MCPServer> {
-    const response = await this.configClient.post('/mcp/servers', data);
-    return response.data;
-  }
-
-  async updateMCPServer(serverId: string, data: MCPServerUpdate): Promise<MCPServer> {
-    const response = await this.configClient.put(`/mcp/servers/${serverId}`, data);
-    return response.data;
-  }
-
-  async deleteMCPServer(serverId: string): Promise<void> {
-    await this.configClient.delete(`/mcp/servers/${serverId}`);
-  }
-
-  async listMCPTools(): Promise<any[]> {
-    const response = await this.configClient.get('/mcp/tools');
-    return response.data;
-  }
-
   // Roles
   async listRoles(): Promise<Role[]> {
     const response = await this.configClient.get('/roles');
@@ -390,6 +361,11 @@ class APIClient {
     await this.configClient.delete(`/roles/${roleName}/permissions`, {
       params: { permission_key: permissionKey }
     });
+  }
+
+  async getPermissionReference(): Promise<Array<{ resource: string; description: string; actions: string[]; namespaced?: boolean; adminOnly?: boolean }>> {
+    const response = await this.configClient.get('/roles/permissions/reference');
+    return response.data;
   }
 
   // Users
@@ -553,12 +529,12 @@ class APIClient {
 
   // Executions
   async listExecutions(): Promise<any[]> {
-    const response = await this.configClient.get('/executions');
+    const response = await this.runtimeClient.get('/executions');
     return response.data;
   }
 
   async getExecution(executionId: string): Promise<any> {
-    const response = await this.configClient.get(`/executions/${executionId}`);
+    const response = await this.runtimeClient.get(`/executions/${executionId}`);
     return response.data;
   }
 
@@ -812,6 +788,37 @@ class APIClient {
     if (version) params.version = version;
     if (expiresIn) params.expires_in = expiresIn;
     const response = await this.runtimeClient.post(`/files/${namespace}/${collection}/${filename}/url`, null, { params });
+    return response.data;
+  }
+
+  // Apps
+  async listApps(namespace?: string): Promise<App[]> {
+    const params = namespace ? { namespace } : {};
+    const response = await this.configClient.get('/apps', { params });
+    return response.data;
+  }
+
+  async getApp(namespace: string, name: string): Promise<App> {
+    const response = await this.configClient.get(`/apps/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createApp(data: AppCreate): Promise<App> {
+    const response = await this.configClient.post('/apps', data);
+    return response.data;
+  }
+
+  async updateApp(namespace: string, name: string, data: AppUpdate): Promise<App> {
+    const response = await this.configClient.put(`/apps/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteApp(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/apps/${namespace}/${name}`);
+  }
+
+  async getAppStatus(namespace: string, name: string): Promise<AppStatus> {
+    const response = await this.runtimeClient.get(`/apps/${namespace}/${name}/status`);
     return response.data;
   }
 }

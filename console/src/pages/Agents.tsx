@@ -1,13 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Link } from 'react-router-dom';
-import { Bot, Plus, Trash2, Edit, CheckCircle, XCircle, Copy } from 'lucide-react';
-import { useState } from 'react';
-import type { AgentCreate } from '../types';
+import { Link, useNavigate } from 'react-router-dom';
+import { Bot, Plus, Trash2, Edit, Copy, MessageSquare, Brain, Search } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { useToast } from '../lib/toast-context';
+import { SchemaFormField } from '../components/SchemaFormField';
+import type { AgentCreate, ChatCreate } from '../types';
 
 export function Agents() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { showError } = useToast();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [chatAgent, setChatAgent] = useState<any>(null);
+  const [chatInputParams, setChatInputParams] = useState<Record<string, any>>({});
+  const [searchFilter, setSearchFilter] = useState('');
   const [formData, setFormData] = useState<AgentCreate>({
     namespace: 'default',
     name: '',
@@ -27,6 +35,18 @@ export function Agents() {
     retry: false,
   });
 
+  const activeProviders = llmProviders?.filter((p) => p.is_active) || [];
+
+  const filteredAgents = useMemo(() => {
+    if (!agents) return [];
+    if (!searchFilter.trim()) return agents;
+    const search = searchFilter.toLowerCase();
+    return agents.filter((a) =>
+      `${a.namespace}/${a.name}`.toLowerCase().includes(search) ||
+      a.description?.toLowerCase().includes(search)
+    );
+  }, [agents, searchFilter]);
+
   const createMutation = useMutation({
     mutationFn: (data: AgentCreate) => apiClient.createAgent(data),
     onSuccess: () => {
@@ -45,14 +65,9 @@ export function Agents() {
 
   const duplicateMutation = useMutation({
     mutationFn: async ({ namespace, name }: { namespace: string; name: string }) => {
-      // Fetch full agent details
       const agent = await apiClient.getAgent(namespace, name);
-
-      // Create timestamp
       const now = new Date();
       const timestamp = now.toISOString().replace('T', ' ').substring(0, 19);
-
-      // Create duplicate with modified name (convert null to undefined)
       const duplicateData: AgentCreate = {
         namespace: agent.namespace,
         name: `${agent.name} (copy - ${timestamp})`,
@@ -66,19 +81,31 @@ export function Agents() {
         output_schema: agent.output_schema,
         initial_messages: agent.initial_messages || undefined,
         enabled_functions: agent.enabled_functions,
-        enabled_mcp_tools: agent.enabled_mcp_tools,
         enabled_agents: agent.enabled_agents || undefined,
         enabled_skills: agent.enabled_skills || undefined,
         function_parameters: agent.function_parameters,
-        mcp_tool_parameters: agent.mcp_tool_parameters,
         state_namespaces_readonly: agent.state_namespaces_readonly || undefined,
         state_namespaces_readwrite: agent.state_namespaces_readwrite || undefined,
       };
-
       return apiClient.createAgent(duplicateData);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['agents'] });
+    },
+  });
+
+  const startChatMutation = useMutation({
+    mutationFn: ({ namespace, name, data }: { namespace: string; name: string; data: ChatCreate }) =>
+      apiClient.createChatWithAgent(namespace, name, data),
+    onSuccess: (chat: any) => {
+      queryClient.invalidateQueries({ queryKey: ['chats'] });
+      setShowChatModal(false);
+      setChatAgent(null);
+      setChatInputParams({});
+      navigate(`/chats/${chat.id}`);
+    },
+    onError: (error: any) => {
+      showError(error?.response?.data?.detail || 'Failed to create chat');
     },
   });
 
@@ -87,6 +114,36 @@ export function Agents() {
     if (formData.name.trim()) {
       createMutation.mutate(formData);
     }
+  };
+
+  const handleStartChat = (agent: any) => {
+    const inputSchema = agent.input_schema;
+    const hasInputParams = inputSchema?.properties && Object.keys(inputSchema.properties).length > 0;
+    if (hasInputParams) {
+      setChatAgent(agent);
+      setChatInputParams({});
+      setShowChatModal(true);
+    } else {
+      startChatMutation.mutate({
+        namespace: agent.namespace,
+        name: agent.name,
+        data: { title: `Chat with ${agent.name}` },
+      });
+    }
+  };
+
+  const handleChatModalSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatAgent) return;
+    const data: ChatCreate = { title: `Chat with ${chatAgent.name}` };
+    if (Object.keys(chatInputParams).length > 0) {
+      data.input = chatInputParams;
+    }
+    startChatMutation.mutate({
+      namespace: chatAgent.namespace,
+      name: chatAgent.name,
+      data,
+    });
   };
 
   return (
@@ -106,103 +163,90 @@ export function Agents() {
         </button>
       </div>
 
-      {/* Agents Grid */}
+      {/* Search */}
+      {agents && agents.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+            placeholder="Search agents by name, namespace, or description..."
+            className="input w-full !pl-11"
+          />
+        </div>
+      )}
+
+      {/* Agents List */}
       {isLoading ? (
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
           <p className="text-gray-600 mt-2">Loading agents...</p>
         </div>
       ) : agents && agents.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {agents.map((agent) => (
+        <div className="space-y-3">
+          {filteredAgents.map((agent) => (
             <div key={agent.id} className="card hover:shadow-md transition-shadow">
-              <div className="flex items-start justify-between mb-4">
-                <div className="flex items-center flex-1 min-w-0">
-                  <Bot className="w-8 h-8 text-primary-600 mr-3 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <h3 className="font-semibold text-gray-900 truncate">{agent.name}</h3>
-                    <p className="text-xs text-gray-500">
-                      {new Date(agent.created_at).toLocaleDateString()}
-                    </p>
+              <div className="flex items-center gap-4">
+                {/* Icon + status */}
+                <div className="flex-shrink-0 relative">
+                  <Bot className="w-8 h-8 text-primary-600" />
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${agent.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-gray-900 truncate">
+                      <span className="text-gray-500">{agent.namespace}/</span>{agent.name}
+                    </h3>
+                    {agent.is_default && (
+                      <span className="text-xs font-medium bg-primary-100 text-primary-700 px-2 py-0.5 rounded flex-shrink-0">Default</span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-600 truncate mt-0.5">
+                    {agent.description || 'No description'}
+                  </p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
+                    {agent.model && (
+                      <span className="text-xs text-gray-500">{agent.model}</span>
+                    )}
+                    {agent.enabled_functions.length > 0 && (
+                      <span className="text-xs text-gray-500">{agent.enabled_functions.length} functions</span>
+                    )}
+                    {agent.enabled_agents && agent.enabled_agents.length > 0 && (
+                      <span className="text-xs text-gray-500">{agent.enabled_agents.length} agents</span>
+                    )}
                   </div>
                 </div>
-                <div className="ml-2 flex-shrink-0">
-                  {agent.is_active ? (
-                    <CheckCircle className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-gray-400" />
-                  )}
-                </div>
-              </div>
 
-              <div className="mb-4">
-                <p className="text-sm text-gray-600 line-clamp-2 min-h-[40px]">
-                  {agent.description || 'No description provided'}
-                </p>
-              </div>
-
-              <div className="space-y-2 mb-4">
-                {agent.llm_provider_id && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Provider:</span>{' '}
-                    {llmProviders?.find(p => p.id === agent.llm_provider_id)?.name || 'Unknown'}
-                  </div>
-                )}
-                {agent.model && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Model:</span> {agent.model}
-                  </div>
-                )}
-                {agent.system_prompt && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">System Prompt:</span> Configured
-                  </div>
-                )}
-                {agent.input_schema && Object.keys(agent.input_schema).length > 0 && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Input Schema:</span> Defined
-                  </div>
-                )}
-                {agent.output_schema && Object.keys(agent.output_schema).length > 0 && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Output Schema:</span> Defined
-                  </div>
-                )}
-                {agent.enabled_agents && agent.enabled_agents.length > 0 && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Other Agents:</span> {agent.enabled_agents.length}
-                  </div>
-                )}
-                {agent.enabled_functions.length > 0 && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">Functions:</span> {agent.enabled_functions.length}
-                  </div>
-                )}
-                {agent.enabled_mcp_tools.length > 0 && (
-                  <div className="text-xs text-gray-600">
-                    <span className="font-medium">MCP Tools:</span> {agent.enabled_mcp_tools.length}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-                <Link
-                  to={`/agents/${agent.namespace}/${agent.name}`}
-                  className="text-sm text-primary-600 hover:text-primary-700 flex items-center"
-                >
-                  <Edit className="w-4 h-4 mr-1" />
-                  Edit
-                </Link>
-                <div className="flex items-center gap-2">
+                {/* Actions */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => handleStartChat(agent)}
+                    disabled={startChatMutation.isPending}
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
+                    title="Start chat"
+                  >
+                    <MessageSquare className="w-4 h-4 mr-1.5" />
+                    Chat
+                  </button>
+                  <Link
+                    to={`/agents/${agent.namespace}/${agent.name}`}
+                    className="p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-md transition-colors"
+                    title="Edit"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </Link>
                   <button
                     onClick={() => {
                       if (confirm('Create a duplicate of this agent?')) {
                         duplicateMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="text-sm text-blue-600 hover:text-blue-700 flex items-center cursor-pointer"
+                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-md transition-colors"
                     disabled={duplicateMutation.isPending}
-                    title="Duplicate agent"
+                    title="Duplicate"
                   >
                     <Copy className="w-4 h-4" />
                   </button>
@@ -212,9 +256,9 @@ export function Agents() {
                         deleteMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="text-sm text-red-600 hover:text-red-700 flex items-center cursor-pointer"
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-100 rounded-md transition-colors"
                     disabled={deleteMutation.isPending}
-                    title="Delete agent"
+                    title="Delete"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -222,6 +266,18 @@ export function Agents() {
               </div>
             </div>
           ))}
+          {searchFilter && filteredAgents.length === 0 && (
+            <div className="text-center py-8 text-gray-500">No agents match your search</div>
+          )}
+        </div>
+      ) : activeProviders.length === 0 ? (
+        <div className="text-center py-12 card">
+          <Brain className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Configure an LLM Provider first</h3>
+          <p className="text-gray-600 mb-4">You need at least one active LLM provider before creating agents</p>
+          <Link to="/llm-providers" className="btn btn-primary">
+            Configure LLM Provider
+          </Link>
         </div>
       ) : (
         <div className="text-center py-12 card">
@@ -324,6 +380,57 @@ export function Agents() {
                   disabled={createMutation.isPending || !formData.name.trim()}
                 >
                   {createMutation.isPending ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Start Chat Modal (for agents with input_schema) */}
+      {showChatModal && chatAgent && (
+        <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-900 mb-1">Start Chat</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Configure input parameters for <span className="font-medium">{chatAgent.namespace}/{chatAgent.name}</span>
+            </p>
+            <form onSubmit={handleChatModalSubmit} className="space-y-4">
+              {(() => {
+                const inputSchema = chatAgent.input_schema;
+                const properties = inputSchema?.properties || {};
+                const requiredFields = inputSchema?.required || [];
+                return Object.entries(properties).map(([key, prop]: [string, any]) => (
+                  <SchemaFormField
+                    key={key}
+                    name={key}
+                    schema={prop}
+                    value={chatInputParams[key]}
+                    onChange={(value) => setChatInputParams({ ...chatInputParams, [key]: value })}
+                    required={requiredFields.includes(key)}
+                  />
+                ));
+              })()}
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowChatModal(false);
+                    setChatAgent(null);
+                    setChatInputParams({});
+                  }}
+                  className="btn btn-secondary"
+                  disabled={startChatMutation.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={startChatMutation.isPending}
+                >
+                  {startChatMutation.isPending ? 'Starting...' : 'Start Chat'}
                 </button>
               </div>
             </form>

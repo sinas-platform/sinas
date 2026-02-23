@@ -109,66 +109,15 @@ export function APIKeys() {
     });
   };
 
-  // Common permission categories
-  const permissionCategories = [
-    {
-      name: 'Chats',
-      permissions: [
-        { key: 'sinas.chats.read:all', label: 'Read Chats' },
-        { key: 'sinas.chats.write:all', label: 'Write Chats' },
-        { key: 'sinas.chats.delete:all', label: 'Delete Chats' },
-      ],
-    },
-    {
-      name: 'Agents',
-      permissions: [
-        { key: 'sinas.assistants.read:all', label: 'Read Agents' },
-        { key: 'sinas.assistants.write:all', label: 'Write Agents' },
-        { key: 'sinas.assistants.delete:all', label: 'Delete Agents' },
-      ],
-    },
-    {
-      name: 'Functions',
-      permissions: [
-        { key: 'sinas.functions.read:all', label: 'Read Functions' },
-        { key: 'sinas.functions.write:all', label: 'Write Functions' },
-        { key: 'sinas.functions.delete:all', label: 'Delete Functions' },
-        { key: 'sinas.functions.execute:all', label: 'Execute Functions' },
-      ],
-    },
-    {
-      name: 'Webhooks',
-      permissions: [
-        { key: 'sinas.webhooks.read:all', label: 'Read Webhooks' },
-        { key: 'sinas.webhooks.write:all', label: 'Write Webhooks' },
-        { key: 'sinas.webhooks.delete:all', label: 'Delete Webhooks' },
-      ],
-    },
-    {
-      name: 'Ontology',
-      permissions: [
-        { key: 'sinas.ontology.read:all', label: 'Read Ontology' },
-        { key: 'sinas.ontology.write:all', label: 'Write Ontology' },
-        { key: 'sinas.ontology.delete:all', label: 'Delete Ontology' },
-      ],
-    },
-    {
-      name: 'State Store',
-      permissions: [
-        { key: 'sinas.contexts.read:all', label: 'Read States' },
-        { key: 'sinas.contexts.write:all', label: 'Write States' },
-        { key: 'sinas.contexts.delete:all', label: 'Delete States' },
-      ],
-    },
-    {
-      name: 'Documents',
-      permissions: [
-        { key: 'sinas.documents.read:all', label: 'Read Documents' },
-        { key: 'sinas.documents.write:all', label: 'Write Documents' },
-        { key: 'sinas.documents.delete:all', label: 'Delete Documents' },
-      ],
-    },
-  ];
+  // Fetch permission reference from backend
+  const { data: permissionRegistry } = useQuery({
+    queryKey: ['permissionRegistry'],
+    queryFn: () => apiClient.getPermissionReference(),
+    retry: false,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+  });
+
+  const [permScope, setPermScope] = useState<'own' | 'all'>('own');
 
   return (
     <div className="space-y-6">
@@ -443,35 +392,67 @@ export function APIKeys() {
                   </div>
                 </div>
 
-                {/* Common Permission Examples */}
-                <details className="border border-gray-200 rounded-lg">
-                  <summary className="cursor-pointer p-3 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                    Common Permission Examples
-                  </summary>
-                  <div className="p-3 pt-0 space-y-3 max-h-64 overflow-y-auto">
-                    {permissionCategories.map((category) => (
-                      <div key={category.name}>
-                        <h4 className="text-xs font-semibold text-gray-900 mb-1">{category.name}</h4>
-                        <div className="flex flex-wrap gap-1 ml-2">
-                          {category.permissions.map((permission) => (
-                            <button
-                              key={permission.key}
-                              type="button"
-                              onClick={() => togglePermission(permission.key)}
-                              className={`px-2 py-1 text-xs rounded font-mono transition-colors ${
-                                formData.permissions[permission.key]
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                              }`}
-                            >
-                              {permission.key}
-                            </button>
-                          ))}
-                        </div>
+                {/* Permission Reference */}
+                {permissionRegistry && permissionRegistry.length > 0 && (
+                  <details className="border border-gray-200 rounded-lg">
+                    <summary className="cursor-pointer p-3 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                      Permission Reference
+                    </summary>
+                    <div className="p-3 pt-0">
+                      {/* Scope toggle */}
+                      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-gray-100">
+                        <span className="text-xs text-gray-500">Scope:</span>
+                        <button
+                          type="button"
+                          onClick={() => setPermScope('own')}
+                          className={`px-2 py-0.5 text-xs rounded ${permScope === 'own' ? 'bg-blue-100 text-blue-800 font-medium' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          :own
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPermScope('all')}
+                          className={`px-2 py-0.5 text-xs rounded ${permScope === 'all' ? 'bg-blue-100 text-blue-800 font-medium' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                          :all
+                        </button>
+                        <span className="text-xs text-gray-400 ml-1">(:all grants :own)</span>
                       </div>
-                    ))}
-                  </div>
-                </details>
+                      <div className="space-y-2 max-h-72 overflow-y-auto">
+                        {(permissionRegistry as Array<{ resource: string; description: string; actions: string[]; namespaced?: boolean; adminOnly?: boolean }>).map((entry) => (
+                          <div key={entry.resource} className="flex items-start gap-2">
+                            <div className="w-32 flex-shrink-0 pt-0.5">
+                              <span className="text-xs font-medium text-gray-900">{entry.description}</span>
+                              {entry.adminOnly && <span className="ml-1 text-[10px] text-amber-600 font-medium">admin</span>}
+                            </div>
+                            <div className="flex flex-wrap gap-1 flex-1">
+                              {entry.actions.map((action) => {
+                                const scope = entry.adminOnly ? 'all' : permScope;
+                                const permKey = `sinas.${entry.resource}.${action}:${scope}`;
+                                const isSelected = formData.permissions[permKey];
+                                return (
+                                  <button
+                                    key={action}
+                                    type="button"
+                                    onClick={() => togglePermission(permKey)}
+                                    className={`px-1.5 py-0.5 text-[11px] rounded font-mono transition-colors ${
+                                      isSelected
+                                        ? 'bg-blue-100 text-blue-800'
+                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                    title={permKey}
+                                  >
+                                    {action}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </details>
+                )}
               </div>
 
               {createMutation.isError && (

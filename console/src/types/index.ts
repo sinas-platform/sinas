@@ -180,15 +180,15 @@ export interface Agent {
   output_schema: Record<string, any>;
   initial_messages: Array<{role: string; content: string}> | null;
   enabled_functions: string[];
-  enabled_mcp_tools: string[];
+
   enabled_agents: string[];
   enabled_skills: EnabledSkillConfig[];
   function_parameters: FunctionParameters;
-  mcp_tool_parameters: Record<string, any>;
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
   enabled_collections: string[];
   is_active: boolean;
+  is_default: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -206,14 +206,13 @@ export interface AgentCreate {
   output_schema?: Record<string, any>;
   initial_messages?: Array<{role: string; content: string}>;
   enabled_functions?: string[];
-  enabled_mcp_tools?: string[];
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
   function_parameters?: FunctionParameters;
-  mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
+  is_default?: boolean;
 }
 
 export interface AgentUpdate {
@@ -229,43 +228,14 @@ export interface AgentUpdate {
   output_schema?: Record<string, any>;
   initial_messages?: Array<{role: string; content: string}>;
   enabled_functions?: string[];
-  enabled_mcp_tools?: string[];
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
   function_parameters?: FunctionParameters;
-  mcp_tool_parameters?: Record<string, any>;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
   is_active?: boolean;
-}
-
-// MCP Servers
-export interface MCPServer {
-  id: string;
-  name: string;
-  url: string;
-  protocol: string;
-  is_active: boolean;
-  last_connected: string | null;
-  connection_status: string;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MCPServerCreate {
-  name: string;
-  url: string;
-  protocol?: string;
-  api_key?: string;
-}
-
-export interface MCPServerUpdate {
-  url?: string;
-  protocol?: string;
-  api_key?: string;
-  is_active?: boolean;
+  is_default?: boolean;
 }
 
 // Roles & Users
@@ -644,6 +614,58 @@ export interface FileDownloadResponse {
   content_type: string;
   file_metadata: Record<string, any>;
   version: number;
+}
+
+// Apps
+export interface AppResourceRef {
+  type: string;
+  namespace: string;
+  name: string;
+}
+
+export interface App {
+  id: string;
+  user_id: string;
+  namespace: string;
+  name: string;
+  description: string | null;
+  required_resources: AppResourceRef[];
+  required_permissions: string[];
+  optional_permissions: string[];
+  exposed_namespaces: Record<string, string[]>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface AppCreate {
+  namespace: string;
+  name: string;
+  description?: string;
+  required_resources?: AppResourceRef[];
+  required_permissions?: string[];
+  optional_permissions?: string[];
+  exposed_namespaces?: Record<string, string[]>;
+}
+
+export interface AppUpdate {
+  namespace?: string;
+  name?: string;
+  description?: string;
+  required_resources?: AppResourceRef[];
+  required_permissions?: string[];
+  optional_permissions?: string[];
+  exposed_namespaces?: Record<string, string[]>;
+  is_active?: boolean;
+}
+
+export interface AppStatus {
+  ready: boolean;
+  resources: { satisfied: AppResourceRef[]; missing: AppResourceRef[] };
+  permissions: {
+    required: { granted: string[]; missing: string[] };
+    optional: { granted: string[]; missing: string[] };
+  };
 }
 
 // File Search

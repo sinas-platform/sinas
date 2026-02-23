@@ -2,14 +2,23 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24-alpine
     container_name: sinas-clickhouse
+    restart: unless-stopped
+    entrypoint: /docker-entrypoint-wrapper.sh
     environment:
       CLICKHOUSE_DB: sinas
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_S3_ENDPOINT: ${CLICKHOUSE_S3_ENDPOINT:-}
+      CLICKHOUSE_S3_BUCKET: ${CLICKHOUSE_S3_BUCKET:-}
+      CLICKHOUSE_S3_ACCESS_KEY_ID: ${CLICKHOUSE_S3_ACCESS_KEY_ID:-}
+      CLICKHOUSE_S3_SECRET_ACCESS_KEY: ${CLICKHOUSE_S3_SECRET_ACCESS_KEY:-}
+      CLICKHOUSE_S3_REGION: ${CLICKHOUSE_S3_REGION:-}
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./backend/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backend/clickhouse/entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
+      - ./backend/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     ulimits:
       nofile:
         soft: 262144
@@ -27,6 +36,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: sinas-redis
+    restart: unless-stopped
     volumes:
       - redis_data:/data
     healthcheck:
@@ -39,6 +49,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: sinas-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DATABASE_USER:-postgres}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set in .env file}
@@ -54,6 +65,7 @@ services:
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: sinas-pgbouncer
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgres://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-sinas}
       POOL_MODE: transaction
@@ -84,6 +96,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
@@ -142,6 +155,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     volumes:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
@@ -175,6 +189,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     volumes:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
@@ -208,6 +223,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     volumes:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock

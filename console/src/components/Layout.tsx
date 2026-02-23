@@ -15,13 +15,12 @@ import {
   Database,
   Brain,
   Settings,
-  Shield,
   Activity,
   Webhook,
   FileText,
   Lightbulb,
-  Play,
   Archive,
+  AppWindow,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -33,40 +32,36 @@ const navigationSections = [
     ],
   },
   {
-    name: 'USE',
-    items: [
-      { name: 'Chats', href: '/chats', icon: MessageSquare },
-      { name: 'Executions', href: '/functions/execute', icon: Play },
-    ],
-  },
-  {
-    name: 'CONFIGURE',
+    name: 'AGENTS',
     items: [
       { name: 'Agents', href: '/agents', icon: Bot },
       { name: 'Skills', href: '/skills', icon: Lightbulb },
-      { name: 'Functions', href: '/functions', icon: Code },
-      { name: 'Templates', href: '/templates', icon: FileText },
-      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
-      { name: 'Collections', href: '/collections', icon: Archive },
-      { name: 'States', href: '/states', icon: Database },
       { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
-      { name: 'MCP Servers', href: '/mcp', icon: Server },
+    ],
+  },
+  {
+    name: 'FUNCTIONS',
+    items: [
+      { name: 'Functions', href: '/functions', icon: Code },
+      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
       { name: 'Schedules', href: '/schedules', icon: Clock },
     ],
   },
   {
-    name: 'SECURITY',
+    name: 'RESOURCES',
     items: [
-      { name: 'Users & Roles', href: '/users', icon: Users },
-      { name: 'Permissions', href: '/permissions', icon: Shield },
-      { name: 'API Keys', href: '/api-keys', icon: Key },
+      { name: 'Templates', href: '/templates', icon: FileText },
+      { name: 'Collections', href: '/collections', icon: Archive },
+      { name: 'States', href: '/states', icon: Database },
     ],
   },
   {
-    name: 'SYSTEM',
+    name: 'ADMIN',
     items: [
-      { name: 'Messages', href: '/messages', icon: Activity },
-      { name: 'Request Logs', href: '/logs', icon: Activity },
+      { name: 'Apps', href: '/apps', icon: AppWindow },
+      { name: 'Users & Roles', href: '/users', icon: Users },
+      { name: 'API Keys', href: '/api-keys', icon: Key },
+      { name: 'Logs', href: '/logs', icon: Activity },
       { name: 'System', href: '/system', icon: Server },
       { name: 'Config Manager', href: '/config', icon: Settings },
     ],
@@ -146,6 +141,18 @@ export function Layout() {
               </div>
             ))}
           </nav>
+
+          {/* Chat History link */}
+          <div className="px-4 pb-2">
+            <Link
+              to="/chats"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-md transition-colors"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              Chat History
+            </Link>
+          </div>
 
           {/* User menu */}
           <div className="p-4 border-t border-gray-200">

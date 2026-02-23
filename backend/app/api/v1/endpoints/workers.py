@@ -47,12 +47,11 @@ async def list_workers(
     """
     List all shared workers.
 
-    Requires sinas.workers.read:all permission (admin only).
+    Requires sinas.system.read:all permission (admin only).
     """
     user_id, permissions = current_user_data
 
-    # Check permission
-    permission = "sinas.workers.read:all"
+    permission = "sinas.system.read:all"
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view workers")
@@ -74,12 +73,11 @@ async def scale_workers(
     """
     Scale workers up or down to target count.
 
-    Requires sinas.workers.scale:all permission (admin only).
+    Requires sinas.system.update:all permission (admin only).
     """
     user_id, permissions = current_user_data
 
-    # Check permission
-    permission = "sinas.workers.scale:all"
+    permission = "sinas.system.update:all"
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to scale workers")
@@ -109,7 +107,7 @@ async def get_worker_count(
     user_id, permissions = current_user_data
 
     # Check permission
-    permission = "sinas.workers.read:all"
+    permission = "sinas.system.read:all"
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to view workers")
@@ -131,12 +129,11 @@ async def reload_worker_packages(
     Reload packages in all shared workers.
     Reinstalls all approved packages in each worker.
 
-    Requires sinas.workers.put:all permission (admin only).
+    Requires sinas.system.update:all permission (admin only).
     """
     user_id, permissions = current_user_data
 
-    # Check permission
-    permission = "sinas.workers.put:all"
+    permission = "sinas.system.update:all"
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to reload workers")

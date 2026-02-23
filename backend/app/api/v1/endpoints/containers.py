@@ -17,7 +17,7 @@ class ScaleRequest(BaseModel):
 
 @router.get("/stats")
 async def get_container_stats(
-    user_id: str = Depends(require_permission("sinas.containers.read:all")),
+    user_id: str = Depends(require_permission("sinas.system.read:all")),
 ) -> dict[str, Any]:
     """Get pool container stats. Admin only."""
     from app.services.container_pool import container_pool
@@ -27,7 +27,7 @@ async def get_container_stats(
 
 @router.post("/reload")
 async def reload_pool_packages(
-    current_user_id: str = Depends(require_permission("sinas.containers.update:all")),
+    current_user_id: str = Depends(require_permission("sinas.system.update:all")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -43,7 +43,7 @@ async def reload_pool_packages(
 @router.post("/scale")
 async def scale_pool(
     body: ScaleRequest,
-    current_user_id: str = Depends(require_permission("sinas.containers.update:all")),
+    current_user_id: str = Depends(require_permission("sinas.system.update:all")),
     db: AsyncSession = Depends(get_db),
 ):
     """Scale the container pool to a target size. Admin only."""

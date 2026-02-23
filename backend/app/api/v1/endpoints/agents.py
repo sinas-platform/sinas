@@ -1,7 +1,7 @@
 """Agent endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -51,6 +51,10 @@ async def create_agent(
             status_code=400,
             detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists",
         )
+    # If setting as default, unset other defaults
+    if agent_data.is_default:
+        await db.execute(update(Agent).values(is_default=False))
+
     agent = Agent(
         user_id=user_id,
         namespace=agent_data.namespace,
@@ -65,17 +69,16 @@ async def create_agent(
         output_schema=agent_data.output_schema or {},
         initial_messages=agent_data.initial_messages,
         enabled_functions=agent_data.enabled_functions or [],
-        enabled_mcp_tools=agent_data.enabled_mcp_tools or [],
         enabled_agents=agent_data.enabled_agents or [],
         enabled_skills=[skill.model_dump() for skill in agent_data.enabled_skills]
         if agent_data.enabled_skills
         else [],
         function_parameters=agent_data.function_parameters or {},
-        mcp_tool_parameters=agent_data.mcp_tool_parameters or {},
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
         enabled_collections=agent_data.enabled_collections or [],
         is_active=True,
+        is_default=agent_data.is_default or False,
     )
 
     db.add(agent)
@@ -194,16 +197,12 @@ async def update_agent(
         agent.initial_messages = agent_data.initial_messages
     if agent_data.enabled_functions is not None:
         agent.enabled_functions = agent_data.enabled_functions
-    if agent_data.enabled_mcp_tools is not None:
-        agent.enabled_mcp_tools = agent_data.enabled_mcp_tools
     if agent_data.enabled_agents is not None:
         agent.enabled_agents = agent_data.enabled_agents
     if agent_data.enabled_skills is not None:
         agent.enabled_skills = [skill.model_dump() for skill in agent_data.enabled_skills]
     if agent_data.function_parameters is not None:
         agent.function_parameters = agent_data.function_parameters
-    if agent_data.mcp_tool_parameters is not None:
-        agent.mcp_tool_parameters = agent_data.mcp_tool_parameters
     if agent_data.state_namespaces_readonly is not None:
         agent.state_namespaces_readonly = agent_data.state_namespaces_readonly
     if agent_data.state_namespaces_readwrite is not None:
@@ -212,6 +211,12 @@ async def update_agent(
         agent.enabled_collections = agent_data.enabled_collections
     if agent_data.is_active is not None:
         agent.is_active = agent_data.is_active
+    if agent_data.is_default is not None:
+        if agent_data.is_default:
+            await db.execute(
+                update(Agent).where(Agent.id != agent.id).values(is_default=False)
+            )
+        agent.is_default = agent_data.is_default
     await db.commit()
     await db.refresh(agent)
 

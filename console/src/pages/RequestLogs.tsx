@@ -11,10 +11,62 @@ import {
   ChevronDown,
   ChevronRight,
   CheckCircle,
-  XCircle
+  XCircle,
+  MessageSquare,
+  Activity,
 } from 'lucide-react';
+import { Messages } from './Messages';
+
+type Tab = 'requests' | 'messages';
 
 export function RequestLogs() {
+  const [activeTab, setActiveTab] = useState<Tab>('requests');
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-3xl font-bold text-gray-900">Logs</h1>
+        <p className="text-gray-600 mt-1">Monitor API requests and chat messages</p>
+      </div>
+
+      {/* Tabs */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('requests')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'requests'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Activity className="w-5 h-5 inline mr-2" />
+            Request Logs
+          </button>
+          <button
+            onClick={() => setActiveTab('messages')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'messages'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <MessageSquare className="w-5 h-5 inline mr-2" />
+            Message Logs
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      <div>
+        {activeTab === 'requests' && <RequestLogsTab />}
+        {activeTab === 'messages' && <Messages />}
+      </div>
+    </div>
+  );
+}
+
+function RequestLogsTab() {
   const [filters, setFilters] = useState({
     user_id: '',
     start_time: '',
@@ -32,7 +84,6 @@ export function RequestLogs() {
     queryKey: ['requestLogs', filters],
     queryFn: () => {
       const params: any = { ...filters };
-      // Remove empty filters
       Object.keys(params).forEach(key => {
         if (params[key] === '') delete params[key];
       });
@@ -106,29 +157,23 @@ export function RequestLogs() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Request Logs</h1>
-          <p className="text-gray-600 mt-1">Monitor API requests and permissions</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="btn btn-secondary"
-          >
-            <Filter className="w-4 h-4" />
-            Filters
-          </button>
-          <button
-            onClick={exportLogs}
-            className="btn btn-secondary"
-            disabled={!logs || logs.length === 0}
-          >
-            <Download className="w-4 h-4" />
-            Export CSV
-          </button>
-        </div>
+      {/* Actions */}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="btn btn-secondary"
+        >
+          <Filter className="w-4 h-4" />
+          Filters
+        </button>
+        <button
+          onClick={exportLogs}
+          className="btn btn-secondary"
+          disabled={!logs || logs.length === 0}
+        >
+          <Download className="w-4 h-4" />
+          Export CSV
+        </button>
       </div>
 
       {/* Stats */}

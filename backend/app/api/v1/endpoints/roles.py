@@ -505,3 +505,19 @@ async def delete_role_permission(
     await db.commit()
 
     return {"message": "Permission deleted successfully"}
+
+
+@router.get("/permissions/reference")
+async def get_permissions_reference(
+    request: Request,
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Return the canonical registry of all permissions evaluated in the codebase.
+
+    No special permission required — any authenticated user can see what
+    permissions exist (they still can't grant themselves anything).
+    """
+    from app.core.permission_registry import PERMISSION_REGISTRY
+
+    return PERMISSION_REGISTRY

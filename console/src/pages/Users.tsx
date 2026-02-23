@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus } from 'lucide-react';
+import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus, Lock } from 'lucide-react';
+import { Permissions as PermissionsTab } from './Permissions';
 
-type Tab = 'users' | 'roles';
+type Tab = 'users' | 'roles' | 'permissions';
 
 export function Users() {
   const [activeTab, setActiveTab] = useState<Tab>('users');
@@ -40,6 +41,17 @@ export function Users() {
             <Shield className="w-5 h-5 inline mr-2" />
             Roles
           </button>
+          <button
+            onClick={() => setActiveTab('permissions')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'permissions'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <Lock className="w-5 h-5 inline mr-2" />
+            Permissions
+          </button>
         </nav>
       </div>
 
@@ -47,6 +59,7 @@ export function Users() {
       <div>
         {activeTab === 'users' && <UsersTab />}
         {activeTab === 'roles' && <RolesTab />}
+        {activeTab === 'permissions' && <PermissionsTab />}
       </div>
     </div>
   );

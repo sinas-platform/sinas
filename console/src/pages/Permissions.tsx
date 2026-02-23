@@ -162,33 +162,27 @@ export function Permissions() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Permissions Matrix</h1>
-          <p className="text-gray-600 mt-1">Manage role permissions across your organization</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {pendingChanges.size > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-600">{pendingChanges.size} pending change{pendingChanges.size > 1 ? 's' : ''}</span>
-              <button onClick={cancelChanges} className="btn btn-secondary text-sm">
-                Cancel
-              </button>
-              <button onClick={applyChanges} className="btn btn-primary text-sm flex items-center">
-                <Save className="w-4 h-4 mr-2" />
-                Apply Changes
-              </button>
-            </div>
-          )}
-          <button
-            onClick={() => setShowAddPermissionModal(true)}
-            className="btn btn-primary flex items-center"
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Add Permission
-          </button>
-        </div>
+      {/* Actions */}
+      <div className="flex items-center justify-end gap-3">
+        {pendingChanges.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-600">{pendingChanges.size} pending change{pendingChanges.size > 1 ? 's' : ''}</span>
+            <button onClick={cancelChanges} className="btn btn-secondary text-sm">
+              Cancel
+            </button>
+            <button onClick={applyChanges} className="btn btn-primary text-sm flex items-center">
+              <Save className="w-4 h-4 mr-2" />
+              Apply Changes
+            </button>
+          </div>
+        )}
+        <button
+          onClick={() => setShowAddPermissionModal(true)}
+          className="btn btn-primary flex items-center"
+        >
+          <Plus className="w-5 h-5 mr-2" />
+          Add Permission
+        </button>
       </div>
 
       {/* Matrix */}

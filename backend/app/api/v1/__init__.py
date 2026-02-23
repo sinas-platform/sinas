@@ -4,12 +4,13 @@ from fastapi import APIRouter
 from .endpoints import (
     agents,
     api_keys,
+    apps,
     collections,
     config,
     containers,
     functions,
     llm_providers,
-    mcp_servers,
+
     messages,
     packages,
     queue,
@@ -27,10 +28,11 @@ router = APIRouter()
 
 # Core configuration routes
 router.include_router(agents.router, prefix="/agents", tags=["agents"])
+router.include_router(apps.router)
 router.include_router(skills.router)
 router.include_router(collections.router)
 router.include_router(llm_providers.router, prefix="/llm-providers", tags=["llm-providers"])
-router.include_router(mcp_servers.router, prefix="/mcp", tags=["mcp"])
+
 router.include_router(roles.router)
 router.include_router(users.router)
 router.include_router(api_keys.router, tags=["api-keys"])

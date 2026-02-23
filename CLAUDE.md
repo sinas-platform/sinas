@@ -142,13 +142,12 @@ Agents are AI assistants with configurable LLM providers, tools, and behavior.
   - `input_schema`/`output_schema`: JSON Schema for input variables and output validation
   - `enabled_functions`: List of functions the agent can call
   - `function_parameters`: Default parameter values per function (supports Jinja2)
-  - `enabled_mcp_tools`: List of MCP tools the agent can use
   - `enabled_agents`: Other agents this agent can call as tools
   - `enabled_skills`: List of skill configs with `{"skill": "namespace/name", "preload": bool}` - preload injects into system prompt
   - `state_namespaces_readonly`/`state_namespaces_readwrite`: State access permissions
 
 **Agent Features:**
-- **Tool Calling**: Agents can call functions, other agents, MCP tools, and retrieve skills
+- **Tool Calling**: Agents can call functions, other agents, and retrieve skills
 - **Function Parameter Defaults**: Configure default parameter values per function
   - Example: `{"email/send_email": {"sender": "{{company_email}}", "priority": "high"}}`
   - Supports Jinja2 templates that reference agent input variables
@@ -357,8 +356,7 @@ namespace="memory", key="name", visibility="private"
 3. Default roles created (GuestUsers, Users, Admins)
 4. Superadmin user created if `SUPERADMIN_EMAIL` set and Admins role empty
 5. Declarative config applied if `CONFIG_FILE` and `AUTO_APPLY_CONFIG=true`
-6. MCP (Model Context Protocol) client initialized
-7. Default agents created
+6. Default agents created
 
 ### Declarative Configuration (Preferred)
 
@@ -425,21 +423,19 @@ alembic upgrade head
 
 3. **Function Execution:** Functions can call other functions. The ExecutionTracker builds a tree of StepExecution records. Parent execution ID must be passed through tracking context.
 
-4. **MCP Tools:** MCP (Model Context Protocol) servers provide tools to agents. Configured per agent. Tools are dynamically loaded from MCP servers on startup.
+4. **Agent vs Assistant:** Use "agent" terminology consistently in code and UI. The backend models still use `Agent` but some schemas reference `Assistant` for historical reasons.
 
-5. **Agent vs Assistant:** Use "agent" terminology consistently in code and UI. The backend models still use `Agent` but some schemas reference `Assistant` for historical reasons.
+5. **Function Parameter Defaults:** When setting default parameters for functions in agents, use Jinja2 templates to reference agent input variables: `{{variable_name}}`.
 
-6. **Function Parameter Defaults:** When setting default parameters for functions in agents, use Jinja2 templates to reference agent input variables: `{{variable_name}}`.
+6. **Message Content Format:** Messages support multimodal content stored as JSON arrays: `[{"type": "text", "text": "..."}, {"type": "image", "image": "data:image/..."}]`. Frontend must parse JSON strings from database.
 
-7. **Message Content Format:** Messages support multimodal content stored as JSON arrays: `[{"type": "text", "text": "..."}, {"type": "image", "image": "data:image/..."}]`. Frontend must parse JSON strings from database.
+7. **Provider Type Detection:** When agents don't have explicit `llm_provider_id`, the system falls back to default provider. Ensure `provider_type` is determined before building messages for content conversion.
 
-8. **Provider Type Detection:** When agents don't have explicit `llm_provider_id`, the system falls back to default provider. Ensure `provider_type` is determined before building messages for content conversion.
+8. **Chats and Agents:** Chats are always linked to agents via `agent_id`, `agent_namespace`, and `agent_name`. Chat access is controlled by agent permissions (`sinas.agents/{namespace}/{name}.read:own`), not separate chat permissions. Chats are created via `/api/runtime/agents/{namespace}/{agent_name}/chats`.
 
-9. **Chats and Agents:** Chats are always linked to agents via `agent_id`, `agent_namespace`, and `agent_name`. Chat access is controlled by agent permissions (`sinas.agents/{namespace}/{name}.read:own`), not separate chat permissions. Chats are created via `/api/runtime/agents/{namespace}/{agent_name}/chats`.
+9. **State Namespaces:** States use namespace-based permissions similar to agents and functions. Users can create private states in any namespace they have permission for. Shared states require both `visibility="shared"` AND the viewer must have `sinas.states/{namespace}.read:all` permission.
 
-10. **State Namespaces:** States use namespace-based permissions similar to agents and functions. Users can create private states in any namespace they have permission for. Shared states require both `visibility="shared"` AND the viewer must have `sinas.states/{namespace}.read:all` permission.
-
-11. **CRUD Verbs:** Always use CRUD action verbs in permissions: `create`, `read`, `update`, `delete`, `execute`, `render`, `send`, etc. Never use HTTP verbs like `get`, `post`, `put`. Example: `sinas.functions.read:own` not `sinas.functions.get:own`.
+10. **CRUD Verbs:** Always use CRUD action verbs in permissions: `create`, `read`, `update`, `delete`, `execute`, `render`, `send`, etc. Never use HTTP verbs like `get`, `post`, `put`. Example: `sinas.functions.read:own` not `sinas.functions.get:own`.
 
 ## Key Integration Points
 

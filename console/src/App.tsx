@@ -10,7 +10,6 @@ import { Chats } from './pages/Chats';
 import { ChatDetail } from './pages/ChatDetail';
 import { Agents } from './pages/Agents';
 import { AgentDetail } from './pages/AgentDetail';
-import { MCPServers } from './pages/MCPServers';
 import { Users } from './pages/Users';
 import { APIKeys } from './pages/APIKeys';
 import { Functions } from './pages/Functions';
@@ -31,6 +30,7 @@ import { Messages } from './pages/Messages';
 import { FunctionExecute } from './pages/FunctionExecute';
 import { Collections } from './pages/Collections';
 import { CollectionDetail } from './pages/CollectionDetail';
+import { Apps } from './pages/Apps';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -114,12 +114,12 @@ function App() {
               <Route path="webhooks/*" element={<WebhookEditor />} />
               <Route path="schedules" element={<Schedules />} />
               <Route path="schedules/:scheduleId" element={<ScheduleEditor />} />
-              <Route path="mcp" element={<MCPServers />} />
               <Route path="llm-providers" element={<LLMProviders />} />
               <Route path="skills" element={<Skills />} />
               <Route path="collections" element={<Collections />} />
               <Route path="collections/:namespace/:name" element={<CollectionDetail />} />
               <Route path="templates" element={<Templates />} />
+              <Route path="apps" element={<Apps />} />
               <Route path="config" element={<ConfigManager />} />
               <Route path="states" element={<States />} />
               <Route path="logs" element={<RequestLogs />} />

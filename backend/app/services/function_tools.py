@@ -24,7 +24,6 @@ class FunctionToolConverter:
         db: AsyncSession,
         user_id: str,
         enabled_functions: Optional[list[str]] = None,
-        disabled_functions: Optional[list[str]] = None,
         function_parameters: Optional[dict[str, dict[str, Any]]] = None,
         agent_input_context: Optional[dict[str, Any]] = None,
     ) -> list[dict[str, Any]]:
@@ -35,7 +34,6 @@ class FunctionToolConverter:
             db: Database session
             user_id: User ID to filter functions
             enabled_functions: List of "namespace/name" strings to include
-            disabled_functions: List of "namespace/name" strings to exclude
             function_parameters: Pre-filled parameters with Jinja2 templates
             agent_input_context: Context for rendering Jinja2 templates
 
@@ -49,10 +47,6 @@ class FunctionToolConverter:
             return tools
 
         for function_ref in enabled_functions:
-            # Skip if in disabled list
-            if disabled_functions and function_ref in disabled_functions:
-                continue
-
             # Parse namespace/name
             if "/" not in function_ref:
                 # Legacy format or invalid - skip

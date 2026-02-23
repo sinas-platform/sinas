@@ -47,12 +47,6 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const { data: mcpTools } = useQuery({
-    queryKey: ['mcpTools'],
-    queryFn: () => apiClient.listMCPTools(),
-    retry: false,
-  });
-
   const { data: collections } = useQuery({
     queryKey: ['collections'],
     queryFn: () => apiClient.listCollections(),
@@ -60,7 +54,7 @@ export function AgentDetail() {
   });
 
   const [formData, setFormData] = useState<AgentUpdate>({});
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'mcp' | 'states' | 'collections'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'states' | 'collections'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
 
   // Initialize form data when agent loads
@@ -79,12 +73,11 @@ export function AgentDetail() {
         output_schema: agent.output_schema || {},
         initial_messages: agent.initial_messages || [],
         is_active: agent.is_active,
+        is_default: agent.is_default,
         enabled_functions: agent.enabled_functions || [],
-        enabled_mcp_tools: agent.enabled_mcp_tools || [],
         enabled_agents: agent.enabled_agents || [],
         enabled_skills: agent.enabled_skills || [],
         function_parameters: agent.function_parameters || {},
-        mcp_tool_parameters: agent.mcp_tool_parameters || {},
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
         enabled_collections: agent.enabled_collections || [],
@@ -233,17 +226,31 @@ export function AgentDetail() {
               </p>
             </div>
 
-            <div className="flex items-center">
-              <input
-                id="is_active"
-                type="checkbox"
-                checked={formData.is_active ?? agent.is_active}
-                onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-              />
-              <label htmlFor="is_active" className="ml-2 text-sm text-gray-700">
-                Active (agent can be used in chats)
-              </label>
+            <div className="flex items-center gap-6">
+              <div className="flex items-center">
+                <input
+                  id="is_active"
+                  type="checkbox"
+                  checked={formData.is_active ?? agent.is_active}
+                  onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
+                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                />
+                <label htmlFor="is_active" className="ml-2 text-sm text-gray-700">
+                  Active
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  id="is_default"
+                  type="checkbox"
+                  checked={formData.is_default ?? agent.is_default}
+                  onChange={(e) => setFormData({ ...formData, is_default: e.target.checked })}
+                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                />
+                <label htmlFor="is_default" className="ml-2 text-sm text-gray-700">
+                  Default agent
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -428,17 +435,6 @@ export function AgentDetail() {
             </button>
             <button
               type="button"
-              onClick={() => setToolsTab('mcp')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                toolsTab === 'mcp'
-                  ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              MCP Tools
-            </button>
-            <button
-              type="button"
               onClick={() => setToolsTab('states')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'states'
@@ -467,51 +463,148 @@ export function AgentDetail() {
             {toolsTab === 'assistants' && (
               <div>
                 <p className="text-xs text-gray-500 mb-3">
-                  Enable other agents to be called as tools by this agent
+                  Select agents or add wildcard patterns (<code className="text-xs bg-gray-100 px-1 rounded">namespace/*</code>, <code className="text-xs bg-gray-100 px-1 rounded">*/*</code>)
                 </p>
-                {agents && agents.length > 1 ? (
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-96 overflow-y-auto">
-                    {agents
-                      .filter((a: any) => a.id !== agent.id)
-                      .map((otherAgent: any) => (
-                        <label
-                          key={otherAgent.id}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(formData.enabled_agents || agent.enabled_agents || []).includes(otherAgent.id)}
-                            onChange={(e) => {
-                              const current = formData.enabled_agents || agent.enabled_agents || [];
-                              const updated = e.target.checked
-                                ? [...current, otherAgent.id]
-                                : current.filter((id: string) => id !== otherAgent.id);
+                {/* Tags for selected agents/patterns */}
+                {(() => {
+                  const current = formData.enabled_agents || agent.enabled_agents || [];
+                  return current.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {current.map((entry: string) => {
+                        const isWildcard = entry.includes('*');
+                        return (
+                          <span
+                            key={entry}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border ${
+                              isWildcard
+                                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                : 'bg-primary-50 text-primary-700 border-primary-200'
+                            }`}
+                          >
+                            {isWildcard && <span className="font-mono">*</span>}
+                            {!isWildcard && <Bot className="w-3 h-3" />}
+                            {entry}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = current.filter((p: string) => p !== entry);
+                                setFormData({ ...formData, enabled_agents: updated });
+                              }}
+                              className="ml-0.5 hover:opacity-70"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : null;
+                })()}
+                {/* Combobox input with dropdown suggestions */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Type to search agents or enter a pattern..."
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
+                    onChange={(e) => {
+                      const input = e.target as HTMLInputElement;
+                      input.dataset.filter = input.value;
+                      // Force re-render of dropdown by toggling a data attribute
+                      input.dispatchEvent(new Event('input', { bubbles: true }));
+                    }}
+                    onFocus={(e) => {
+                      (e.target as HTMLInputElement).dataset.open = 'true';
+                      // Trigger re-render
+                      setFormData({ ...formData });
+                    }}
+                    onBlur={(e) => {
+                      // Delay to allow click on dropdown items
+                      setTimeout(() => {
+                        (e.target as HTMLInputElement).dataset.open = 'false';
+                        setFormData({ ...formData });
+                      }, 200);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const value = (e.target as HTMLInputElement).value.trim();
+                        if (value) {
+                          const current = formData.enabled_agents || agent.enabled_agents || [];
+                          if (!current.includes(value)) {
+                            setFormData({ ...formData, enabled_agents: [...current, value] });
+                          }
+                          (e.target as HTMLInputElement).value = '';
+                          (e.target as HTMLInputElement).dataset.filter = '';
+                        }
+                      }
+                    }}
+                    id="agent-combobox"
+                  />
+                  {(() => {
+                    const input = document.getElementById('agent-combobox') as HTMLInputElement | null;
+                    const isOpen = input?.dataset.open === 'true';
+                    const filter = (input?.dataset.filter || input?.value || '').toLowerCase();
+                    if (!isOpen) return null;
+
+                    const current = formData.enabled_agents || agent.enabled_agents || [];
+                    const otherAgents = (agents || []).filter((a: any) => a.id !== agent.id);
+
+                    // Build suggestion list: wildcard patterns + specific agents
+                    const wildcardSuggestions = [
+                      { value: '*/*', label: 'All agents', description: 'Access every active agent' },
+                      ...Array.from(new Set(otherAgents.map((a: any) => a.namespace))).map((ns) => ({
+                        value: `${ns}/*`,
+                        label: `${ns}/*`,
+                        description: `All agents in ${ns} namespace`,
+                      })),
+                    ];
+
+                    const agentSuggestions = otherAgents.map((a: any) => ({
+                      value: `${a.namespace}/${a.name}`,
+                      label: `${a.namespace}/${a.name}`,
+                      description: a.description || '',
+                    }));
+
+                    const allSuggestions = [...wildcardSuggestions, ...agentSuggestions]
+                      .filter((s) => !current.includes(s.value))
+                      .filter((s) => !filter || s.value.toLowerCase().includes(filter) || s.label.toLowerCase().includes(filter));
+
+                    if (allSuggestions.length === 0) return null;
+
+                    return (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {allSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion.value}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              const updated = [...current, suggestion.value];
                               setFormData({ ...formData, enabled_agents: updated });
+                              if (input) {
+                                input.value = '';
+                                input.dataset.filter = '';
+                              }
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-                          />
-                          <div className="ml-3 flex-1">
-                            <div className="flex items-center gap-2">
-                              <Bot className="w-4 h-4 text-primary-600" />
-                              <span className="text-sm font-medium text-gray-900">{otherAgent.name}</span>
+                          >
+                            {suggestion.value.includes('*') ? (
+                              <span className="w-4 h-4 text-amber-500 font-mono text-xs font-bold flex items-center justify-center">*</span>
+                            ) : (
+                              <Bot className="w-4 h-4 text-primary-600 flex-shrink-0" />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 truncate">{suggestion.label}</div>
+                              {suggestion.description && (
+                                <div className="text-xs text-gray-500 truncate">{suggestion.description}</div>
+                              )}
                             </div>
-                            {otherAgent.description && (
-                              <p className="text-xs text-gray-500 mt-0.5">{otherAgent.description}</p>
-                            )}
-                            {otherAgent.provider && otherAgent.model && (
-                              <p className="text-xs text-gray-400 mt-0.5">
-                                {otherAgent.provider}/{otherAgent.model}
-                              </p>
-                            )}
-                          </div>
-                        </label>
-                      ))}
-                  </div>
-                ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                    <p className="text-sm text-gray-500">No other agents available.</p>
-                  </div>
-                )}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
 
@@ -759,58 +852,6 @@ export function AgentDetail() {
                 ) : (
                   <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                     <p className="text-sm text-gray-500">No functions available. Create functions first.</p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* MCP Tools Tab */}
-            {toolsTab === 'mcp' && (
-              <div>
-                <p className="text-xs text-gray-500 mb-3">
-                  Select MCP tools that this agent can use
-                </p>
-                {mcpTools && mcpTools.length > 0 ? (
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-96 overflow-y-auto">
-                    {mcpTools.map((tool: any) => {
-                      const toolName = tool.name || tool.tool_name;
-                      const isEnabled = (formData.enabled_mcp_tools || agent.enabled_mcp_tools || []).includes(toolName);
-
-                      return (
-                        <label
-                          key={toolName}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isEnabled}
-                            onChange={(e) => {
-                              const current = formData.enabled_mcp_tools || agent.enabled_mcp_tools || [];
-                              const updated = e.target.checked
-                                ? [...current, toolName]
-                                : current.filter((name: string) => name !== toolName);
-                              setFormData({ ...formData, enabled_mcp_tools: updated });
-                            }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-                          />
-                          <div className="ml-3 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900 font-mono">{toolName}</span>
-                              {tool.server_name && (
-                                <span className="text-xs text-gray-500">({tool.server_name})</span>
-                              )}
-                            </div>
-                            {tool.description && (
-                              <p className="text-xs text-gray-500 mt-0.5">{tool.description}</p>
-                            )}
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                    <p className="text-sm text-gray-500">No MCP tools available. Configure and activate MCP servers first.</p>
                   </div>
                 )}
               </div>

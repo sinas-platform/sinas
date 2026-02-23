@@ -34,6 +34,8 @@ class RequestLoggerMiddleware:
         referer = headers_dict.get(b"referer", b"").decode("latin1")
         content_type = headers_dict.get(b"content-type", b"").decode("latin1")
 
+        application = headers_dict.get(b"x-application", b"").decode("latin1")
+
         # Get client IP
         client = scope.get("client")
         ip_address = client[0] if client else None
@@ -147,5 +149,6 @@ class RequestLoggerMiddleware:
                     group_id=group_id,
                     error_message=error_message,
                     error_type=error_type,
+                    metadata={"application": application} if application else None,
                 )
             )

@@ -101,8 +101,6 @@ class ConfigParser:
             f"{c.get('namespace', 'default')}/{c['name']}" for c in spec.get("collections", [])
         }
         llm_provider_names = {p["name"] for p in spec.get("llmProviders", [])}
-        mcp_server_names = {s["name"] for s in spec.get("mcpServers", [])}
-
         # Database names (if db provided)
         db_group_names: set[str] = set()
         db_function_names: set[str] = set()
@@ -110,14 +108,11 @@ class ConfigParser:
         db_skill_names: set[str] = set()
         db_collection_names: set[str] = set()
         db_llm_provider_names: set[str] = set()
-        db_mcp_server_names: set[str] = set()
-
         if db:
             from app.models.agent import Agent
             from app.models.file import Collection
             from app.models.function import Function
             from app.models.llm_provider import LLMProvider
-            from app.models.mcp import MCPServer
             from app.models.skill import Skill
             from app.models.user import Role
 
@@ -141,9 +136,6 @@ class ConfigParser:
             result = await db.execute(select(LLMProvider.name))
             db_llm_provider_names = {name for (name,) in result.fetchall()}
 
-            result = await db.execute(select(MCPServer.name))
-            db_mcp_server_names = {name for (name,) in result.fetchall()}
-
         # Combined sets (config + database)
         all_group_names = group_names | db_group_names
         all_function_names = function_names | db_function_names
@@ -151,7 +143,38 @@ class ConfigParser:
         all_skill_names = skill_names | db_skill_names
         all_collection_names = collection_names | db_collection_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
-        all_mcp_server_names = mcp_server_names | db_mcp_server_names
+        # Validate app resource references
+        valid_resource_types = {"agent", "function", "skill", "collection"}
+        for i, app in enumerate(spec.get("apps", [])):
+            for j, res in enumerate(app.get("requiredResources", [])):
+                res_type = res.get("type", "")
+                if res_type not in valid_resource_types:
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.apps[{i}].requiredResources[{j}].type",
+                            message=f"Unsupported resource type '{res_type}'. Must be one of: {', '.join(sorted(valid_resource_types))}",
+                        )
+                    )
+                    continue
+
+                res_ns = res.get("namespace", "default")
+                res_name = res.get("name", "")
+                res_ref = f"{res_ns}/{res_name}"
+
+                # Check if the referenced resource exists in config or DB
+                lookup = {
+                    "agent": all_agent_names,
+                    "function": all_function_names,
+                    "skill": all_skill_names,
+                    "collection": all_collection_names,
+                }
+                if res_ref not in lookup.get(res_type, set()):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.apps[{i}].requiredResources[{j}]",
+                            message=f"Referenced {res_type} '{res_ref}' not defined",
+                        )
+                    )
 
         # Validate function references
         for i, func in enumerate(spec.get("functions", [])):
@@ -217,20 +240,6 @@ class ConfigParser:
                                 message=f"Referenced skill '{skill_ref}' not defined",
                             )
                         )
-
-            # Validate MCP tool references
-            if "enabledMcpTools" in agent and agent["enabledMcpTools"]:
-                # Format: "server_name:tool_name"
-                for tool_ref in agent["enabledMcpTools"]:
-                    if ":" in tool_ref:
-                        server_name = tool_ref.split(":")[0]
-                        if server_name not in all_mcp_server_names:
-                            errors.append(
-                                ConfigValidationError(
-                                    path=f"spec.agents[{i}].enabledMcpTools",
-                                    message=f"Referenced MCP server '{server_name}' not defined",
-                                )
-                            )
 
             # Validate enabled collection references
             if "enabledCollections" in agent and agent["enabledCollections"]:
@@ -313,12 +322,3 @@ class ConfigParser:
                     )
                 )
 
-        # Validate MCP server references
-        for i, server in enumerate(spec.get("mcpServers", [])):
-            if server["groupName"] not in all_group_names:
-                errors.append(
-                    ConfigValidationError(
-                        path=f"spec.mcpServers[{i}].groupName",
-                        message=f"Referenced group '{server['groupName']}' not defined",
-                    )
-                )

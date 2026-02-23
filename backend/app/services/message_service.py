@@ -20,10 +20,10 @@ from app.models.llm_provider import LLMProvider
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
+from app.core.permissions import check_permission
 from app.services.content_converter import ContentConverter
 
 from app.services.function_tools import FunctionToolConverter
-from app.services.mcp import mcp_client
 from app.services.queue_service import queue_service
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
@@ -150,10 +150,6 @@ class MessageService:
         provider: Optional[str],
         model: Optional[str],
         temperature: float,
-        enabled_functions: Optional[list[str]],
-        disabled_functions: Optional[list[str]],
-        enabled_mcp_tools: Optional[list[str]],
-        disabled_mcp_tools: Optional[list[str]],
         inject_context: bool,
         state_namespaces: Optional[list[str]],
         context_limit: int,
@@ -288,10 +284,6 @@ class MessageService:
         tools = await self._get_available_tools(
             user_id=user_id,
             chat=chat,
-            message_enabled_functions=enabled_functions,
-            message_disabled_functions=disabled_functions,
-            message_enabled_mcp=enabled_mcp_tools,
-            message_disabled_mcp=disabled_mcp_tools,
         )
 
         # Create LLM provider
@@ -362,10 +354,6 @@ class MessageService:
             provider=None,
             model=None,
             temperature=None,
-            enabled_functions=None,
-            disabled_functions=None,
-            enabled_mcp_tools=None,
-            disabled_mcp_tools=None,
             inject_context=True,
             state_namespaces=None,
             context_limit=5,
@@ -478,10 +466,6 @@ class MessageService:
             provider=None,
             model=None,
             temperature=None,
-            enabled_functions=None,
-            disabled_functions=None,
-            enabled_mcp_tools=None,
-            disabled_mcp_tools=None,
             inject_context=True,
             state_namespaces=None,
             context_limit=5,
@@ -977,15 +961,74 @@ class MessageService:
 
         return messages
 
-    async def _get_agent_tools(self, agent_ids: list[str]) -> list[dict[str, Any]]:
-        """Get tool definitions for enabled agents."""
+    async def _resolve_agent_patterns(
+        self,
+        patterns: list[str],
+        user_id: str,
+        permissions: dict[str, bool],
+        db: Optional[AsyncSession] = None,
+    ) -> list[Agent]:
+        """
+        Resolve agent patterns to Agent objects.
+
+        Supports:
+        - "*/*" — all active agents
+        - "namespace/*" — all active agents in namespace
+        - "namespace/name" — specific agent by namespace/name
+        - UUID string — legacy lookup by ID
+        """
+        db = db or self.db
+        seen_ids: set[uuid.UUID] = set()
+        resolved: list[Agent] = []
+
+        for pattern in patterns:
+            agents_to_check: list[Agent] = []
+
+            if pattern == "*/*":
+                result = await db.execute(
+                    select(Agent).where(Agent.is_active == True)
+                )
+                agents_to_check = list(result.scalars().all())
+            elif pattern.endswith("/*"):
+                ns = pattern[:-2]
+                result = await db.execute(
+                    select(Agent).where(Agent.namespace == ns, Agent.is_active == True)
+                )
+                agents_to_check = list(result.scalars().all())
+            elif "/" in pattern:
+                ns, name = pattern.split("/", 1)
+                agent = await Agent.get_by_name(db, ns, name)
+                if agent:
+                    agents_to_check = [agent]
+            else:
+                # Try as UUID (legacy)
+                try:
+                    uuid.UUID(pattern)
+                    result = await db.execute(
+                        select(Agent).where(Agent.id == pattern, Agent.is_active == True)
+                    )
+                    agent = result.scalar_one_or_none()
+                    if agent:
+                        agents_to_check = [agent]
+                except ValueError:
+                    pass
+
+            for agent in agents_to_check:
+                if agent.id in seen_ids:
+                    continue
+                perm = f"sinas.agents/{agent.namespace}/{agent.name}.read:own"
+                if check_permission(permissions, perm):
+                    seen_ids.add(agent.id)
+                    resolved.append(agent)
+
+        return resolved
+
+    async def _get_agent_tools(self, agents: list[Agent]) -> list[dict[str, Any]]:
+        """Get tool definitions for resolved agent objects."""
         tools = []
 
-        for agent_id in agent_ids:
-            result = await self.db.execute(select(Agent).where(Agent.id == agent_id))
-            agent = result.scalar_one_or_none()
-
-            if not agent or not agent.is_active:
+        for agent in agents:
+            if not agent.is_active:
                 continue
 
             # Build tool definition for this agent
@@ -1014,28 +1057,32 @@ class MessageService:
                 },
             }
 
-            # Build parameters - always include agent_id as a hidden constant
+            # Build parameters - always include prompt + agent_id
+            _prompt = {
+                "prompt": {
+                    "type": "string",
+                    "description": "The message or query to send to the agent",
+                },
+            }
+
             if agent.input_schema and agent.input_schema.get("properties"):
-                # Merge input_schema with hidden params
+                # Merge input_schema with prompt and hidden params
                 params = dict(agent.input_schema)
                 if "properties" not in params:
                     params["properties"] = {}
-                params["properties"].update(_hidden)
-                # Make _agent_id required
+                params["properties"] = {**_prompt, **params["properties"], **_hidden}
                 if "required" not in params:
                     params["required"] = []
-                if "_agent_id" not in params["required"]:
-                    params["required"].append("_agent_id")
+                for req in ["prompt", "_agent_id"]:
+                    if req not in params["required"]:
+                        params["required"].append(req)
                 tool_def["function"]["parameters"] = params
             else:
                 # Default: simple prompt + hidden params
                 tool_def["function"]["parameters"] = {
                     "type": "object",
                     "properties": {
-                        "prompt": {
-                            "type": "string",
-                            "description": "The prompt or query to send to the agent",
-                        },
+                        **_prompt,
                         **_hidden,
                     },
                     "required": ["prompt", "_agent_id"],
@@ -1049,12 +1096,8 @@ class MessageService:
         self,
         user_id: str,
         chat: Chat,
-        message_enabled_functions: Optional[list[str]],
-        message_disabled_functions: Optional[list[str]],
-        message_enabled_mcp: Optional[list[str]],
-        message_disabled_mcp: Optional[list[str]],
     ) -> list[dict[str, Any]]:
-        """Get all available tools (functions + MCP + context + agents + execution continuation)."""
+        """Get all available tools (functions + context + agents + execution continuation)."""
         tools = []
 
         # No agent = no tools
@@ -1082,17 +1125,16 @@ class MessageService:
         # Add agent tools (other agents this agent can call)
         agent_enabled = agent.enabled_agents or []
         if agent_enabled:
-            agent_tools = await self._get_agent_tools(agent_enabled)
-            tools.extend(agent_tools)
+            from app.core.auth import get_user_permissions
 
-        # Determine function configuration
-        # Priority: message override > agent config
-        # Note: Empty list [] means no functions, None means all functions from agent
-        if message_enabled_functions is not None:
-            function_enabled = message_enabled_functions
-        else:
-            function_enabled = agent.enabled_functions
-        function_disabled = message_disabled_functions or []
+            user_permissions = await get_user_permissions(self.db, user_id)
+            resolved_agents = await self._resolve_agent_patterns(
+                agent_enabled, user_id, user_permissions
+            )
+            # Exclude self to prevent recursion
+            resolved_agents = [a for a in resolved_agents if a.id != chat.agent_id]
+            agent_tools = await self._get_agent_tools(resolved_agents)
+            tools.extend(agent_tools)
 
         # Get agent input context for function parameter templating
         agent_input_context = {}
@@ -1100,28 +1142,15 @@ class MessageService:
             agent_input_context = chat.chat_metadata["agent_input"]
 
         # Get function tools (only if list has items - opt-in)
-        if function_enabled and len(function_enabled) > 0:
+        if agent.enabled_functions and len(agent.enabled_functions) > 0:
             function_tools = await self.function_converter.get_available_functions(
                 db=self.db,
                 user_id=user_id,
-                enabled_functions=function_enabled,
-                disabled_functions=function_disabled,
+                enabled_functions=agent.enabled_functions,
                 function_parameters=agent.function_parameters,
                 agent_input_context=agent_input_context,
             )
             tools.extend(function_tools)
-
-        # Determine MCP configuration
-        # Priority: message override > agent config
-        if message_enabled_mcp is not None:
-            mcp_enabled = message_enabled_mcp
-        else:
-            mcp_enabled = agent.enabled_mcp_tools
-
-        # Get MCP tools (only if list has items - opt-in)
-        if mcp_enabled and len(mcp_enabled) > 0:
-            mcp_tools = await mcp_client.get_available_tools(enabled_tools=mcp_enabled)
-            tools.extend(mcp_tools)
 
         # Get skill tools (only if list has items - opt-in)
         if agent.enabled_skills and len(agent.enabled_skills) > 0:
@@ -1208,19 +1237,10 @@ class MessageService:
             return {"error": f"Agent not found: {agent_id_str}"}
 
         # Prepare input data for the agent
-        # Filter out internal _* parameters
+        # Filter out internal _* parameters and extract prompt
         user_arguments = {k: v for k, v in arguments.items() if not k.startswith("_")}
-
-        # If arguments contain just "prompt", send as message content
-        # Otherwise, use as input_data for validation
-        if "prompt" in user_arguments and len(user_arguments) == 1:
-            # Simple prompt mode
-            input_data = {}
-            content = user_arguments["prompt"]
-        else:
-            # Structured input mode
-            input_data = user_arguments
-            content = json.dumps(user_arguments)
+        content = user_arguments.pop("prompt", "")
+        input_data = user_arguments  # Remaining args become input variables
 
         # Resume existing chat or create a new one
         resume_chat_id = arguments.get("_chat_id")
@@ -1373,14 +1393,21 @@ class MessageService:
                         resume_data=arguments["input"],
                     )
                 elif tool_name.startswith("call_agent_"):
+                    # Resolve enabled agent patterns to actual agent IDs
                     enabled_agent_ids = []
                     if chat and chat.agent_id:
                         result_agent = await db.execute(
                             select(Agent).where(Agent.id == chat.agent_id)
                         )
                         chat_agent = result_agent.scalar_one_or_none()
-                        if chat_agent:
-                            enabled_agent_ids = chat_agent.enabled_agents or []
+                        if chat_agent and chat_agent.enabled_agents:
+                            from app.core.auth import get_user_permissions
+
+                            user_perms = await get_user_permissions(db, user_id)
+                            resolved = await self._resolve_agent_patterns(
+                                chat_agent.enabled_agents, user_id, user_perms, db=db
+                            )
+                            enabled_agent_ids = [str(a.id) for a in resolved]
 
                     result = await self._execute_agent_tool(
                         chat=chat,
@@ -1415,8 +1442,6 @@ class MessageService:
                     )
                     elapsed = time.time() - start_time
                     logger.debug(f"Collection tool completed in {elapsed:.3f}s: {tool_name}")
-                elif tool_name in mcp_client.tools:
-                    result = await mcp_client.execute_tool(tool_name, arguments)
                 else:
                     # Default: execute as function tool
                     start_time = time.time()

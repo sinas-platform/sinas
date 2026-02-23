@@ -13,10 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.llm_provider import LLMProvider
-from app.models.mcp import MCPServer
+
 from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
 from app.models.user import Role, RolePermission, User, UserRole
@@ -105,11 +106,12 @@ class ConfigApplyService:
             await self._apply_groups(config.spec.groups, dry_run)
             await self._apply_users(config.spec.users, dry_run)
             await self._apply_llm_providers(config.spec.llmProviders, dry_run)
-            await self._apply_mcp_servers(config.spec.mcpServers, dry_run)
+
 
             await self._apply_functions(config.spec.functions, dry_run)
             await self._apply_skills(config.spec.skills, dry_run)
             await self._apply_collections(config.spec.collections, dry_run)
+            await self._apply_apps(config.spec.apps, dry_run)
             await self._apply_agents(config.spec.agents, dry_run)
             await self._apply_webhooks(config.spec.webhooks, dry_run)
             await self._apply_schedules(config.spec.schedules, dry_run)
@@ -399,77 +401,6 @@ class ConfigApplyService:
                 self.errors.append(
                     f"Error applying LLM provider '{provider_config.name}': {str(e)}"
                 )
-
-    async def _apply_mcp_servers(self, servers, dry_run: bool):
-        """Apply MCP server configurations"""
-        for server_config in servers:
-            try:
-                stmt = select(MCPServer).where(MCPServer.name == server_config.name)
-                result = await self.db.execute(stmt)
-                existing = result.scalar_one_or_none()
-
-                # Get group ID
-                group_id = self.group_ids.get(server_config.groupName)
-
-                # Don't include API key in hash (it's encrypted)
-                config_hash = self._calculate_hash(
-                    {
-                        "name": server_config.name,
-                        "url": server_config.url,
-                        "protocol": server_config.protocol,
-                        "is_active": server_config.isActive,
-                        "group_name": server_config.groupName,
-                    }
-                )
-
-                if existing:
-                    if existing.managed_by != "config":
-                        self.warnings.append(
-                            f"MCP server '{server_config.name}' exists but is not config-managed. Skipping."
-                        )
-                        self._track_change("unchanged", "mcpServers", server_config.name)
-                        continue
-
-                    if existing.config_checksum == config_hash:
-                        self._track_change("unchanged", "mcpServers", server_config.name)
-                        continue
-
-                    if not dry_run:
-                        existing.url = server_config.url
-                        existing.protocol = server_config.protocol
-                        existing.is_active = server_config.isActive
-                        existing.group_id = group_id
-                        if server_config.apiKey:
-                            existing.api_key = EncryptionService.encrypt(server_config.apiKey)
-                        existing.config_checksum = config_hash
-                        existing.updated_at = datetime.utcnow()
-
-                    self._track_change("update", "mcpServers", server_config.name)
-
-                else:
-                    if not dry_run:
-                        encrypted_key = None
-                        if server_config.apiKey:
-                            encrypted_key = EncryptionService.encrypt(server_config.apiKey)
-
-                        new_server = MCPServer(
-                            name=server_config.name,
-                            url=server_config.url,
-                            protocol=server_config.protocol,
-                            api_key=encrypted_key,
-                            is_active=server_config.isActive,
-                            group_id=group_id,
-                            managed_by="config",
-                            config_name=self.config_name,
-                            config_checksum=config_hash,
-                        )
-                        self.db.add(new_server)
-                        await self.db.flush()
-
-                    self._track_change("create", "mcpServers", server_config.name)
-
-            except Exception as e:
-                self.errors.append(f"Error applying MCP server '{server_config.name}': {str(e)}")
 
     async def _apply_functions(self, functions, dry_run: bool):
         """Apply function configurations"""
@@ -839,6 +770,110 @@ class ConfigApplyService:
             except Exception as e:
                 self.errors.append(f"Error applying collection '{resource_name}': {str(e)}")
 
+    async def _apply_apps(self, apps, dry_run: bool):
+        """Apply app registration configurations"""
+        for app_config in apps:
+            resource_name = f"{app_config.namespace}/{app_config.name}"
+            try:
+                stmt = select(App).where(
+                    App.namespace == app_config.namespace,
+                    App.name == app_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": app_config.namespace,
+                        "name": app_config.name,
+                        "description": app_config.description,
+                        "required_resources": [
+                            {"type": r.type, "namespace": r.namespace, "name": r.name}
+                            for r in app_config.requiredResources
+                        ],
+                        "required_permissions": sorted(app_config.requiredPermissions),
+                        "optional_permissions": sorted(app_config.optionalPermissions),
+                        "exposed_namespaces": {
+                            k: sorted(v) for k, v in sorted(app_config.exposedNamespaces.items())
+                        },
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"App '{resource_name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change("unchanged", "apps", resource_name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "apps", resource_name)
+                        continue
+
+                    if not dry_run:
+                        existing.description = app_config.description
+                        existing.required_resources = [
+                            {"type": r.type, "namespace": r.namespace, "name": r.name}
+                            for r in app_config.requiredResources
+                        ]
+                        existing.required_permissions = app_config.requiredPermissions
+                        existing.optional_permissions = app_config.optionalPermissions
+                        existing.exposed_namespaces = app_config.exposedNamespaces
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "apps", resource_name)
+
+                else:
+                    if not dry_run:
+                        # Get admin user for ownership
+                        from app.models.user import Role, UserRole
+
+                        stmt = select(Role).where(Role.name == "Admins")
+                        result = await self.db.execute(stmt)
+                        admin_role = result.scalar_one_or_none()
+
+                        if not admin_role:
+                            self.errors.append(
+                                f"Admins role not found for app '{resource_name}'"
+                            )
+                            continue
+
+                        stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
+                        result = await self.db.execute(stmt)
+                        admin_member = result.scalar_one_or_none()
+
+                        if not admin_member:
+                            self.errors.append(
+                                f"No admin users found for app '{resource_name}'"
+                            )
+                            continue
+
+                        new_app = App(
+                            namespace=app_config.namespace,
+                            name=app_config.name,
+                            description=app_config.description,
+                            required_resources=[
+                                {"type": r.type, "namespace": r.namespace, "name": r.name}
+                                for r in app_config.requiredResources
+                            ],
+                            required_permissions=app_config.requiredPermissions,
+                            optional_permissions=app_config.optionalPermissions,
+                            exposed_namespaces=app_config.exposedNamespaces,
+                            user_id=admin_member.user_id,
+                            is_active=True,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_app)
+
+                    self._track_change("create", "apps", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying app '{resource_name}': {str(e)}")
+
     async def _apply_agents(self, agents, dry_run: bool):
         """Apply agent configurations"""
         for agent_config in agents:
@@ -877,9 +912,6 @@ class ConfigApplyService:
                         "function_parameters": agent_config.functionParameters
                         if agent_config.functionParameters
                         else {},
-                        "enabled_mcp_tools": sorted(agent_config.enabledMcpTools)
-                        if agent_config.enabledMcpTools
-                        else [],
                         "enabled_agents": sorted(agent_config.enabledAgents)
                         if agent_config.enabledAgents
                         else [],
@@ -895,6 +927,7 @@ class ConfigApplyService:
                         "enabled_collections": sorted(agent_config.enabledCollections)
                         if agent_config.enabledCollections
                         else [],
+                        "is_default": agent_config.isDefault,
                     }
                 )
 
@@ -928,12 +961,18 @@ class ConfigApplyService:
                         existing.system_prompt = agent_config.systemPrompt
                         existing.enabled_functions = normalized_functions
                         existing.function_parameters = agent_config.functionParameters
-                        existing.enabled_mcp_tools = agent_config.enabledMcpTools
                         existing.enabled_agents = agent_config.enabledAgents
                         existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
                         existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
                         existing.enabled_collections = agent_config.enabledCollections
+                        if agent_config.isDefault:
+                            await self.db.execute(
+                                Agent.__table__.update()
+                                .where(Agent.id != existing.id)
+                                .values(is_default=False)
+                            )
+                        existing.is_default = agent_config.isDefault
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -966,6 +1005,11 @@ class ConfigApplyService:
                                 agent_config.llmProviderName
                             )
 
+                        if agent_config.isDefault:
+                            await self.db.execute(
+                                Agent.__table__.update().values(is_default=False)
+                            )
+
                         new_agent = Agent(
                             namespace=agent_config.namespace,
                             name=agent_config.name,
@@ -977,12 +1021,12 @@ class ConfigApplyService:
                             system_prompt=agent_config.systemPrompt,
                             enabled_functions=normalized_functions,
                             function_parameters=agent_config.functionParameters,
-                            enabled_mcp_tools=agent_config.enabledMcpTools,
                             enabled_agents=agent_config.enabledAgents,
                             enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,
                             state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
                             enabled_collections=agent_config.enabledCollections,
+                            is_default=agent_config.isDefault,
                             user_id=member.user_id,
                             group_id=group_id,
                             is_active=True,
