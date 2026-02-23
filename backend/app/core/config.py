@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     clickhouse_user: str = os.getenv("CLICKHOUSE_USER", "default")
     clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "")
     clickhouse_database: str = os.getenv("CLICKHOUSE_DATABASE", "sinas")
+    clickhouse_retention_days: int = int(os.getenv("CLICKHOUSE_RETENTION_DAYS", "90"))
+    clickhouse_hot_retention_days: int = int(os.getenv("CLICKHOUSE_HOT_RETENTION_DAYS", "30"))
 
     # Application
     debug: bool = False

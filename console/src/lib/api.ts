@@ -48,6 +48,10 @@ import type {
   FileDownloadResponse,
   FileSearchRequest,
   FileSearchResult,
+  App,
+  AppCreate,
+  AppUpdate,
+  AppStatus,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -784,6 +788,37 @@ class APIClient {
     if (version) params.version = version;
     if (expiresIn) params.expires_in = expiresIn;
     const response = await this.runtimeClient.post(`/files/${namespace}/${collection}/${filename}/url`, null, { params });
+    return response.data;
+  }
+
+  // Apps
+  async listApps(namespace?: string): Promise<App[]> {
+    const params = namespace ? { namespace } : {};
+    const response = await this.configClient.get('/apps', { params });
+    return response.data;
+  }
+
+  async getApp(namespace: string, name: string): Promise<App> {
+    const response = await this.configClient.get(`/apps/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createApp(data: AppCreate): Promise<App> {
+    const response = await this.configClient.post('/apps', data);
+    return response.data;
+  }
+
+  async updateApp(namespace: string, name: string, data: AppUpdate): Promise<App> {
+    const response = await this.configClient.put(`/apps/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteApp(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/apps/${namespace}/${name}`);
+  }
+
+  async getAppStatus(namespace: string, name: string): Promise<AppStatus> {
+    const response = await this.runtimeClient.get(`/apps/${namespace}/${name}/status`);
     return response.data;
   }
 }

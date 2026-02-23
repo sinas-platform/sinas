@@ -35,6 +35,7 @@ def get_namespace_filter(app: Optional[App], resource_type: str) -> Optional[lis
     """Return namespace list from app.exposed_namespaces for a resource type.
 
     Returns None when no app context (no filtering).
+    Returns None when app exposes ["*"] for this type (all namespaces).
     Returns [] when app doesn't expose this resource type (empty result).
     Returns list of namespaces to filter by otherwise.
     """
@@ -45,4 +46,8 @@ def get_namespace_filter(app: Optional[App], resource_type: str) -> Optional[lis
     if resource_type not in exposed:
         return []
 
-    return exposed[resource_type]
+    namespaces = exposed[resource_type]
+    if namespaces == ["*"]:
+        return None
+
+    return namespaces

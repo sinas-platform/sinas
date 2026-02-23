@@ -9,12 +9,16 @@ from app.models.function import Function
 from app.models.skill import Skill
 from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus
 
-# Map resource type strings to SQLAlchemy models
+# Map resource type strings to SQLAlchemy models (accept both singular and plural)
 RESOURCE_TYPE_MAP = {
     "agent": Agent,
+    "agents": Agent,
     "function": Function,
+    "functions": Function,
     "skill": Skill,
+    "skills": Skill,
     "collection": Collection,
+    "collections": Collection,
 }
 
 

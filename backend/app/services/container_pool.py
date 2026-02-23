@@ -138,8 +138,16 @@ class ContainerPool:
 
                 if container.status != "running":
                     print(f"🔄 Starting stopped pool container: {name}")
-                    await asyncio.to_thread(container.start)
-                    await asyncio.to_thread(container.reload)
+                    try:
+                        await asyncio.to_thread(container.start)
+                        await asyncio.to_thread(container.reload)
+                    except docker.errors.APIError as e:
+                        print(f"⚠️  Cannot start {name}, removing: {e}")
+                        try:
+                            await asyncio.to_thread(container.remove, force=True)
+                        except Exception:
+                            pass
+                        continue
 
                 pc = PooledContainer(
                     name=name,

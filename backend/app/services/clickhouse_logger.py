@@ -415,6 +415,58 @@ class ClickHouseLogger:
             print(f"Failed to get execution logs: {e}")
             return []
 
+    def apply_storage_migration(self):
+        """Apply TTL and storage policy migration to ClickHouse tables.
+
+        If a 'tiered' storage policy exists (S3 configured), sets TTL to move
+        data from hot (local) to cold (S3) after hot_retention_days.
+        Otherwise, sets TTL to DELETE data after retention_days.
+        """
+        if not self.client:
+            return
+
+        tables = ["request_logs", "execution_logs"]
+        hot_days = settings.clickhouse_hot_retention_days
+        retention_days = settings.clickhouse_retention_days
+
+        try:
+            result = self.client.query(
+                "SELECT policy_name FROM system.storage_policies WHERE policy_name = 'tiered'"
+            )
+            has_tiered = len(result.result_rows) > 0
+        except Exception as e:
+            print(f"ClickHouse storage migration: failed to check storage policies: {e}")
+            return
+
+        try:
+            if has_tiered:
+                print(
+                    f"ClickHouse storage migration: tiered policy found. "
+                    f"Hot retention: {hot_days}d, then move to S3."
+                )
+                for table in tables:
+                    self.client.command(
+                        f"ALTER TABLE {table} MODIFY SETTING storage_policy = 'tiered'"
+                    )
+                    self.client.command(
+                        f"ALTER TABLE {table} MODIFY TTL timestamp + INTERVAL {hot_days} DAY TO VOLUME 'cold'"
+                    )
+                    self.client.command(f"ALTER TABLE {table} MATERIALIZE TTL")
+                    print(f"  {table}: tiered TTL applied")
+            else:
+                print(
+                    f"ClickHouse storage migration: no S3 configured. "
+                    f"TTL DELETE after {retention_days}d."
+                )
+                for table in tables:
+                    self.client.command(
+                        f"ALTER TABLE {table} MODIFY TTL timestamp + INTERVAL {retention_days} DAY DELETE"
+                    )
+                    self.client.command(f"ALTER TABLE {table} MATERIALIZE TTL")
+                    print(f"  {table}: delete TTL applied")
+        except Exception as e:
+            print(f"ClickHouse storage migration: failed to apply: {e}")
+
     def close(self):
         """Close ClickHouse connection."""
         if self.client:

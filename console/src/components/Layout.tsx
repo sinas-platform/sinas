@@ -20,6 +20,7 @@ import {
   FileText,
   Lightbulb,
   Archive,
+  AppWindow,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -57,6 +58,7 @@ const navigationSections = [
   {
     name: 'ADMIN',
     items: [
+      { name: 'Apps', href: '/apps', icon: AppWindow },
       { name: 'Users & Roles', href: '/users', icon: Users },
       { name: 'API Keys', href: '/api-keys', icon: Key },
       { name: 'Logs', href: '/logs', icon: Activity },

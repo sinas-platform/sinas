@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Shared worker discovery skipped: {e}")
 
+    # Apply ClickHouse storage/TTL migration
+    try:
+        clickhouse_logger.apply_storage_migration()
+    except Exception as e:
+        print(f"⚠️  ClickHouse storage migration skipped: {e}")
+
     yield
 
     # Shutdown

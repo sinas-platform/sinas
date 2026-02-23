@@ -30,6 +30,7 @@ import { Messages } from './pages/Messages';
 import { FunctionExecute } from './pages/FunctionExecute';
 import { Collections } from './pages/Collections';
 import { CollectionDetail } from './pages/CollectionDetail';
+import { Apps } from './pages/Apps';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -118,6 +119,7 @@ function App() {
               <Route path="collections" element={<Collections />} />
               <Route path="collections/:namespace/:name" element={<CollectionDetail />} />
               <Route path="templates" element={<Templates />} />
+              <Route path="apps" element={<Apps />} />
               <Route path="config" element={<ConfigManager />} />
               <Route path="states" element={<States />} />
               <Route path="logs" element={<RequestLogs />} />

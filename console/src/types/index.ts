@@ -616,6 +616,58 @@ export interface FileDownloadResponse {
   version: number;
 }
 
+// Apps
+export interface AppResourceRef {
+  type: string;
+  namespace: string;
+  name: string;
+}
+
+export interface App {
+  id: string;
+  user_id: string;
+  namespace: string;
+  name: string;
+  description: string | null;
+  required_resources: AppResourceRef[];
+  required_permissions: string[];
+  optional_permissions: string[];
+  exposed_namespaces: Record<string, string[]>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface AppCreate {
+  namespace: string;
+  name: string;
+  description?: string;
+  required_resources?: AppResourceRef[];
+  required_permissions?: string[];
+  optional_permissions?: string[];
+  exposed_namespaces?: Record<string, string[]>;
+}
+
+export interface AppUpdate {
+  namespace?: string;
+  name?: string;
+  description?: string;
+  required_resources?: AppResourceRef[];
+  required_permissions?: string[];
+  optional_permissions?: string[];
+  exposed_namespaces?: Record<string, string[]>;
+  is_active?: boolean;
+}
+
+export interface AppStatus {
+  ready: boolean;
+  resources: { satisfied: AppResourceRef[]; missing: AppResourceRef[] };
+  permissions: {
+    required: { granted: string[]; missing: string[] };
+    optional: { granted: string[]; missing: string[] };
+  };
+}
+
 // File Search
 export interface FileSearchRequest {
   query?: string;

@@ -206,9 +206,11 @@ async def send_message(
     # Use message service
     message_service = MessageService(db)
 
-    # Handle Union[str, List[Dict]] content - convert to string if needed
+    # Handle Union[str, list[ContentPart]] content - convert to string if needed
     content_str = (
-        request.content if isinstance(request.content, str) else json.dumps(request.content)
+        request.content
+        if isinstance(request.content, str)
+        else json.dumps([part.model_dump(exclude_none=True) for part in request.content])
     )
 
     response_message = await message_service.send_message(
@@ -265,9 +267,11 @@ async def stream_message(
     # Use message service directly (no queue — interactive chat needs low latency)
     message_service = MessageService(db)
 
-    # Handle Union[str, List[Dict]] content - convert to string if needed
+    # Handle Union[str, list[ContentPart]] content - convert to string if needed
     content_str = (
-        request.content if isinstance(request.content, str) else json.dumps(request.content)
+        request.content
+        if isinstance(request.content, str)
+        else json.dumps([part.model_dump(exclude_none=True) for part in request.content])
     )
 
     # Track accumulated content for partial save
