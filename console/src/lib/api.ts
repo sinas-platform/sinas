@@ -52,6 +52,14 @@ import type {
   AppCreate,
   AppUpdate,
   AppStatus,
+  DatabaseConnection,
+  DatabaseConnectionCreate,
+  DatabaseConnectionUpdate,
+  DatabaseConnectionTestResponse,
+  Query,
+  QueryCreate,
+  QueryUpdate,
+  QueryExecuteResponse,
 } from '../types';
 
 // Auto-detect API base URL based on environment
@@ -581,6 +589,79 @@ class APIClient {
 
   async deleteLLMProvider(providerId: string): Promise<void> {
     await this.configClient.delete(`/llm-providers/${providerId}`);
+  }
+
+  // Database Connections
+  async listDatabaseConnections(): Promise<DatabaseConnection[]> {
+    const response = await this.configClient.get('/database-connections');
+    return response.data;
+  }
+
+  async getDatabaseConnection(name: string): Promise<DatabaseConnection> {
+    const response = await this.configClient.get(`/database-connections/${name}`);
+    return response.data;
+  }
+
+  async createDatabaseConnection(data: DatabaseConnectionCreate): Promise<DatabaseConnection> {
+    const response = await this.configClient.post('/database-connections', data);
+    return response.data;
+  }
+
+  async updateDatabaseConnection(id: string, data: DatabaseConnectionUpdate): Promise<DatabaseConnection> {
+    const response = await this.configClient.patch(`/database-connections/${id}`, data);
+    return response.data;
+  }
+
+  async deleteDatabaseConnection(id: string): Promise<void> {
+    await this.configClient.delete(`/database-connections/${id}`);
+  }
+
+  async testDatabaseConnection(id: string): Promise<DatabaseConnectionTestResponse> {
+    const response = await this.configClient.post(`/database-connections/${id}/test`);
+    return response.data;
+  }
+
+  async testDatabaseConnectionRaw(data: {
+    connection_type: string;
+    host: string;
+    port: number;
+    database: string;
+    username: string;
+    password?: string;
+    ssl_mode?: string;
+  }): Promise<DatabaseConnectionTestResponse> {
+    const response = await this.configClient.post('/database-connections/test', data);
+    return response.data;
+  }
+
+  // Queries
+  async listQueries(): Promise<Query[]> {
+    const response = await this.configClient.get('/queries');
+    return response.data;
+  }
+
+  async getQuery(namespace: string, name: string): Promise<Query> {
+    const response = await this.configClient.get(`/queries/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createQuery(data: QueryCreate): Promise<Query> {
+    const response = await this.configClient.post('/queries', data);
+    return response.data;
+  }
+
+  async updateQuery(namespace: string, name: string, data: QueryUpdate): Promise<Query> {
+    const response = await this.configClient.put(`/queries/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteQuery(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/queries/${namespace}/${name}`);
+  }
+
+  async executeQuery(namespace: string, name: string, input: Record<string, any> = {}): Promise<QueryExecuteResponse> {
+    const response = await this.configClient.post(`/queries/${namespace}/${name}/execute`, { input });
+    return response.data;
   }
 
   // Config Management

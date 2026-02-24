@@ -68,6 +68,15 @@ class Agent(Base, PermissionMixin):
     function_parameters: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict
     )  # {"namespace/name": {"param": "value or {{template}}"}}
+
+    # Query access
+    enabled_queries: Mapped[list[str]] = mapped_column(
+        JSON, default=list
+    )  # List of "namespace/name" query references
+    query_parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict
+    )  # {"namespace/name": {"param": "value or {{template}}"}}
+
     # State access
     state_namespaces_readonly: Mapped[list[str]] = mapped_column(
         JSON, default=list

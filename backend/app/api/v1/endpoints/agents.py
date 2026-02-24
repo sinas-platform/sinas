@@ -74,6 +74,8 @@ async def create_agent(
         if agent_data.enabled_skills
         else [],
         function_parameters=agent_data.function_parameters or {},
+        enabled_queries=agent_data.enabled_queries or [],
+        query_parameters=agent_data.query_parameters or {},
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
         enabled_collections=agent_data.enabled_collections or [],
@@ -203,6 +205,10 @@ async def update_agent(
         agent.enabled_skills = [skill.model_dump() for skill in agent_data.enabled_skills]
     if agent_data.function_parameters is not None:
         agent.function_parameters = agent_data.function_parameters
+    if agent_data.enabled_queries is not None:
+        agent.enabled_queries = agent_data.enabled_queries
+    if agent_data.query_parameters is not None:
+        agent.query_parameters = agent_data.query_parameters
     if agent_data.state_namespaces_readonly is not None:
         agent.state_namespaces_readonly = agent_data.state_namespaces_readonly
     if agent_data.state_namespaces_readwrite is not None:

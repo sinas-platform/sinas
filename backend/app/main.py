@@ -76,6 +76,9 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    from app.services.database_pool import DatabasePoolManager
+
+    await DatabasePoolManager.get_instance().close_all()
     clickhouse_logger.close()
     await close_redis()
 

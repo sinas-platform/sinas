@@ -184,6 +184,8 @@ export interface Agent {
   enabled_agents: string[];
   enabled_skills: EnabledSkillConfig[];
   function_parameters: FunctionParameters;
+  enabled_queries: string[];
+  query_parameters: FunctionParameters;
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
   enabled_collections: string[];
@@ -209,6 +211,8 @@ export interface AgentCreate {
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
   function_parameters?: FunctionParameters;
+  enabled_queries?: string[];
+  query_parameters?: FunctionParameters;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
@@ -231,6 +235,8 @@ export interface AgentUpdate {
   enabled_agents?: string[];
   enabled_skills?: EnabledSkillConfig[];
   function_parameters?: FunctionParameters;
+  enabled_queries?: string[];
+  query_parameters?: FunctionParameters;
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
@@ -666,6 +672,113 @@ export interface AppStatus {
     required: { granted: string[]; missing: string[] };
     optional: { granted: string[]; missing: string[] };
   };
+}
+
+// Database Connections
+export interface DatabaseConnection {
+  id: string;
+  name: string;
+  connection_type: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  ssl_mode: string | null;
+  config: Record<string, any>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatabaseConnectionCreate {
+  name: string;
+  connection_type: string;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password?: string;
+  ssl_mode?: string;
+  config?: Record<string, any>;
+  is_active?: boolean;
+}
+
+export interface DatabaseConnectionUpdate {
+  name?: string;
+  connection_type?: string;
+  host?: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  password?: string;
+  ssl_mode?: string;
+  config?: Record<string, any>;
+  is_active?: boolean;
+}
+
+export interface DatabaseConnectionTestResponse {
+  success: boolean;
+  message: string;
+  latency_ms?: number;
+}
+
+// Queries
+export interface Query {
+  id: string;
+  user_id: string;
+  namespace: string;
+  name: string;
+  description: string | null;
+  database_connection_id: string;
+  operation: string;
+  sql: string;
+  input_schema: Record<string, any>;
+  output_schema: Record<string, any>;
+  timeout_ms: number;
+  max_rows: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface QueryCreate {
+  namespace?: string;
+  name: string;
+  description?: string;
+  database_connection_id: string;
+  operation: string;
+  sql: string;
+  input_schema?: Record<string, any>;
+  output_schema?: Record<string, any>;
+  timeout_ms?: number;
+  max_rows?: number;
+}
+
+export interface QueryUpdate {
+  namespace?: string;
+  name?: string;
+  description?: string;
+  database_connection_id?: string;
+  operation?: string;
+  sql?: string;
+  input_schema?: Record<string, any>;
+  output_schema?: Record<string, any>;
+  timeout_ms?: number;
+  max_rows?: number;
+  is_active?: boolean;
+}
+
+export interface QueryExecuteRequest {
+  input: Record<string, any>;
+}
+
+export interface QueryExecuteResponse {
+  success: boolean;
+  operation: string;
+  data?: Record<string, any>[];
+  row_count?: number;
+  affected_rows?: number;
+  duration_ms: number;
 }
 
 // File Search

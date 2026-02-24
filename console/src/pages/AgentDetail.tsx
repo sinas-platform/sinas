@@ -53,8 +53,14 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: queries } = useQuery({
+    queryKey: ['queries'],
+    queryFn: () => apiClient.listQueries(),
+    retry: false,
+  });
+
   const [formData, setFormData] = useState<AgentUpdate>({});
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'states' | 'collections'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
 
   // Initialize form data when agent loads
@@ -78,6 +84,8 @@ export function AgentDetail() {
         enabled_agents: agent.enabled_agents || [],
         enabled_skills: agent.enabled_skills || [],
         function_parameters: agent.function_parameters || {},
+        enabled_queries: agent.enabled_queries || [],
+        query_parameters: agent.query_parameters || {},
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
         enabled_collections: agent.enabled_collections || [],
@@ -432,6 +440,17 @@ export function AgentDetail() {
               }`}
             >
               Functions
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('queries')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'queries'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              Queries
             </button>
             <button
               type="button"
@@ -941,6 +960,58 @@ export function AgentDetail() {
                     </div>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* Queries Tab */}
+            {toolsTab === 'queries' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable SQL queries for this agent to execute against external databases
+                </p>
+                {queries && queries.length > 0 ? (
+                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    {queries.map((query: any) => {
+                      const queryRef = `${query.namespace}/${query.name}`;
+                      return (
+                        <label
+                          key={queryRef}
+                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(formData.enabled_queries || agent.enabled_queries || []).includes(queryRef)}
+                            onChange={(e) => {
+                              const current = formData.enabled_queries || agent.enabled_queries || [];
+                              const updated = e.target.checked
+                                ? [...current, queryRef]
+                                : current.filter((ref: string) => ref !== queryRef);
+                              setFormData({ ...formData, enabled_queries: updated });
+                            }}
+                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                          />
+                          <div className="ml-3 flex-1">
+                            <span className="text-sm font-medium text-gray-900 font-mono">{queryRef}</span>
+                            <span className={`ml-2 px-1.5 py-0.5 text-xs font-medium rounded ${
+                              query.operation === 'read'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-orange-100 text-orange-700'
+                            }`}>
+                              {query.operation}
+                            </span>
+                            {query.description && (
+                              <p className="text-xs text-gray-600 mt-0.5">{query.description}</p>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <p className="text-sm text-gray-500">No queries available. Create queries first.</p>
+                  </div>
+                )}
               </div>
             )}
 

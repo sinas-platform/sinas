@@ -21,6 +21,8 @@ import {
   Lightbulb,
   Archive,
   AppWindow,
+  Cable,
+  SearchCode,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -45,6 +47,13 @@ const navigationSections = [
       { name: 'Functions', href: '/functions', icon: Code },
       { name: 'Webhooks', href: '/webhooks', icon: Webhook },
       { name: 'Schedules', href: '/schedules', icon: Clock },
+    ],
+  },
+  {
+    name: 'DATA',
+    items: [
+      { name: 'Database Connections', href: '/database-connections', icon: Cable },
+      { name: 'Queries', href: '/queries', icon: SearchCode },
     ],
   },
   {

@@ -31,6 +31,9 @@ import { FunctionExecute } from './pages/FunctionExecute';
 import { Collections } from './pages/Collections';
 import { CollectionDetail } from './pages/CollectionDetail';
 import { Apps } from './pages/Apps';
+import { DatabaseConnections } from './pages/DatabaseConnections';
+import { Queries } from './pages/Queries';
+import { QueryDetail } from './pages/QueryDetail';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -115,6 +118,9 @@ function App() {
               <Route path="schedules" element={<Schedules />} />
               <Route path="schedules/:scheduleId" element={<ScheduleEditor />} />
               <Route path="llm-providers" element={<LLMProviders />} />
+              <Route path="database-connections" element={<DatabaseConnections />} />
+              <Route path="queries" element={<Queries />} />
+              <Route path="queries/:namespace/:name" element={<QueryDetail />} />
               <Route path="skills" element={<Skills />} />
               <Route path="collections" element={<Collections />} />
               <Route path="collections/:namespace/:name" element={<CollectionDetail />} />

@@ -101,6 +101,10 @@ class ConfigParser:
             f"{c.get('namespace', 'default')}/{c['name']}" for c in spec.get("collections", [])
         }
         llm_provider_names = {p["name"] for p in spec.get("llmProviders", [])}
+        database_connection_names = {c["name"] for c in spec.get("databaseConnections", [])}
+        query_names = {
+            f"{q.get('namespace', 'default')}/{q['name']}" for q in spec.get("queries", [])
+        }
         # Database names (if db provided)
         db_group_names: set[str] = set()
         db_function_names: set[str] = set()
@@ -108,6 +112,8 @@ class ConfigParser:
         db_skill_names: set[str] = set()
         db_collection_names: set[str] = set()
         db_llm_provider_names: set[str] = set()
+        db_database_connection_names: set[str] = set()
+        db_query_names: set[str] = set()
         if db:
             from app.models.agent import Agent
             from app.models.file import Collection
@@ -136,6 +142,15 @@ class ConfigParser:
             result = await db.execute(select(LLMProvider.name))
             db_llm_provider_names = {name for (name,) in result.fetchall()}
 
+            from app.models.database_connection import DatabaseConnection
+            from app.models.query import Query as QueryModel
+
+            result = await db.execute(select(DatabaseConnection.name))
+            db_database_connection_names = {name for (name,) in result.fetchall()}
+
+            result = await db.execute(select(QueryModel.namespace, QueryModel.name))
+            db_query_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
+
         # Combined sets (config + database)
         all_group_names = group_names | db_group_names
         all_function_names = function_names | db_function_names
@@ -143,6 +158,8 @@ class ConfigParser:
         all_skill_names = skill_names | db_skill_names
         all_collection_names = collection_names | db_collection_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
+        all_database_connection_names = database_connection_names | db_database_connection_names
+        all_query_names = query_names | db_query_names
         # Validate app resource references
         valid_resource_types = {"agent", "function", "skill", "collection"}
         for i, app in enumerate(spec.get("apps", [])):
@@ -241,6 +258,17 @@ class ConfigParser:
                             )
                         )
 
+            # Validate enabled query references
+            if "enabledQueries" in agent and agent["enabledQueries"]:
+                for query_ref in agent["enabledQueries"]:
+                    if query_ref not in all_query_names:
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledQueries",
+                                message=f"Referenced query '{query_ref}' not defined",
+                            )
+                        )
+
             # Validate enabled collection references
             if "enabledCollections" in agent and agent["enabledCollections"]:
                 for coll_ref in agent["enabledCollections"]:
@@ -251,6 +279,23 @@ class ConfigParser:
                                 message=f"Referenced collection '{coll_ref}' not defined",
                             )
                         )
+
+        # Validate query references
+        for i, query in enumerate(spec.get("queries", [])):
+            if query["groupName"] not in all_group_names:
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.queries[{i}].groupName",
+                        message=f"Referenced group '{query['groupName']}' not defined",
+                    )
+                )
+            if query["connectionName"] not in all_database_connection_names:
+                errors.append(
+                    ConfigValidationError(
+                        path=f"spec.queries[{i}].connectionName",
+                        message=f"Referenced database connection '{query['connectionName']}' not defined",
+                    )
+                )
 
         # Validate collection references
         for i, coll in enumerate(spec.get("collections", [])):

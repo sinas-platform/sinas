@@ -57,6 +57,36 @@ class LLMProviderConfig(BaseModel):
     isActive: bool = True
 
 
+class DatabaseConnectionConfig(BaseModel):
+    """Database connection configuration"""
+
+    name: str
+    connectionType: str  # postgresql, clickhouse, snowflake
+    host: str
+    port: int
+    database: str
+    username: str
+    password: Optional[str] = None  # Supports ${ENV_VAR}
+    sslMode: Optional[str] = None
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryConfig(BaseModel):
+    """Query configuration"""
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    connectionName: str  # Ref to DatabaseConnection by name
+    operation: str  # "read" or "write"
+    sql: str
+    groupName: str
+    inputSchema: Optional[dict[str, Any]] = None
+    outputSchema: Optional[dict[str, Any]] = None
+    timeoutMs: int = 5000
+    maxRows: int = 1000
+
+
 class FunctionConfig(BaseModel):
     """Function configuration"""
 
@@ -111,6 +141,10 @@ class AgentConfig(BaseModel):
     )  # List of skill configs (string for backward compat, dict for preload)
     stateNamespacesReadonly: list[str] = Field(default_factory=list)  # Readonly state namespaces
     stateNamespacesReadwrite: list[str] = Field(default_factory=list)  # Read-write state namespaces
+    enabledQueries: list[str] = Field(default_factory=list)  # List of "namespace/name" query refs
+    queryParameters: dict[str, Any] = Field(
+        default_factory=dict
+    )  # {"namespace/name": {"param": "value or {{template}}"}}
     enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
     isDefault: bool = False
 
@@ -195,9 +229,11 @@ class ConfigSpec(BaseModel):
     groups: list[GroupConfig] = Field(default_factory=list)
     users: list[UserConfig] = Field(default_factory=list)
     llmProviders: list[LLMProviderConfig] = Field(default_factory=list)
+    databaseConnections: list[DatabaseConnectionConfig] = Field(default_factory=list)
 
     skills: list[SkillConfig] = Field(default_factory=list)
     functions: list[FunctionConfig] = Field(default_factory=list)
+    queries: list[QueryConfig] = Field(default_factory=list)
     collections: list[CollectionConfig] = Field(default_factory=list)
     apps: list[AppConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)

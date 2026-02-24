@@ -24,6 +24,7 @@ from app.core.permissions import check_permission
 from app.services.content_converter import ContentConverter
 
 from app.services.function_tools import FunctionToolConverter
+from app.services.query_tools import QueryToolConverter
 from app.services.queue_service import queue_service
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
@@ -39,6 +40,7 @@ class MessageService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.function_converter = FunctionToolConverter()
+        self.query_converter = QueryToolConverter()
         self.skill_converter = SkillToolConverter()
         self.collection_converter = CollectionToolConverter()
         self.context_tools = StateTools()
@@ -696,7 +698,7 @@ class MessageService:
             "update_context",
             "delete_context",
             "continue_execution",
-        ] or tool_name.startswith("call_agent_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
+        ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
             return None, None
 
         # Convert namespace__name to namespace/name if needed
@@ -1152,6 +1154,17 @@ class MessageService:
             )
             tools.extend(function_tools)
 
+        # Get query tools (only if list has items - opt-in)
+        if agent.enabled_queries and len(agent.enabled_queries) > 0:
+            query_tools = await self.query_converter.get_available_queries(
+                db=self.db,
+                user_id=user_id,
+                enabled_queries=agent.enabled_queries,
+                query_parameters=agent.query_parameters,
+                agent_input_context=agent_input_context,
+            )
+            tools.extend(query_tools)
+
         # Get skill tools (only if list has items - opt-in)
         if agent.enabled_skills and len(agent.enabled_skills) > 0:
             skill_tools = await self.skill_converter.get_available_skills(
@@ -1426,6 +1439,46 @@ class MessageService:
                     logger.debug(f"Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
                     if result is None:
                         result = {"error": f"Skill not found for tool: {tool_name}"}
+                elif tool_name.startswith("query_"):
+                    start_time = time.time()
+                    # Extract metadata for locked/overridable params
+                    tool_metadata = {}
+                    for tool in tools:
+                        if tool.get("function", {}).get("name") == tool_name:
+                            tool_metadata = tool.get("function", {}).get("_metadata", {})
+                            break
+
+                    # Get enabled queries list from agent
+                    enabled_query_list = []
+                    if chat and chat.agent_id:
+                        result_agent = await db.execute(
+                            select(Agent).where(Agent.id == chat.agent_id)
+                        )
+                        chat_agent = result_agent.scalar_one_or_none()
+                        if chat_agent:
+                            enabled_query_list = chat_agent.enabled_queries or []
+
+                    # Get user email for context injection
+                    from app.models.user import User
+
+                    user_email = None
+                    user_result = await db.execute(select(User).where(User.id == user_id))
+                    user_obj = user_result.scalar_one_or_none()
+                    if user_obj:
+                        user_email = user_obj.email
+
+                    result = await self.query_converter.execute_query_tool(
+                        db=db,
+                        tool_name=tool_name,
+                        arguments=arguments,
+                        user_id=user_id,
+                        user_email=user_email,
+                        locked_params=tool_metadata.get("locked_params", {}),
+                        overridable_params=tool_metadata.get("overridable_params", {}),
+                        enabled_queries=enabled_query_list,
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Query execution completed in {elapsed:.3f}s: {tool_name}")
                 elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
                     start_time = time.time()
                     tool_metadata = {}

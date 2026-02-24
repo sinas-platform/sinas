@@ -39,6 +39,11 @@ class AgentCreate(BaseModel):
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
+    enabled_queries: Optional[list[str]] = None  # List of "namespace/name" query references
+    query_parameters: Optional[
+        dict[str, Any]
+    ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
+
     state_namespaces_readonly: Optional[list[str]] = None  # Readonly state namespaces
     state_namespaces_readwrite: Optional[list[str]] = None  # Read-write state namespaces
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
@@ -71,6 +76,11 @@ class AgentUpdate(BaseModel):
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
+    enabled_queries: Optional[list[str]] = None  # List of "namespace/name" query references
+    query_parameters: Optional[
+        dict[str, Any]
+    ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
+
     state_namespaces_readonly: Optional[list[str]] = None
     state_namespaces_readwrite: Optional[list[str]] = None
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
@@ -97,6 +107,9 @@ class AgentResponse(BaseModel):
     enabled_agents: list[str]  # List of agent names that can be called as tools
     enabled_skills: list[EnabledSkillConfig]  # List of skill configs with preload option
     function_parameters: dict[str, Any]  # {"namespace/name": {"param": "value or {{template}}"}}
+
+    enabled_queries: list[str]  # List of "namespace/name" query references
+    query_parameters: dict[str, Any]  # {"namespace/name": {"param": "value or {{template}}"}}
 
     state_namespaces_readonly: list[str]
     state_namespaces_readwrite: list[str]

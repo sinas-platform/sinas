@@ -2,12 +2,14 @@ from .agent import Agent
 from .app import App
 from .base import Base
 from .chat import Chat, Message
+from .database_connection import DatabaseConnection
 from .execution import Execution, StepExecution
 from .file import Collection, ContentFilterEvaluation, File, FileVersion
 from .function import Function, FunctionVersion
 from .llm_provider import LLMProvider
 
 from .package import InstalledPackage
+from .query import Query
 from .pending_approval import PendingToolApproval
 from .schedule import ScheduledJob
 from .skill import Skill
@@ -37,7 +39,8 @@ __all__ = [
     "Agent",
     "App",
     "LLMProvider",
-
+    "DatabaseConnection",
+    "Query",
     "State",
     "PendingToolApproval",
     "Template",

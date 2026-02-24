@@ -16,8 +16,9 @@ from app.models.agent import Agent
 from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
+from app.models.database_connection import DatabaseConnection
 from app.models.llm_provider import LLMProvider
-
+from app.models.query import Query
 from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
 from app.models.user import Role, RolePermission, User, UserRole
@@ -50,6 +51,7 @@ class ConfigApplyService:
         self.function_ids: dict[str, str] = {}
         self.agent_ids: dict[str, str] = {}
         self.llm_provider_ids: dict[str, str] = {}
+        self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
         self.collection_ids: dict[str, str] = {}
         self.folder_ids: dict[str, str] = {}  # Alias for collection_ids
@@ -106,10 +108,11 @@ class ConfigApplyService:
             await self._apply_groups(config.spec.groups, dry_run)
             await self._apply_users(config.spec.users, dry_run)
             await self._apply_llm_providers(config.spec.llmProviders, dry_run)
-
+            await self._apply_database_connections(config.spec.databaseConnections, dry_run)
 
             await self._apply_functions(config.spec.functions, dry_run)
             await self._apply_skills(config.spec.skills, dry_run)
+            await self._apply_queries(config.spec.queries, dry_run)
             await self._apply_collections(config.spec.collections, dry_run)
             await self._apply_apps(config.spec.apps, dry_run)
             await self._apply_agents(config.spec.agents, dry_run)
@@ -400,6 +403,222 @@ class ConfigApplyService:
             except Exception as e:
                 self.errors.append(
                     f"Error applying LLM provider '{provider_config.name}': {str(e)}"
+                )
+
+    async def _apply_database_connections(self, connections, dry_run: bool):
+        """Apply database connection configurations"""
+        for conn_config in connections:
+            try:
+                stmt = select(DatabaseConnection).where(
+                    DatabaseConnection.name == conn_config.name
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                # Don't include password in hash (it's encrypted)
+                config_hash = self._calculate_hash(
+                    {
+                        "name": conn_config.name,
+                        "connection_type": conn_config.connectionType,
+                        "host": conn_config.host,
+                        "port": conn_config.port,
+                        "database": conn_config.database,
+                        "username": conn_config.username,
+                        "ssl_mode": conn_config.sslMode,
+                        "config": conn_config.config,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"Database connection '{conn_config.name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change(
+                            "unchanged", "databaseConnections", conn_config.name
+                        )
+                        self.database_connection_ids[conn_config.name] = str(existing.id)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change(
+                            "unchanged", "databaseConnections", conn_config.name
+                        )
+                        self.database_connection_ids[conn_config.name] = str(existing.id)
+                        continue
+
+                    if not dry_run:
+                        existing.connection_type = conn_config.connectionType
+                        existing.host = conn_config.host
+                        existing.port = conn_config.port
+                        existing.database = conn_config.database
+                        existing.username = conn_config.username
+                        existing.ssl_mode = conn_config.sslMode
+                        existing.config = conn_config.config
+                        if conn_config.password:
+                            existing.password = EncryptionService.encrypt(conn_config.password)
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "databaseConnections", conn_config.name)
+                    self.database_connection_ids[conn_config.name] = str(existing.id)
+
+                else:
+                    if not dry_run:
+                        encrypted_password = None
+                        if conn_config.password:
+                            encrypted_password = EncryptionService.encrypt(
+                                conn_config.password
+                            )
+
+                        new_conn = DatabaseConnection(
+                            name=conn_config.name,
+                            connection_type=conn_config.connectionType,
+                            host=conn_config.host,
+                            port=conn_config.port,
+                            database=conn_config.database,
+                            username=conn_config.username,
+                            password=encrypted_password,
+                            ssl_mode=conn_config.sslMode,
+                            config=conn_config.config,
+                            is_active=True,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_conn)
+                        await self.db.flush()
+                        self.database_connection_ids[conn_config.name] = str(new_conn.id)
+                    else:
+                        self.database_connection_ids[conn_config.name] = "dry-run-id"
+
+                    self._track_change("create", "databaseConnections", conn_config.name)
+
+            except Exception as e:
+                self.errors.append(
+                    f"Error applying database connection '{conn_config.name}': {str(e)}"
+                )
+
+    async def _apply_queries(self, queries, dry_run: bool):
+        """Apply query configurations"""
+        for query_config in queries:
+            resource_name = f"{query_config.namespace}/{query_config.name}"
+            try:
+                stmt = select(Query).where(
+                    Query.namespace == query_config.namespace,
+                    Query.name == query_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": query_config.namespace,
+                        "name": query_config.name,
+                        "description": query_config.description,
+                        "connection_name": query_config.connectionName,
+                        "operation": query_config.operation,
+                        "sql": query_config.sql,
+                        "input_schema": query_config.inputSchema,
+                        "output_schema": query_config.outputSchema,
+                        "timeout_ms": query_config.timeoutMs,
+                        "max_rows": query_config.maxRows,
+                    }
+                )
+
+                # Resolve database connection name to ID
+                db_conn_id = self.database_connection_ids.get(query_config.connectionName)
+                if not db_conn_id:
+                    # Try loading from database
+                    db_conn = await DatabaseConnection.get_by_name(
+                        self.db, query_config.connectionName
+                    )
+                    if db_conn:
+                        db_conn_id = str(db_conn.id)
+                    else:
+                        self.errors.append(
+                            f"Database connection '{query_config.connectionName}' not found for query '{resource_name}'"
+                        )
+                        continue
+
+                if existing:
+                    if existing.managed_by != "config":
+                        self.warnings.append(
+                            f"Query '{resource_name}' exists but is not config-managed. Skipping."
+                        )
+                        self._track_change("unchanged", "queries", resource_name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "queries", resource_name)
+                        continue
+
+                    if not dry_run:
+                        existing.description = query_config.description
+                        existing.database_connection_id = db_conn_id
+                        existing.operation = query_config.operation
+                        existing.sql = query_config.sql
+                        existing.input_schema = query_config.inputSchema or {}
+                        existing.output_schema = query_config.outputSchema or {}
+                        existing.timeout_ms = query_config.timeoutMs
+                        existing.max_rows = query_config.maxRows
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "queries", resource_name)
+
+                else:
+                    if not dry_run:
+                        # Get user from group
+                        from app.models.user import Role, UserRole
+
+                        group_id = self.group_ids.get(query_config.groupName)
+                        if not group_id:
+                            stmt = select(Role).where(Role.name == query_config.groupName)
+                            result = await self.db.execute(stmt)
+                            group = result.scalar_one_or_none()
+                            if group:
+                                group_id = str(group.id)
+
+                        if not group_id:
+                            self.errors.append(
+                                f"Group '{query_config.groupName}' not found for query '{resource_name}'"
+                            )
+                            continue
+
+                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
+                        result = await self.db.execute(stmt)
+                        member = result.scalar_one_or_none()
+                        if not member:
+                            self.errors.append(
+                                f"No users in group '{query_config.groupName}' for query '{resource_name}'"
+                            )
+                            continue
+
+                        new_query = Query(
+                            namespace=query_config.namespace,
+                            name=query_config.name,
+                            description=query_config.description,
+                            database_connection_id=db_conn_id,
+                            operation=query_config.operation,
+                            sql=query_config.sql,
+                            input_schema=query_config.inputSchema or {},
+                            output_schema=query_config.outputSchema or {},
+                            timeout_ms=query_config.timeoutMs,
+                            max_rows=query_config.maxRows,
+                            user_id=member.user_id,
+                            is_active=True,
+                            managed_by="config",
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_query)
+
+                    self._track_change("create", "queries", resource_name)
+
+            except Exception as e:
+                self.errors.append(
+                    f"Error applying query '{resource_name}': {str(e)}"
                 )
 
     async def _apply_functions(self, functions, dry_run: bool):
@@ -924,6 +1143,12 @@ class ConfigApplyService:
                         "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite)
                         if agent_config.stateNamespacesReadwrite
                         else [],
+                        "enabled_queries": sorted(agent_config.enabledQueries)
+                        if agent_config.enabledQueries
+                        else [],
+                        "query_parameters": agent_config.queryParameters
+                        if agent_config.queryParameters
+                        else {},
                         "enabled_collections": sorted(agent_config.enabledCollections)
                         if agent_config.enabledCollections
                         else [],
@@ -965,6 +1190,8 @@ class ConfigApplyService:
                         existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
                         existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
+                        existing.enabled_queries = agent_config.enabledQueries
+                        existing.query_parameters = agent_config.queryParameters
                         existing.enabled_collections = agent_config.enabledCollections
                         if agent_config.isDefault:
                             await self.db.execute(
@@ -1025,6 +1252,8 @@ class ConfigApplyService:
                             enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,
                             state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
+                            enabled_queries=agent_config.enabledQueries,
+                            query_parameters=agent_config.queryParameters,
                             enabled_collections=agent_config.enabledCollections,
                             is_default=agent_config.isDefault,
                             user_id=member.user_id,
