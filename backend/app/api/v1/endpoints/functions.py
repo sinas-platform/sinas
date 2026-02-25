@@ -1,6 +1,4 @@
 """Functions API endpoints."""
-import uuid
-
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -355,48 +353,3 @@ async def list_function_versions(
     return versions
 
 
-@router.post("/{namespace}/{name}/execute")
-async def execute_function(
-    request: Request,
-    namespace: str,
-    name: str,
-    input_data: dict,
-    current_user_data: tuple = Depends(get_current_user_with_permissions),
-    db: AsyncSession = Depends(get_db),
-):
-    """Execute a function directly from the management UI."""
-    user_id, permissions = current_user_data
-
-    # Load function
-    function = await Function.get_by_name(db, namespace, name)
-    if not function:
-        raise HTTPException(status_code=404, detail="Function not found")
-
-    # Check execute permission
-    permission = f"sinas.functions/{namespace}/{name}.execute:own"
-    if not check_permission(permissions, permission):
-        set_permission_used(request, permission, has_perm=False)
-        raise HTTPException(status_code=403, detail="Not authorized to execute this function")
-
-    set_permission_used(request, permission)
-
-    # Execute function via queue (shows up in Jobs, runs on worker)
-    from app.models.execution import TriggerType
-    from app.services.queue_service import queue_service
-
-    execution_id = str(uuid.uuid4())
-
-    try:
-        result = await queue_service.enqueue_and_wait(
-            function_namespace=namespace,
-            function_name=name,
-            input_data=input_data,
-            execution_id=execution_id,
-            trigger_type=TriggerType.MANUAL.value,
-            trigger_id="management-ui",
-            user_id=user_id,
-        )
-
-        return {"status": "success", "execution_id": execution_id, "result": result}
-    except Exception as e:
-        return {"status": "error", "execution_id": execution_id, "error": str(e)}

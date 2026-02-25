@@ -1,10 +1,11 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, API_BASE_URL } from '../lib/api';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Save, Trash2, Loader2, Bot } from 'lucide-react';
 import type { AgentUpdate } from '../types';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
+import { ApiUsage } from '../components/ApiUsage';
 
 export function AgentDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
@@ -165,6 +166,56 @@ export function AgentDetail() {
           Delete
         </button>
       </div>
+
+      {agent && (
+        <ApiUsage
+          curl={[
+            {
+              label: 'Create a chat',
+              language: 'bash',
+              code: `curl -X POST ${API_BASE_URL}/agents/${agent.namespace}/${agent.name}/chats \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${agent.input_schema && Object.keys(agent.input_schema.properties || {}).length > 0
+    ? `{"input": {${Object.keys(agent.input_schema.properties || {}).map(k => `"${k}": "..."`).join(', ')}}}`
+    : '{}'}'`,
+            },
+            {
+              label: 'Send a message (streaming)',
+              language: 'bash',
+              code: `curl -N -X POST ${API_BASE_URL}/chats/{chat_id}/messages/stream \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"content": "Hello"}'`,
+            },
+          ]}
+          sdk={[
+            {
+              label: 'Create a chat and send messages',
+              language: 'python',
+              code: `from sinas import SinasClient
+
+client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
+
+chat = client.chats.create("${agent.namespace}", "${agent.name}"${
+  agent.input_schema && Object.keys(agent.input_schema.properties || {}).length > 0
+    ? `,\n    input={${Object.keys(agent.input_schema.properties || {}).map(k => `"${k}": "..."`).join(', ')}}`
+    : ''})
+
+# Blocking
+response = client.chats.send(chat["id"], "Hello")
+print(response["content"])
+
+# Streaming
+import json
+for chunk in client.chats.stream(chat["id"], "Hello"):
+    data = json.loads(chunk)
+    if "content" in data:
+        print(data["content"], end="", flush=True)`,
+            },
+          ]}
+        />
+      )}
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -1117,6 +1168,7 @@ export function AgentDetail() {
           </div>
         )}
       </form>
+
     </div>
   );
 }

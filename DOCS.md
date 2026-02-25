@@ -346,6 +346,7 @@ The runtime API is mounted at the root. It handles authentication, chat, executi
 /auth/...              # Authentication
 /agents/...            # Create chats with agents
 /chats/...             # Send messages, manage chats
+/functions/...         # Execute functions (sync and async)
 /webhooks/...          # Trigger webhook-linked functions
 /executions/...        # View execution history and results
 /jobs/...              # Check job status
@@ -361,7 +362,7 @@ The management API handles CRUD operations on all resources. These are typically
 
 ```
 /api/v1/agents/...                 # Agent CRUD
-/api/v1/functions/...              # Function CRUD + execution
+/api/v1/functions/...              # Function CRUD
 /api/v1/skills/...                 # Skill CRUD
 /api/v1/llm-providers/...         # LLM provider management (admin)
 /api/v1/database-connections/...  # DB connection management (admin)
@@ -619,7 +620,7 @@ def my_function(input, context):
     #   user_email      - User's email
     #   access_token    - JWT token for making API calls back to SINAS
     #   execution_id    - Unique execution ID
-    #   trigger_type    - WEBHOOK, AGENT, SCHEDULE, or MANUAL
+    #   trigger_type    - WEBHOOK, AGENT, SCHEDULE, MANUAL, or API
     #   chat_id         - Chat ID if triggered from a conversation
     return {"result": "value"}
 ```
@@ -631,12 +632,14 @@ The `access_token` lets functions call back into the SINAS API with the triggeri
 **Endpoints:**
 
 ```
+POST   /functions/{namespace}/{name}/execute               # Execute (sync, waits for result)
+POST   /functions/{namespace}/{name}/execute/async         # Execute (async, returns execution_id)
+
 POST   /api/v1/functions                                   # Create function
 GET    /api/v1/functions                                   # List functions
 GET    /api/v1/functions/{namespace}/{name}                # Get function
 PUT    /api/v1/functions/{namespace}/{name}                # Update function
 DELETE /api/v1/functions/{namespace}/{name}                # Delete function
-POST   /api/v1/functions/{namespace}/{name}/execute        # Execute directly
 GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
 ```
 

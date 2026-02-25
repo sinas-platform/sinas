@@ -38,13 +38,17 @@ class QueueService:
         """
         Enqueue a function execution job.
 
+        Uses execution_id as the arq job_id so there's a single ID
+        to track both the queue job and the execution record.
+
         Returns:
-            job_id (str)
+            execution_id (str) — same value passed in, now also the job_id
         """
         pool = await get_arq_pool()
         redis = await get_redis()
 
-        job_id = str(uuid.uuid4())
+        # Use execution_id as job_id — single ID for both queue and execution
+        job_id = execution_id
 
         fn_label = f"{function_namespace}/{function_name}" if function_name else f"resume:{execution_id[:8]}"
 
@@ -89,10 +93,10 @@ class QueueService:
         )
 
         logger.info(
-            f"Enqueued function job {job_id}: {function_namespace}/{function_name} "
+            f"Enqueued function job: {function_namespace}/{function_name} "
             f"(execution_id={execution_id})"
         )
-        return job_id
+        return execution_id
 
     async def get_job_status(self, job_id: str) -> Optional[dict[str, Any]]:
         """Get job status from Redis."""

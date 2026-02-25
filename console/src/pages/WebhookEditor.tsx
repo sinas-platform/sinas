@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, API_BASE_URL } from '../lib/api';
 import { ArrowLeft, Save, Trash2 } from 'lucide-react';
+import { ApiUsage } from '../components/ApiUsage';
 
 export function WebhookEditor() {
   const { '*': webhookPath } = useParams();
@@ -163,6 +164,37 @@ export function WebhookEditor() {
           </button>
         </div>
       </div>
+
+      {!isNew && formData.path && (
+        <ApiUsage
+          curl={[
+            {
+              label: 'Trigger the webhook',
+              language: 'bash',
+              code: `curl -X ${formData.http_method} ${API_BASE_URL}/webhooks/${formData.path}${formData.requires_auth ? ` \\
+  -H "Authorization: Bearer $TOKEN"` : ''} \\
+  -H "Content-Type: application/json" \\
+  -d '{"key": "value"}'`,
+            },
+          ]}
+          sdk={[
+            {
+              label: 'Trigger via SDK',
+              language: 'python',
+              code: `from sinas import SinasClient
+
+client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
+
+result = client.webhooks.run(
+    "${formData.path}",
+    method="${formData.http_method}",
+    body={"key": "value"}
+)
+print(result["execution_id"], result["result"])`,
+            },
+          ]}
+        />
+      )}
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
@@ -336,6 +368,7 @@ export function WebhookEditor() {
           </div>
         )}
       </form>
+
     </div>
   );
 }

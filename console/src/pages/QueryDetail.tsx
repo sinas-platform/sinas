@@ -1,12 +1,13 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, API_BASE_URL } from '../lib/api';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Save, Play, Loader } from 'lucide-react';
 import type { QueryUpdate, QueryExecuteResponse, DatabaseConnection } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 import { SchemaFormField } from '../components/SchemaFormField';
+import { ApiUsage } from '../components/ApiUsage';
 
 export function QueryDetail() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
@@ -135,6 +136,40 @@ export function QueryDetail() {
           </div>
         </div>
       </div>
+
+      {namespace && name && (
+        <ApiUsage
+          curl={[
+            {
+              label: 'Execute query',
+              language: 'bash',
+              code: `curl -X POST ${API_BASE_URL}/api/v1/queries/${namespace}/${name}/execute \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${Object.keys((inputSchema as any)?.properties || {}).length > 0
+    ? `{${Object.keys((inputSchema as any).properties).map(k => `"${k}": "..."`).join(', ')}}`
+    : '{}'}'`,
+            },
+          ]}
+          sdk={[
+            {
+              label: 'SDK support coming soon — use HTTP for now',
+              language: 'python',
+              code: `from sinas import SinasClient
+
+client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
+
+# Direct HTTP until SDK queries module is released
+result = client._request(
+    "POST",
+    "/api/v1/queries/${namespace}/${name}/execute",
+    json={${Object.keys((inputSchema as any)?.properties || {}).map(k => `"${k}": "..."`).join(', ')}}
+)
+print(result)`,
+            },
+          ]}
+        />
+      )}
 
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
@@ -400,6 +435,7 @@ export function QueryDetail() {
           )}
         </div>
       </div>
+
     </div>
   );
 }

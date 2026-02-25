@@ -14,6 +14,7 @@ class TriggerType(str, enum.Enum):
     SCHEDULE = "SCHEDULE"
     AGENT = "AGENT"  # Triggered by agent/chat tool call
     MANUAL = "MANUAL"  # Triggered manually from UI
+    API = "API"  # Triggered via runtime API
 
 
 class ExecutionStatus(str, enum.Enum):

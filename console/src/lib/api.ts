@@ -65,7 +65,7 @@ import type {
 // Auto-detect API base URL based on environment
 // Local: http://localhost:8000
 // Production: https://yourdomain.com (same domain as console, port 443)
-const API_BASE_URL = window.location.hostname === 'localhost'
+export const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8000'
   : `${window.location.protocol}//${window.location.hostname}`;
 
@@ -481,7 +481,7 @@ class APIClient {
   }
 
   async executeFunction(namespace: string, name: string, inputData: any): Promise<any> {
-    const response = await this.configClient.post(`/functions/${namespace}/${name}/execute`, inputData);
+    const response = await this.runtimeClient.post(`/functions/${namespace}/${name}/execute`, { input: inputData });
     return response.data;
   }
 

@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
-import { apiClient } from '../lib/api';
+import { apiClient, API_BASE_URL } from '../lib/api';
 import { Upload, Download, Trash2, ChevronDown, ChevronRight, ArrowLeft, File as FileIcon, Pencil, Search, X, Plus, Minus, Link2 } from 'lucide-react';
 import { SchemaFormField } from '../components/SchemaFormField';
 import { useState, useRef } from 'react';
 import type { FileWithVersions, FileSearchResult } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { ApiUsage } from '../components/ApiUsage';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -328,6 +329,65 @@ export function CollectionDetail() {
           </button>
         </div>
       </div>
+
+      {namespace && name && (
+        <ApiUsage
+          curl={[
+            {
+              label: 'Upload a file',
+              language: 'bash',
+              code: `curl -X POST ${API_BASE_URL}/files/${namespace}/${name} \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "document.pdf",
+    "content_base64": "<base64-encoded>",
+    "content_type": "application/pdf",
+    "visibility": "private"
+  }'`,
+            },
+            {
+              label: 'Download a file',
+              language: 'bash',
+              code: `curl ${API_BASE_URL}/files/${namespace}/${name}/{filename} \\
+  -H "Authorization: Bearer $TOKEN"`,
+            },
+          ]}
+          sdk={[
+            {
+              label: 'Upload, download, and search files',
+              language: 'python',
+              code: `from sinas import SinasClient
+
+client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
+
+# Upload from local path
+client.files.upload_from_path(
+    "${namespace}", "${name}", "/path/to/file.pdf",
+    visibility="private"
+)
+
+# List files
+files = client.files.list("${namespace}", "${name}")
+
+# Download as bytes
+data = client.files.download_bytes(
+    "${namespace}", "${name}", "file.pdf"
+)
+
+# Search
+results = client.files.search(
+    "${namespace}", "${name}", query="report"
+)
+
+# Temporary public URL
+url = client.files.generate_temp_url(
+    "${namespace}", "${name}", "file.pdf"
+)`,
+            },
+          ]}
+        />
+      )}
 
       {/* Search Panel */}
       <div className="card">
@@ -874,6 +934,7 @@ export function CollectionDetail() {
           </div>
         </>
       )}
+
     </div>
   );
 }

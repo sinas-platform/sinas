@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, API_BASE_URL } from '../lib/api';
 import { ArrowLeft, Save, Trash2, Package, ChevronDown, ChevronRight, Filter, Upload, Info } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
+import { ApiUsage } from '../components/ApiUsage';
 
 const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }> = {
   'pre-upload-filter': {
@@ -295,6 +296,47 @@ export function FunctionEditor() {
           </button>
         </div>
       </div>
+
+      {!isNew && formData.namespace && formData.name && (
+        <ApiUsage
+          curl={[
+            {
+              label: 'Execute function',
+              language: 'bash',
+              code: `curl -X POST ${API_BASE_URL}/functions/${formData.namespace}/${formData.name}/execute \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '${Object.keys((formData.input_schema as any)?.properties || {}).length > 0
+    ? `{${Object.keys((formData.input_schema as any).properties).map(k => `"${k}": "..."`).join(', ')}}`
+    : '{}'}'`,
+            },
+            {
+              label: 'Check execution result',
+              language: 'bash',
+              code: `curl ${API_BASE_URL}/executions/{execution_id} \\
+  -H "Authorization: Bearer $TOKEN"`,
+            },
+          ]}
+          sdk={[
+            {
+              label: 'Execute and check results',
+              language: 'python',
+              code: `from sinas import SinasClient
+
+client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
+
+# List executions for this function
+executions = client.executions.list(
+    function_name="${formData.name}", limit=10
+)
+
+# Get execution details
+details = client.executions.get(executions[0]["execution_id"])
+print(details["status"], details["output_data"])`,
+            },
+          ]}
+        />
+      )}
 
       {/* Success/Error Messages */}
       {saveMutation.isError && (
@@ -680,6 +722,7 @@ export function FunctionEditor() {
           )}
         </div>
       </form>
+
     </div>
   );
 }

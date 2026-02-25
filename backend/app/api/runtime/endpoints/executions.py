@@ -53,32 +53,46 @@ async def list_executions(
     return executions
 
 
-@router.get("/{execution_id}", response_model=ExecutionResponse)
+@router.get("/{execution_id}")
 async def get_execution(
     request: Request,
     execution_id: str,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Get a specific execution."""
+    """Get a specific execution. Falls back to queue status if the DB record hasn't been created yet."""
     user_id, permissions = current_user_data
 
     result = await db.execute(select(Execution).where(Execution.execution_id == execution_id))
     execution = result.scalar_one_or_none()
 
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
+    if execution:
+        # Check permissions
+        if check_permission(permissions, "sinas.executions.read:all"):
+            set_permission_used(request, "sinas.executions.read:all")
+        else:
+            if execution.user_id != user_id:
+                set_permission_used(request, "sinas.executions.read:own", has_perm=False)
+                raise HTTPException(status_code=403, detail="Not authorized to view this execution")
+            set_permission_used(request, "sinas.executions.read:own")
 
-    # Check permissions
-    if check_permission(permissions, "sinas.executions.read:all"):
-        set_permission_used(request, "sinas.executions.read:all")
-    else:
-        if execution.user_id != user_id:
-            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to view this execution")
+        return ExecutionResponse.model_validate(execution)
+
+    # No DB record yet — check Redis for queued/in-progress job status.
+    # Since job_id = execution_id, we can look up directly.
+    from app.services.queue_service import queue_service
+
+    status = await queue_service.get_job_status(execution_id)
+    if status:
         set_permission_used(request, "sinas.executions.read:own")
+        return {
+            "execution_id": execution_id,
+            "status": status.get("status", "queued").upper(),
+            "function_name": status.get("function", "").split("/")[-1] if status.get("function") else None,
+            "trigger_type": status.get("trigger_type"),
+        }
 
-    return execution
+    raise HTTPException(status_code=404, detail="Execution not found")
 
 
 @router.get("/{execution_id}/steps", response_model=list[StepExecutionResponse])
