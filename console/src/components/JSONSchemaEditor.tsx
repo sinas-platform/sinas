@@ -143,13 +143,13 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
     const isComplex = propType === 'object' || propType === 'array';
 
     return (
-      <div className="border border-gray-200 rounded-lg p-3 bg-white">
+      <div className="border border-white/[0.06] rounded-lg p-3 bg-[#161616]">
         <div className="flex items-start gap-2">
           {isComplex && (
             <button
               type="button"
               onClick={() => toggleExpanded(path)}
-              className="mt-1 text-gray-400 hover:text-gray-600"
+              className="mt-1 text-gray-500 hover:text-gray-400"
             >
               {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
             </button>
@@ -195,7 +195,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                 <option value="array">Array</option>
               </select>
 
-              <label className="flex items-center text-sm text-gray-600">
+              <label className="flex items-center text-sm text-gray-400">
                 <input
                   type="checkbox"
                   checked={isRequired}
@@ -208,7 +208,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
               <button
                 type="button"
                 onClick={() => removeProperty(propKey)}
-                className="ml-auto text-red-600 hover:text-red-700"
+                className="ml-auto text-red-600 hover:text-red-400"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -228,8 +228,8 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
 
             {/* Type-specific fields */}
             {propType === 'array' && isExpanded && (
-              <div className="ml-4 pl-4 border-l-2 border-gray-200 space-y-2">
-                <label className="block text-xs font-medium text-gray-700">Array Item Type</label>
+              <div className="ml-4 pl-4 border-l-2 border-white/[0.06] space-y-2">
+                <label className="block text-xs font-medium text-gray-300">Array Item Type</label>
                 <select
                   value={(prop.items as any)?.type || 'string'}
                   onChange={(e) => updateProperty(propKey, {
@@ -250,8 +250,8 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
             )}
 
             {propType === 'object' && isExpanded && (
-              <div className="ml-4 pl-4 border-l-2 border-gray-200">
-                <div className="text-xs font-medium text-gray-700 mb-2">Nested Properties</div>
+              <div className="ml-4 pl-4 border-l-2 border-white/[0.06]">
+                <div className="text-xs font-medium text-gray-300 mb-2">Nested Properties</div>
                 <div className="space-y-2">
                   {Object.entries(prop.properties || {}).map(([nestedKey, nestedProp], nestedIndex) => (
                     <PropertyEditor
@@ -300,12 +300,12 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
   return (
     <div className={className}>
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-2">
+        <label className="block text-sm font-medium text-gray-300 mb-2">
           {label}
         </label>
       )}
       {description && (
-        <p className="text-sm text-gray-600 mb-2">{description}</p>
+        <p className="text-sm text-gray-400 mb-2">{description}</p>
       )}
 
       {/* Mode Toggle */}
@@ -316,7 +316,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           className={`flex items-center px-3 py-1.5 text-sm rounded-md ${
             mode === 'guided'
               ? 'bg-primary-100 text-primary-700 font-medium'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
           }`}
         >
           <Layout className="w-4 h-4 mr-1.5" />
@@ -328,7 +328,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           className={`flex items-center px-3 py-1.5 text-sm rounded-md ${
             mode === 'raw'
               ? 'bg-primary-100 text-primary-700 font-medium'
-              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
           }`}
         >
           <Code className="w-4 h-4 mr-1.5" />
@@ -360,7 +360,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           </button>
 
           {Object.keys(value?.properties || {}).length === 0 && (
-            <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-gray-300 rounded-lg">
+            <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-white/10 rounded-lg">
               No properties defined. Click "Add Property" to get started.
             </div>
           )}
@@ -375,7 +375,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
             placeholder='{"type": "object", "properties": {...}}'
           />
           {jsonError && (
-            <div className="mt-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+            <div className="mt-2 text-sm text-red-600 bg-red-900/20 border border-red-800/30 rounded p-2">
               <strong>Invalid JSON:</strong> {jsonError}
             </div>
           )}

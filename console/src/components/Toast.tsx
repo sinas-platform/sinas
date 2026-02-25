@@ -41,32 +41,32 @@ export function ToastItem({ toast, onClose }: ToastItemProps) {
   const getBackgroundClass = () => {
     switch (toast.type) {
       case 'success':
-        return 'bg-green-50 border-green-200';
+        return 'bg-green-900/20 border-green-800/30';
       case 'error':
-        return 'bg-red-50 border-red-200';
+        return 'bg-red-900/20 border-red-800/30';
       case 'warning':
-        return 'bg-yellow-50 border-yellow-200';
+        return 'bg-yellow-900/20 border-yellow-800/30';
       case 'info':
-        return 'bg-blue-50 border-blue-200';
+        return 'bg-blue-900/20 border-blue-800/30';
     }
   };
 
   const getTextClass = () => {
     switch (toast.type) {
       case 'success':
-        return 'text-green-800';
+        return 'text-green-300';
       case 'error':
-        return 'text-red-800';
+        return 'text-red-300';
       case 'warning':
-        return 'text-yellow-800';
+        return 'text-yellow-300';
       case 'info':
-        return 'text-blue-800';
+        return 'text-blue-300';
     }
   };
 
   return (
     <div
-      className={`flex items-start gap-3 p-4 rounded-lg border shadow-lg ${getBackgroundClass()} animate-slide-in-right`}
+      className={`flex items-start gap-3 p-4 rounded-lg border ${getBackgroundClass()} animate-slide-in-right`}
       style={{ minWidth: '300px', maxWidth: '500px' }}
     >
       {getIcon()}

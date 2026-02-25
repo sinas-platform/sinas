@@ -103,7 +103,7 @@ export function QueryDetail() {
   if (!query) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Query not found</p>
+        <p className="text-gray-400">Query not found</p>
         <Link to="/queries" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
           Back to Queries
         </Link>
@@ -117,21 +117,21 @@ export function QueryDetail() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4">
-        <Link to="/queries" className="text-gray-500 hover:text-gray-700">
+        <Link to="/queries" className="text-gray-500 hover:text-gray-300">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 font-mono">
+          <h1 className="text-2xl font-bold text-gray-100 font-mono">
             {query.namespace}/{query.name}
           </h1>
           <div className="flex items-center gap-2 mt-1">
             <span className={`px-2 py-0.5 text-xs font-medium rounded ${
-              query.operation === 'read' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+              query.operation === 'read' ? 'bg-blue-900/30 text-blue-400' : 'bg-orange-900/30 text-orange-400'
             }`}>
               {query.operation}
             </span>
             {!query.is_active && (
-              <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs font-medium rounded">Inactive</span>
+              <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
             )}
           </div>
         </div>
@@ -174,11 +174,11 @@ print(result)`,
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Configuration</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Configuration</h2>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Namespace</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Namespace</label>
                 <input
                   type="text"
                   value={formData.namespace || ''}
@@ -187,7 +187,7 @@ print(result)`,
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Name</label>
                 <input
                   type="text"
                   value={formData.name || ''}
@@ -197,7 +197,7 @@ print(result)`,
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
               <input
                 type="text"
                 value={formData.description || ''}
@@ -208,7 +208,7 @@ print(result)`,
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Connection</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Connection</label>
                 <select
                   value={formData.database_connection_id || ''}
                   onChange={(e) => setFormData({ ...formData, database_connection_id: e.target.value })}
@@ -221,7 +221,7 @@ print(result)`,
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Operation</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Operation</label>
                 <select
                   value={formData.operation || 'read'}
                   onChange={(e) => setFormData({ ...formData, operation: e.target.value })}
@@ -234,7 +234,7 @@ print(result)`,
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Timeout (ms)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Timeout (ms)</label>
                 <input
                   type="number"
                   value={formData.timeout_ms || 5000}
@@ -243,7 +243,7 @@ print(result)`,
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Max Rows</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Max Rows</label>
                 <input
                   type="number"
                   value={formData.max_rows || 1000}
@@ -257,7 +257,7 @@ print(result)`,
 
         {/* SQL Editor */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">SQL Template</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">SQL Template</h2>
           <textarea
             value={formData.sql || ''}
             onChange={(e) => setFormData({ ...formData, sql: e.target.value })}
@@ -266,14 +266,14 @@ print(result)`,
             placeholder="SELECT * FROM table WHERE column = :param_name"
           />
           <p className="text-xs text-gray-500 mt-2">
-            Use <code className="bg-gray-100 px-1 rounded">:param_name</code> for input parameters.
-            Context vars <code className="bg-gray-100 px-1 rounded">:user_id</code> and <code className="bg-gray-100 px-1 rounded">:user_email</code> are auto-injected.
+            Use <code className="bg-[#161616] px-1 rounded">:param_name</code> for input parameters.
+            Context vars <code className="bg-[#161616] px-1 rounded">:user_id</code> and <code className="bg-[#161616] px-1 rounded">:user_email</code> are auto-injected.
           </p>
         </div>
 
         {/* Schemas */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Schemas</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Schemas</h2>
           <div className="grid grid-cols-2 gap-6">
             <JSONSchemaEditor
               label="Input Schema"
@@ -310,20 +310,20 @@ print(result)`,
 
       {/* Execute Section */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-gray-100 mb-4 flex items-center gap-2">
           <Play className="w-5 h-5 text-green-600" />
           Test Execute
         </h2>
         <div className="space-y-4">
           {/* Input Mode Toggle */}
           {hasInputSchema && (
-            <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded">
-              <span className="text-sm text-blue-900">
+            <div className="flex items-center justify-between p-3 bg-blue-900/20 border border-blue-800/30 rounded">
+              <span className="text-sm text-blue-300">
                 {useAdvancedMode ? 'Advanced Mode (JSON)' : 'Form Mode (Schema-based)'}
               </span>
               <button
                 onClick={() => setUseAdvancedMode(!useAdvancedMode)}
-                className="text-xs text-blue-700 hover:text-blue-900 underline"
+                className="text-xs text-blue-400 hover:text-blue-300 underline"
               >
                 {useAdvancedMode ? 'Switch to Form' : 'Switch to JSON'}
               </button>
@@ -333,7 +333,7 @@ print(result)`,
           {/* Schema-based Form */}
           {hasInputSchema && !useAdvancedMode ? (
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Input Parameters</h4>
+              <h4 className="text-sm font-medium text-gray-100 mb-3">Input Parameters</h4>
               {Object.entries(inputSchema.properties || {}).map(([key, prop]: [string, any]) => (
                 <SchemaFormField
                   key={key}
@@ -347,7 +347,7 @@ print(result)`,
             </div>
           ) : (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Input Parameters (JSON)</label>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Input Parameters (JSON)</label>
               <textarea
                 value={executeInput}
                 onChange={(e) => setExecuteInput(e.target.value)}
@@ -378,15 +378,15 @@ print(result)`,
           </button>
 
           {executeError && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <p className="text-sm text-red-700">{executeError}</p>
+            <div className="bg-red-900/20 border border-red-800/30 rounded-lg p-4">
+              <p className="text-sm text-red-400">{executeError}</p>
             </div>
           )}
 
           {executeResult && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="bg-[#0d0d0d] border border-white/[0.06] rounded-lg p-4">
               <div className="flex items-center gap-4 mb-3 text-sm">
-                <span className={`font-medium ${executeResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                <span className={`font-medium ${executeResult.success ? 'text-green-400' : 'text-red-400'}`}>
                   {executeResult.success ? 'Success' : 'Failed'}
                 </span>
                 <span className="text-gray-500">{executeResult.duration_ms}ms</span>
@@ -401,9 +401,9 @@ print(result)`,
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      <tr className="border-b border-gray-300">
+                      <tr className="border-b border-white/10">
                         {Object.keys(executeResult.data[0]).map((col) => (
-                          <th key={col} className="px-3 py-2 text-left font-medium text-gray-700">
+                          <th key={col} className="px-3 py-2 text-left font-medium text-gray-300">
                             {col}
                           </th>
                         ))}
@@ -411,10 +411,10 @@ print(result)`,
                     </thead>
                     <tbody>
                       {executeResult.data.slice(0, 50).map((row, i) => (
-                        <tr key={i} className="border-b border-gray-200">
+                        <tr key={i} className="border-b border-white/[0.06]">
                           {Object.values(row).map((val, j) => (
-                            <td key={j} className="px-3 py-2 text-gray-600 font-mono text-xs">
-                              {val === null ? <span className="text-gray-400 italic">null</span> : String(val)}
+                            <td key={j} className="px-3 py-2 text-gray-400 font-mono text-xs">
+                              {val === null ? <span className="text-gray-500 italic">null</span> : String(val)}
                             </td>
                           ))}
                         </tr>

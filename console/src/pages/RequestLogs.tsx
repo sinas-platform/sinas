@@ -25,19 +25,19 @@ export function RequestLogs() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Logs</h1>
-        <p className="text-gray-600 mt-1">Monitor API requests and chat messages</p>
+        <h1 className="text-3xl font-bold text-gray-100">Logs</h1>
+        <p className="text-gray-400 mt-1">Monitor API requests and chat messages</p>
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-white/[0.06]">
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab('requests')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'requests'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
             }`}
           >
             <Activity className="w-5 h-5 inline mr-2" />
@@ -48,7 +48,7 @@ export function RequestLogs() {
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'messages'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
             }`}
           >
             <MessageSquare className="w-5 h-5 inline mr-2" />
@@ -106,21 +106,21 @@ function RequestLogsTab() {
   });
 
   const getStatusColor = (statusCode: number) => {
-    if (statusCode >= 200 && statusCode < 300) return 'text-green-600 bg-green-50';
-    if (statusCode >= 300 && statusCode < 400) return 'text-blue-600 bg-blue-50';
-    if (statusCode >= 400 && statusCode < 500) return 'text-orange-600 bg-orange-50';
-    return 'text-red-600 bg-red-50';
+    if (statusCode >= 200 && statusCode < 300) return 'text-green-600 bg-green-900/20';
+    if (statusCode >= 300 && statusCode < 400) return 'text-blue-600 bg-blue-900/20';
+    if (statusCode >= 400 && statusCode < 500) return 'text-orange-400 bg-orange-900/20';
+    return 'text-red-600 bg-red-900/20';
   };
 
   const getMethodColor = (method: string) => {
     const colors: Record<string, string> = {
-      GET: 'text-blue-600 bg-blue-50',
-      POST: 'text-green-600 bg-green-50',
-      PUT: 'text-orange-600 bg-orange-50',
-      PATCH: 'text-purple-600 bg-purple-50',
-      DELETE: 'text-red-600 bg-red-50',
+      GET: 'text-blue-600 bg-blue-900/20',
+      POST: 'text-green-600 bg-green-900/20',
+      PUT: 'text-orange-400 bg-orange-900/20',
+      PATCH: 'text-purple-400 bg-purple-900/20',
+      DELETE: 'text-red-600 bg-red-900/20',
     };
-    return colors[method] || 'text-gray-600 bg-gray-50';
+    return colors[method] || 'text-gray-400 bg-[#0d0d0d]';
   };
 
   const formatBytes = (bytes: number) => {
@@ -182,10 +182,10 @@ function RequestLogsTab() {
           <div className="card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Total Requests</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.total_requests}</p>
+                <p className="text-sm font-medium text-gray-400">Total Requests</p>
+                <p className="text-2xl font-bold text-gray-100 mt-1">{stats.total_requests}</p>
               </div>
-              <div className="p-3 bg-primary-50 rounded-lg">
+              <div className="p-3 bg-primary-900/20 rounded-lg">
                 <FileText className="w-5 h-5 text-primary-600" />
               </div>
             </div>
@@ -193,10 +193,10 @@ function RequestLogsTab() {
           <div className="card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Unique Users</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{stats.unique_users}</p>
+                <p className="text-sm font-medium text-gray-400">Unique Users</p>
+                <p className="text-2xl font-bold text-gray-100 mt-1">{stats.unique_users}</p>
               </div>
-              <div className="p-3 bg-blue-50 rounded-lg">
+              <div className="p-3 bg-blue-900/20 rounded-lg">
                 <Users className="w-5 h-5 text-blue-600" />
               </div>
             </div>
@@ -204,10 +204,10 @@ function RequestLogsTab() {
           <div className="card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Avg Response Time</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{Math.round(stats.avg_response_time_ms)}ms</p>
+                <p className="text-sm font-medium text-gray-400">Avg Response Time</p>
+                <p className="text-2xl font-bold text-gray-100 mt-1">{Math.round(stats.avg_response_time_ms)}ms</p>
               </div>
-              <div className="p-3 bg-green-50 rounded-lg">
+              <div className="p-3 bg-green-900/20 rounded-lg">
                 <Clock className="w-5 h-5 text-green-600" />
               </div>
             </div>
@@ -215,10 +215,10 @@ function RequestLogsTab() {
           <div className="card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Error Rate</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{(stats.error_rate * 100).toFixed(1)}%</p>
+                <p className="text-sm font-medium text-gray-400">Error Rate</p>
+                <p className="text-2xl font-bold text-gray-100 mt-1">{(stats.error_rate * 100).toFixed(1)}%</p>
               </div>
-              <div className="p-3 bg-red-50 rounded-lg">
+              <div className="p-3 bg-red-900/20 rounded-lg">
                 <AlertCircle className="w-5 h-5 text-red-600" />
               </div>
             </div>
@@ -230,23 +230,23 @@ function RequestLogsTab() {
       {stats && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Paths</h3>
+            <h3 className="text-lg font-semibold text-gray-100 mb-4">Top Paths</h3>
             <div className="space-y-2">
               {stats.top_paths.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                  <span className="text-sm font-mono text-gray-900">{item.path}</span>
-                  <span className="text-sm font-semibold text-gray-600">{item.count}</span>
+                <div key={idx} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
+                  <span className="text-sm font-mono text-gray-100">{item.path}</span>
+                  <span className="text-sm font-semibold text-gray-400">{item.count}</span>
                 </div>
               ))}
             </div>
           </div>
           <div className="card">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Top Permissions</h3>
+            <h3 className="text-lg font-semibold text-gray-100 mb-4">Top Permissions</h3>
             <div className="space-y-2">
               {stats.top_permissions.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                  <span className="text-sm font-mono text-gray-900">{item.permission}</span>
-                  <span className="text-sm font-semibold text-gray-600">{item.count}</span>
+                <div key={idx} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
+                  <span className="text-sm font-mono text-gray-100">{item.permission}</span>
+                  <span className="text-sm font-semibold text-gray-400">{item.count}</span>
                 </div>
               ))}
             </div>
@@ -257,7 +257,7 @@ function RequestLogsTab() {
       {/* Filters */}
       {showFilters && (
         <div className="card">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Filters</h3>
+          <h3 className="text-lg font-semibold text-gray-100 mb-4">Filters</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="label">User ID</label>
@@ -341,7 +341,7 @@ function RequestLogsTab() {
       {/* Logs List */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Request Logs</h2>
+          <h2 className="text-lg font-semibold text-gray-100">Request Logs</h2>
           <span className="text-sm text-gray-500">{logs?.length || 0} results</span>
         </div>
 
@@ -352,15 +352,15 @@ function RequestLogsTab() {
         ) : (
           <div className="space-y-2">
             {logs.map((log: any) => (
-              <div key={log.request_id} className="border border-gray-200 rounded-lg overflow-hidden">
+              <div key={log.request_id} className="border border-white/[0.06] rounded-lg overflow-hidden">
                 <button
                   onClick={() => setExpandedLog(expandedLog === log.request_id ? null : log.request_id)}
-                  className="w-full px-4 py-3 flex items-center gap-3 hover:bg-gray-50 transition-colors text-left"
+                  className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
                 >
                   {expandedLog === log.request_id ? (
-                    <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
                   ) : (
-                    <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                    <ChevronRight className="w-4 h-4 text-gray-500 flex-shrink-0" />
                   )}
 
                   <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -370,7 +370,7 @@ function RequestLogsTab() {
                     <span className={`px-2 py-0.5 text-xs font-medium rounded ${getStatusColor(log.status_code)}`}>
                       {log.status_code}
                     </span>
-                    <span className="text-sm font-mono text-gray-900 truncate">{log.path}</span>
+                    <span className="text-sm font-mono text-gray-100 truncate">{log.path}</span>
                   </div>
 
                   <div className="flex items-center gap-4 text-xs text-gray-500 flex-shrink-0">
@@ -385,33 +385,33 @@ function RequestLogsTab() {
                 </button>
 
                 {expandedLog === log.request_id && (
-                  <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 space-y-3">
+                  <div className="px-4 py-3 bg-[#0d0d0d] border-t border-white/[0.06] space-y-3">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">User</p>
-                        <p className="text-sm text-gray-900">{log.user_email}</p>
+                        <p className="text-sm text-gray-100">{log.user_email}</p>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Permission</p>
-                        <p className="text-sm text-gray-900 font-mono">{log.permission_used}</p>
+                        <p className="text-sm text-gray-100 font-mono">{log.permission_used}</p>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">IP Address</p>
-                        <p className="text-sm text-gray-900">{log.ip_address}</p>
+                        <p className="text-sm text-gray-100">{log.ip_address}</p>
                       </div>
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Response Size</p>
-                        <p className="text-sm text-gray-900">{formatBytes(log.response_size_bytes)}</p>
+                        <p className="text-sm text-gray-100">{formatBytes(log.response_size_bytes)}</p>
                       </div>
                       {log.resource_type && (
                         <>
                           <div>
                             <p className="text-xs font-medium text-gray-500 mb-1">Resource Type</p>
-                            <p className="text-sm text-gray-900">{log.resource_type}</p>
+                            <p className="text-sm text-gray-100">{log.resource_type}</p>
                           </div>
                           <div>
                             <p className="text-xs font-medium text-gray-500 mb-1">Resource ID</p>
-                            <p className="text-sm text-gray-900 font-mono">{log.resource_id}</p>
+                            <p className="text-sm text-gray-100 font-mono">{log.resource_id}</p>
                           </div>
                         </>
                       )}
@@ -420,7 +420,7 @@ function RequestLogsTab() {
                     {log.query_params && (
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Query Params</p>
-                        <pre className="text-xs text-gray-900 bg-white p-2 rounded border border-gray-200 overflow-x-auto">
+                        <pre className="text-xs text-gray-100 bg-[#161616] p-2 rounded border border-white/[0.06] overflow-x-auto">
                           {log.query_params}
                         </pre>
                       </div>
@@ -429,7 +429,7 @@ function RequestLogsTab() {
                     {log.request_body && log.request_body !== '{}' && (
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Request Body</p>
-                        <pre className="text-xs text-gray-900 bg-white p-2 rounded border border-gray-200 overflow-x-auto">
+                        <pre className="text-xs text-gray-100 bg-[#161616] p-2 rounded border border-white/[0.06] overflow-x-auto">
                           {JSON.stringify(JSON.parse(log.request_body), null, 2)}
                         </pre>
                       </div>
@@ -438,7 +438,7 @@ function RequestLogsTab() {
                     {log.error_message && (
                       <div>
                         <p className="text-xs font-medium text-red-600 mb-1">Error</p>
-                        <pre className="text-xs text-red-900 bg-red-50 p-2 rounded border border-red-200 overflow-x-auto">
+                        <pre className="text-xs text-red-900 bg-red-900/20 p-2 rounded border border-red-800/30 overflow-x-auto">
                           {log.error_type}: {log.error_message}
                         </pre>
                       </div>
@@ -446,7 +446,7 @@ function RequestLogsTab() {
 
                     <div>
                       <p className="text-xs font-medium text-gray-500 mb-1">User Agent</p>
-                      <p className="text-xs text-gray-700 break-all">{log.user_agent}</p>
+                      <p className="text-xs text-gray-300 break-all">{log.user_agent}</p>
                     </div>
                   </div>
                 )}

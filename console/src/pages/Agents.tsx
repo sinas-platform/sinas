@@ -151,8 +151,8 @@ export function Agents() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Agents</h1>
-          <p className="text-gray-600 mt-1">Manage your AI agents and their configurations</p>
+          <h1 className="text-3xl font-bold text-gray-100">Agents</h1>
+          <p className="text-gray-400 mt-1">Manage your AI agents and their configurations</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -166,7 +166,7 @@ export function Agents() {
       {/* Search */}
       {agents && agents.length > 0 && (
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
           <input
             type="text"
             value={searchFilter}
@@ -181,30 +181,30 @@ export function Agents() {
       {isLoading ? (
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-          <p className="text-gray-600 mt-2">Loading agents...</p>
+          <p className="text-gray-400 mt-2">Loading agents...</p>
         </div>
       ) : agents && agents.length > 0 ? (
         <div className="space-y-3">
           {filteredAgents.map((agent) => (
-            <div key={agent.id} className="card hover:shadow-md transition-shadow">
+            <div key={agent.id} className="card transition-colors">
               <div className="flex items-center gap-4">
                 {/* Icon + status */}
                 <div className="flex-shrink-0 relative">
                   <Bot className="w-8 h-8 text-primary-600" />
-                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${agent.is_active ? 'bg-green-500' : 'bg-gray-300'}`} />
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#161616] ${agent.is_active ? 'bg-green-500' : 'bg-gray-600'}`} />
                 </div>
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-semibold text-gray-900 truncate">
+                    <h3 className="font-semibold text-gray-100 truncate">
                       <span className="text-gray-500">{agent.namespace}/</span>{agent.name}
                     </h3>
                     {agent.is_default && (
                       <span className="text-xs font-medium bg-primary-100 text-primary-700 px-2 py-0.5 rounded flex-shrink-0">Default</span>
                     )}
                   </div>
-                  <p className="text-sm text-gray-600 truncate mt-0.5">
+                  <p className="text-sm text-gray-400 truncate mt-0.5">
                     {agent.description || 'No description'}
                   </p>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
@@ -225,7 +225,7 @@ export function Agents() {
                   <button
                     onClick={() => handleStartChat(agent)}
                     disabled={startChatMutation.isPending}
-                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
+                    className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-400 bg-green-900/20 hover:bg-green-900/30 rounded-md transition-colors"
                     title="Start chat"
                   >
                     <MessageSquare className="w-4 h-4 mr-1.5" />
@@ -233,7 +233,7 @@ export function Agents() {
                   </button>
                   <Link
                     to={`/agents/${agent.namespace}/${agent.name}`}
-                    className="p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-600 hover:bg-white/10 rounded-md transition-colors"
                     title="Edit"
                   >
                     <Edit className="w-4 h-4" />
@@ -244,7 +244,7 @@ export function Agents() {
                         duplicateMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-white/10 rounded-md transition-colors"
                     disabled={duplicateMutation.isPending}
                     title="Duplicate"
                   >
@@ -256,7 +256,7 @@ export function Agents() {
                         deleteMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-100 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-white/10 rounded-md transition-colors"
                     disabled={deleteMutation.isPending}
                     title="Delete"
                   >
@@ -272,18 +272,18 @@ export function Agents() {
         </div>
       ) : activeProviders.length === 0 ? (
         <div className="text-center py-12 card">
-          <Brain className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Configure an LLM Provider first</h3>
-          <p className="text-gray-600 mb-4">You need at least one active LLM provider before creating agents</p>
+          <Brain className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">Configure an LLM Provider first</h3>
+          <p className="text-gray-400 mb-4">You need at least one active LLM provider before creating agents</p>
           <Link to="/llm-providers" className="btn btn-primary">
             Configure LLM Provider
           </Link>
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Bot className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No agents yet</h3>
-          <p className="text-gray-600 mb-4">Create your first AI agent to get started</p>
+          <Bot className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No agents yet</h3>
+          <p className="text-gray-400 mb-4">Create your first AI agent to get started</p>
           <button onClick={() => setShowCreateModal(true)} className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Agent
@@ -294,11 +294,11 @@ export function Agents() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Create New Agent</h2>
+          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Create New Agent</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label htmlFor="namespace" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="namespace" className="block text-sm font-medium text-gray-300 mb-2">
                   Namespace *
                 </label>
                 <input
@@ -317,7 +317,7 @@ export function Agents() {
               </div>
 
               <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-2">
                   Name *
                 </label>
                 <input
@@ -335,7 +335,7 @@ export function Agents() {
               </div>
 
               <div>
-                <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="description" className="block text-sm font-medium text-gray-300 mb-2">
                   Description
                 </label>
                 <input
@@ -349,7 +349,7 @@ export function Agents() {
               </div>
 
               <div>
-                <label htmlFor="system_prompt" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="system_prompt" className="block text-sm font-medium text-gray-300 mb-2">
                   System Prompt
                 </label>
                 <textarea
@@ -390,8 +390,8 @@ export function Agents() {
       {/* Start Chat Modal (for agents with input_schema) */}
       {showChatModal && chatAgent && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-gray-900 mb-1">Start Chat</h2>
+          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-100 mb-1">Start Chat</h2>
             <p className="text-sm text-gray-500 mb-4">
               Configure input parameters for <span className="font-medium">{chatAgent.namespace}/{chatAgent.name}</span>
             </p>

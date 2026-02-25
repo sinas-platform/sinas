@@ -46,33 +46,33 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-primary-50 via-white to-accent-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-[#090909] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo and title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
             <img src="/sinas-logo.svg" alt="sinas" className="h-16" />
           </div>
-          <h1 className="text-xl font-semibold text-gray-900 mb-2">Management Console</h1>
-          <p className="text-gray-600">Sovereign Infrastructure for Native Agentic Systems</p>
+          <h1 className="text-xl font-semibold text-gray-100 mb-2">Management Console</h1>
+          <p className="text-gray-400">Sovereign Infrastructure for Native Agentic Systems</p>
         </div>
 
         {/* Login card */}
-        <div className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100">
+        <div className="bg-[#161616] rounded-2xl p-8 border border-white/[0.06]">
           {step === 'email' ? (
             <>
               <div className="mb-6">
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Welcome back</h2>
-                <p className="text-gray-600">Enter your email to receive a login code</p>
+                <h2 className="text-2xl font-semibold text-gray-100 mb-2">Welcome back</h2>
+                <p className="text-gray-400">Enter your email to receive a login code</p>
               </div>
 
               <form onSubmit={handleEmailSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
                     Email address
                   </label>
                   <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                     <input
                       id="email"
                       type="email"
@@ -80,13 +80,13 @@ export function Login() {
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="you@example.com"
                       required
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     />
                   </div>
                 </div>
 
                 {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
                     {error}
                   </div>
                 )}
@@ -110,19 +110,19 @@ export function Login() {
           ) : (
             <>
               <div className="mb-6">
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Verify your email</h2>
-                <p className="text-gray-600">
-                  We sent a code to <span className="font-medium text-gray-900">{email}</span>
+                <h2 className="text-2xl font-semibold text-gray-100 mb-2">Verify your email</h2>
+                <p className="text-gray-400">
+                  We sent a code to <span className="font-medium text-gray-100">{email}</span>
                 </p>
               </div>
 
               <form onSubmit={handleOTPSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="otp" className="block text-sm font-medium text-gray-700 mb-2">
+                  <label htmlFor="otp" className="block text-sm font-medium text-gray-300 mb-2">
                     Verification code
                   </label>
                   <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
                     <input
                       id="otp"
                       type="text"
@@ -131,13 +131,13 @@ export function Login() {
                       placeholder="000000"
                       required
                       maxLength={6}
-                      className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
+                      className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
                     />
                   </div>
                 </div>
 
                 {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                  <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
                     {error}
                   </div>
                 )}
@@ -164,7 +164,7 @@ export function Login() {
                     setOtpCode('');
                     setError('');
                   }}
-                  className="w-full text-sm text-gray-600 hover:text-gray-900"
+                  className="w-full text-sm text-gray-400 hover:text-gray-200"
                 >
                   Use a different email
                 </button>

@@ -416,8 +416,8 @@ export function ChatDetail() {
   if (!chat) {
     return (
       <div className="text-center py-12">
-        <h2 className="text-xl font-semibold text-gray-900">Chat not found</h2>
-        <Link to="/chats" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
+        <h2 className="text-xl font-semibold text-gray-100">Chat not found</h2>
+        <Link to="/chats" className="text-primary-600 hover:text-primary-400 mt-2 inline-block">
           Back to chats
         </Link>
       </div>
@@ -427,13 +427,13 @@ export function ChatDetail() {
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-gray-200">
+      <div className="flex items-center justify-between pb-4 border-b border-white/[0.06]">
         <div className="flex items-center">
-          <Link to="/chats" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/chats" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{chat.title}</h1>
+            <h1 className="text-2xl font-bold text-gray-100">{chat.title}</h1>
             <p className="text-sm text-gray-500">
               {chat.messages.length} messages • Created {new Date(chat.created_at).toLocaleDateString()}
             </p>
@@ -445,9 +445,9 @@ export function ChatDetail() {
       <div className="flex-1 overflow-y-auto py-4 space-y-4">
         {chat.messages.length === 0 ? (
           <div className="text-center py-12">
-            <Bot className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">Start a conversation</h3>
-            <p className="text-gray-600">Send a message to begin chatting with your AI assistant</p>
+            <Bot className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-100 mb-2">Start a conversation</h3>
+            <p className="text-gray-400">Send a message to begin chatting with your AI assistant</p>
           </div>
         ) : (
           chat.messages.map((msg) => (
@@ -464,7 +464,7 @@ export function ChatDetail() {
                   className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
                     msg.role === 'user'
                       ? 'bg-primary-600 text-white ml-3'
-                      : 'bg-gray-200 text-gray-600 mr-3'
+                      : 'bg-[#1e1e1e] text-gray-400 mr-3'
                   }`}
                 >
                   {msg.role === 'user' ? (
@@ -476,26 +476,26 @@ export function ChatDetail() {
                 <div className="flex-1">
                   {/* Tool response message */}
                   {msg.role === 'tool' ? (
-                    <div className="border border-purple-200 bg-purple-50 rounded-lg overflow-hidden">
+                    <div className="border border-purple-800/30 bg-purple-900/20 rounded-lg overflow-hidden">
                       <button
                         onClick={() => toggleToolCall(msg.id)}
-                        className="w-full px-3 py-2 flex items-center justify-between hover:bg-purple-100 transition-colors"
+                        className="w-full px-3 py-2 flex items-center justify-between hover:bg-purple-900/30 transition-colors"
                       >
                         <div className="flex items-center gap-2">
-                          <Wrench className="w-4 h-4 text-purple-600" />
+                          <Wrench className="w-4 h-4 text-purple-400" />
                           <span className="text-sm font-medium text-purple-900">
                             Tool Response: {msg.name}
                           </span>
                         </div>
                         {expandedToolCalls.has(msg.id) ? (
-                          <ChevronDown className="w-4 h-4 text-purple-600" />
+                          <ChevronDown className="w-4 h-4 text-purple-400" />
                         ) : (
-                          <ChevronRight className="w-4 h-4 text-purple-600" />
+                          <ChevronRight className="w-4 h-4 text-purple-400" />
                         )}
                       </button>
                       {expandedToolCalls.has(msg.id) && (
-                        <div className="px-3 py-2 border-t border-purple-200 bg-white">
-                          <pre className="text-xs text-gray-800 whitespace-pre-wrap font-mono overflow-x-auto">
+                        <div className="px-3 py-2 border-t border-purple-800/30 bg-[#161616]">
+                          <pre className="text-xs text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
                             {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
                           </pre>
                         </div>
@@ -507,10 +507,10 @@ export function ChatDetail() {
                       className={`rounded-lg px-4 py-2 ${
                         msg.role === 'user'
                           ? 'text-white'
-                          : 'text-gray-900'
+                          : 'text-gray-100'
                       }`}
                       style={{
-                        backgroundColor: msg.role === 'user' ? '#2563eb' : '#f3f4f6'
+                        backgroundColor: msg.role === 'user' ? '#2563eb' : '#1e1e1e'
                       }}
                     >
                       {/* Render multimodal content */}
@@ -550,14 +550,14 @@ export function ChatDetail() {
                                   );
                                 } else if (part.type === 'audio') {
                                   return (
-                                    <div key={idx} className="flex items-center gap-2 p-2 bg-white bg-opacity-20 rounded">
+                                    <div key={idx} className="flex items-center gap-2 p-2 bg-[#161616] bg-opacity-20 rounded">
                                       <Music className="w-4 h-4" />
                                       <span className="text-xs">Audio file ({part.format})</span>
                                     </div>
                                   );
                                 } else if (part.type === 'file') {
                                   return (
-                                    <div key={idx} className="flex items-center gap-2 p-2 bg-white bg-opacity-20 rounded">
+                                    <div key={idx} className="flex items-center gap-2 p-2 bg-[#161616] bg-opacity-20 rounded">
                                       <FileText className="w-4 h-4" />
                                       <span className="text-xs">{part.filename || 'File attachment'}</span>
                                     </div>
@@ -585,7 +585,7 @@ export function ChatDetail() {
 
                   {/* Tool calls made by assistant */}
                   {msg.tool_calls && msg.tool_calls.length > 0 && (
-                    <div className="mt-2 border border-amber-200 bg-amber-50 rounded-lg overflow-hidden">
+                    <div className="mt-2 border border-amber-800/30 bg-amber-900/20 rounded-lg overflow-hidden">
                       <button
                         onClick={() => toggleToolCall(`${msg.id}-calls`)}
                         className="w-full px-3 py-2 flex items-center justify-between hover:bg-amber-100 transition-colors"
@@ -603,14 +603,14 @@ export function ChatDetail() {
                         )}
                       </button>
                       {expandedToolCalls.has(`${msg.id}-calls`) && (
-                        <div className="px-3 py-2 border-t border-amber-200 bg-white space-y-2">
+                        <div className="px-3 py-2 border-t border-amber-800/30 bg-[#161616] space-y-2">
                           {msg.tool_calls.map((call: any, idx: number) => (
                             <div key={idx} className="text-xs">
                               <p className="font-medium text-amber-900">
                                 {call.function?.name || 'Unknown function'}
                               </p>
                               {call.function?.arguments && (
-                                <pre className="mt-1 text-gray-700 whitespace-pre-wrap font-mono overflow-x-auto">
+                                <pre className="mt-1 text-gray-300 whitespace-pre-wrap font-mono overflow-x-auto">
                                   {call.function.arguments}
                                 </pre>
                               )}
@@ -630,11 +630,11 @@ export function ChatDetail() {
         {isStreaming && streamingContent && (
           <div className="flex justify-start">
             <div className="flex items-start max-w-[80%]">
-              <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-gray-200 text-gray-600 mr-3">
+              <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-[#1e1e1e] text-gray-400 mr-3">
                 <Bot className="w-5 h-5" />
               </div>
               <div className="flex-1">
-                <div className="rounded-lg px-4 py-2 bg-gray-100 text-gray-900">
+                <div className="rounded-lg px-4 py-2 bg-[#161616] text-gray-100">
                   <div className="flex items-start gap-2">
                     <div className="text-sm prose prose-sm max-w-none prose-pre:bg-gray-800 prose-pre:text-gray-100 flex-1">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -655,9 +655,9 @@ export function ChatDetail() {
             {pendingApprovals.map((approval) => {
               const isProcessing = processingApproval === approval.tool_call_id;
               return (
-                <div key={approval.tool_call_id} className={`border-2 ${isProcessing ? 'border-blue-400 bg-blue-50' : 'border-yellow-400 bg-yellow-50'} rounded-lg p-4 shadow-md transition-all`}>
+                <div key={approval.tool_call_id} className={`border-2 ${isProcessing ? 'border-blue-400 bg-blue-900/20' : 'border-yellow-400 bg-yellow-900/20'} rounded-lg p-4 transition-all`}>
                   <div className="flex items-start gap-3">
-                    <div className={`flex-shrink-0 w-10 h-10 rounded-full ${isProcessing ? 'bg-blue-100' : 'bg-yellow-100'} flex items-center justify-center`}>
+                    <div className={`flex-shrink-0 w-10 h-10 rounded-full ${isProcessing ? 'bg-blue-900/30' : 'bg-yellow-900/30'} flex items-center justify-center`}>
                       {isProcessing ? (
                         <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
                       ) : (
@@ -665,18 +665,18 @@ export function ChatDetail() {
                       )}
                     </div>
                     <div className="flex-1">
-                      <h4 className={`font-semibold ${isProcessing ? 'text-blue-900' : 'text-yellow-900'} mb-1`}>
+                      <h4 className={`font-semibold ${isProcessing ? 'text-blue-300' : 'text-yellow-900'} mb-1`}>
                         {isProcessing ? 'Processing...' : 'Function Approval Required'}
                       </h4>
-                      <p className={`text-sm ${isProcessing ? 'text-blue-800' : 'text-yellow-800'} mb-2`}>
+                      <p className={`text-sm ${isProcessing ? 'text-blue-300' : 'text-yellow-300'} mb-2`}>
                         The agent wants to call <code className={`px-2 py-0.5 ${isProcessing ? 'bg-blue-200' : 'bg-yellow-200'} rounded font-mono text-xs`}>{approval.function_namespace}/{approval.function_name}</code>
                       </p>
 
                       {/* Show arguments */}
                       {Object.keys(approval.arguments).length > 0 && (
                         <div className="mb-3">
-                          <p className={`text-xs font-medium ${isProcessing ? 'text-blue-900' : 'text-yellow-900'} mb-1`}>Arguments:</p>
-                          <pre className={`text-xs bg-white border ${isProcessing ? 'border-blue-200' : 'border-yellow-200'} rounded p-2 overflow-x-auto`}>
+                          <p className={`text-xs font-medium ${isProcessing ? 'text-blue-300' : 'text-yellow-900'} mb-1`}>Arguments:</p>
+                          <pre className={`text-xs bg-[#161616] border ${isProcessing ? 'border-blue-800/30' : 'border-yellow-800/30'} rounded p-2 overflow-x-auto`}>
                             {JSON.stringify(approval.arguments, null, 2)}
                           </pre>
                         </div>
@@ -686,7 +686,7 @@ export function ChatDetail() {
                         <button
                           onClick={() => handleApproval(approval, true)}
                           disabled={isProcessing}
-                          className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm transition-colors"
+                          className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm transition-colors"
                         >
                           {isProcessing ? (
                             <>
@@ -703,7 +703,7 @@ export function ChatDetail() {
                         <button
                           onClick={() => handleApproval(approval, false)}
                           disabled={isProcessing}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm transition-colors"
+                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-medium text-sm transition-colors"
                         >
                           <X className="w-4 h-4" />
                           Reject
@@ -721,26 +721,26 @@ export function ChatDetail() {
       </div>
 
       {/* Input */}
-      <div className="pt-4 border-t border-gray-200">
+      <div className="pt-4 border-t border-white/[0.06]">
         {/* Attachments Preview */}
         {attachments.length > 0 && (
           <div className="mb-3 flex flex-wrap gap-2">
             {attachments.map((attachment) => (
               <div key={attachment.id} className="relative group">
-                <div className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-2 px-3 py-2 bg-[#161616] rounded-lg border border-white/[0.06]">
                   {attachment.type === 'image' && attachment.preview ? (
                     <img src={attachment.preview} alt={attachment.file.name} className="w-12 h-12 object-cover rounded" />
                   ) : attachment.type === 'audio' ? (
-                    <Music className="w-5 h-5 text-purple-600" />
+                    <Music className="w-5 h-5 text-purple-400" />
                   ) : (
                     <FileText className="w-5 h-5 text-blue-600" />
                   )}
-                  <span className="text-sm text-gray-700 max-w-[150px] truncate">
+                  <span className="text-sm text-gray-300 max-w-[150px] truncate">
                     {attachment.file.name}
                   </span>
                   <button
                     onClick={() => removeAttachment(attachment.id)}
-                    className="ml-1 p-1 hover:bg-gray-200 rounded transition-colors"
+                    className="ml-1 p-1 hover:bg-[#1e1e1e] rounded transition-colors"
                     type="button"
                   >
                     <X className="w-4 h-4 text-gray-500" />

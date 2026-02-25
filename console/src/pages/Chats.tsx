@@ -73,8 +73,8 @@ export function Chats() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Chats</h1>
-          <p className="text-gray-600 mt-1">Manage your AI conversations</p>
+          <h1 className="text-3xl font-bold text-gray-100">Chats</h1>
+          <p className="text-gray-400 mt-1">Manage your AI conversations</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -87,7 +87,7 @@ export function Chats() {
 
       {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
         <input
           type="text"
           value={searchQuery}
@@ -100,14 +100,14 @@ export function Chats() {
       {/* Chats Table */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Your Chats</h2>
+          <h2 className="text-lg font-semibold text-gray-100">Your Chats</h2>
           <span className="text-sm text-gray-500">{filteredChats?.length || 0} chats</span>
         </div>
 
         {isLoading ? (
           <div className="text-center py-12">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-            <p className="text-gray-600 mt-2">Loading chats...</p>
+            <p className="text-gray-400 mt-2">Loading chats...</p>
           </div>
         ) : !filteredChats || filteredChats.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
@@ -115,8 +115,8 @@ export function Chats() {
               'No chats match your search'
             ) : !assistants || assistants.length === 0 ? (
               <div>
-                <Bot className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                <p className="text-gray-900 font-medium mb-1">Create an agent first to start chatting</p>
+                <Bot className="w-12 h-12 text-gray-500 mx-auto mb-3" />
+                <p className="text-gray-100 font-medium mb-1">Create an agent first to start chatting</p>
                 <p className="text-sm text-gray-500 mb-4">You need at least one agent before you can start a conversation</p>
                 <Link to="/agents" className="btn btn-primary">
                   Go to Agents
@@ -129,7 +129,7 @@ export function Chats() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-[#0d0d0d] border-b border-white/[0.06]">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Title
@@ -148,10 +148,10 @@ export function Chats() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-white/[0.06]">
                 {filteredChats.map((chat: any) => {
                   return (
-                    <tr key={chat.id} className="hover:bg-gray-50">
+                    <tr key={chat.id} className="hover:bg-white/5">
                       <td className="px-4 py-3">
                         <Link
                           to={`/chats/${chat.id}`}
@@ -160,19 +160,19 @@ export function Chats() {
                           {chat.title}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-900">
+                      <td className="px-4 py-3 text-sm text-gray-100">
                         {chat.agent_namespace && chat.agent_name ? (
                           `${chat.agent_namespace}/${chat.agent_name}`
                         ) : (
-                          <span className="text-gray-400">No agent</span>
+                          <span className="text-gray-500">No agent</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">
+                      <td className="px-4 py-3 text-sm text-gray-400">
                         {chat.user_email}
                       </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">
+                      <td className="px-4 py-3 text-sm text-gray-400">
                         {chat.last_message_at ? new Date(chat.last_message_at).toLocaleString() : (
-                          <span className="text-gray-400">No messages</span>
+                          <span className="text-gray-500">No messages</span>
                         )}
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -182,7 +182,7 @@ export function Chats() {
                               deleteMutation.mutate(chat.id);
                             }
                           }}
-                          className="p-1 text-red-600 hover:text-red-900 hover:bg-red-50 rounded"
+                          className="p-1 text-red-600 hover:text-red-900 hover:bg-red-900/20 rounded"
                           disabled={deleteMutation.isPending}
                         >
                           <Trash2 className="w-4 h-4" />
@@ -200,11 +200,11 @@ export function Chats() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Create New Chat</h2>
+          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Create New Chat</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label htmlFor="title" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="title" className="block text-sm font-medium text-gray-300 mb-2">
                   Chat Title
                 </label>
                 <input
@@ -220,7 +220,7 @@ export function Chats() {
               </div>
 
               <div>
-                <label htmlFor="assistant" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="assistant" className="block text-sm font-medium text-gray-300 mb-2">
                   Agent *
                 </label>
                 <select
@@ -252,7 +252,7 @@ export function Chats() {
 
                 return (
                   <div className="border-t pt-4">
-                    <h3 className="text-sm font-medium text-gray-900 mb-3">Input Parameters</h3>
+                    <h3 className="text-sm font-medium text-gray-100 mb-3">Input Parameters</h3>
                     {Object.entries(properties).map(([key, prop]: [string, any]) => (
                       <SchemaFormField
                         key={key}

@@ -89,8 +89,8 @@ export function Queries() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Queries</h1>
-          <p className="text-gray-600 mt-1">SQL query templates for agent data access</p>
+          <h1 className="text-3xl font-bold text-gray-100">Queries</h1>
+          <p className="text-gray-400 mt-1">SQL query templates for agent data access</p>
         </div>
         <button
           onClick={() => { resetCreateForm(); setShowCreateModal(true); }}
@@ -117,29 +117,29 @@ export function Queries() {
                   <Link
                     key={query.id}
                     to={`/queries/${query.namespace}/${query.name}`}
-                    className={`card hover:shadow-md transition-shadow block ${!query.is_active ? 'opacity-60 bg-gray-50' : ''}`}
+                    className={`card transition-colors block ${!query.is_active ? 'opacity-60 bg-[#0d0d0d]' : ''}`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center flex-1">
-                        <SearchCode className={`w-6 h-6 mr-3 flex-shrink-0 ${query.is_active ? 'text-primary-600' : 'text-gray-400'}`} />
+                        <SearchCode className={`w-6 h-6 mr-3 flex-shrink-0 ${query.is_active ? 'text-primary-600' : 'text-gray-500'}`} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <h3 className="font-semibold text-gray-900 font-mono">
+                            <h3 className="font-semibold text-gray-100 font-mono">
                               {query.namespace}/{query.name}
                             </h3>
                             <span className={`px-2 py-0.5 text-xs font-medium rounded ${
                               query.operation === 'read'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-orange-100 text-orange-700'
+                                ? 'bg-blue-900/30 text-blue-400'
+                                : 'bg-orange-900/30 text-orange-400'
                             }`}>
                               {query.operation}
                             </span>
                             {!query.is_active && (
-                              <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs font-medium rounded">Inactive</span>
+                              <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
                             )}
                           </div>
                           {query.description && (
-                            <p className="text-sm text-gray-600 mt-1">{query.description}</p>
+                            <p className="text-sm text-gray-400 mt-1">{query.description}</p>
                           )}
                           <p className="text-xs text-gray-500 mt-1">
                             Timeout: {query.timeout_ms}ms | Max rows: {query.max_rows}
@@ -154,7 +154,7 @@ export function Queries() {
                             deleteMutation.mutate({ namespace: query.namespace, name: query.name });
                           }
                         }}
-                        className="text-red-600 hover:text-red-700 ml-4 flex-shrink-0"
+                        className="text-red-600 hover:text-red-400 ml-4 flex-shrink-0"
                         disabled={deleteMutation.isPending}
                       >
                         <Trash2 className="w-5 h-5" />
@@ -168,9 +168,9 @@ export function Queries() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <SearchCode className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No queries configured</h3>
-          <p className="text-gray-600 mb-4">Create SQL query templates for agents to access external data</p>
+          <SearchCode className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No queries configured</h3>
+          <p className="text-gray-400 mb-4">Create SQL query templates for agents to access external data</p>
           <button onClick={() => setShowCreateModal(true)} className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Add Query
@@ -181,12 +181,12 @@ export function Queries() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Add Query</h2>
+          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Query</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Namespace</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Namespace</label>
                   <input
                     type="text"
                     value={createFormData.namespace || 'default'}
@@ -195,7 +195,7 @@ export function Queries() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
                   <input
                     type="text"
                     value={createFormData.name}
@@ -208,7 +208,7 @@ export function Queries() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
                 <input
                   type="text"
                   value={createFormData.description || ''}
@@ -219,7 +219,7 @@ export function Queries() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Connection *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Connection *</label>
                   <select
                     value={createFormData.database_connection_id}
                     onChange={(e) => setCreateFormData({ ...createFormData, database_connection_id: e.target.value })}
@@ -233,7 +233,7 @@ export function Queries() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Operation *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Operation *</label>
                   <select
                     value={createFormData.operation}
                     onChange={(e) => setCreateFormData({ ...createFormData, operation: e.target.value })}
@@ -246,7 +246,7 @@ export function Queries() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">SQL *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">SQL *</label>
                 <textarea
                   value={createFormData.sql}
                   onChange={(e) => setCreateFormData({ ...createFormData, sql: e.target.value })}
@@ -271,7 +271,7 @@ export function Queries() {
               />
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Timeout (ms)</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Timeout (ms)</label>
                   <input
                     type="number"
                     value={createFormData.timeout_ms || 5000}
@@ -280,7 +280,7 @@ export function Queries() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Max Rows</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Max Rows</label>
                   <input
                     type="number"
                     value={createFormData.max_rows || 1000}

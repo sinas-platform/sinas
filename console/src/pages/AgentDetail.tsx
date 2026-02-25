@@ -136,8 +136,8 @@ export function AgentDetail() {
   if (!agent) {
     return (
       <div className="text-center py-12">
-        <h2 className="text-xl font-semibold text-gray-900">Agent not found</h2>
-        <Link to="/agents" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
+        <h2 className="text-xl font-semibold text-gray-100">Agent not found</h2>
+        <Link to="/agents" className="text-primary-600 hover:text-primary-400 mt-2 inline-block">
           Back to agents
         </Link>
       </div>
@@ -149,12 +149,12 @@ export function AgentDetail() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Link to="/agents" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/agents" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{agent.name}</h1>
-            <p className="text-gray-600 mt-1">Configure your AI agent</p>
+            <h1 className="text-3xl font-bold text-gray-100">{agent.name}</h1>
+            <p className="text-gray-400 mt-1">Configure your AI agent</p>
           </div>
         </div>
         <button
@@ -221,11 +221,11 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Basic Information</h2>
 
           <div className="space-y-4">
             <div>
-              <label htmlFor="namespace" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="namespace" className="block text-sm font-medium text-gray-300 mb-2">
                 Namespace *
               </label>
               <input
@@ -242,7 +242,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </div>
 
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-2">
                 Name *
               </label>
               <input
@@ -256,7 +256,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </div>
 
             <div>
-              <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="description" className="block text-sm font-medium text-gray-300 mb-2">
                 Description
               </label>
               <input
@@ -270,7 +270,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </div>
 
             <div>
-              <label htmlFor="system_prompt" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="system_prompt" className="block text-sm font-medium text-gray-300 mb-2">
                 System Prompt
               </label>
               <textarea
@@ -293,9 +293,9 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   type="checkbox"
                   checked={formData.is_active ?? agent.is_active}
                   onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                 />
-                <label htmlFor="is_active" className="ml-2 text-sm text-gray-700">
+                <label htmlFor="is_active" className="ml-2 text-sm text-gray-300">
                   Active
                 </label>
               </div>
@@ -305,9 +305,9 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   type="checkbox"
                   checked={formData.is_default ?? agent.is_default}
                   onChange={(e) => setFormData({ ...formData, is_default: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                 />
-                <label htmlFor="is_default" className="ml-2 text-sm text-gray-700">
+                <label htmlFor="is_default" className="ml-2 text-sm text-gray-300">
                   Default agent
                 </label>
               </div>
@@ -316,12 +316,12 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
         </div>
 
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">LLM Configuration</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">LLM Configuration</h2>
 
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label htmlFor="llm_provider_id" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="llm_provider_id" className="block text-sm font-medium text-gray-300 mb-2">
                   LLM Provider
                 </label>
                 <select
@@ -349,7 +349,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               </div>
 
               <div>
-                <label htmlFor="model" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="model" className="block text-sm font-medium text-gray-300 mb-2">
                   Model
                 </label>
                 <input
@@ -367,7 +367,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </div>
 
             <div>
-              <label htmlFor="temperature" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="temperature" className="block text-sm font-medium text-gray-300 mb-2">
                 Temperature ({formData.temperature ?? agent.temperature})
               </label>
               <input
@@ -388,7 +388,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </div>
 
             <div>
-              <label htmlFor="max_tokens" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="max_tokens" className="block text-sm font-medium text-gray-300 mb-2">
                 Max Tokens (optional)
               </label>
               <input
@@ -409,8 +409,8 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
         </div>
 
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Input/Output Schemas</h2>
-          <p className="text-sm text-gray-600 mb-4">
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Input/Output Schemas</h2>
+          <p className="text-sm text-gray-400 mb-4">
             Define JSON schemas for input variables and expected output structure
           </p>
 
@@ -430,7 +430,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             />
 
             <div>
-              <label htmlFor="initial_messages" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="initial_messages" className="block text-sm font-medium text-gray-300 mb-2">
                 Initial Messages (JSON)
               </label>
               <textarea
@@ -456,17 +456,17 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
         </div>
 
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Tools & Access</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Tools & Access</h2>
 
           {/* Tabs */}
-          <div className="flex border-b border-gray-200 mb-4">
+          <div className="flex border-b border-white/[0.06] mb-4">
             <button
               type="button"
               onClick={() => setToolsTab('assistants')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'assistants'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               Other Agents
@@ -477,7 +477,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'skills'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               Skills
@@ -488,7 +488,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'functions'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               Functions
@@ -499,7 +499,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'queries'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               Queries
@@ -510,7 +510,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'states'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               States
@@ -521,7 +521,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'collections'
                   ? 'text-primary-600 border-b-2 border-primary-600'
-                  : 'text-gray-600 hover:text-gray-900'
+                  : 'text-gray-400 hover:text-gray-100'
               }`}
             >
               Collections
@@ -534,7 +534,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             {toolsTab === 'assistants' && (
               <div>
                 <p className="text-xs text-gray-500 mb-3">
-                  Select agents or add wildcard patterns (<code className="text-xs bg-gray-100 px-1 rounded">namespace/*</code>, <code className="text-xs bg-gray-100 px-1 rounded">*/*</code>)
+                  Select agents or add wildcard patterns (<code className="text-xs bg-[#161616] px-1 rounded">namespace/*</code>, <code className="text-xs bg-[#161616] px-1 rounded">*/*</code>)
                 </p>
                 {/* Tags for selected agents/patterns */}
                 {(() => {
@@ -548,8 +548,8 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                             key={entry}
                             className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border ${
                               isWildcard
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-primary-50 text-primary-700 border-primary-200'
+                                ? 'bg-amber-900/20 text-amber-400 border-amber-800/30'
+                                : 'bg-primary-900/20 text-primary-400 border-primary-800/30'
                             }`}
                           >
                             {isWildcard && <span className="font-mono">*</span>}
@@ -576,7 +576,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   <input
                     type="text"
                     placeholder="Type to search agents or enter a pattern..."
-                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-primary-500 focus:border-primary-500"
+                    className="w-full px-3 py-1.5 text-sm border border-white/10 rounded-lg focus:ring-primary-500 focus:border-primary-500"
                     onChange={(e) => {
                       const input = e.target as HTMLInputElement;
                       input.dataset.filter = input.value;
@@ -643,12 +643,12 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     if (allSuggestions.length === 0) return null;
 
                     return (
-                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                      <div className="absolute z-10 w-full mt-1 bg-[#161616] border border-white/[0.06] rounded-lg max-h-48 overflow-y-auto">
                         {allSuggestions.map((suggestion) => (
                           <button
                             key={suggestion.value}
                             type="button"
-                            className="w-full text-left px-3 py-2 hover:bg-gray-50 flex items-center gap-2 text-sm"
+                            className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-sm"
                             onMouseDown={(e) => {
                               e.preventDefault();
                               const updated = [...current, suggestion.value];
@@ -665,7 +665,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                               <Bot className="w-4 h-4 text-primary-600 flex-shrink-0" />
                             )}
                             <div className="flex-1 min-w-0">
-                              <div className="font-medium text-gray-900 truncate">{suggestion.label}</div>
+                              <div className="font-medium text-gray-100 truncate">{suggestion.label}</div>
                               {suggestion.description && (
                                 <div className="text-xs text-gray-500 truncate">{suggestion.description}</div>
                               )}
@@ -686,7 +686,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable skills that this agent can retrieve for instructions. Mark as "Preload" to inject into system prompt instead of exposing as tool.
                 </p>
                 {skills && skills.length > 0 ? (
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-96 overflow-y-auto">
+                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-96 overflow-y-auto">
                     {skills.map((skill: any) => {
                       const skillIdentifier = `${skill.namespace}/${skill.name}`;
                       const current = formData.enabled_skills || agent.enabled_skills || [];
@@ -697,7 +697,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       return (
                         <div
                           key={skill.id}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded"
+                          className="flex items-start p-2 hover:bg-white/5 rounded"
                         >
                           <input
                             type="checkbox"
@@ -709,15 +709,15 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((s: any) => s.skill !== skillIdentifier);
                               setFormData({ ...formData, enabled_skills: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-medium text-gray-900 font-mono">
+                              <span className="text-sm font-medium text-gray-100 font-mono">
                                 {skillIdentifier}
                               </span>
                               {!skill.is_active && (
-                                <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">
+                                <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
                                   Inactive
                                 </span>
                               )}
@@ -739,9 +739,9 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                     );
                                     setFormData({ ...formData, enabled_skills: updated });
                                   }}
-                                  className="w-3 h-3 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                  className="w-3 h-3 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                                 />
-                                <span className="ml-2 text-xs text-gray-600">
+                                <span className="ml-2 text-xs text-gray-400">
                                   Preload (inject into system prompt)
                                 </span>
                               </label>
@@ -752,7 +752,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                     <p className="text-sm text-gray-500">No skills available. Create skills to use them with agents.</p>
                   </div>
                 )}
@@ -766,7 +766,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Select which functions this agent can call and configure default parameters
                 </p>
                 {functions && functions.length > 0 ? (
-                  <div className="space-y-3 border border-gray-200 rounded-lg p-3 max-h-[600px] overflow-y-auto">
+                  <div className="space-y-3 border border-white/[0.06] rounded-lg p-3 max-h-[600px] overflow-y-auto">
                     {functions.map((func: any) => {
                       const funcIdentifier = `${func.namespace}/${func.name}`;
                       const isEnabled = (formData.enabled_functions || agent.enabled_functions || []).includes(funcIdentifier);
@@ -778,7 +778,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       return (
                         <div
                           key={func.id}
-                          className="border border-gray-200 rounded-lg p-3"
+                          className="border border-white/[0.06] rounded-lg p-3"
                         >
                           <div className="flex items-start gap-3">
                             <input
@@ -791,21 +791,21 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   : currentFunctions.filter((id: string) => id !== funcIdentifier);
                                 setFormData({ ...formData, enabled_functions: newFunctions });
                               }}
-                              className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                              className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                             />
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
-                                <span className="text-sm font-medium text-gray-900 font-mono">
+                                <span className="text-sm font-medium text-gray-100 font-mono">
                                   {funcIdentifier}
                                 </span>
                                 {!func.is_active && (
-                                  <span className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">
+                                  <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
                                     Inactive
                                   </span>
                                 )}
                               </div>
                               {func.description && (
-                                <p className="text-xs text-gray-600 mt-0.5">{func.description}</p>
+                                <p className="text-xs text-gray-400 mt-0.5">{func.description}</p>
                               )}
 
                               {/* Configure Parameters Button */}
@@ -821,7 +821,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                     }
                                     setExpandedFunctionParams(newExpanded);
                                   }}
-                                  className="mt-2 text-xs text-primary-600 hover:text-primary-700 font-medium"
+                                  className="mt-2 text-xs text-primary-600 hover:text-primary-400 font-medium"
                                 >
                                   {isExpanded ? '▼ Hide' : '▶'} Configure Default Parameters
                                 </button>
@@ -829,7 +829,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
 
                               {/* Parameter Configuration */}
                               {isEnabled && isExpanded && hasParameters && (
-                                <div className="mt-3 space-y-3 pl-4 border-l-2 border-primary-200">
+                                <div className="mt-3 space-y-3 pl-4 border-l-2 border-primary-800/30">
                                   <div className="text-xs text-gray-500 italic space-y-1 mb-2">
                                     <p>Tip: Use Jinja2 templates like {'{{'} variable_name {'}}'}  to reference agent input variables</p>
                                     <p>Locked parameters are hidden from the LLM and cannot be overridden (useful for API keys, sender emails, etc.)</p>
@@ -847,7 +847,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
 
                                     return (
                                       <div key={paramName} className="space-y-1">
-                                        <label className="block text-xs font-medium text-gray-700">
+                                        <label className="block text-xs font-medium text-gray-300">
                                           {paramName}
                                           {paramDef.type && (
                                             <span className="ml-1 text-gray-500">({paramDef.type})</span>
@@ -900,9 +900,9 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                               }
                                               setFormData({ ...formData, function_parameters: newFunctionParams });
                                             }}
-                                            className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                            className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
                                           />
-                                          <span className="text-xs text-gray-600">
+                                          <span className="text-xs text-gray-400">
                                             Locked
                                           </span>
                                         </label>
@@ -921,7 +921,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                     <p className="text-sm text-gray-500">No functions available. Create functions first.</p>
                   </div>
                 )}
@@ -933,16 +933,16 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               <div className="space-y-4">
                 {/* Read-only Namespaces */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Read-only State Namespaces</h3>
+                  <h3 className="text-sm font-semibold text-gray-100 mb-2">Read-only State Namespaces</h3>
                   <p className="text-xs text-gray-500 mb-3">
                     This agent can retrieve states from these namespaces (read-only)
                   </p>
                   {states && states.length > 0 ? (
-                    <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
                       {Array.from(new Set(states.map((c: any) => c.namespace))).map((namespace: string) => (
                         <label
                           key={namespace}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -954,10 +954,10 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ns: string) => ns !== namespace);
                               setFormData({ ...formData, state_namespaces_readonly: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            className="mt-1 w-4 h-4 text-blue-600 border-white/10 rounded focus:ring-blue-500"
                           />
                           <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-900 font-mono">{namespace}</span>
+                            <span className="text-sm font-medium text-gray-100 font-mono">{namespace}</span>
                             <p className="text-xs text-gray-500 mt-0.5">
                               {states.filter((c: any) => c.namespace === namespace).length} state(s)
                             </p>
@@ -966,7 +966,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       ))}
                     </div>
                   ) : (
-                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                       <p className="text-sm text-gray-500">No states available. Create states first.</p>
                     </div>
                   )}
@@ -974,16 +974,16 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
 
                 {/* Read-write Namespaces */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-900 mb-2">Read-write State Namespaces</h3>
+                  <h3 className="text-sm font-semibold text-gray-100 mb-2">Read-write State Namespaces</h3>
                   <p className="text-xs text-gray-500 mb-3">
                     This agent can save, update, and delete states in these namespaces (full access)
                   </p>
                   {states && states.length > 0 ? (
-                    <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
                       {Array.from(new Set(states.map((c: any) => c.namespace))).map((namespace: string) => (
                         <label
                           key={namespace}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -995,10 +995,10 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ns: string) => ns !== namespace);
                               setFormData({ ...formData, state_namespaces_readwrite: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-900 font-mono">{namespace}</span>
+                            <span className="text-sm font-medium text-gray-100 font-mono">{namespace}</span>
                             <p className="text-xs text-gray-500 mt-0.5">
                               {states.filter((c: any) => c.namespace === namespace).length} state(s)
                             </p>
@@ -1007,7 +1007,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       ))}
                     </div>
                   ) : (
-                    <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                       <p className="text-sm text-gray-500">No states available. Create states first.</p>
                     </div>
                   )}
@@ -1022,13 +1022,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable SQL queries for this agent to execute against external databases
                 </p>
                 {queries && queries.length > 0 ? (
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
                     {queries.map((query: any) => {
                       const queryRef = `${query.namespace}/${query.name}`;
                       return (
                         <label
                           key={queryRef}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -1040,19 +1040,19 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ref: string) => ref !== queryRef);
                               setFormData({ ...formData, enabled_queries: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-900 font-mono">{queryRef}</span>
+                            <span className="text-sm font-medium text-gray-100 font-mono">{queryRef}</span>
                             <span className={`ml-2 px-1.5 py-0.5 text-xs font-medium rounded ${
                               query.operation === 'read'
-                                ? 'bg-blue-100 text-blue-700'
-                                : 'bg-orange-100 text-orange-700'
+                                ? 'bg-blue-900/30 text-blue-400'
+                                : 'bg-orange-900/30 text-orange-400'
                             }`}>
                               {query.operation}
                             </span>
                             {query.description && (
-                              <p className="text-xs text-gray-600 mt-0.5">{query.description}</p>
+                              <p className="text-xs text-gray-400 mt-0.5">{query.description}</p>
                             )}
                           </div>
                         </label>
@@ -1060,7 +1060,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                     <p className="text-sm text-gray-500">No queries available. Create queries first.</p>
                   </div>
                 )}
@@ -1074,13 +1074,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable file collections for this agent to search and retrieve files
                 </p>
                 {collections && collections.length > 0 ? (
-                  <div className="space-y-2 border border-gray-200 rounded-lg p-3 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
                     {collections.map((coll: any) => {
                       const collRef = `${coll.namespace}/${coll.name}`;
                       return (
                         <label
                           key={collRef}
-                          className="flex items-start p-2 hover:bg-gray-50 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -1092,17 +1092,17 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ref: string) => ref !== collRef);
                               setFormData({ ...formData, enabled_collections: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-900 font-mono">{collRef}</span>
+                            <span className="text-sm font-medium text-gray-100 font-mono">{collRef}</span>
                           </div>
                         </label>
                       );
                     })}
                   </div>
                 ) : (
-                  <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                     <p className="text-sm text-gray-500">No collections available. Create collections first.</p>
                   </div>
                 )}
@@ -1111,24 +1111,24 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
           </div>
         </div>
 
-        <div className="card bg-gray-50">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Metadata</h2>
+        <div className="card bg-[#0d0d0d]">
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Metadata</h2>
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>
-              <dt className="font-medium text-gray-700">Created</dt>
-              <dd className="text-gray-600">{new Date(agent.created_at).toLocaleString()}</dd>
+              <dt className="font-medium text-gray-300">Created</dt>
+              <dd className="text-gray-400">{new Date(agent.created_at).toLocaleString()}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-700">Last Updated</dt>
-              <dd className="text-gray-600">{new Date(agent.updated_at).toLocaleString()}</dd>
+              <dt className="font-medium text-gray-300">Last Updated</dt>
+              <dd className="text-gray-400">{new Date(agent.updated_at).toLocaleString()}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-700">Agent ID</dt>
-              <dd className="text-gray-600 font-mono text-xs">{agent.id}</dd>
+              <dt className="font-medium text-gray-300">Agent ID</dt>
+              <dd className="text-gray-400 font-mono text-xs">{agent.id}</dd>
             </div>
             <div>
-              <dt className="font-medium text-gray-700">User ID</dt>
-              <dd className="text-gray-600 font-mono text-xs">{agent.user_id || 'N/A'}</dd>
+              <dt className="font-medium text-gray-300">User ID</dt>
+              <dd className="text-gray-400 font-mono text-xs">{agent.user_id || 'N/A'}</dd>
             </div>
           </dl>
         </div>
@@ -1158,13 +1158,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
         </div>
 
         {updateMutation.isSuccess && (
-          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+          <div className="p-3 bg-green-900/20 border border-green-800/30 rounded-lg text-sm text-green-400">
             Agent updated successfully!
           </div>
         )}
 
         {updateMutation.isError && (
-          <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
             Failed to update agent. Please try again.
           </div>
         )}

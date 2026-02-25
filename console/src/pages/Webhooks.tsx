@@ -23,8 +23,8 @@ export function Webhooks() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Webhooks</h1>
-          <p className="text-gray-600 mt-1">Configure webhook endpoints for external integrations</p>
+          <h1 className="text-3xl font-bold text-gray-100">Webhooks</h1>
+          <p className="text-gray-400 mt-1">Configure webhook endpoints for external integrations</p>
         </div>
         <Link to="/webhooks/new" className="btn btn-primary flex items-center">
           <Plus className="w-5 h-5 mr-2" />
@@ -45,12 +45,12 @@ export function Webhooks() {
                   <Webhook className="w-8 h-8 text-primary-600 mr-3 flex-shrink-0" />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-medium rounded">
+                      <span className="px-2 py-0.5 bg-blue-900/30 text-blue-300 text-xs font-medium rounded">
                         {webhook.http_method}
                       </span>
-                      <h3 className="font-semibold text-gray-900 font-mono">{webhook.path}</h3>
+                      <h3 className="font-semibold text-gray-100 font-mono">{webhook.path}</h3>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">{webhook.description || 'No description'}</p>
+                    <p className="text-sm text-gray-400 mt-1">{webhook.description || 'No description'}</p>
                     <div className="flex items-center gap-4 mt-1">
                       <p className="text-xs text-gray-500">
                         Function: <span className="font-mono">{webhook.function_namespace}/{webhook.function_name}</span>
@@ -77,7 +77,7 @@ export function Webhooks() {
                         deleteMutation.mutate(webhook.path);
                       }
                     }}
-                    className="text-red-600 hover:text-red-700"
+                    className="text-red-600 hover:text-red-400"
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="w-5 h-5" />
@@ -89,9 +89,9 @@ export function Webhooks() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Webhook className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No webhooks configured</h3>
-          <p className="text-gray-600 mb-4">Create webhooks to integrate with external services</p>
+          <Webhook className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No webhooks configured</h3>
+          <p className="text-gray-400 mb-4">Create webhooks to integrate with external services</p>
           <Link to="/webhooks/new" className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Webhook

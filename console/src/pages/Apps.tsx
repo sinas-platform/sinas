@@ -22,7 +22,7 @@ function ExposedNamespacesEditor({
     <div className="space-y-2">
       {RESOURCE_TYPES.map((type) => (
         <div key={type} className="flex items-center space-x-3">
-          <label className="w-28 text-sm font-medium text-gray-700 capitalize">{type}</label>
+          <label className="w-28 text-sm font-medium text-gray-300 capitalize">{type}</label>
           <input
             type="text"
             className="input flex-1"
@@ -107,7 +107,7 @@ function ResourceListEditor({
           <button
             type="button"
             onClick={() => removeResource(idx)}
-            className="text-red-500 hover:text-red-700 p-1"
+            className="text-red-500 hover:text-red-400 p-1"
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -152,7 +152,7 @@ function StatusBanner({ status }: { status?: AppStatus }) {
 
   if (status.ready) {
     return (
-      <div className="flex items-center gap-2 mt-2 px-3 py-1.5 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+      <div className="flex items-center gap-2 mt-2 px-3 py-1.5 bg-green-900/20 border border-green-800/30 rounded text-sm text-green-400">
         <CheckCircle className="w-4 h-4 shrink-0" />
         All resources and permissions satisfied
       </div>
@@ -171,7 +171,7 @@ function StatusBanner({ status }: { status?: AppStatus }) {
   }
 
   return (
-    <div className="mt-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+    <div className="mt-2 px-3 py-1.5 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-400">
       <div className="flex items-center gap-2 font-medium">
         <XCircle className="w-4 h-4 shrink-0" />
         Missing dependencies
@@ -320,8 +320,8 @@ export function Apps() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Apps</h1>
-          <p className="text-gray-600 mt-1">Manage application packages that bundle resources and permissions</p>
+          <h1 className="text-3xl font-bold text-gray-100">Apps</h1>
+          <p className="text-gray-400 mt-1">Manage application packages that bundle resources and permissions</p>
         </div>
         <div className="flex items-center space-x-2">
           {apps && apps.length > 0 && (
@@ -358,42 +358,42 @@ export function Apps() {
             const key = `${app.namespace}/${app.name}`;
             const status = appStatuses[key];
             return (
-              <div key={app.id} className="card hover:shadow-md transition-shadow">
+              <div key={app.id} className="card transition-colors">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
                       <AppWindow className="w-5 h-5 text-blue-500" />
-                      <h3 className="text-lg font-semibold text-gray-900">
+                      <h3 className="text-lg font-semibold text-gray-100">
                         {app.namespace}/{app.name}
                       </h3>
                       {!app.is_active && (
-                        <span className="px-2 py-1 text-xs bg-gray-200 text-gray-600 rounded">
+                        <span className="px-2 py-1 text-xs bg-[#1e1e1e] text-gray-400 rounded">
                           Inactive
                         </span>
                       )}
                     </div>
                     {app.description && (
-                      <p className="text-gray-600 mt-2">{app.description}</p>
+                      <p className="text-gray-400 mt-2">{app.description}</p>
                     )}
                     <StatusBanner status={status} />
                     <div className="flex flex-wrap gap-2 mt-3">
                       {(app.required_resources || []).length > 0 && (
-                        <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded">
+                        <span className="px-2 py-1 text-xs bg-blue-900/30 text-blue-400 rounded">
                           {app.required_resources.length} resource{app.required_resources.length !== 1 ? 's' : ''}
                         </span>
                       )}
                       {(app.required_permissions || []).length > 0 && (
-                        <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded">
+                        <span className="px-2 py-1 text-xs bg-purple-900/30 text-purple-400 rounded">
                           {app.required_permissions.length} required perm{app.required_permissions.length !== 1 ? 's' : ''}
                         </span>
                       )}
                       {(app.optional_permissions || []).length > 0 && (
-                        <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded">
+                        <span className="px-2 py-1 text-xs bg-yellow-900/30 text-yellow-400 rounded">
                           {app.optional_permissions.length} optional perm{app.optional_permissions.length !== 1 ? 's' : ''}
                         </span>
                       )}
                       {Object.entries(app.exposed_namespaces || {}).map(([type, namespaces]) => (
-                        <span key={type} className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded">
+                        <span key={type} className="px-2 py-1 text-xs bg-green-900/30 text-green-400 rounded">
                           {type}: {namespaces.join(', ')}
                         </span>
                       ))}
@@ -425,18 +425,18 @@ export function Apps() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <AppWindow className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No apps yet</h3>
-          <p className="text-gray-600 mb-4">Create your first app to get started</p>
+          <AppWindow className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No apps yet</h3>
+          <p className="text-gray-400 mb-4">Create your first app to get started</p>
         </div>
       )}
 
       {/* Create Modal */}
       {showCreateModal && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Create App</h2>
               <form onSubmit={handleCreate} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -539,9 +539,9 @@ export function Apps() {
       {/* Edit Modal */}
       {showEditModal && selectedApp && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Edit App</h2>
               <form onSubmit={handleEdit} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">

@@ -73,7 +73,7 @@ export function FunctionExecute() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Function Executions</h1>
+        <h1 className="text-2xl font-bold text-gray-100">Function Executions</h1>
         <p className="mt-1 text-sm text-gray-500">
           Test and run functions directly from the UI
         </p>
@@ -82,8 +82,8 @@ export function FunctionExecute() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Input Panel */}
         <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Input</h3>
+          <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+            <h3 className="text-lg font-semibold text-gray-100 mb-4">Input</h3>
 
             {/* Function Selector */}
             <div className="mb-4">
@@ -105,25 +105,25 @@ export function FunctionExecute() {
 
             {/* Function Details */}
             {selectedFunctionObj && (
-              <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
-                <p className="text-sm font-medium text-gray-900 mb-1">
+              <div className="mb-4 p-3 bg-[#0d0d0d] rounded border border-white/[0.06]">
+                <p className="text-sm font-medium text-gray-100 mb-1">
                   {selectedFunctionObj.namespace}/{selectedFunctionObj.name}
                 </p>
                 {selectedFunctionObj.description && (
-                  <p className="text-sm text-gray-600">{selectedFunctionObj.description}</p>
+                  <p className="text-sm text-gray-400">{selectedFunctionObj.description}</p>
                 )}
               </div>
             )}
 
             {/* Input Mode Toggle (only show if function has schema) */}
             {hasInputSchema && (
-              <div className="mb-4 flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded">
-                <span className="text-sm text-blue-900">
+              <div className="mb-4 flex items-center justify-between p-3 bg-blue-900/20 border border-blue-800/30 rounded">
+                <span className="text-sm text-blue-300">
                   {useAdvancedMode ? 'Advanced Mode (JSON)' : 'Form Mode (Schema-based)'}
                 </span>
                 <button
                   onClick={() => setUseAdvancedMode(!useAdvancedMode)}
-                  className="text-xs text-blue-700 hover:text-blue-900 underline"
+                  className="text-xs text-blue-400 hover:text-blue-300 underline"
                 >
                   {useAdvancedMode ? 'Switch to Form' : 'Switch to JSON'}
                 </button>
@@ -133,7 +133,7 @@ export function FunctionExecute() {
             {/* Schema-based Form (if function has schema and not in advanced mode) */}
             {hasInputSchema && !useAdvancedMode ? (
               <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-gray-900 mb-3">Input Parameters</h4>
+                <h4 className="text-sm font-medium text-gray-100 mb-3">Input Parameters</h4>
                 {Object.entries(selectedFunctionObj.input_schema.properties || {}).map(([key, prop]: [string, any]) => (
                   <SchemaFormField
                     key={key}
@@ -205,11 +205,11 @@ export function FunctionExecute() {
 
         {/* Output Panel */}
         <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Output</h3>
+          <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+            <h3 className="text-lg font-semibold text-gray-100 mb-4">Output</h3>
 
             {!executeMutation.data && !executeMutation.error && !executeMutation.isPending && (
-              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+              <div className="flex flex-col items-center justify-center py-12 text-gray-500">
                 <Code className="w-12 h-12 mb-2" />
                 <p className="text-sm">Execute a function to see results</p>
               </div>
@@ -223,12 +223,12 @@ export function FunctionExecute() {
             )}
 
             {executeMutation.isError && (
-              <div className="p-4 bg-red-50 border border-red-200 rounded">
+              <div className="p-4 bg-red-900/20 border border-red-800/30 rounded">
                 <div className="flex items-start">
                   <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 mr-2" />
                   <div>
                     <p className="font-medium text-red-900">Execution Error</p>
-                    <p className="text-sm text-red-700 mt-1">
+                    <p className="text-sm text-red-400 mt-1">
                       {(executeMutation.error as Error).message}
                     </p>
                   </div>
@@ -240,21 +240,21 @@ export function FunctionExecute() {
               <div>
                 {/* Status Badge */}
                 {executeMutation.data.status === 'success' ? (
-                  <div className="flex items-center mb-4 text-green-700">
+                  <div className="flex items-center mb-4 text-green-400">
                     <CheckCircle className="w-5 h-5 mr-2" />
                     <span className="font-medium">Execution Successful</span>
                   </div>
                 ) : (
-                  <div className="flex items-center mb-4 text-red-700">
+                  <div className="flex items-center mb-4 text-red-400">
                     <AlertCircle className="w-5 h-5 mr-2" />
                     <span className="font-medium">Execution Failed</span>
                   </div>
                 )}
 
                 {/* Execution ID */}
-                <div className="mb-4 p-3 bg-gray-50 rounded border border-gray-200">
+                <div className="mb-4 p-3 bg-[#0d0d0d] rounded border border-white/[0.06]">
                   <p className="text-xs text-gray-500">Execution ID</p>
-                  <p className="text-sm font-mono text-gray-900 mt-1">
+                  <p className="text-sm font-mono text-gray-100 mt-1">
                     {executeMutation.data.execution_id}
                   </p>
                 </div>

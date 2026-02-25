@@ -166,7 +166,7 @@ export function Permissions() {
       <div className="flex items-center justify-end gap-3">
         {pendingChanges.size > 0 && (
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-600">{pendingChanges.size} pending change{pendingChanges.size > 1 ? 's' : ''}</span>
+            <span className="text-sm text-gray-400">{pendingChanges.size} pending change{pendingChanges.size > 1 ? 's' : ''}</span>
             <button onClick={cancelChanges} className="btn btn-secondary text-sm">
               Cancel
             </button>
@@ -189,19 +189,19 @@ export function Permissions() {
       {isLoading ? (
         <div className="text-center py-12">
           <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-          <p className="text-gray-600 mt-2">Loading permissions...</p>
+          <p className="text-gray-400 mt-2">Loading permissions...</p>
         </div>
       ) : !roles || roles.length === 0 ? (
         <div className="text-center py-12 card">
-          <Shield className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No roles yet</h3>
-          <p className="text-gray-600">Create roles to manage permissions</p>
+          <Shield className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No roles yet</h3>
+          <p className="text-gray-400">Create roles to manage permissions</p>
         </div>
       ) : allPermissionKeys.length === 0 ? (
         <div className="text-center py-12 card">
-          <Shield className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No permissions yet</h3>
-          <p className="text-gray-600 mb-4">Add custom permissions to get started</p>
+          <Shield className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No permissions yet</h3>
+          <p className="text-gray-400 mb-4">Add custom permissions to get started</p>
           <button onClick={() => setShowAddPermissionModal(true)} className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Add Permission
@@ -211,17 +211,17 @@ export function Permissions() {
         <div className="card overflow-x-auto">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 font-semibold text-gray-700 bg-gray-50 sticky left-0 z-10 min-w-[250px]">
+              <tr className="border-b border-white/[0.06]">
+                <th className="text-left py-3 px-4 font-semibold text-gray-300 bg-[#0d0d0d] sticky left-0 z-10 min-w-[250px]">
                   Permission
                 </th>
                 {roles.map((role) => (
-                  <th key={role.id} className="text-center py-3 px-4 font-semibold text-gray-700 bg-gray-50 min-w-[120px]">
+                  <th key={role.id} className="text-center py-3 px-4 font-semibold text-gray-300 bg-[#0d0d0d] min-w-[120px]">
                     <div className="flex flex-col items-center">
                       <div className="flex items-center gap-1">
                         <span className="truncate max-w-[100px]" title={role.name}>{role.name}</span>
                         {isAdminRole(role.name) && (
-                          <span className="px-1.5 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">Admin</span>
+                          <span className="px-1.5 py-0.5 bg-red-900/30 text-red-300 text-xs font-medium rounded">Admin</span>
                         )}
                       </div>
                       {role.description && (
@@ -232,13 +232,13 @@ export function Permissions() {
                     </div>
                   </th>
                 ))}
-                <th className="text-center py-3 px-4 font-semibold text-gray-700 bg-gray-50 w-[80px]">Actions</th>
+                <th className="text-center py-3 px-4 font-semibold text-gray-300 bg-[#0d0d0d] w-[80px]">Actions</th>
               </tr>
             </thead>
             <tbody>
               {allPermissionKeys.map((permissionKey) => (
-                <tr key={permissionKey} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-4 font-mono text-sm text-gray-900 sticky left-0 bg-white z-10">
+                <tr key={permissionKey} className="border-b border-white/[0.04] hover:bg-white/5">
+                  <td className="py-3 px-4 font-mono text-sm text-gray-100 sticky left-0 bg-[#161616] z-10">
                     {permissionKey}
                   </td>
                   {roles.map((role) => {
@@ -255,7 +255,7 @@ export function Permissions() {
                             checked={enabled}
                             onChange={() => togglePermission(role.name, permissionKey)}
                             disabled={isAdmin}
-                            className={`w-5 h-5 rounded border-gray-300 text-primary-600 focus:ring-primary-500 ${
+                            className={`w-5 h-5 rounded border-white/10 text-primary-600 focus:ring-primary-500 ${
                               isAdmin ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                             } ${hasChange ? 'ring-2 ring-yellow-400' : ''}`}
                             title={isAdmin ? 'Admin permissions are read-only' : ''}
@@ -267,7 +267,7 @@ export function Permissions() {
                   <td className="py-3 px-4 text-center">
                     <button
                       onClick={() => handleDeletePermission(permissionKey)}
-                      className="text-red-600 hover:text-red-700 p-1"
+                      className="text-red-600 hover:text-red-400 p-1"
                       title="Delete permission from all groups"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -283,11 +283,11 @@ export function Permissions() {
       {/* Add Permission Modal */}
       {showAddPermissionModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Add Custom Permission</h2>
+          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Custom Permission</h2>
             <div className="space-y-4">
               <div>
-                <label htmlFor="permission_key" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="permission_key" className="block text-sm font-medium text-gray-300 mb-2">
                   Permission Key *
                 </label>
                 <input

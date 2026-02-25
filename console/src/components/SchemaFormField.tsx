@@ -33,7 +33,7 @@ export function SchemaFormField({
   if (enumValues && enumValues.length > 0) {
     return (
       <div className="mb-3">
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-gray-300 mb-1">
           {name} {required && <span className="text-red-500">*</span>}
         </label>
         {description && (
@@ -73,9 +73,9 @@ export function SchemaFormField({
               type="checkbox"
               checked={value === true}
               onChange={(e) => onChange(e.target.checked)}
-              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+              className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
             />
-            <span className="text-sm font-medium text-gray-700">
+            <span className="text-sm font-medium text-gray-300">
               {name} {required && <span className="text-red-500">*</span>}
             </span>
           </label>
@@ -89,7 +89,7 @@ export function SchemaFormField({
     case 'number':
       return (
         <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-300 mb-1">
             {name} {required && <span className="text-red-500">*</span>}
           </label>
           {description && (
@@ -118,7 +118,7 @@ export function SchemaFormField({
     case 'array':
       return (
         <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-300 mb-1">
             {name} {required && <span className="text-red-500">*</span>}
             <span className="text-xs text-gray-500 ml-2">(JSON array)</span>
           </label>
@@ -157,7 +157,7 @@ export function SchemaFormField({
     case 'object':
       return (
         <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-300 mb-1">
             {name} {required && <span className="text-red-500">*</span>}
             <span className="text-xs text-gray-500 ml-2">(JSON object)</span>
           </label>
@@ -197,7 +197,7 @@ export function SchemaFormField({
     default:
       return (
         <div className="mb-3">
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium text-gray-300 mb-1">
             {name} {required && <span className="text-red-500">*</span>}
           </label>
           {description && (

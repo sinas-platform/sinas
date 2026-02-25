@@ -255,18 +255,18 @@ export function FunctionEditor() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Link to="/functions" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/functions" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-100">
               {isNew ? 'New Function' : (
                 <>
                   <span className="text-gray-500">{formData.namespace}/</span>{formData.name || 'Edit Function'}
                 </>
               )}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-gray-400 mt-1">
               {isNew ? 'Create a new Python function' : 'Edit function configuration and code'}
             </p>
           </div>
@@ -340,13 +340,13 @@ print(details["status"], details["output_data"])`,
 
       {/* Success/Error Messages */}
       {saveMutation.isError && (
-        <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
           Failed to save function. Please check your code and JSON schemas.
         </div>
       )}
 
       {saveMutation.isSuccess && (
-        <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+        <div className="p-4 bg-green-900/20 border border-green-800/30 rounded-lg text-sm text-green-400">
           Function saved successfully!
         </div>
       )}
@@ -354,10 +354,10 @@ print(details["status"], details["output_data"])`,
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Basic Information</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Basic Information</h2>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Namespace *
               </label>
               <input
@@ -376,7 +376,7 @@ print(details["status"], details["output_data"])`,
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Function Name *
               </label>
               <input
@@ -395,7 +395,7 @@ print(details["status"], details["output_data"])`,
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Description
               </label>
               <input
@@ -407,8 +407,8 @@ print(details["status"], details["output_data"])`,
               />
             </div>
 
-            <div className="space-y-3 pt-2 border-t border-gray-200">
-              <h3 className="text-sm font-medium text-gray-900">Execution Settings</h3>
+            <div className="space-y-3 pt-2 border-t border-white/[0.06]">
+              <h3 className="text-sm font-medium text-gray-100">Execution Settings</h3>
 
               <div className="flex items-start">
                 <input
@@ -416,10 +416,10 @@ print(details["status"], details["output_data"])`,
                   id="shared_pool"
                   checked={formData.shared_pool}
                   onChange={(e) => setFormData({ ...formData, shared_pool: e.target.checked })}
-                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
                 />
                 <label htmlFor="shared_pool" className="ml-3">
-                  <span className="block text-sm font-medium text-gray-700">Use Shared Worker Pool</span>
+                  <span className="block text-sm font-medium text-gray-300">Use Shared Worker Pool</span>
                   <span className="block text-xs text-gray-500 mt-0.5">
                     Run in shared worker pool instead of isolated container. More efficient for trusted functions with high call frequency.
                   </span>
@@ -432,10 +432,10 @@ print(details["status"], details["output_data"])`,
                   id="requires_approval"
                   checked={formData.requires_approval}
                   onChange={(e) => setFormData({ ...formData, requires_approval: e.target.checked })}
-                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
                 />
                 <label htmlFor="requires_approval" className="ml-3">
-                  <span className="block text-sm font-medium text-gray-700">Require Approval Before Execution</span>
+                  <span className="block text-sm font-medium text-gray-300">Require Approval Before Execution</span>
                   <span className="block text-xs text-gray-500 mt-0.5">
                     LLM must ask user for approval before calling this function. Use for dangerous operations (delete, send email, etc.).
                   </span>
@@ -447,18 +447,19 @@ print(details["status"], details["output_data"])`,
 
         {/* Code Editor */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Python Code *</h2>
-          <div className="border border-gray-300 rounded-lg overflow-hidden" style={{ minHeight: '400px' }}>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Python Code *</h2>
+          <div className="border border-white/10 rounded-lg overflow-hidden" style={{ minHeight: '400px' }}>
             <CodeEditor
               value={formData.code}
               language="python"
               placeholder="Enter your Python code here..."
               onChange={(e) => setFormData({ ...formData, code: e.target.value })}
               padding={15}
+              data-color-mode="dark"
               style={{
                 fontSize: 14,
-                backgroundColor: '#fafafa',
-                color: '#1f2937',
+                backgroundColor: '#111111',
+                color: '#ededed',
                 fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
                 minHeight: '400px',
               }}
@@ -466,7 +467,7 @@ print(details["status"], details["output_data"])`,
           </div>
           <div className="flex items-center justify-between mt-2">
             <p className="text-xs text-gray-500">
-              Entry point must be <code className="font-mono bg-gray-100 px-1 rounded">def {formData.name || 'function_name'}(input, context):</code> matching the Function Name above. The <code className="font-mono bg-gray-100 px-1 rounded">context</code> parameter provides user info and access token. Return value can be any type matching output_schema.
+              Entry point must be <code className="font-mono bg-[#161616] px-1 rounded">def {formData.name || 'function_name'}(input, context):</code> matching the Function Name above. The <code className="font-mono bg-[#161616] px-1 rounded">context</code> parameter provides user info and access token. Return value can be any type matching output_schema.
             </p>
             {formData.name && (
               <div className="flex items-center ml-4">
@@ -491,7 +492,7 @@ print(details["status"], details["output_data"])`,
         </div>
 
         {/* Collection Trigger Reference */}
-        <div className="card border-blue-200 bg-blue-50/50">
+        <div className="card border-blue-800/30 bg-blue-900/20/50">
           <button
             type="button"
             onClick={() => setShowTriggerDocs(!showTriggerDocs)}
@@ -499,17 +500,17 @@ print(details["status"], details["output_data"])`,
           >
             <Info className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0" />
             <div className="flex-1">
-              <span className="text-sm font-medium text-gray-900">Collection trigger reference</span>
+              <span className="text-sm font-medium text-gray-100">Collection trigger reference</span>
               {isCollectionTrigger && (
                 <span className="text-xs text-gray-500 ml-2">
                   {triggerRoles.contentFilter.length > 0 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 mr-1">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/30 text-orange-300 mr-1">
                       <Filter className="w-3 h-3 mr-1" />
                       Content filter for {triggerRoles.contentFilter.join(', ')}
                     </span>
                   )}
                   {triggerRoles.postUpload.length > 0 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/30 text-green-300">
                       <Upload className="w-3 h-3 mr-1" />
                       Post-upload for {triggerRoles.postUpload.join(', ')}
                     </span>
@@ -517,20 +518,20 @@ print(details["status"], details["output_data"])`,
                 </span>
               )}
             </div>
-            {showTriggerDocs ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+            {showTriggerDocs ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
           </button>
           {showTriggerDocs && (
             <div className="mt-4 space-y-4">
-              <p className="text-xs text-gray-600">
+              <p className="text-xs text-gray-400">
                 Functions can be used as collection triggers. Set this in the collection's configuration under Content Filter or Post-Upload function.
               </p>
               <div>
                 <div className="flex items-center mb-2">
                   <Filter className="w-4 h-4 text-orange-500 mr-2" />
-                  <h4 className="text-sm font-semibold text-gray-900">Content Filter Function</h4>
+                  <h4 className="text-sm font-semibold text-gray-100">Content Filter Function</h4>
                 </div>
-                <p className="text-xs text-gray-600 mb-2">
-                  Runs before a file is stored. Return <code className="font-mono bg-white px-1 rounded">approved: false</code> to reject the upload.
+                <p className="text-xs text-gray-400 mb-2">
+                  Runs before a file is stored. Return <code className="font-mono bg-[#161616] px-1 rounded">approved: false</code> to reject the upload.
                 </p>
                 <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
                   <pre className="text-xs text-gray-100 font-mono">{`# input dict received by this function:
@@ -557,9 +558,9 @@ print(details["status"], details["output_data"])`,
               <div>
                 <div className="flex items-center mb-2">
                   <Upload className="w-4 h-4 text-green-500 mr-2" />
-                  <h4 className="text-sm font-semibold text-gray-900">Post-Upload Function</h4>
+                  <h4 className="text-sm font-semibold text-gray-100">Post-Upload Function</h4>
                 </div>
-                <p className="text-xs text-gray-600 mb-2">
+                <p className="text-xs text-gray-400 mb-2">
                   Runs asynchronously after the file is stored. Does not block the upload response.
                 </p>
                 <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
@@ -636,7 +637,7 @@ print(details["status"], details["output_data"])`,
 
         {/* Requirements */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">
             <Package className="w-5 h-5 inline mr-2" />
             Python Requirements
           </h2>
@@ -662,13 +663,13 @@ print(details["status"], details["output_data"])`,
               {formData.requirements.map((req) => (
                 <div
                   key={req}
-                  className="flex items-center justify-between p-2 bg-gray-50 rounded"
+                  className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded"
                 >
                   <span className="font-mono text-sm">{req}</span>
                   <button
                     type="button"
                     onClick={() => removeRequirement(req)}
-                    className="text-red-600 hover:text-red-700 text-sm"
+                    className="text-red-600 hover:text-red-400 text-sm"
                   >
                     Remove
                   </button>
@@ -680,8 +681,8 @@ print(details["status"], details["output_data"])`,
 
         {/* Enabled Namespaces */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2">Enabled Namespaces</h2>
-          <p className="text-sm text-gray-600 mb-4">
+          <h2 className="text-lg font-semibold text-gray-100 mb-2">Enabled Namespaces</h2>
+          <p className="text-sm text-gray-400 mb-4">
             Namespaces this function can call (empty = own namespace only)
           </p>
           <div className="flex space-x-2 mb-2">

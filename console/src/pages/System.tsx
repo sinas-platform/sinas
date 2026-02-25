@@ -103,19 +103,19 @@ export function System() {
 
   const getJobStatusColor = (status: string) => {
     switch (status) {
-      case 'running': return 'bg-blue-100 text-blue-800';
-      case 'completed': return 'bg-green-100 text-green-800';
-      case 'queued': return 'bg-gray-100 text-gray-800';
-      case 'failed': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'running': return 'bg-blue-900/30 text-blue-300';
+      case 'completed': return 'bg-green-900/30 text-green-300';
+      case 'queued': return 'bg-[#161616] text-gray-200';
+      case 'failed': return 'bg-red-900/30 text-red-300';
+      default: return 'bg-[#161616] text-gray-200';
     }
   };
 
   const getContainerStatusColor = (status: string) => {
     switch (status) {
-      case 'running': return 'bg-green-100 text-green-800';
-      case 'missing': case 'exited': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+      case 'running': return 'bg-green-900/30 text-green-300';
+      case 'missing': case 'exited': return 'bg-red-900/30 text-red-300';
+      default: return 'bg-[#161616] text-gray-200';
     }
   };
 
@@ -141,8 +141,8 @@ export function System() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">System</h1>
-        <p className="text-gray-600 mt-1">Workers, queues, and execution infrastructure</p>
+        <h1 className="text-3xl font-bold text-gray-100">System</h1>
+        <p className="text-gray-400 mt-1">Workers, queues, and execution infrastructure</p>
       </div>
 
       {/* Stats Overview */}
@@ -152,14 +152,14 @@ export function System() {
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Workers</h3>
           <div className="mt-3 flex items-baseline gap-3">
             <div>
-              <span className="text-2xl font-bold text-gray-900">{functionWorkers.length}</span>
+              <span className="text-2xl font-bold text-gray-100">{functionWorkers.length}</span>
               <span className="text-sm text-gray-500 ml-1">fn</span>
             </div>
             <div>
-              <span className="text-2xl font-bold text-gray-900">{agentWorkers.length}</span>
+              <span className="text-2xl font-bold text-gray-100">{agentWorkers.length}</span>
               <span className="text-sm text-gray-500 ml-1">agent</span>
             </div>
-            <span className="text-xs text-gray-400">{totalWorkerSlots} slots</span>
+            <span className="text-xs text-gray-500">{totalWorkerSlots} slots</span>
           </div>
         </div>
 
@@ -168,11 +168,11 @@ export function System() {
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Queue Depth</h3>
           <div className="mt-3 flex items-baseline gap-3">
             <div>
-              <span className="text-2xl font-bold text-gray-900">{stats?.queues?.functions?.pending ?? 0}</span>
+              <span className="text-2xl font-bold text-gray-100">{stats?.queues?.functions?.pending ?? 0}</span>
               <span className="text-sm text-gray-500 ml-1">functions</span>
             </div>
             <div>
-              <span className="text-2xl font-bold text-gray-900">{stats?.queues?.agents?.pending ?? 0}</span>
+              <span className="text-2xl font-bold text-gray-100">{stats?.queues?.agents?.pending ?? 0}</span>
               <span className="text-sm text-gray-500 ml-1">agents</span>
             </div>
           </div>
@@ -183,31 +183,31 @@ export function System() {
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Jobs (24h)</h3>
           <div className="mt-3 grid grid-cols-4 gap-1 text-center">
             {[
-              { label: 'Q', value: stats?.jobs?.queued ?? 0, color: 'text-gray-700' },
+              { label: 'Q', value: stats?.jobs?.queued ?? 0, color: 'text-gray-300' },
               { label: 'Run', value: stats?.jobs?.running ?? 0, color: 'text-blue-600' },
               { label: 'Done', value: stats?.jobs?.completed ?? 0, color: 'text-green-600' },
-              { label: 'Fail', value: stats?.jobs?.failed ?? 0, color: stats?.jobs?.failed ? 'text-red-600' : 'text-gray-400' },
+              { label: 'Fail', value: stats?.jobs?.failed ?? 0, color: stats?.jobs?.failed ? 'text-red-600' : 'text-gray-500' },
             ].map(s => (
               <div key={s.label}>
                 <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
-                <div className="text-xs text-gray-400">{s.label}</div>
+                <div className="text-xs text-gray-500">{s.label}</div>
               </div>
             ))}
           </div>
         </div>
 
         {/* Health */}
-        <div className={`card ${dlqSize > 0 ? 'border-red-300 bg-red-50' : ''}`}>
+        <div className={`card ${dlqSize > 0 ? 'border-red-300 bg-red-900/20' : ''}`}>
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Health</h3>
           <div className="mt-3 space-y-2">
             <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Dead letter queue</span>
+              <span className="text-sm text-gray-400">Dead letter queue</span>
               <span className={`text-sm font-bold ${dlqSize > 0 ? 'text-red-600' : 'text-green-600'}`}>
                 {dlqSize > 0 ? dlqSize : 'clean'}
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Shared pool</span>
+              <span className="text-sm text-gray-400">Shared pool</span>
               <span className="text-sm font-semibold">{sharedCount} running</span>
             </div>
           </div>
@@ -223,14 +223,14 @@ export function System() {
               key={w.worker_id}
               className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
                 w.queue === 'functions'
-                  ? 'bg-purple-50 border-purple-200 text-purple-700'
-                  : 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                  ? 'bg-purple-900/20 border-purple-800/30 text-purple-400'
+                  : 'bg-indigo-900/20 border-indigo-800/30 text-indigo-300'
               }`}
             >
               <span className="font-mono">{w.worker_id.slice(0, 8)}</span>
-              <span className="text-gray-400">|</span>
+              <span className="text-gray-500">|</span>
               <span>{w.queue === 'functions' ? 'fn' : 'agent'} &times;{w.max_jobs}</span>
-              <span className="text-gray-400">|</span>
+              <span className="text-gray-500">|</span>
               <span className="text-gray-500">{w.started_at ? formatUptime(w.started_at) : '-'}</span>
             </span>
           ))}
@@ -243,8 +243,8 @@ export function System() {
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Sandbox Pool</h2>
-              <p className="text-sm text-gray-600 mt-1">Isolated containers for user functions</p>
+              <h2 className="text-lg font-semibold text-gray-100">Sandbox Pool</h2>
+              <p className="text-sm text-gray-400 mt-1">Isolated containers for user functions</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -255,7 +255,7 @@ export function System() {
               >
                 <Minus className="w-4 h-4" />
               </button>
-              <span className="text-sm font-semibold text-gray-700 w-8 text-center">{poolTotal}</span>
+              <span className="text-sm font-semibold text-gray-300 w-8 text-center">{poolTotal}</span>
               <button
                 onClick={() => handlePoolScale(1)}
                 disabled={(poolMax != null && poolTotal >= poolMax) || poolScaleMutation.isPending}
@@ -274,7 +274,7 @@ export function System() {
             </div>
           </div>
 
-          <div className="mb-3 h-2 bg-gray-100 rounded-full overflow-hidden">
+          <div className="mb-3 h-2 bg-[#161616] rounded-full overflow-hidden">
             <div className="h-full flex">
               <div className="bg-blue-500 transition-all" style={{ width: `${poolBusyPct}%` }} />
               <div className="bg-green-400 transition-all" style={{ width: `${poolUtilPct - poolBusyPct}%` }} />
@@ -283,47 +283,47 @@ export function System() {
           <div className="flex gap-4 text-xs text-gray-500 mb-4">
             <span><span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1" />busy ({poolInUse})</span>
             <span><span className="inline-block w-2 h-2 rounded-full bg-green-400 mr-1" />idle ({poolIdle})</span>
-            {poolMax != null && <span className="text-gray-400">max {poolMax}</span>}
+            {poolMax != null && <span className="text-gray-500">max {poolMax}</span>}
           </div>
 
           {poolScaleMutation.isError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <div className="mb-4 p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
               Failed to scale sandbox pool.
             </div>
           )}
 
           {allSandboxContainers.length === 0 ? (
             <div className="text-center py-4">
-              <Box className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+              <Box className="w-8 h-8 text-gray-500 mx-auto mb-2" />
               <p className="text-gray-500 text-sm">No containers</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-200">
+                  <tr className="border-b border-white/[0.06]">
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[45%]">Container</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[15%]">Status</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[20%]">Executions</th>
                     <th className="text-left py-2 font-medium text-gray-500 w-[20%]">Age</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-white/[0.04]">
                   {allSandboxContainers.map((c: any) => (
-                    <tr key={c.name} className="hover:bg-gray-50">
-                      <td className="py-2 pr-4 font-mono text-xs text-gray-700">{c.name}</td>
+                    <tr key={c.name} className="hover:bg-white/5">
+                      <td className="py-2 pr-4 font-mono text-xs text-gray-300">{c.name}</td>
                       <td className="py-2 pr-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          c.state === 'in_use' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'
+                          c.state === 'in_use' ? 'bg-blue-900/30 text-blue-300' : 'bg-green-900/30 text-green-300'
                         }`}>
                           {c.state === 'in_use' ? 'busy' : 'idle'}
                         </span>
                       </td>
-                      <td className="py-2 pr-4 text-gray-600">
+                      <td className="py-2 pr-4 text-gray-400">
                         {c.executions}
-                        <span className="text-gray-400"> / {poolStats?.max_executions ?? '?'}</span>
+                        <span className="text-gray-500"> / {poolStats?.max_executions ?? '?'}</span>
                       </td>
-                      <td className="py-2 text-gray-600">{formatAge(c.age_seconds)}</td>
+                      <td className="py-2 text-gray-400">{formatAge(c.age_seconds)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -336,8 +336,8 @@ export function System() {
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Shared Pool</h2>
-              <p className="text-sm text-gray-600 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-gray-100 rounded text-xs">shared_pool</code> functions</p>
+              <h2 className="text-lg font-semibold text-gray-100">Shared Pool</h2>
+              <p className="text-sm text-gray-400 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-[#161616] rounded text-xs">shared_pool</code> functions</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -348,7 +348,7 @@ export function System() {
               >
                 <Minus className="w-4 h-4" />
               </button>
-              <span className="text-sm font-semibold text-gray-700 w-8 text-center">{sharedCount}</span>
+              <span className="text-sm font-semibold text-gray-300 w-8 text-center">{sharedCount}</span>
               <button
                 onClick={() => handleSharedPoolScale(1)}
                 disabled={sharedCount >= 10 || sharedPoolScaleMutation.isPending}
@@ -368,38 +368,38 @@ export function System() {
           </div>
 
           {sharedPoolScaleMutation.isError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <div className="mb-4 p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
               Failed to scale shared pool.
             </div>
           )}
 
           {!sharedPoolContainers || sharedPoolContainers.length === 0 ? (
             <div className="text-center py-4">
-              <Server className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+              <Server className="w-8 h-8 text-gray-500 mx-auto mb-2" />
               <p className="text-gray-500 text-sm">No containers</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-200">
+                  <tr className="border-b border-white/[0.06]">
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[45%]">Container</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[15%]">Status</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[20%]">Executions</th>
                     <th className="text-left py-2 font-medium text-gray-500 w-[20%]">Created</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-white/[0.04]">
                   {sharedPoolContainers.map((w: any) => (
-                    <tr key={w.id} className="hover:bg-gray-50">
-                      <td className="py-2 pr-4 font-mono text-xs text-gray-700">{w.container_name}</td>
+                    <tr key={w.id} className="hover:bg-white/5">
+                      <td className="py-2 pr-4 font-mono text-xs text-gray-300">{w.container_name}</td>
                       <td className="py-2 pr-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getContainerStatusColor(w.status)}`}>
                           {w.status}
                         </span>
                       </td>
-                      <td className="py-2 pr-4 text-gray-600">{w.executions}</td>
-                      <td className="py-2 text-gray-600 text-xs">{new Date(w.created_at).toLocaleString()}</td>
+                      <td className="py-2 pr-4 text-gray-400">{w.executions}</td>
+                      <td className="py-2 text-gray-400 text-xs">{new Date(w.created_at).toLocaleString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -412,7 +412,7 @@ export function System() {
       {/* Jobs */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Jobs</h2>
+          <h2 className="text-lg font-semibold text-gray-100">Jobs</h2>
           <select
             value={jobStatusFilter}
             onChange={(e) => setJobStatusFilter(e.target.value)}
@@ -434,24 +434,24 @@ export function System() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-white/[0.06]">
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Status</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Description</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Time</th>
                   <th className="text-left py-2 font-medium text-gray-500">Error</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-white/[0.04]">
                 {jobs.map((job: any) => (
-                  <tr key={job.job_id} className="hover:bg-gray-50">
+                  <tr key={job.job_id} className="hover:bg-white/5">
                     <td className="py-2 pr-4">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getJobStatusColor(job.status)}`}>
                         {job.status}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-sm text-gray-700">
+                    <td className="py-2 pr-4 text-sm text-gray-300">
                       <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium mr-2 ${
-                        job.queue === 'functions' ? 'bg-purple-100 text-purple-700' : 'bg-indigo-100 text-indigo-700'
+                        job.queue === 'functions' ? 'bg-purple-900/30 text-purple-400' : 'bg-indigo-900/30 text-indigo-300'
                       }`}>
                         {job.queue === 'functions' ? 'fn' : 'agent'}
                       </span>
@@ -459,14 +459,14 @@ export function System() {
                         ? (job.function || '-')
                         : (job.agent || 'unknown')}
                       {job.queue === 'agents' && job.type === 'resume' && (
-                        <span className="text-xs text-gray-400 ml-1">(resume)</span>
+                        <span className="text-xs text-gray-500 ml-1">(resume)</span>
                       )}
-                      <span className="text-xs text-gray-400 ml-1">via {(job.trigger_type || (job.queue === 'agents' ? 'agent' : 'api')).toLowerCase()}</span>
+                      <span className="text-xs text-gray-500 ml-1">via {(job.trigger_type || (job.queue === 'agents' ? 'agent' : 'api')).toLowerCase()}</span>
                       {job.chat_id && (
-                        <span className="text-xs text-gray-400 ml-1">chat:{job.chat_id.slice(0, 8)}</span>
+                        <span className="text-xs text-gray-500 ml-1">chat:{job.chat_id.slice(0, 8)}</span>
                       )}
                     </td>
-                    <td className="py-2 pr-4 text-xs text-gray-400 whitespace-nowrap">
+                    <td className="py-2 pr-4 text-xs text-gray-500 whitespace-nowrap">
                       {job.enqueued_at
                         ? new Date(job.enqueued_at * 1000).toLocaleTimeString()
                         : '-'}
@@ -484,31 +484,31 @@ export function System() {
 
       {/* Dead Letter Queue */}
       {dlqEntries && dlqEntries.length > 0 && (
-        <div className="card border-red-200">
+        <div className="card border-red-800/30">
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="w-5 h-5 text-red-500" />
-            <h2 className="text-lg font-semibold text-gray-900">Dead Letter Queue</h2>
+            <h2 className="text-lg font-semibold text-gray-100">Dead Letter Queue</h2>
             <span className="text-sm text-red-600 font-medium">({dlqEntries.length})</span>
           </div>
 
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200">
+                <tr className="border-b border-white/[0.06]">
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Function</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Error</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Attempts</th>
                   <th className="text-right py-2 font-medium text-gray-500">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-white/[0.04]">
                 {dlqEntries.map((entry: any, idx: number) => (
-                  <tr key={entry.job_id || idx} className="hover:bg-gray-50">
-                    <td className="py-2 pr-4 text-gray-700">{entry.function || '-'}</td>
+                  <tr key={entry.job_id || idx} className="hover:bg-white/5">
+                    <td className="py-2 pr-4 text-gray-300">{entry.function || '-'}</td>
                     <td className="py-2 pr-4 text-red-600 text-xs max-w-md truncate">
                       {entry.error || '-'}
                     </td>
-                    <td className="py-2 pr-4 text-gray-600">{entry.attempts ?? '-'}</td>
+                    <td className="py-2 pr-4 text-gray-400">{entry.attempts ?? '-'}</td>
                     <td className="py-2 text-right">
                       <button
                         onClick={() => retryMutation.mutate(entry.job_id)}
@@ -526,12 +526,12 @@ export function System() {
           </div>
 
           {retryMutation.isSuccess && (
-            <div className="mt-3 p-2 bg-green-50 border border-green-200 rounded text-sm text-green-700">
+            <div className="mt-3 p-2 bg-green-900/20 border border-green-800/30 rounded text-sm text-green-400">
               Job re-enqueued.
             </div>
           )}
           {retryMutation.isError && (
-            <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+            <div className="mt-3 p-2 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-400">
               Retry failed.
             </div>
           )}

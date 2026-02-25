@@ -142,8 +142,8 @@ export function DatabaseConnections() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Database Connections</h1>
-          <p className="text-gray-600 mt-1">Manage external database connections for queries</p>
+          <h1 className="text-3xl font-bold text-gray-100">Database Connections</h1>
+          <p className="text-gray-400 mt-1">Manage external database connections for queries</p>
         </div>
         <button
           onClick={() => {
@@ -164,24 +164,24 @@ export function DatabaseConnections() {
       ) : connections && connections.length > 0 ? (
         <div className="grid gap-6">
           {connections.map((conn) => (
-            <div key={conn.id} className={`card ${!conn.is_active ? 'opacity-60 bg-gray-50' : ''}`}>
+            <div key={conn.id} className={`card ${!conn.is_active ? 'opacity-60 bg-[#0d0d0d]' : ''}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center flex-1">
-                  <Cable className={`w-8 h-8 mr-3 flex-shrink-0 ${conn.is_active ? 'text-primary-600' : 'text-gray-400'}`} />
+                  <Cable className={`w-8 h-8 mr-3 flex-shrink-0 ${conn.is_active ? 'text-primary-600' : 'text-gray-500'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">{conn.name}</h3>
-                      <span className="text-xs font-medium bg-gray-100 text-gray-700 px-2 py-0.5 rounded">{conn.connection_type}</span>
+                      <h3 className="font-semibold text-gray-100">{conn.name}</h3>
+                      <span className="text-xs font-medium bg-[#161616] text-gray-300 px-2 py-0.5 rounded">{conn.connection_type}</span>
                       {conn.is_active ? (
-                        <span className="px-2 py-0.5 bg-green-100 text-green-800 text-xs font-medium rounded">Active</span>
+                        <span className="px-2 py-0.5 bg-green-900/30 text-green-300 text-xs font-medium rounded">Active</span>
                       ) : (
-                        <span className="px-2 py-0.5 bg-gray-200 text-gray-600 text-xs font-medium rounded">Inactive</span>
+                        <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-600 font-mono">
+                    <p className="text-sm text-gray-400 font-mono">
                       {conn.host}:{conn.port}/{conn.database}
                     </p>
-                    <p className="text-sm text-gray-600">
+                    <p className="text-sm text-gray-400">
                       User: <span className="font-medium">{conn.username}</span>
                       {conn.ssl_mode && <> | SSL: {conn.ssl_mode}</>}
                     </p>
@@ -189,7 +189,7 @@ export function DatabaseConnections() {
                       Created: {new Date(conn.created_at).toLocaleString()}
                     </p>
                     {testResults[conn.id] && (
-                      <div className={`mt-2 text-sm ${testResults[conn.id].success ? 'text-green-700' : 'text-red-700'}`}>
+                      <div className={`mt-2 text-sm ${testResults[conn.id].success ? 'text-green-400' : 'text-red-400'}`}>
                         {testResults[conn.id].success ? '✓' : '✗'} {testResults[conn.id].message}
                         {testResults[conn.id].latency_ms != null && ` (${testResults[conn.id].latency_ms}ms)`}
                       </div>
@@ -199,7 +199,7 @@ export function DatabaseConnections() {
                 <div className="flex items-center space-x-2 ml-4 flex-shrink-0">
                   <button
                     onClick={() => testMutation.mutate(conn.id)}
-                    className="text-green-600 hover:text-green-700"
+                    className="text-green-600 hover:text-green-400"
                     title="Test Connection"
                     disabled={testMutation.isPending}
                   >
@@ -207,7 +207,7 @@ export function DatabaseConnections() {
                   </button>
                   <button
                     onClick={() => openEditModal(conn)}
-                    className="text-blue-600 hover:text-blue-700"
+                    className="text-blue-600 hover:text-blue-400"
                     disabled={updateMutation.isPending}
                   >
                     <Edit2 className="w-5 h-5" />
@@ -218,7 +218,7 @@ export function DatabaseConnections() {
                         deleteMutation.mutate(conn.id);
                       }
                     }}
-                    className="text-red-600 hover:text-red-700"
+                    className="text-red-600 hover:text-red-400"
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="w-5 h-5" />
@@ -230,9 +230,9 @@ export function DatabaseConnections() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Cable className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No database connections configured</h3>
-          <p className="text-gray-600 mb-4">Add external database connections so agents can query data</p>
+          <Cable className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No database connections configured</h3>
+          <p className="text-gray-400 mb-4">Add external database connections so agents can query data</p>
           <button onClick={() => setShowCreateModal(true)} className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Add Connection
@@ -243,11 +243,11 @@ export function DatabaseConnections() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Add Database Connection</h2>
+          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Database Connection</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
                 <input
                   type="text"
                   value={createFormData.name}
@@ -259,7 +259,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Type *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Type *</label>
                 <select
                   value={createFormData.connection_type}
                   onChange={(e) => setCreateFormData({ ...createFormData, connection_type: e.target.value })}
@@ -273,7 +273,7 @@ export function DatabaseConnections() {
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Host *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Host *</label>
                   <input
                     type="text"
                     value={createFormData.host}
@@ -284,7 +284,7 @@ export function DatabaseConnections() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Port *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Port *</label>
                   <input
                     type="number"
                     value={createFormData.port}
@@ -295,7 +295,7 @@ export function DatabaseConnections() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Database *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Database *</label>
                 <input
                   type="text"
                   value={createFormData.database}
@@ -306,7 +306,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Username *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Username *</label>
                 <input
                   type="text"
                   value={createFormData.username}
@@ -317,7 +317,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
                 <input
                   type="password"
                   value={createFormData.password || ''}
@@ -326,7 +326,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">SSL Mode</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">SSL Mode</label>
                 <select
                   value={createFormData.ssl_mode || ''}
                   onChange={(e) => setCreateFormData({ ...createFormData, ssl_mode: e.target.value || undefined })}
@@ -341,7 +341,7 @@ export function DatabaseConnections() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Config (JSON)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Config (JSON)</label>
                 <textarea
                   value={createConfigText}
                   onChange={(e) => {
@@ -369,7 +369,7 @@ export function DatabaseConnections() {
                   {modalTestLoading ? 'Testing...' : 'Test Connection'}
                 </button>
                 {modalTestResult && (
-                  <div className={`mt-2 text-sm ${modalTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                  <div className={`mt-2 text-sm ${modalTestResult.success ? 'text-green-400' : 'text-red-400'}`}>
                     {modalTestResult.success ? '✓' : '✗'} {modalTestResult.message}
                     {modalTestResult.latency_ms != null && ` (${modalTestResult.latency_ms}ms)`}
                   </div>
@@ -405,11 +405,11 @@ export function DatabaseConnections() {
       {/* Edit Modal */}
       {showEditModal && selectedConnection && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Edit Database Connection</h2>
+          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Edit Database Connection</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Name *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
                 <input
                   type="text"
                   value={editFormData.name || ''}
@@ -420,7 +420,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Type *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Type *</label>
                 <select
                   value={editFormData.connection_type || ''}
                   onChange={(e) => setEditFormData({ ...editFormData, connection_type: e.target.value })}
@@ -434,7 +434,7 @@ export function DatabaseConnections() {
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Host *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Host *</label>
                   <input
                     type="text"
                     value={editFormData.host || ''}
@@ -444,7 +444,7 @@ export function DatabaseConnections() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Port *</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Port *</label>
                   <input
                     type="number"
                     value={editFormData.port || 5432}
@@ -455,7 +455,7 @@ export function DatabaseConnections() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Database *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Database *</label>
                 <input
                   type="text"
                   value={editFormData.database || ''}
@@ -465,7 +465,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Username *</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Username *</label>
                 <input
                   type="text"
                   value={editFormData.username || ''}
@@ -475,7 +475,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Password</label>
                 <input
                   type="password"
                   value={editFormData.password || ''}
@@ -485,7 +485,7 @@ export function DatabaseConnections() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">SSL Mode</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">SSL Mode</label>
                 <select
                   value={editFormData.ssl_mode || ''}
                   onChange={(e) => setEditFormData({ ...editFormData, ssl_mode: e.target.value || undefined })}
@@ -500,7 +500,7 @@ export function DatabaseConnections() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Config (JSON)</label>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Config (JSON)</label>
                 <textarea
                   value={editConfigText}
                   onChange={(e) => {
@@ -519,9 +519,9 @@ export function DatabaseConnections() {
                   type="checkbox"
                   checked={editFormData.is_active ?? true}
                   onChange={(e) => setEditFormData({ ...editFormData, is_active: e.target.checked })}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
                 />
-                <label className="ml-2 block text-sm text-gray-700">Active</label>
+                <label className="ml-2 block text-sm text-gray-300">Active</label>
               </div>
 
               {/* Test Connection */}
@@ -536,7 +536,7 @@ export function DatabaseConnections() {
                   {modalTestLoading ? 'Testing...' : 'Test Connection'}
                 </button>
                 {modalTestResult && (
-                  <div className={`mt-2 text-sm ${modalTestResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                  <div className={`mt-2 text-sm ${modalTestResult.success ? 'text-green-400' : 'text-red-400'}`}>
                     {modalTestResult.success ? '✓' : '✗'} {modalTestResult.message}
                     {modalTestResult.latency_ms != null && ` (${modalTestResult.latency_ms}ms)`}
                   </div>

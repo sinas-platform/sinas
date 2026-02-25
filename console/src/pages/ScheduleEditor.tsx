@@ -152,14 +152,14 @@ export function ScheduleEditor() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Link to="/schedules" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/schedules" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-100">
               {isNew ? 'New Schedule' : formData.name || 'Edit Schedule'}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-gray-400 mt-1">
               {isNew ? 'Schedule a function or agent to run automatically' : 'Edit scheduled job configuration'}
             </p>
           </div>
@@ -193,10 +193,10 @@ export function ScheduleEditor() {
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Schedule Configuration</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Schedule Configuration</h2>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Schedule Name *
               </label>
               <input
@@ -211,17 +211,17 @@ export function ScheduleEditor() {
 
             {/* Schedule Type Toggle */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Type
               </label>
-              <div className="flex rounded-lg border border-gray-300 overflow-hidden w-fit">
+              <div className="flex rounded-lg border border-white/10 overflow-hidden w-fit">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, schedule_type: 'function', target_namespace: 'default', target_name: '', content: '' })}
                   className={`px-4 py-2 text-sm font-medium ${
                     formData.schedule_type === 'function'
                       ? 'bg-[#2563eb] text-white'
-                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'
                   }`}
                 >
                   Function
@@ -229,10 +229,10 @@ export function ScheduleEditor() {
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, schedule_type: 'agent', target_namespace: 'default', target_name: '', content: '' })}
-                  className={`px-4 py-2 text-sm font-medium border-l border-gray-300 ${
+                  className={`px-4 py-2 text-sm font-medium border-l border-white/10 ${
                     formData.schedule_type === 'agent'
                       ? 'bg-[#2563eb] text-white'
-                      : 'bg-white text-gray-700 hover:bg-gray-50'
+                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'
                   }`}
                 >
                   Agent
@@ -243,7 +243,7 @@ export function ScheduleEditor() {
             {/* Target Selection */}
             {formData.schedule_type === 'function' ? (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
                   Function to Execute *
                 </label>
                 <select
@@ -271,7 +271,7 @@ export function ScheduleEditor() {
             ) : (
               <>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Agent *
                   </label>
                   <select
@@ -297,7 +297,7 @@ export function ScheduleEditor() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Message Content *
                   </label>
                   <textarea
@@ -316,7 +316,7 @@ export function ScheduleEditor() {
             )}
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Description
               </label>
               <textarea
@@ -330,7 +330,7 @@ export function ScheduleEditor() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
                   Cron Expression *
                 </label>
                 <input
@@ -342,13 +342,13 @@ export function ScheduleEditor() {
                   className="input font-mono"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Examples: <code className="font-mono bg-gray-100 px-1 rounded">0 0 * * *</code> (daily at midnight),{' '}
-                  <code className="font-mono bg-gray-100 px-1 rounded">*/15 * * * *</code> (every 15 min)
+                  Examples: <code className="font-mono bg-[#161616] px-1 rounded">0 0 * * *</code> (daily at midnight),{' '}
+                  <code className="font-mono bg-[#161616] px-1 rounded">*/15 * * * *</code> (every 15 min)
                 </p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-300 mb-2">
                   Timezone *
                 </label>
                 <input
@@ -371,9 +371,9 @@ export function ScheduleEditor() {
                 id="is_active"
                 checked={formData.is_active}
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
               />
-              <label htmlFor="is_active" className="ml-2 text-sm text-gray-700">
+              <label htmlFor="is_active" className="ml-2 text-sm text-gray-300">
                 Active (schedule will run)
               </label>
             </div>
@@ -384,10 +384,10 @@ export function ScheduleEditor() {
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">
+              <h2 className="text-lg font-semibold text-gray-100">
                 {formData.schedule_type === 'function' ? 'Function Input Data' : 'Agent Input Variables'}
               </h2>
-              <p className="text-sm text-gray-600 mt-1">
+              <p className="text-sm text-gray-400 mt-1">
                 {formData.schedule_type === 'function'
                   ? 'Parameters passed to the function on each execution'
                   : 'Input variables for the agent (used in system prompt templates)'}
@@ -406,17 +406,18 @@ export function ScheduleEditor() {
           </div>
 
           {!hasSchemaFields || rawMode ? (
-            <div className="border border-gray-300 rounded-lg overflow-hidden">
+            <div className="border border-white/10 rounded-lg overflow-hidden">
               <CodeEditor
                 value={formData.input_data}
                 language="json"
                 placeholder='{}'
                 onChange={(e) => setFormData({ ...formData, input_data: e.target.value })}
                 padding={15}
+                data-color-mode="dark"
                 style={{
                   fontSize: 14,
-                  backgroundColor: '#fafafa',
-                  color: '#1f2937',
+                  backgroundColor: '#111111',
+                  color: '#ededed',
                   fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
                   minHeight: '150px',
                 }}
@@ -439,13 +440,13 @@ export function ScheduleEditor() {
         </div>
 
         {saveMutation.isError && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
             Failed to save schedule. Please check your configuration.
           </div>
         )}
 
         {saveMutation.isSuccess && (
-          <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+          <div className="p-4 bg-green-900/20 border border-green-800/30 rounded-lg text-sm text-green-400">
             Schedule saved successfully!
           </div>
         )}

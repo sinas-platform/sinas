@@ -127,14 +127,14 @@ export function WebhookEditor() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Link to="/webhooks" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/webhooks" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-100">
               {isNew ? 'New Webhook' : formData.path || 'Edit Webhook'}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-gray-400 mt-1">
               {isNew ? 'Create a web-accessible endpoint to trigger a function' : 'Edit webhook endpoint configuration'}
             </p>
           </div>
@@ -199,10 +199,10 @@ print(result["execution_id"], result["result"])`,
       <form onSubmit={handleSave} className="space-y-6">
         {/* Basic Info */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Webhook Configuration</h2>
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Webhook Configuration</h2>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Function to Execute *
               </label>
               <select
@@ -232,11 +232,11 @@ print(result["execution_id"], result["result"])`,
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 URL Path *
               </label>
               <div className="flex items-stretch">
-                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500 text-sm font-mono">
+                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-white/10 bg-[#0d0d0d] text-gray-500 text-sm font-mono">
                   /h/
                 </span>
                 <input
@@ -256,7 +256,7 @@ print(result["execution_id"], result["result"])`,
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 HTTP Method *
               </label>
               <select
@@ -273,7 +273,7 @@ print(result["execution_id"], result["result"])`,
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
                 Description
               </label>
               <textarea
@@ -291,9 +291,9 @@ print(result["execution_id"], result["result"])`,
                 id="requires_auth"
                 checked={formData.requires_auth}
                 onChange={(e) => setFormData({ ...formData, requires_auth: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
               />
-              <label htmlFor="requires_auth" className="ml-2 text-sm text-gray-700">
+              <label htmlFor="requires_auth" className="ml-2 text-sm text-gray-300">
                 Requires Authentication
               </label>
             </div>
@@ -302,8 +302,8 @@ print(result["execution_id"], result["result"])`,
 
         {/* Default Values */}
         <div className="card">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Default Input Values</h2>
-          <p className="text-sm text-gray-600 mb-4">
+          <h2 className="text-lg font-semibold text-gray-100 mb-4">Default Input Values</h2>
+          <p className="text-sm text-gray-400 mb-4">
             Provide default values that will be merged with incoming request data when the function is executed.
           </p>
           <div className="space-y-2 mb-4">
@@ -336,7 +336,7 @@ print(result["execution_id"], result["result"])`,
               {Object.entries(formData.default_values).map(([key, value]) => (
                 <div
                   key={key}
-                  className="flex items-center justify-between p-3 bg-gray-50 rounded"
+                  className="flex items-center justify-between p-3 bg-[#0d0d0d] rounded"
                 >
                   <div className="flex-1">
                     <span className="font-mono text-sm font-medium">{key}</span>
@@ -346,7 +346,7 @@ print(result["execution_id"], result["result"])`,
                   <button
                     type="button"
                     onClick={() => removeDefaultValue(key)}
-                    className="text-red-600 hover:text-red-700 text-sm"
+                    className="text-red-600 hover:text-red-400 text-sm"
                   >
                     Remove
                   </button>
@@ -357,13 +357,13 @@ print(result["execution_id"], result["result"])`,
         </div>
 
         {saveMutation.isError && (
-          <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
             Failed to save webhook. Please check your configuration.
           </div>
         )}
 
         {saveMutation.isSuccess && (
-          <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+          <div className="p-4 bg-green-900/20 border border-green-800/30 rounded-lg text-sm text-green-400">
             Webhook saved successfully!
           </div>
         )}

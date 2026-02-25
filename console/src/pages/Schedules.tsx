@@ -31,8 +31,8 @@ export function Schedules() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Scheduled Jobs</h1>
-          <p className="text-gray-600 mt-1">Schedule functions and agents to run automatically on a cron schedule</p>
+          <h1 className="text-3xl font-bold text-gray-100">Scheduled Jobs</h1>
+          <p className="text-gray-400 mt-1">Schedule functions and agents to run automatically on a cron schedule</p>
         </div>
         <Link to="/schedules/new" className="btn btn-primary flex items-center">
           <Plus className="w-5 h-5 mr-2" />
@@ -53,12 +53,12 @@ export function Schedules() {
                   <Clock className="w-8 h-8 text-primary-600 mr-3 flex-shrink-0" />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-gray-900">{schedule.name}</h3>
+                      <h3 className="font-semibold text-gray-100">{schedule.name}</h3>
                       <span
                         className={`px-2 py-0.5 text-xs font-medium rounded ${
                           schedule.schedule_type === 'agent'
-                            ? 'bg-purple-100 text-purple-800'
-                            : 'bg-blue-100 text-blue-800'
+                            ? 'bg-purple-900/30 text-purple-300'
+                            : 'bg-blue-900/30 text-blue-300'
                         }`}
                       >
                         {schedule.schedule_type === 'agent' ? 'agent' : 'fn'}
@@ -66,14 +66,14 @@ export function Schedules() {
                       <span
                         className={`px-2 py-0.5 text-xs font-medium rounded ${
                           schedule.is_active
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
+                            ? 'bg-green-900/30 text-green-300'
+                            : 'bg-[#161616] text-gray-200'
                         }`}
                       >
                         {schedule.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <p className="text-sm text-gray-600 mt-1">{schedule.description || 'No description'}</p>
+                    <p className="text-sm text-gray-400 mt-1">{schedule.description || 'No description'}</p>
                     <div className="flex items-center gap-4 mt-2">
                       <p className="text-xs text-gray-500">
                         {schedule.schedule_type === 'agent' ? 'Agent' : 'Function'}:{' '}
@@ -109,7 +109,7 @@ export function Schedules() {
                     className={`${
                       schedule.is_active
                         ? 'text-amber-600 hover:text-amber-700'
-                        : 'text-green-600 hover:text-green-700'
+                        : 'text-green-600 hover:text-green-400'
                     }`}
                     disabled={toggleActiveMutation.isPending}
                     title={schedule.is_active ? 'Pause' : 'Resume'}
@@ -132,7 +132,7 @@ export function Schedules() {
                         deleteMutation.mutate(schedule.name);
                       }
                     }}
-                    className="text-red-600 hover:text-red-700"
+                    className="text-red-600 hover:text-red-400"
                     disabled={deleteMutation.isPending}
                   >
                     <Trash2 className="w-5 h-5" />
@@ -144,9 +144,9 @@ export function Schedules() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No schedules configured</h3>
-          <p className="text-gray-600 mb-4">Create schedules to run functions and agents automatically</p>
+          <Clock className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No schedules configured</h3>
+          <p className="text-gray-400 mb-4">Create schedules to run functions and agents automatically</p>
           <Link to="/schedules/new" className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Schedule

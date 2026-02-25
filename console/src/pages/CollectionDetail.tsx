@@ -272,7 +272,7 @@ export function CollectionDetail() {
   if (collectionError) {
     return (
       <div className="space-y-6">
-        <Link to="/collections" className="inline-flex items-center text-gray-600 hover:text-gray-900">
+        <Link to="/collections" className="inline-flex items-center text-gray-400 hover:text-gray-100">
           <ArrowLeft className="w-4 h-4 mr-1" />
           Back to Collections
         </Link>
@@ -284,7 +284,7 @@ export function CollectionDetail() {
   if (!collection) {
     return (
       <div className="text-center py-12">
-        <h2 className="text-xl font-semibold text-gray-900">Collection not found</h2>
+        <h2 className="text-xl font-semibold text-gray-100">Collection not found</h2>
         <Link to="/collections" className="text-primary-600 hover:text-primary-700 mt-2 inline-block">
           Back to collections
         </Link>
@@ -297,14 +297,14 @@ export function CollectionDetail() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center">
-          <Link to="/collections" className="mr-4 text-gray-600 hover:text-gray-900">
+          <Link to="/collections" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-100">
               {collection.namespace}/{collection.name}
             </h1>
-            <p className="text-gray-600 mt-1">
+            <p className="text-gray-400 mt-1">
               Max file size: {collection.max_file_size_mb} MB
               {' | '}Max total: {collection.max_total_size_gb} GB
               {collection.allow_shared_files && ' | Shared files allowed'}
@@ -393,7 +393,7 @@ url = client.files.generate_temp_url(
       <div className="card">
         <button
           onClick={() => setSearchOpen(!searchOpen)}
-          className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-gray-900 w-full"
+          className="flex items-center gap-2 text-sm font-medium text-gray-300 hover:text-gray-100 w-full"
         >
           {searchOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
           <Search className="w-4 h-4" />
@@ -419,7 +419,7 @@ url = client.files.generate_temp_url(
             <div>
               <label className="label">Metadata Filters</label>
               {hasSchema ? (
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <div className="bg-[#0d0d0d] border border-white/[0.06] rounded-lg p-3">
                   {Object.entries(schemaProperties!).map(([propName, propSchema]) => (
                     <SchemaFormField
                       key={propName}
@@ -498,11 +498,11 @@ url = client.files.generate_temp_url(
             </div>
 
             {searchError && (
-              <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">{searchError}</div>
+              <div className="text-sm text-red-600 bg-red-900/20 border border-red-800/30 rounded p-3">{searchError}</div>
             )}
 
             {searchResults !== null && (
-              <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded px-3 py-2">
+              <div className="text-sm text-gray-400 bg-[#0d0d0d] border border-white/[0.06] rounded px-3 py-2">
                 {searchResults.length} file{searchResults.length !== 1 ? 's' : ''} matched
               </div>
             )}
@@ -513,7 +513,7 @@ url = client.files.generate_temp_url(
       {/* File list */}
       <div className="card">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Files</h2>
+          <h2 className="text-lg font-semibold text-gray-100">Files</h2>
           <span className="text-sm text-gray-500">{files?.length || 0} file(s)</span>
         </div>
 
@@ -526,8 +526,8 @@ url = client.files.generate_temp_url(
         ) : !files || files.length === 0 ? (
           <div className="text-center py-12">
             <FileIcon className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No files yet</h3>
-            <p className="text-gray-600">Upload your first file.</p>
+            <h3 className="text-lg font-medium text-gray-100 mb-2">No files yet</h3>
+            <p className="text-gray-400">Upload your first file.</p>
           </div>
         ) : displayFiles && displayFiles.length === 0 ? (
           <div className="text-center py-8 text-gray-500">No files match your search.</div>
@@ -544,7 +544,7 @@ url = client.files.generate_temp_url(
               return (
                 <div
                   key={file.id}
-                  className="border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                  className="border border-white/[0.06] rounded-lg hover:bg-white/5 transition-colors"
                 >
                   <div className="p-4 flex items-center justify-between">
                     <div className="flex items-center flex-1 min-w-0">
@@ -552,7 +552,7 @@ url = client.files.generate_temp_url(
                       {file.versions && file.versions.length > 0 ? (
                         <button
                           onClick={() => toggleExpanded(file.id)}
-                          className="p-1 text-gray-400 hover:text-gray-600 mr-2"
+                          className="p-1 text-gray-500 hover:text-gray-400 mr-2"
                         >
                           {isExpanded ? (
                             <ChevronDown className="w-4 h-4" />
@@ -564,11 +564,11 @@ url = client.files.generate_temp_url(
                         <div className="w-6 mr-2" />
                       )}
 
-                      <FileIcon className="w-5 h-5 text-gray-400 mr-3 flex-shrink-0" />
+                      <FileIcon className="w-5 h-5 text-gray-500 mr-3 flex-shrink-0" />
 
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-3 flex-wrap">
-                          <span className="text-sm font-medium text-gray-900 truncate">
+                          <span className="text-sm font-medium text-gray-100 truncate">
                             {file.name}
                           </span>
                           <span className="text-xs text-gray-500">
@@ -585,14 +585,14 @@ url = client.files.generate_temp_url(
                           <span
                             className={`px-2 py-0.5 text-xs font-medium rounded ${
                               file.visibility === 'shared'
-                                ? 'bg-blue-50 text-blue-600'
-                                : 'bg-gray-100 text-gray-600'
+                                ? 'bg-blue-900/20 text-blue-600'
+                                : 'bg-[#161616] text-gray-400'
                             }`}
                           >
                             {file.visibility}
                           </span>
                           {contentMatches && contentMatches.length > 0 && (
-                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-yellow-50 text-yellow-700">
+                            <span className="px-2 py-0.5 text-xs font-medium rounded bg-yellow-900/20 text-yellow-400">
                               {contentMatches.length} match{contentMatches.length !== 1 ? 'es' : ''}
                             </span>
                           )}
@@ -606,7 +606,7 @@ url = client.files.generate_temp_url(
                             {Object.entries(file.file_metadata).map(([k, v]) => (
                               <span
                                 key={k}
-                                className="inline-flex items-center px-2 py-0.5 text-xs bg-purple-50 text-purple-700 rounded"
+                                className="inline-flex items-center px-2 py-0.5 text-xs bg-purple-900/20 text-purple-400 rounded"
                               >
                                 <span className="font-medium">{k}:</span>
                                 <span className="ml-1">{typeof v === 'string' ? v : JSON.stringify(v)}</span>
@@ -659,18 +659,18 @@ url = client.files.generate_temp_url(
 
                   {/* Content matches from search */}
                   {contentMatches && contentMatches.length > 0 && (
-                    <div className="border-t border-gray-200 bg-yellow-50/50 px-4 py-3 space-y-2">
-                      <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                    <div className="border-t border-white/[0.06] bg-yellow-900/20/50 px-4 py-3 space-y-2">
+                      <h4 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">
                         Content Matches
                       </h4>
                       {contentMatches.map((match, mi) => (
                         <div key={mi} className="text-xs">
                           <span className="text-gray-500 font-medium">Line {match.line}:</span>
-                          <pre className="mt-1 bg-white border border-gray-200 rounded p-2 overflow-x-auto font-mono text-gray-700">
+                          <pre className="mt-1 bg-[#161616] border border-white/[0.06] rounded p-2 overflow-x-auto font-mono text-gray-300">
                             {match.context.map((line, li) => (
                               <div
                                 key={li}
-                                className={line === match.text ? 'bg-yellow-100 -mx-2 px-2' : ''}
+                                className={line === match.text ? 'bg-yellow-900/30 -mx-2 px-2' : ''}
                               >
                                 {line}
                               </div>
@@ -683,8 +683,8 @@ url = client.files.generate_temp_url(
 
                   {/* Version history */}
                   {isExpanded && file.versions && file.versions.length > 0 && (
-                    <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
-                      <h4 className="text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
+                    <div className="border-t border-white/[0.06] bg-[#0d0d0d] px-4 py-3">
+                      <h4 className="text-xs font-semibold text-gray-300 mb-2 uppercase tracking-wide">
                         Version History
                       </h4>
                       <table className="w-full text-xs">
@@ -701,19 +701,19 @@ url = client.files.generate_temp_url(
                           {file.versions
                             .sort((a, b) => b.version_number - a.version_number)
                             .map((version) => (
-                              <tr key={version.id} className="border-t border-gray-200">
-                                <td className="py-1.5 pr-4 text-gray-900">v{version.version_number}</td>
-                                <td className="py-1.5 pr-4 text-gray-600">{formatFileSize(version.size_bytes)}</td>
-                                <td className="py-1.5 pr-4 text-gray-600 font-mono">
+                              <tr key={version.id} className="border-t border-white/[0.06]">
+                                <td className="py-1.5 pr-4 text-gray-100">v{version.version_number}</td>
+                                <td className="py-1.5 pr-4 text-gray-400">{formatFileSize(version.size_bytes)}</td>
+                                <td className="py-1.5 pr-4 text-gray-400 font-mono">
                                   {version.hash_sha256.substring(0, 16)}...
                                 </td>
-                                <td className="py-1.5 pr-4 text-gray-600">
+                                <td className="py-1.5 pr-4 text-gray-400">
                                   {new Date(version.created_at).toLocaleString()}
                                 </td>
                                 <td className="py-1.5 text-right">
                                   <button
                                     onClick={() => handleDownload(file, version.version_number)}
-                                    className="text-blue-600 hover:text-blue-800"
+                                    className="text-blue-600 hover:text-blue-300"
                                     title={`Download v${version.version_number}`}
                                   >
                                     <Download className="w-3.5 h-3.5 inline" />
@@ -736,7 +736,7 @@ url = client.files.generate_temp_url(
       {showUploadModal && pendingFiles.length > 0 && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
             onClick={() => {
               if (!uploadProgress) {
                 setShowUploadModal(false);
@@ -746,10 +746,10 @@ url = client.files.generate_temp_url(
           />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div
-              className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto"
+              className="bg-[#161616] rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              <h2 className="text-xl font-semibold text-gray-100 mb-4">
                 Upload {pendingFiles.length} File{pendingFiles.length !== 1 ? 's' : ''}
               </h2>
 
@@ -758,7 +758,7 @@ url = client.files.generate_temp_url(
                   <label className="label">Files</label>
                   <div className="space-y-1 max-h-48 overflow-y-auto">
                     {pendingFiles.map((file, i) => (
-                      <div key={i} className="flex items-center justify-between text-sm bg-gray-50 border border-gray-200 rounded px-3 py-2">
+                      <div key={i} className="flex items-center justify-between text-sm bg-[#0d0d0d] border border-white/[0.06] rounded px-3 py-2">
                         <div className="font-mono truncate flex-1 mr-2">
                           {file.name}
                           <span className="text-gray-500 ml-2">
@@ -768,7 +768,7 @@ url = client.files.generate_temp_url(
                         {!uploadProgress && (
                           <button
                             onClick={() => removePendingFile(i)}
-                            className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                            className="text-gray-500 hover:text-red-500 flex-shrink-0"
                           >
                             <X className="w-4 h-4" />
                           </button>
@@ -791,7 +791,7 @@ url = client.files.generate_temp_url(
                         className="text-primary-600 focus:ring-primary-500"
                         disabled={!!uploadProgress}
                       />
-                      <span className="text-sm text-gray-700">Private</span>
+                      <span className="text-sm text-gray-300">Private</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
@@ -803,7 +803,7 @@ url = client.files.generate_temp_url(
                         className="text-primary-600 focus:ring-primary-500"
                         disabled={!collection.allow_shared_files || !!uploadProgress}
                       />
-                      <span className={`text-sm ${collection.allow_shared_files ? 'text-gray-700' : 'text-gray-400'}`}>
+                      <span className={`text-sm ${collection.allow_shared_files ? 'text-gray-300' : 'text-gray-500'}`}>
                         Shared
                       </span>
                     </label>
@@ -814,16 +814,16 @@ url = client.files.generate_temp_url(
                 </div>
 
                 {uploadProgress && (
-                  <div className="text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded p-3">
+                  <div className="text-sm text-blue-400 bg-blue-900/20 border border-blue-800/30 rounded p-3">
                     Uploading {uploadProgress.current}/{uploadProgress.total}...
                   </div>
                 )}
 
                 {uploadError && (
-                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-3">{uploadError}</div>
+                  <div className="text-sm text-red-600 bg-red-900/20 border border-red-800/30 rounded p-3">{uploadError}</div>
                 )}
 
-                <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
+                <div className="flex justify-end gap-2 pt-4 border-t border-white/[0.06]">
                   <button
                     type="button"
                     onClick={() => {
@@ -862,15 +862,15 @@ url = client.files.generate_temp_url(
       {metadataEditFile && (
         <>
           <div
-            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
             onClick={() => setMetadataEditFile(null)}
           />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div
-              className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto"
+              className="bg-[#161616] rounded-lg max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto"
               onClick={(e) => e.stopPropagation()}
             >
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              <h2 className="text-xl font-semibold text-gray-100 mb-4">
                 Edit Metadata: {metadataEditFile.name}
               </h2>
 
@@ -913,7 +913,7 @@ url = client.files.generate_temp_url(
                   <ErrorDisplay error={metadataMutation.error} title="Failed to update metadata" />
                 )}
 
-                <div className="flex justify-end gap-2 pt-4 border-t border-gray-200">
+                <div className="flex justify-end gap-2 pt-4 border-t border-white/[0.06]">
                   <button
                     type="button"
                     onClick={() => setMetadataEditFile(null)}

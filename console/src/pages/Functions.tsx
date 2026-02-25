@@ -159,8 +159,8 @@ export function Functions() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Functions</h1>
-          <p className="text-gray-600 mt-1">Create and manage Python functions</p>
+          <h1 className="text-3xl font-bold text-gray-100">Functions</h1>
+          <p className="text-gray-400 mt-1">Create and manage Python functions</p>
         </div>
         <div className="flex space-x-3">
           <button
@@ -180,7 +180,7 @@ export function Functions() {
       {/* Search Bar */}
       {functions && functions.length > 0 && (
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
           <input
             type="text"
             value={searchFilter}
@@ -193,9 +193,9 @@ export function Functions() {
 
       {/* Packages Section */}
       {packages && packages.length > 0 && (
-        <div className="card bg-gray-50">
+        <div className="card bg-[#0d0d0d]">
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-gray-700">Installed Packages ({packages.length})</h3>
+            <h3 className="text-sm font-medium text-gray-300">Installed Packages ({packages.length})</h3>
             <button
               onClick={() => reloadWorkersMutation.mutate()}
               disabled={reloadWorkersMutation.isPending}
@@ -206,12 +206,12 @@ export function Functions() {
           </div>
           <div className="flex flex-wrap gap-2">
             {packages.map((pkg: any) => (
-              <div key={pkg.id} className="flex items-center bg-white px-3 py-1 rounded border border-gray-200">
+              <div key={pkg.id} className="flex items-center bg-[#161616] px-3 py-1 rounded border border-white/[0.06]">
                 <span className="text-sm font-mono">{pkg.package_name}</span>
                 <span className="text-xs text-gray-500 ml-2">{pkg.version}</span>
                 <button
                   onClick={() => deletePackageMutation.mutate(pkg.id)}
-                  className="ml-2 text-red-600 hover:text-red-700"
+                  className="ml-2 text-red-600 hover:text-red-400"
                   disabled={deletePackageMutation.isPending}
                 >
                   ×
@@ -244,7 +244,7 @@ export function Functions() {
                   {/* Icon */}
                   <button
                     onClick={() => toggleFunctionExpanded(func.id)}
-                    className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
+                    className="flex-shrink-0 text-gray-500 hover:text-gray-400 transition-colors"
                     title={isExpanded ? "Hide code" : "Show code"}
                   >
                     {isExpanded ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
@@ -253,33 +253,33 @@ export function Functions() {
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-semibold text-gray-900 truncate">
+                      <h3 className="font-semibold text-gray-100 truncate">
                         <span className="text-gray-500">{func.namespace}/</span>{func.name}
                       </h3>
                       {func.shared_pool && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 flex-shrink-0">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/30 text-blue-300 flex-shrink-0">
                           Shared Pool
                         </span>
                       )}
                       {func.requires_approval && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 flex-shrink-0">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-900/30 text-yellow-300 flex-shrink-0">
                           Requires Approval
                         </span>
                       )}
                       {triggerRoles?.contentFilter.length > 0 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 flex-shrink-0" title={`Content filter for: ${triggerRoles.contentFilter.join(', ')}`}>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-900/30 text-orange-300 flex-shrink-0" title={`Content filter for: ${triggerRoles.contentFilter.join(', ')}`}>
                           <Filter className="w-3 h-3 mr-1" />
                           Content Filter
                         </span>
                       )}
                       {triggerRoles?.postUpload.length > 0 && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 flex-shrink-0" title={`Post-upload for: ${triggerRoles.postUpload.join(', ')}`}>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/30 text-green-300 flex-shrink-0" title={`Post-upload for: ${triggerRoles.postUpload.join(', ')}`}>
                           <Upload className="w-3 h-3 mr-1" />
                           Post-Upload
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-600 truncate mt-0.5">{func.description || 'No description'}</p>
+                    <p className="text-sm text-gray-400 truncate mt-0.5">{func.description || 'No description'}</p>
                     <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1">
                       <span className="text-xs text-gray-500">
                         Created {new Date(func.created_at).toLocaleDateString()}
@@ -302,7 +302,7 @@ export function Functions() {
                     <button
                       onClick={() => handleExecute(func)}
                       disabled={executeMutation.isPending}
-                      className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-md transition-colors"
+                      className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-400 bg-green-900/20 hover:bg-green-900/30 rounded-md transition-colors"
                       title="Execute function"
                     >
                       <Play className="w-4 h-4 mr-1.5" />
@@ -310,7 +310,7 @@ export function Functions() {
                     </button>
                     <Link
                       to={`/functions/${func.namespace}/${func.name}`}
-                      className="p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-md transition-colors"
+                      className="p-2 text-gray-500 hover:text-primary-600 hover:bg-white/10 rounded-md transition-colors"
                       title="Edit"
                     >
                       <Edit2 className="w-4 h-4" />
@@ -321,7 +321,7 @@ export function Functions() {
                           deleteMutation.mutate({ namespace: func.namespace, name: func.name });
                         }
                       }}
-                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-gray-100 rounded-md transition-colors"
+                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-white/10 rounded-md transition-colors"
                       disabled={deleteMutation.isPending}
                       title="Delete"
                     >
@@ -345,9 +345,9 @@ export function Functions() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Code className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No functions yet</h3>
-          <p className="text-gray-600 mb-4">Create Python functions to extend your AI capabilities</p>
+          <Code className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No functions yet</h3>
+          <p className="text-gray-400 mb-4">Create Python functions to extend your AI capabilities</p>
           <Link to="/functions/new/new" className="btn btn-primary">
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Function
@@ -358,13 +358,13 @@ export function Functions() {
       {/* Execute Function Modal */}
       {showExecuteModal && executeFunc && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">Execute Function</h2>
+                <h2 className="text-xl font-semibold text-gray-100">Execute Function</h2>
                 <p className="text-sm text-gray-500 font-mono">{executeFunc.namespace}/{executeFunc.name}</p>
               </div>
-              <button onClick={closeExecuteModal} className="p-1 text-gray-400 hover:text-gray-600">
+              <button onClick={closeExecuteModal} className="p-1 text-gray-500 hover:text-gray-400">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -410,7 +410,7 @@ export function Functions() {
             {executeMutation.isPending && (
               <div className="flex items-center justify-center py-8">
                 <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600 mr-3"></div>
-                <span className="text-gray-600">Executing...</span>
+                <span className="text-gray-400">Executing...</span>
               </div>
             )}
 
@@ -419,8 +419,8 @@ export function Functions() {
               <div className="space-y-3">
                 <div className={`inline-flex items-center px-2.5 py-1 rounded text-sm font-medium ${
                   executeResult.status === 'success'
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-red-100 text-red-700'
+                    ? 'bg-green-900/30 text-green-400'
+                    : 'bg-red-900/30 text-red-400'
                 }`}>
                   {executeResult.status === 'success' ? 'Success' : 'Error'}
                 </div>
@@ -470,11 +470,11 @@ export function Functions() {
       {/* Package Management Modal */}
       {showPackageModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Manage Packages</h2>
+          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6">
+            <h2 className="text-xl font-semibold text-gray-100 mb-4">Manage Packages</h2>
 
             <form onSubmit={handleInstallPackage} className="mb-6">
-              <label htmlFor="package" className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="package" className="block text-sm font-medium text-gray-300 mb-2">
                 Install Package
               </label>
               <div className="flex space-x-2">
@@ -496,19 +496,19 @@ export function Functions() {
               </div>
             </form>
 
-            <div className="border-t border-gray-200 pt-4">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Installed Packages</h3>
+            <div className="border-t border-white/[0.06] pt-4">
+              <h3 className="text-sm font-medium text-gray-300 mb-3">Installed Packages</h3>
               {packages && packages.length > 0 ? (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {packages.map((pkg: any) => (
-                    <div key={pkg.id} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                    <div key={pkg.id} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
                       <div>
                         <span className="font-mono text-sm">{pkg.package_name}</span>
                         <span className="text-xs text-gray-500 ml-2">{pkg.version}</span>
                       </div>
                       <button
                         onClick={() => deletePackageMutation.mutate(pkg.id)}
-                        className="text-red-600 hover:text-red-700 text-sm"
+                        className="text-red-600 hover:text-red-400 text-sm"
                         disabled={deletePackageMutation.isPending}
                       >
                         Uninstall

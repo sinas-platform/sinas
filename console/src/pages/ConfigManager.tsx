@@ -150,7 +150,7 @@ export function ConfigManager() {
     const sections = [
       { title: 'Created', data: summary.created, color: 'text-green-600' },
       { title: 'Updated', data: summary.updated, color: 'text-blue-600' },
-      { title: 'Unchanged', data: summary.unchanged, color: 'text-gray-600' },
+      { title: 'Unchanged', data: summary.unchanged, color: 'text-gray-400' },
       { title: 'Deleted', data: summary.deleted, color: 'text-red-600' },
     ];
 
@@ -161,12 +161,12 @@ export function ConfigManager() {
           if (total === 0) return null;
 
           return (
-            <div key={title} className="bg-white p-4 rounded-lg border">
+            <div key={title} className="bg-[#161616] p-4 rounded-lg border border-white/[0.06]">
               <h4 className={`font-semibold ${color} mb-2`}>{title}</h4>
               <div className="text-2xl font-bold">{total}</div>
               {Object.entries(data).map(([type, count]) => (
                 count > 0 && (
-                  <div key={type} className="text-sm text-gray-600 mt-1">
+                  <div key={type} className="text-sm text-gray-400 mt-1">
                     {type}: {count}
                   </div>
                 )
@@ -181,19 +181,19 @@ export function ConfigManager() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Configuration Manager</h1>
+        <h1 className="text-2xl font-bold text-gray-100">Configuration Manager</h1>
         <button
           onClick={handleExport}
-          className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+          className="px-4 py-2 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
         >
           Export Current Config
         </button>
       </div>
 
-      <div className="bg-white rounded-lg border p-6">
+      <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <label className="block text-sm font-medium text-gray-700">
+            <label className="block text-sm font-medium text-gray-300">
               YAML Configuration
             </label>
             <div className="flex gap-2">
@@ -206,7 +206,7 @@ export function ConfigManager() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                className="px-3 py-1.5 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
               >
                 Upload File
               </button>
@@ -216,7 +216,7 @@ export function ConfigManager() {
                   setValidationResult(null);
                   setDryRunResult(null);
                 }}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                className="px-3 py-1.5 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
               >
                 Clear
               </button>
@@ -231,28 +231,28 @@ export function ConfigManager() {
             }}
             disabled={currentStep !== 'edit'}
             placeholder="Paste your YAML configuration here or upload a file..."
-            className="w-full h-96 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-gray-50 disabled:text-gray-600"
+            className="w-full h-96 px-3 py-2 border border-white/10 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-[#0d0d0d] disabled:text-gray-400"
           />
 
           {/* Step indicator */}
           <div className="flex items-center gap-2 text-sm">
-            <div className={`flex items-center gap-2 ${currentStep === 'edit' ? 'text-blue-600 font-medium' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'edit' ? 'bg-blue-600 text-white' : 'bg-gray-200'}`}>1</div>
+            <div className={`flex items-center gap-2 ${currentStep === 'edit' ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'edit' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e]'}`}>1</div>
               <span>Edit</span>
             </div>
-            <div className="flex-1 h-0.5 bg-gray-200"></div>
-            <div className={`flex items-center gap-2 ${currentStep === 'validating' ? 'text-blue-600 font-medium' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'validating' ? 'bg-blue-600 text-white' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>2</div>
+            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className={`flex items-center gap-2 ${currentStep === 'validating' ? 'text-blue-600 font-medium' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'validating' ? 'bg-blue-600 text-white' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>2</div>
               <span>Validate</span>
             </div>
-            <div className="flex-1 h-0.5 bg-gray-200"></div>
-            <div className={`flex items-center gap-2 ${currentStep === 'dryrun' ? 'text-blue-600 font-medium' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'dryrun' ? 'bg-blue-600 text-white' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>3</div>
+            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className={`flex items-center gap-2 ${currentStep === 'dryrun' ? 'text-blue-600 font-medium' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'dryrun' ? 'bg-blue-600 text-white' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>3</div>
               <span>Dry Run</span>
             </div>
-            <div className="flex-1 h-0.5 bg-gray-200"></div>
-            <div className={`flex items-center gap-2 ${currentStep === 'confirm' || currentStep === 'applying' ? 'text-blue-600 font-medium' : currentStep === 'complete' ? 'text-green-600' : 'text-gray-400'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'confirm' || currentStep === 'applying' ? 'bg-blue-600 text-white' : currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-gray-200'}`}>4</div>
+            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className={`flex items-center gap-2 ${currentStep === 'confirm' || currentStep === 'applying' ? 'text-blue-600 font-medium' : currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'confirm' || currentStep === 'applying' ? 'bg-blue-600 text-white' : currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>4</div>
               <span>Confirm</span>
             </div>
           </div>
@@ -287,7 +287,7 @@ export function ConfigManager() {
                 </button>
                 <button
                   onClick={handleReject}
-                  className="px-6 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  className="px-6 py-2 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
                 >
                   Reject
                 </button>
@@ -315,7 +315,7 @@ export function ConfigManager() {
 
       {/* Validation Results */}
       {validationResult && (
-        <div className={`bg-white rounded-lg border p-6 ${validationResult.valid ? 'border-green-300' : 'border-red-300'}`}>
+        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${validationResult.valid ? 'border-green-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">
             {validationResult.valid ? '✓ Validation Passed' : '✗ Validation Failed'}
           </h2>
@@ -325,8 +325,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-red-600 mb-2">Errors:</h3>
               <div className="space-y-2">
                 {validationResult.errors.map((error, idx) => (
-                  <div key={idx} className="bg-red-50 border border-red-200 rounded p-3">
-                    <div className="text-sm text-red-800">{error.message}</div>
+                  <div key={idx} className="bg-red-900/20 border border-red-800/30 rounded p-3">
+                    <div className="text-sm text-red-300">{error.message}</div>
                     {error.location && error.location.length > 0 && (
                       <div className="text-xs text-red-600 mt-1">Location: {error.location.join(' > ')}</div>
                     )}
@@ -341,8 +341,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-yellow-600 mb-2">Warnings:</h3>
               <div className="space-y-2">
                 {validationResult.warnings.map((warning, idx) => (
-                  <div key={idx} className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                    <div className="text-sm text-yellow-800">{warning.message}</div>
+                  <div key={idx} className="bg-yellow-900/20 border border-yellow-800/30 rounded p-3">
+                    <div className="text-sm text-yellow-300">{warning.message}</div>
                     {warning.location && warning.location.length > 0 && (
                       <div className="text-xs text-yellow-600 mt-1">Location: {warning.location.join(' > ')}</div>
                     )}
@@ -356,7 +356,7 @@ export function ConfigManager() {
 
       {/* Dry Run Results */}
       {dryRunResult && currentStep === 'confirm' && (
-        <div className={`bg-white rounded-lg border p-6 ${dryRunResult.success ? 'border-blue-300' : 'border-red-300'}`}>
+        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${dryRunResult.success ? 'border-blue-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">Dry Run Results - Review Changes</h2>
 
           {renderSummary(dryRunResult.summary)}
@@ -366,8 +366,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-red-600 mb-2">Errors:</h3>
               <div className="space-y-2">
                 {dryRunResult.errors.map((error, idx) => (
-                  <div key={idx} className="bg-red-50 border border-red-200 rounded p-3">
-                    <div className="text-sm text-red-800">{error}</div>
+                  <div key={idx} className="bg-red-900/20 border border-red-800/30 rounded p-3">
+                    <div className="text-sm text-red-300">{error}</div>
                   </div>
                 ))}
               </div>
@@ -379,8 +379,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-yellow-600 mb-2">Warnings:</h3>
               <div className="space-y-2">
                 {dryRunResult.warnings.map((warning, idx) => (
-                  <div key={idx} className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                    <div className="text-sm text-yellow-800">{warning}</div>
+                  <div key={idx} className="bg-yellow-900/20 border border-yellow-800/30 rounded p-3">
+                    <div className="text-sm text-yellow-300">{warning}</div>
                   </div>
                 ))}
               </div>
@@ -389,38 +389,38 @@ export function ConfigManager() {
 
           {dryRunResult.changes && dryRunResult.changes.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-2">
+              <h3 className="font-medium text-gray-100 mb-2">
                 Detailed Changes ({dryRunResult.changes.length} resources):
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {dryRunResult.changes.map((change, idx) => (
-                  <div key={idx} className="bg-gray-50 border border-gray-200 rounded p-3">
+                  <div key={idx} className="bg-[#0d0d0d] border border-white/[0.06] rounded p-3">
                     <div className="flex items-start gap-3">
                       <span className={`px-2 py-1 rounded text-xs font-semibold uppercase whitespace-nowrap ${
-                        change.action === 'create' ? 'bg-green-100 text-green-800' :
-                        change.action === 'update' ? 'bg-blue-100 text-blue-800' :
-                        change.action === 'delete' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
+                        change.action === 'create' ? 'bg-green-900/30 text-green-300' :
+                        change.action === 'update' ? 'bg-blue-900/30 text-blue-300' :
+                        change.action === 'delete' ? 'bg-red-900/30 text-red-300' :
+                        'bg-[#161616] text-gray-200'
                       }`}>
                         {change.action}
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline gap-2 mb-1">
-                          <span className="text-sm font-semibold text-gray-900">{change.resourceType}</span>
-                          <span className="text-sm text-gray-600 font-mono truncate">
+                          <span className="text-sm font-semibold text-gray-100">{change.resourceType}</span>
+                          <span className="text-sm text-gray-400 font-mono truncate">
                             {change.resourceName}
                           </span>
                         </div>
                         {change.details && (
-                          <p className="text-xs text-gray-600 mt-1">{change.details}</p>
+                          <p className="text-xs text-gray-400 mt-1">{change.details}</p>
                         )}
                         {change.changes && Object.keys(change.changes).length > 0 && (
                           <div className="mt-2">
                             <details className="text-xs">
-                              <summary className="cursor-pointer text-blue-600 hover:text-blue-700 font-medium">
+                              <summary className="cursor-pointer text-blue-600 hover:text-blue-400 font-medium">
                                 View changes
                               </summary>
-                              <pre className="text-xs text-gray-700 mt-2 bg-white p-2 rounded overflow-x-auto border">
+                              <pre className="text-xs text-gray-300 mt-2 bg-[#161616] p-2 rounded overflow-x-auto border border-white/[0.06]">
                                 {JSON.stringify(change.changes, null, 2)}
                               </pre>
                             </details>
@@ -438,7 +438,7 @@ export function ConfigManager() {
 
       {/* Apply Results */}
       {applyResult && currentStep === 'complete' && (
-        <div className={`bg-white rounded-lg border p-6 ${applyResult.success ? 'border-green-300' : 'border-red-300'}`}>
+        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${applyResult.success ? 'border-green-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">
             {applyResult.success ? '✓ Configuration Applied Successfully' : '✗ Configuration Applied with Errors'}
           </h2>
@@ -450,8 +450,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-red-600 mb-2">Errors:</h3>
               <div className="space-y-2">
                 {applyResult.errors.map((error, idx) => (
-                  <div key={idx} className="bg-red-50 border border-red-200 rounded p-3">
-                    <div className="text-sm text-red-800">{error}</div>
+                  <div key={idx} className="bg-red-900/20 border border-red-800/30 rounded p-3">
+                    <div className="text-sm text-red-300">{error}</div>
                   </div>
                 ))}
               </div>
@@ -463,8 +463,8 @@ export function ConfigManager() {
               <h3 className="font-medium text-yellow-600 mb-2">Warnings:</h3>
               <div className="space-y-2">
                 {applyResult.warnings.map((warning, idx) => (
-                  <div key={idx} className="bg-yellow-50 border border-yellow-200 rounded p-3">
-                    <div className="text-sm text-yellow-800">{warning}</div>
+                  <div key={idx} className="bg-yellow-900/20 border border-yellow-800/30 rounded p-3">
+                    <div className="text-sm text-yellow-300">{warning}</div>
                   </div>
                 ))}
               </div>
@@ -473,38 +473,38 @@ export function ConfigManager() {
 
           {applyResult.changes && applyResult.changes.length > 0 && (
             <div>
-              <h3 className="font-medium text-gray-900 mb-2">
+              <h3 className="font-medium text-gray-100 mb-2">
                 Changes Applied ({applyResult.changes.length} resources):
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {applyResult.changes.map((change, idx) => (
-                  <div key={idx} className="bg-gray-50 border border-gray-200 rounded p-3">
+                  <div key={idx} className="bg-[#0d0d0d] border border-white/[0.06] rounded p-3">
                     <div className="flex items-start gap-3">
                       <span className={`px-2 py-1 rounded text-xs font-semibold uppercase whitespace-nowrap ${
-                        change.action === 'create' ? 'bg-green-100 text-green-800' :
-                        change.action === 'update' ? 'bg-blue-100 text-blue-800' :
-                        change.action === 'delete' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
+                        change.action === 'create' ? 'bg-green-900/30 text-green-300' :
+                        change.action === 'update' ? 'bg-blue-900/30 text-blue-300' :
+                        change.action === 'delete' ? 'bg-red-900/30 text-red-300' :
+                        'bg-[#161616] text-gray-200'
                       }`}>
                         {change.action}
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-baseline gap-2 mb-1">
-                          <span className="text-sm font-semibold text-gray-900">{change.resourceType}</span>
-                          <span className="text-sm text-gray-600 font-mono truncate">
+                          <span className="text-sm font-semibold text-gray-100">{change.resourceType}</span>
+                          <span className="text-sm text-gray-400 font-mono truncate">
                             {change.resourceName}
                           </span>
                         </div>
                         {change.details && (
-                          <p className="text-xs text-gray-600 mt-1">{change.details}</p>
+                          <p className="text-xs text-gray-400 mt-1">{change.details}</p>
                         )}
                         {change.changes && Object.keys(change.changes).length > 0 && (
                           <div className="mt-2">
                             <details className="text-xs">
-                              <summary className="cursor-pointer text-blue-600 hover:text-blue-700 font-medium">
+                              <summary className="cursor-pointer text-blue-600 hover:text-blue-400 font-medium">
                                 View changes
                               </summary>
-                              <pre className="text-xs text-gray-700 mt-2 bg-white p-2 rounded overflow-x-auto border">
+                              <pre className="text-xs text-gray-300 mt-2 bg-[#161616] p-2 rounded overflow-x-auto border border-white/[0.06]">
                                 {JSON.stringify(change.changes, null, 2)}
                               </pre>
                             </details>

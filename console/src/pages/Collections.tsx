@@ -139,8 +139,8 @@ export function Collections() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Collections</h1>
-          <p className="text-gray-600 mt-1">Organize files with validation rules and access control</p>
+          <h1 className="text-3xl font-bold text-gray-100">Collections</h1>
+          <p className="text-gray-400 mt-1">Organize files with validation rules and access control</p>
         </div>
         <button
           onClick={() => {
@@ -161,16 +161,16 @@ export function Collections() {
       ) : collections && collections.length > 0 ? (
         <div className="grid gap-4">
           {collections.map((collection) => (
-            <div key={collection.id} className="card hover:shadow-md transition-shadow">
+            <div key={collection.id} className="card transition-colors">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center space-x-2">
                     <Archive className="w-5 h-5 text-blue-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">
+                    <h3 className="text-lg font-semibold text-gray-100">
                       {collection.namespace}/{collection.name}
                     </h3>
                   </div>
-                  <div className="text-sm text-gray-600 mt-2 space-y-1">
+                  <div className="text-sm text-gray-400 mt-2 space-y-1">
                     <p>
                       Max file size: {collection.max_file_size_mb} MB | Max total size: {collection.max_total_size_gb} GB
                     </p>
@@ -219,18 +219,18 @@ export function Collections() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Archive className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No collections yet</h3>
-          <p className="text-gray-600 mb-4">Create your first collection to get started</p>
+          <Archive className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No collections yet</h3>
+          <p className="text-gray-400 mb-4">Create your first collection to get started</p>
         </div>
       )}
 
       {/* Create Modal */}
       {showCreateModal && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Create Collection</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -367,16 +367,16 @@ export function Collections() {
       {/* Edit Modal */}
       {showEditModal && selectedCollection && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Edit Collection</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
                 <label className="label">Namespace</label>
                 <input
                   type="text"
-                  className="input bg-gray-100"
+                  className="input bg-[#161616]"
                   value={selectedCollection.namespace}
                   disabled
                 />
@@ -386,7 +386,7 @@ export function Collections() {
                 <label className="label">Name</label>
                 <input
                   type="text"
-                  className="input bg-gray-100"
+                  className="input bg-[#161616]"
                   value={selectedCollection.name}
                   disabled
                 />

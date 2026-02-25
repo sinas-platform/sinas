@@ -112,8 +112,8 @@ export function Skills() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Skills</h1>
-          <p className="text-gray-600 mt-1">Reusable instruction modules that agents can retrieve as needed</p>
+          <h1 className="text-3xl font-bold text-gray-100">Skills</h1>
+          <p className="text-gray-400 mt-1">Reusable instruction modules that agents can retrieve as needed</p>
         </div>
         <button
           onClick={() => {
@@ -134,21 +134,21 @@ export function Skills() {
       ) : skills && skills.length > 0 ? (
         <div className="grid gap-4">
           {skills.map((skill) => (
-            <div key={skill.id} className="card hover:shadow-md transition-shadow">
+            <div key={skill.id} className="card transition-colors">
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center space-x-2">
                     <Lightbulb className="w-5 h-5 text-yellow-500" />
-                    <h3 className="text-lg font-semibold text-gray-900">
+                    <h3 className="text-lg font-semibold text-gray-100">
                       {skill.namespace}/{skill.name}
                     </h3>
                     {!skill.is_active && (
-                      <span className="px-2 py-1 text-xs bg-gray-200 text-gray-600 rounded">
+                      <span className="px-2 py-1 text-xs bg-[#1e1e1e] text-gray-400 rounded">
                         Inactive
                       </span>
                     )}
                   </div>
-                  <p className="text-gray-600 mt-2">{skill.description}</p>
+                  <p className="text-gray-400 mt-2">{skill.description}</p>
                   <div className="text-xs text-gray-500 mt-2">
                     {new Date(skill.created_at).toLocaleString()}
                   </div>
@@ -182,18 +182,18 @@ export function Skills() {
         </div>
       ) : (
         <div className="text-center py-12 card">
-          <Lightbulb className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No skills yet</h3>
-          <p className="text-gray-600 mb-4">Create your first skill to get started</p>
+          <Lightbulb className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No skills yet</h3>
+          <p className="text-gray-400 mb-4">Create your first skill to get started</p>
         </div>
       )}
 
       {/* Create Modal */}
       {showCreateModal && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Create Skill</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -277,9 +277,9 @@ export function Skills() {
       {/* Edit Modal */}
       {showEditModal && selectedSkill && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Edit Skill</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
@@ -360,28 +360,28 @@ export function Skills() {
       {/* View Modal */}
       {showViewModal && selectedSkill && (
         <>
-          <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50" onClick={() => setShowViewModal(false)} />
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowViewModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">
                   {selectedSkill.namespace}/{selectedSkill.name}
                 </h2>
                 <button
                   onClick={() => setShowViewModal(false)}
-                  className="text-gray-500 hover:text-gray-700 text-3xl leading-none"
+                  className="text-gray-500 hover:text-gray-300 text-3xl leading-none"
                 >
                   ×
                 </button>
               </div>
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
-                  <p className="text-gray-700">{selectedSkill.description}</p>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
+                  <p className="text-gray-300">{selectedSkill.description}</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Content</label>
-                  <pre className="bg-gray-50 p-4 rounded border border-gray-200 overflow-auto max-h-96 text-sm font-mono whitespace-pre-wrap">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Content</label>
+                  <pre className="bg-[#0d0d0d] p-4 rounded border border-white/[0.06] overflow-auto max-h-96 text-sm font-mono whitespace-pre-wrap">
                     {selectedSkill.content}
                   </pre>
                 </div>
