@@ -4,6 +4,7 @@ import json
 import logging
 import traceback
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -113,6 +114,10 @@ async def create_chat_with_agent(
             raise HTTPException(400, f"Input validation failed: {e.message}")
 
     # 4. Create chat with input data stored in metadata
+    expires_at = None
+    if request.expires_in:
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=request.expires_in)
+
     chat = Chat(
         user_id=user_id,
         agent_id=agent.id,
@@ -120,6 +125,7 @@ async def create_chat_with_agent(
         agent_name=agent_name,
         title=request.title or f"Chat with {namespace}/{agent_name}",
         chat_metadata={"agent_input": validated_input} if validated_input else None,
+        expires_at=expires_at,
     )
     db.add(chat)
     await db.commit()
@@ -152,6 +158,8 @@ async def create_chat_with_agent(
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,
         title=chat.title,
+        archived=chat.archived,
+        expires_at=chat.expires_at,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=None,  # New chat has no messages yet
@@ -495,6 +503,7 @@ async def approve_tool_call(
 @router.get("/chats", response_model=list[ChatResponse])
 async def list_chats(
     request: Request,
+    include_archived: bool = Query(False, description="Include archived chats"),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
     db: AsyncSession = Depends(get_db),
 ):
@@ -510,13 +519,17 @@ async def list_chats(
     )
 
     # Join with User and last message subquery
-    result = await db.execute(
+    query = (
         select(Chat, User.email, last_message_subq.c.last_message_at)
         .join(User, Chat.user_id == User.id)
         .outerjoin(last_message_subq, Chat.id == last_message_subq.c.chat_id)
         .where(Chat.user_id == user_id)
-        .order_by(Chat.updated_at.desc())
     )
+
+    if not include_archived:
+        query = query.where(Chat.archived == False)
+
+    result = await db.execute(query.order_by(Chat.updated_at.desc()))
     rows = result.all()
 
     # Build response with user_email and last_message_at
@@ -531,6 +544,8 @@ async def list_chats(
                 agent_namespace=chat.agent_namespace,
                 agent_name=chat.agent_name,
                 title=chat.title,
+                archived=chat.archived,
+                expires_at=chat.expires_at,
                 created_at=chat.created_at,
                 updated_at=chat.updated_at,
                 last_message_at=last_message_at,
@@ -592,6 +607,8 @@ async def get_chat(
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,
         title=chat.title,
+        archived=chat.archived,
+        expires_at=chat.expires_at,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
@@ -631,6 +648,8 @@ async def update_chat(
 
     if request.title is not None:
         chat.title = request.title
+    if request.archived is not None:
+        chat.archived = request.archived
 
     await db.commit()
     await db.refresh(chat)
@@ -653,6 +672,8 @@ async def update_chat(
         agent_namespace=chat.agent_namespace,
         agent_name=chat.agent_name,
         title=chat.title,
+        archived=chat.archived,
+        expires_at=chat.expires_at,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
@@ -666,7 +687,7 @@ async def delete_chat(
     current_user_data: tuple = Depends(get_current_user_with_permissions),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a chat and all its messages."""
+    """Archive a chat (soft-delete). The chat is hidden from listings but can be restored."""
     user_id, permissions = current_user_data
 
     # Get chat (filtered by user_id for data privacy)
@@ -688,7 +709,7 @@ async def delete_chat(
 
     set_permission_used(http_request, agent_chat_perm)
 
-    await db.delete(chat)
+    chat.archived = True
     await db.commit()
 
     return None

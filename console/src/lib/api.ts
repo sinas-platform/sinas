@@ -255,8 +255,9 @@ class APIClient {
   }
 
   // Chats (Runtime API)
-  async listChats(): Promise<Chat[]> {
-    const response = await this.runtimeClient.get('/chats');
+  async listChats(includeArchived: boolean = false): Promise<Chat[]> {
+    const params = includeArchived ? { include_archived: true } : {};
+    const response = await this.runtimeClient.get('/chats', { params });
     return response.data;
   }
 

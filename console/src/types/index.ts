@@ -62,12 +62,16 @@ export interface APIKeyCreatedResponse extends APIKey {
 export interface Chat {
   id: string;
   user_id: string;
+  user_email: string;
   agent_id: string | null;
   agent_namespace: string | null;
   agent_name: string | null;
   title: string;
+  archived: boolean;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
+  last_message_at: string | null;
 }
 
 export interface ChatCreate {
@@ -77,6 +81,7 @@ export interface ChatCreate {
 
 export interface ChatUpdate {
   title?: string;
+  archived?: boolean;
 }
 
 // Multimodal content types

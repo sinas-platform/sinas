@@ -13,6 +13,7 @@ class ChatCreate(BaseModel):
 
 class ChatUpdate(BaseModel):
     title: Optional[str] = None
+    archived: Optional[bool] = None
 
 
 class ChatResponse(BaseModel):
@@ -23,6 +24,8 @@ class ChatResponse(BaseModel):
     agent_namespace: Optional[str]
     agent_name: Optional[str]
     title: str
+    archived: bool = False
+    expires_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime] = None  # Timestamp of last message
@@ -103,6 +106,9 @@ class AgentChatCreateRequest(BaseModel):
 
     # Optional title for the chat
     title: Optional[str] = None
+
+    # Optional TTL in seconds — chat will be hard-deleted after this duration
+    expires_in: Optional[int] = Field(None, gt=0)
 
 
 class MessageSendRequest(BaseModel):
