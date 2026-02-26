@@ -4,9 +4,11 @@ Replaces per-user containers with a pool of pre-warmed generic containers
 that any user's function can run in (acquire/release model).
 """
 import asyncio
+import io
 import json
 import logging
 import re
+import tarfile
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -322,6 +324,18 @@ class ContainerPool:
                 },
             }
 
+            # Write payload to container via tar archive (avoids ARG_MAX limit
+            # that occurs when large payloads like base64 images are embedded
+            # in command-line arguments).
+            payload_bytes = json.dumps(payload).encode("utf-8")
+            tar_buf = io.BytesIO()
+            with tarfile.open(fileobj=tar_buf, mode="w") as tar:
+                info = tarfile.TarInfo(name="exec_request.json")
+                info.size = len(payload_bytes)
+                tar.addfile(info, io.BytesIO(payload_bytes))
+            tar_buf.seek(0)
+            await asyncio.to_thread(container.put_archive, "/tmp", tar_buf)
+
             exec_start = time.time()
             exec_result = await asyncio.to_thread(
                 container.exec_run,
@@ -329,25 +343,17 @@ class ContainerPool:
                     "python3",
                     "-c",
                     f"""
-import sys
-import json
-payload = json.loads({json.dumps(json.dumps(payload))})
-# Write execution request
-with open("/tmp/exec_request.json", "w") as f:
-    json.dump(payload, f)
-# Trigger execution
+import sys, json, time, os
+# Trigger execution (request already written via put_archive)
 with open("/tmp/exec_trigger", "w") as f:
     f.write("1")
 # Wait for result
-import time
 max_wait = {settings.function_timeout}
 start = time.time()
 while time.time() - start < max_wait:
     try:
         with open("/tmp/exec_result.json", "r") as f:
             result = json.load(f)
-            # Clear files
-            import os
             os.remove("/tmp/exec_result.json")
             os.remove("/tmp/exec_trigger")
             print(json.dumps(result))

@@ -1,10 +1,30 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { Link } from 'react-router-dom';
-import { Plus, Trash2, Search, Bot } from 'lucide-react';
+import { Plus, Trash2, Search, Bot, ArchiveRestore, Clock } from 'lucide-react';
 import { useState } from 'react';
-import type { ChatCreate } from '../types';
+import type { Chat, ChatCreate } from '../types';
 import { SchemaFormField } from '../components/SchemaFormField';
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = date.getTime() - now.getTime();
+  const absDiffMs = Math.abs(diffMs);
+  const isPast = diffMs < 0;
+
+  if (absDiffMs < 60_000) return isPast ? 'just now' : 'in < 1m';
+  if (absDiffMs < 3_600_000) {
+    const mins = Math.round(absDiffMs / 60_000);
+    return isPast ? `${mins}m ago` : `in ${mins}m`;
+  }
+  if (absDiffMs < 86_400_000) {
+    const hrs = Math.round(absDiffMs / 3_600_000);
+    return isPast ? `${hrs}h ago` : `in ${hrs}h`;
+  }
+  const days = Math.round(absDiffMs / 86_400_000);
+  return isPast ? `${days}d ago` : `in ${days}d`;
+}
 
 export function Chats() {
   const queryClient = useQueryClient();
@@ -13,10 +33,11 @@ export function Chats() {
   const [selectedAssistantId, setSelectedAssistantId] = useState<string>('');
   const [inputParams, setInputParams] = useState<Record<string, any>>({});
   const [searchQuery, setSearchQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   const { data: chats, isLoading } = useQuery({
-    queryKey: ['chats'],
-    queryFn: () => apiClient.listChats(),
+    queryKey: ['chats', showArchived],
+    queryFn: () => apiClient.listChats(showArchived),
     retry: false,
   });
 
@@ -40,6 +61,13 @@ export function Chats() {
 
   const deleteMutation = useMutation({
     mutationFn: (chatId: string) => apiClient.deleteChat(chatId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['chats'] });
+    },
+  });
+
+  const unarchiveMutation = useMutation({
+    mutationFn: (chatId: string) => apiClient.updateChat(chatId, { archived: false }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['chats'] });
     },
@@ -85,16 +113,27 @@ export function Chats() {
         </button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search chats..."
-          className="input w-full !pl-11"
-        />
+      {/* Search + filters */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search chats..."
+            className="input w-full !pl-11"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer whitespace-nowrap">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            className="rounded border-gray-600 bg-transparent"
+          />
+          Show archived
+        </label>
       </div>
 
       {/* Chats Table */}
@@ -143,22 +182,32 @@ export function Chats() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Last Message
                   </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Expires
+                  </th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.06]">
-                {filteredChats.map((chat: any) => {
+                {filteredChats.map((chat: Chat) => {
                   return (
-                    <tr key={chat.id} className="hover:bg-white/5">
+                    <tr key={chat.id} className={`hover:bg-white/5 ${chat.archived ? 'opacity-60' : ''}`}>
                       <td className="px-4 py-3">
-                        <Link
-                          to={`/chats/${chat.id}`}
-                          className="text-sm font-medium text-primary-600 hover:text-primary-700"
-                        >
-                          {chat.title}
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            to={`/chats/${chat.id}`}
+                            className="text-sm font-medium text-primary-600 hover:text-primary-700"
+                          >
+                            {chat.title}
+                          </Link>
+                          {chat.archived && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-500 font-medium">
+                              Archived
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-100">
                         {chat.agent_namespace && chat.agent_name ? (
@@ -175,18 +224,40 @@ export function Chats() {
                           <span className="text-gray-500">No messages</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          onClick={() => {
-                            if (confirm('Are you sure you want to delete this chat?')) {
-                              deleteMutation.mutate(chat.id);
-                            }
-                          }}
-                          className="p-1 text-red-600 hover:text-red-900 hover:bg-red-900/20 rounded"
-                          disabled={deleteMutation.isPending}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                      <td className="px-4 py-3 text-sm text-gray-400">
+                        {chat.expires_at ? (
+                          <span className="flex items-center gap-1" title={new Date(chat.expires_at).toLocaleString()}>
+                            <Clock className="w-3 h-3" />
+                            {formatRelativeTime(chat.expires_at)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-600">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right flex items-center justify-end gap-1">
+                        {chat.archived ? (
+                          <button
+                            onClick={() => unarchiveMutation.mutate(chat.id)}
+                            className="p-1 text-yellow-500 hover:text-yellow-400 hover:bg-yellow-900/20 rounded"
+                            disabled={unarchiveMutation.isPending}
+                            title="Restore chat"
+                          >
+                            <ArchiveRestore className="w-4 h-4" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              if (confirm('Archive this chat? It can be restored later.')) {
+                                deleteMutation.mutate(chat.id);
+                              }
+                            }}
+                            className="p-1 text-red-600 hover:text-red-900 hover:bg-red-900/20 rounded"
+                            disabled={deleteMutation.isPending}
+                            title="Archive chat"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

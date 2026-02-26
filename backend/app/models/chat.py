@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
@@ -19,6 +20,9 @@ class Chat(Base):
     agent_name: Mapped[Optional[str]] = mapped_column(String(255))
 
     title: Mapped[str] = mapped_column(String(500), nullable=False)
+
+    archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     # Chat metadata for creation context (agent input, resolved function params, etc.)
     chat_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)

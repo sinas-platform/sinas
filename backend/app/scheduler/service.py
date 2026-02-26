@@ -151,6 +151,19 @@ async def main() -> None:
     # --- APScheduler ---
     await scheduler.start()
 
+    # --- System jobs ---
+    from app.scheduler.jobs.cleanup_expired_chats import cleanup_expired_chats
+
+    scheduler.scheduler.add_job(
+        func=cleanup_expired_chats,
+        trigger="interval",
+        hours=1,
+        id="system:cleanup_expired_chats",
+        name="Cleanup expired chats",
+        replace_existing=True,
+    )
+    logger.info("Registered system job: cleanup_expired_chats (every 1h)")
+
     # --- Pub/sub listener for live job changes ---
     stop_event = asyncio.Event()
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))
