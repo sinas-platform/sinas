@@ -1,4 +1,5 @@
 """State Store API endpoints."""
+import json
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -9,11 +10,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
+from app.core.encryption import encryption_service
 from app.core.permissions import check_permission
 from app.models.state import State
 from app.schemas import StateCreate, StateResponse, StateUpdate
 
 router = APIRouter(prefix="/states")
+
+
+def _encrypt_value(value: dict) -> str:
+    """Encrypt a dict value to a Fernet ciphertext string."""
+    return encryption_service.encrypt(json.dumps(value))
+
+
+def _decrypt_value(encrypted_value: str) -> dict:
+    """Decrypt a Fernet ciphertext string back to a dict."""
+    return json.loads(encryption_service.decrypt(encrypted_value))
+
+
+def _state_to_response(state: State) -> StateResponse:
+    """Convert a State model to a StateResponse, decrypting if needed."""
+    value = state.value
+    if state.encrypted and state.encrypted_value:
+        value = _decrypt_value(state.encrypted_value)
+    return StateResponse(
+        id=state.id,
+        user_id=state.user_id,
+        namespace=state.namespace,
+        key=state.key,
+        value=value,
+        visibility=state.visibility,
+        encrypted=state.encrypted,
+        description=state.description,
+        tags=state.tags,
+        relevance_score=state.relevance_score,
+        expires_at=state.expires_at,
+        created_at=state.created_at,
+        updated_at=state.updated_at,
+    )
 
 
 @router.post("", response_model=StateResponse)
@@ -62,12 +96,20 @@ async def create_state(
             detail=f"State with namespace '{state_data.namespace}' and key '{state_data.key}' already exists",
         )
 
-    # Create state
+    # Create state (encrypt if requested)
+    encrypted_value = None
+    value = state_data.value
+    if state_data.encrypted:
+        encrypted_value = _encrypt_value(state_data.value)
+        value = {}
+
     state = State(
         user_id=user_uuid,
         namespace=state_data.namespace,
         key=state_data.key,
-        value=state_data.value,
+        value=value,
+        encrypted=state_data.encrypted,
+        encrypted_value=encrypted_value,
         visibility=state_data.visibility,
         description=state_data.description,
         tags=state_data.tags,
@@ -79,7 +121,7 @@ async def create_state(
     await db.commit()
     await db.refresh(state)
 
-    return state
+    return _state_to_response(state)
 
 
 @router.get("", response_model=list[StateResponse])
@@ -148,7 +190,7 @@ async def list_states(
     else:
         set_permission_used(request, "sinas.states.read:own")
 
-    return accessible_states
+    return [_state_to_response(s) for s in accessible_states]
 
 
 @router.get("/{state_id}", response_model=StateResponse)
@@ -180,12 +222,12 @@ async def get_state(
     # Own state?
     if state.user_id == user_uuid:
         set_permission_used(request, namespace_perm)
-        return state
+        return _state_to_response(state)
 
     # Shared state with namespace permission?
     if state.visibility == "shared" and check_permission(permissions, namespace_perm_all):
         set_permission_used(request, namespace_perm_all)
-        return state
+        return _state_to_response(state)
 
     # No access
     set_permission_used(request, namespace_perm, has_perm=False)
@@ -224,9 +266,34 @@ async def update_state(
     else:
         set_permission_used(request, namespace_perm)
 
-    # Update fields
-    if state_data.value is not None:
-        state.value = state_data.value
+    # Handle encryption toggling
+    turning_on = state_data.encrypted is True and not state.encrypted
+    turning_off = state_data.encrypted is False and state.encrypted
+
+    if turning_on:
+        # Encrypt: use incoming value or existing value
+        plain_value = state_data.value if state_data.value is not None else state.value
+        state.encrypted = True
+        state.encrypted_value = _encrypt_value(plain_value)
+        state.value = {}
+    elif turning_off:
+        # Decrypt: restore plaintext value
+        plain_value = state_data.value
+        if plain_value is None and state.encrypted_value:
+            plain_value = _decrypt_value(state.encrypted_value)
+        state.encrypted = False
+        state.encrypted_value = None
+        state.value = plain_value or {}
+    else:
+        # No encryption toggle — just update value
+        if state_data.value is not None:
+            if state.encrypted:
+                state.encrypted_value = _encrypt_value(state_data.value)
+                state.value = {}
+            else:
+                state.value = state_data.value
+
+    # Update other fields
     if state_data.description is not None:
         state.description = state_data.description
     if state_data.tags is not None:
@@ -241,7 +308,7 @@ async def update_state(
     await db.commit()
     await db.refresh(state)
 
-    return state
+    return _state_to_response(state)
 
 
 @router.delete("/{state_id}")

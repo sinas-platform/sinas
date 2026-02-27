@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Plus, Search, Tag, Users, Lock, Trash2, Edit, X } from 'lucide-react';
+import { Plus, Search, Tag, Users, Lock, Trash2, Edit, X, Shield, Eye, EyeOff } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 
 export function States() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editingState, setEditingState] = useState<any>(null);
+  const [revealedValues, setRevealedValues] = useState<Record<string, boolean>>({});
   const [filters, setFilters] = useState({
     namespace: '',
     visibility: '',
@@ -162,6 +163,12 @@ export function States() {
                         {getVisibilityIcon(state.visibility)}
                         {state.visibility}
                       </span>
+                      {state.encrypted && (
+                        <span className="px-2 py-0.5 text-xs font-medium rounded flex items-center gap-1 text-amber-500 bg-amber-900/20">
+                          <Shield className="w-3 h-3" />
+                          encrypted
+                        </span>
+                      )}
                       <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
                         Score: {state.relevance_score}
                       </span>
@@ -180,14 +187,36 @@ export function States() {
                       </div>
                     )}
                     <div className="mt-2">
-                      <details className="text-xs">
-                        <summary className="cursor-pointer text-gray-500 hover:text-gray-300">
-                          View value
-                        </summary>
-                        <pre className="mt-2 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto">
-                          {JSON.stringify(state.value, null, 2)}
-                        </pre>
-                      </details>
+                      {state.encrypted ? (
+                        <div className="text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-gray-500">
+                              {revealedValues[state.id] ? JSON.stringify(state.value, null, 2).slice(0, 80) : '••••••••'}
+                            </span>
+                            <button
+                              onClick={() => setRevealedValues(prev => ({ ...prev, [state.id]: !prev[state.id] }))}
+                              className="p-1 text-gray-500 hover:text-gray-300 rounded"
+                              title={revealedValues[state.id] ? 'Hide value' : 'Reveal value'}
+                            >
+                              {revealedValues[state.id] ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            </button>
+                          </div>
+                          {revealedValues[state.id] && (
+                            <pre className="mt-2 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto">
+                              {JSON.stringify(state.value, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      ) : (
+                        <details className="text-xs">
+                          <summary className="cursor-pointer text-gray-500 hover:text-gray-300">
+                            View value
+                          </summary>
+                          <pre className="mt-2 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto">
+                            {JSON.stringify(state.value, null, 2)}
+                          </pre>
+                        </details>
+                      )}
                     </div>
                     <div className="mt-2 text-xs text-gray-500">
                       Updated {new Date(state.updated_at).toLocaleString()}
@@ -246,6 +275,7 @@ function StateModal({
     key: state?.key || '',
     value: state?.value ? JSON.stringify(state.value, null, 2) : '{}',
     visibility: state?.visibility || 'private',
+    encrypted: state?.encrypted || false,
     description: state?.description || '',
     tags: state?.tags?.join(', ') || '',
     relevance_score: state?.relevance_score || 1.0,
@@ -257,6 +287,7 @@ function StateModal({
       const payload = {
         ...data,
         value: JSON.parse(data.value),
+        encrypted: data.encrypted,
         tags: data.tags ? data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : [],
         relevance_score: parseFloat(data.relevance_score),
         expires_at: data.expires_at || null,
@@ -355,6 +386,24 @@ function StateModal({
             </select>
             <p className="text-xs text-gray-500 mt-1">
               Shared states can be accessed by users with namespace permissions
+            </p>
+          </div>
+
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.encrypted}
+                onChange={(e) => setFormData({ ...formData, encrypted: e.target.checked })}
+                className="w-4 h-4 rounded border-white/20 bg-[#111] text-amber-500 focus:ring-amber-500/30"
+              />
+              <span className="flex items-center gap-1.5 text-sm text-gray-300">
+                <Shield className="w-4 h-4 text-amber-500" />
+                Encrypted
+              </span>
+            </label>
+            <p className="text-xs text-gray-500 mt-1 ml-6">
+              Value will be encrypted at rest using Fernet encryption
             </p>
           </div>
 
