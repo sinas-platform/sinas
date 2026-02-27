@@ -318,6 +318,7 @@ class QueueService:
                 "running": status_counts.get("running", 0),
                 "completed": status_counts.get("completed", 0),
                 "failed": status_counts.get("failed", 0),
+                "cancelled": status_counts.get("cancelled", 0),
             },
             "dlq": {"size": dlq_size},
         }
@@ -434,6 +435,65 @@ class QueueService:
 
         logger.info(f"Retried DLQ job {job_id} as new job {new_job_id}")
         return {"old_job_id": job_id, "new_job_id": new_job_id}
+
+    async def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """
+        Cancel a job by updating its Redis status and DB execution record.
+
+        This is a soft cancel — it marks the job as cancelled but does not
+        kill running containers or abort arq tasks. Useful for cleaning up
+        orphaned/stale jobs.
+        """
+        redis = await get_redis()
+
+        # Read existing status to preserve metadata fields
+        existing = await redis.get(f"{JOB_STATUS_PREFIX}{job_id}")
+        if not existing:
+            raise ValueError(f"Job {job_id} not found")
+
+        try:
+            status_data = json.loads(existing)
+        except (json.JSONDecodeError, TypeError):
+            status_data = {}
+
+        status_data["status"] = "cancelled"
+        status_data["cancelled_at"] = time.time()
+
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps(status_data),
+            ex=JOB_TTL,
+        )
+
+        # Remove any stale result
+        await redis.delete(f"{JOB_RESULT_PREFIX}{job_id}")
+
+        # Publish to done channel so any waiters unblock
+        execution_id = status_data.get("execution_id", job_id)
+        await redis.publish(
+            f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+            json.dumps({"status": "cancelled", "job_id": job_id}),
+        )
+
+        # Update DB execution record if it exists
+        try:
+            from app.core.database import AsyncSessionLocal
+            from app.models.execution import Execution, ExecutionStatus
+            from sqlalchemy import select
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Execution).where(Execution.execution_id == execution_id)
+                )
+                execution = result.scalar_one_or_none()
+                if execution:
+                    execution.status = ExecutionStatus.CANCELLED
+                    await db.commit()
+        except Exception:
+            logger.warning(f"Could not update DB execution for {execution_id}", exc_info=True)
+
+        logger.info(f"Cancelled job {job_id}")
+        return {"status": "cancelled", "job_id": job_id}
 
     async def get_active_workers(self) -> list[dict[str, Any]]:
         """List active arq worker processes from heartbeat keys."""

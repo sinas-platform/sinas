@@ -716,6 +716,11 @@ class APIClient {
     return response.data;
   }
 
+  async cancelJob(jobId: string): Promise<any> {
+    const response = await this.configClient.post(`/queue/jobs/${jobId}/cancel`);
+    return response.data;
+  }
+
   async retryDLQJob(jobId: string): Promise<any> {
     const response = await this.configClient.post(`/queue/dlq/${jobId}/retry`);
     return response.data;

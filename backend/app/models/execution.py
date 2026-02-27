@@ -23,6 +23,7 @@ class ExecutionStatus(str, enum.Enum):
     AWAITING_INPUT = "AWAITING_INPUT"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
 
 
 class Execution(Base):
