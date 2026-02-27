@@ -4,7 +4,7 @@ import { apiClient } from '../lib/api';
 import { useState, useMemo } from 'react';
 import {
   ArrowLeft, Table2, Plus, Trash2, Pencil, Key, Link2,
-  ChevronLeft, ChevronRight, ArrowUpDown, Filter, X, AlertTriangle,
+  ChevronLeft, ChevronRight, ArrowUpDown, Filter, X, AlertTriangle, Lock,
 } from 'lucide-react';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import type { ColumnInfo, ConstraintInfo, IndexInfo, FilterCondition, ColumnDefinition } from '../types';
@@ -20,6 +20,64 @@ const PG_TYPES = [
 ];
 
 const FILTER_OPERATORS = ['=', '!=', '>', '<', '>=', '<=', 'LIKE', 'ILIKE', 'IS NULL', 'IS NOT NULL'];
+
+/** Type-to-confirm destructive action modal */
+function ConfirmDestroyModal({
+  title,
+  targetName,
+  description,
+  onConfirm,
+  onCancel,
+  isPending,
+  error,
+}: {
+  title: string;
+  targetName: string;
+  description: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+  error?: any;
+}) {
+  const [typed, setTyped] = useState('');
+  const matches = typed === targetName;
+
+  return (
+    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <AlertTriangle className="w-5 h-5 text-red-400" />
+          <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
+        </div>
+        <p className="text-gray-300 text-sm mb-4">{description}</p>
+        <p className="text-gray-400 text-sm mb-2">
+          Type <span className="font-mono font-bold text-gray-100">{targetName}</span> to confirm:
+        </p>
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          className="input font-mono"
+          placeholder={targetName}
+          autoFocus
+        />
+        {error && <ErrorDisplay error={error} title="Operation failed" />}
+        <div className="flex justify-end space-x-3 pt-4">
+          <button type="button" onClick={onCancel} className="btn btn-secondary" disabled={isPending}>
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="btn bg-red-600 hover:bg-red-700 text-white"
+            disabled={!matches || isPending}
+          >
+            {isPending ? 'Dropping...' : 'Drop'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function DbTableDetail() {
   const { name: connectionName, table } = useParams<{ name: string; table: string }>();
@@ -46,6 +104,18 @@ export function DbTableDetail() {
   const [newColumns, setNewColumns] = useState<ColumnDefinition[]>([
     { name: '', type: 'text', nullable: true },
   ]);
+
+  // Confirm-destroy
+  const [showDropTableConfirm, setShowDropTableConfirm] = useState(false);
+
+  // Connection info (for read_only check)
+  const { data: connection } = useQuery({
+    queryKey: ['databaseConnection', connectionName],
+    queryFn: () => apiClient.getDatabaseConnection(connectionName!),
+    enabled: !!connectionName,
+  });
+
+  const isReadOnly = connection?.read_only ?? false;
 
   // Queries
   const { data: tableDetail, isLoading: detailLoading, error: detailError } = useQuery({
@@ -110,8 +180,8 @@ export function DbTableDetail() {
   });
 
   const dropTableMutation = useMutation({
-    mutationFn: (cascade: boolean) =>
-      apiClient.dropDbTable(connectionName!, table!, schema, cascade),
+    mutationFn: () =>
+      apiClient.dropDbTable(connectionName!, table!, schema, false),
     onSuccess: () => {
       window.location.href = `/database-connections/${connectionName}`;
     },
@@ -124,6 +194,7 @@ export function DbTableDetail() {
   }, [tableDetail]);
 
   const hasPK = pkColumns.length > 0;
+  const canMutateRows = hasPK && !isReadOnly;
 
   const buildPKWhere = (row: Record<string, any>): Record<string, any> => {
     const where: Record<string, any> = {};
@@ -186,7 +257,6 @@ export function DbTableDetail() {
 
   const handleInsert = (e: React.FormEvent) => {
     e.preventDefault();
-    // Filter out empty serial/default fields
     const row: Record<string, any> = {};
     for (const [key, val] of Object.entries(insertFormData)) {
       if (val !== '') {
@@ -255,6 +325,12 @@ export function DbTableDetail() {
               {tableDetail?.display_name && (
                 <span className="text-gray-500 text-sm">{table}</span>
               )}
+              {isReadOnly && (
+                <span className="px-2 py-0.5 bg-yellow-900/30 text-yellow-300 text-xs font-medium rounded flex items-center gap-1">
+                  <Lock className="w-3 h-3" />
+                  Read-only
+                </span>
+              )}
             </div>
             <p className="text-gray-400 mt-1 text-sm">
               {connectionName} / {schema}
@@ -264,22 +340,15 @@ export function DbTableDetail() {
             </p>
           </div>
         </div>
-        <div className="flex gap-2">
+        {!isReadOnly && (
           <button
-            onClick={() => {
-              const cascade = confirm(
-                'Drop table with CASCADE? (Click Cancel for regular drop, OK for CASCADE)'
-              );
-              if (confirm(`Are you sure you want to drop "${table}"? This cannot be undone.`)) {
-                dropTableMutation.mutate(cascade);
-              }
-            }}
+            onClick={() => setShowDropTableConfirm(true)}
             className="btn btn-secondary text-red-400 hover:text-red-300 text-sm"
           >
             <Trash2 className="w-4 h-4 mr-1" />
             Drop Table
           </button>
-        </div>
+        )}
       </div>
 
       {/* Schema Section */}
@@ -295,16 +364,18 @@ export function DbTableDetail() {
           <div className="card">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-lg font-semibold text-gray-100">Columns</h3>
-              <button
-                onClick={() => {
-                  setNewColumns([{ name: '', type: 'text', nullable: true }]);
-                  setShowAddColumnModal(true);
-                }}
-                className="text-sm text-primary-400 hover:text-primary-300 flex items-center"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Add Column
-              </button>
+              {!isReadOnly && (
+                <button
+                  onClick={() => {
+                    setNewColumns([{ name: '', type: 'text', nullable: true }]);
+                    setShowAddColumnModal(true);
+                  }}
+                  className="text-sm text-primary-400 hover:text-primary-300 flex items-center"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add Column
+                </button>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -351,7 +422,7 @@ export function DbTableDetail() {
                               </span>
                             )}
                             {fk && (
-                              <span title={`FK → ${fk.ref_table}(${fk.ref_columns?.join(', ')})`}>
+                              <span title={`FK -> ${fk.ref_table}(${fk.ref_columns?.join(', ')})`}>
                                 <Link2 className="w-4 h-4 text-blue-400" />
                               </span>
                             )}
@@ -381,7 +452,7 @@ export function DbTableDetail() {
                         <span className="text-gray-500 text-xs ml-2">({c.columns.join(', ')})</span>
                         {c.ref_table && (
                           <span className="text-blue-400 text-xs ml-1">
-                            → {c.ref_table}({c.ref_columns?.join(', ')})
+                            &rarr; {c.ref_table}({c.ref_columns?.join(', ')})
                           </span>
                         )}
                       </div>
@@ -440,10 +511,12 @@ export function DbTableDetail() {
                 <option key={n} value={n}>{n}</option>
               ))}
             </select>
-            <button onClick={openInsertModal} className="btn btn-primary text-sm flex items-center">
-              <Plus className="w-4 h-4 mr-1" />
-              Add Row
-            </button>
+            {!isReadOnly && (
+              <button onClick={openInsertModal} className="btn btn-primary text-sm flex items-center">
+                <Plus className="w-4 h-4 mr-1" />
+                Add Row
+              </button>
+            )}
           </div>
         </div>
 
@@ -543,7 +616,7 @@ export function DbTableDetail() {
                         </span>
                       </th>
                     ))}
-                    {hasPK && (
+                    {canMutateRows && (
                       <th className="text-center px-3 py-2 text-gray-400 font-medium w-20">Actions</th>
                     )}
                   </tr>
@@ -551,7 +624,7 @@ export function DbTableDetail() {
                 <tbody className="divide-y divide-white/5">
                   {rowsData.rows.length === 0 ? (
                     <tr>
-                      <td colSpan={columnNames.length + (hasPK ? 1 : 0)} className="text-center py-8 text-gray-500">
+                      <td colSpan={columnNames.length + (canMutateRows ? 1 : 0)} className="text-center py-8 text-gray-500">
                         No rows found
                       </td>
                     </tr>
@@ -568,7 +641,7 @@ export function DbTableDetail() {
                             </span>
                           </td>
                         ))}
-                        {hasPK && (
+                        {canMutateRows && (
                           <td className="px-3 py-2 text-center">
                             <div className="flex items-center justify-center gap-1">
                               <button
@@ -626,6 +699,19 @@ export function DbTableDetail() {
           </>
         ) : null}
       </div>
+
+      {/* Type-to-confirm Drop Table Modal */}
+      {showDropTableConfirm && (
+        <ConfirmDestroyModal
+          title="Drop Table"
+          targetName={table!}
+          description={`This will permanently drop the table "${table}" from ${schema}. All data will be lost. This action cannot be undone.`}
+          onConfirm={() => dropTableMutation.mutate()}
+          onCancel={() => { setShowDropTableConfirm(false); dropTableMutation.reset(); }}
+          isPending={dropTableMutation.isPending}
+          error={dropTableMutation.error}
+        />
+      )}
 
       {/* Add Column Modal */}
       {showAddColumnModal && (

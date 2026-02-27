@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useParams, Link } from 'react-router-dom';
 import { apiClient } from '../lib/api';
 import { useState } from 'react';
-import { Cable, Table2, Eye, Plus, Trash2, ChevronDown, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Cable, Table2, Eye, Plus, Trash2, ChevronDown, ChevronRight, ArrowLeft, Lock, AlertTriangle } from 'lucide-react';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import type { DbTableInfo, DbViewInfo, ColumnDefinition, SchemaInfo } from '../types';
 
@@ -23,6 +23,64 @@ function formatSize(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
+/** Type-to-confirm destructive action modal */
+function ConfirmDestroyModal({
+  title,
+  targetName,
+  description,
+  onConfirm,
+  onCancel,
+  isPending,
+  error,
+}: {
+  title: string;
+  targetName: string;
+  description: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+  error?: any;
+}) {
+  const [typed, setTyped] = useState('');
+  const matches = typed === targetName;
+
+  return (
+    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+        <div className="flex items-center gap-2 mb-4">
+          <AlertTriangle className="w-5 h-5 text-red-400" />
+          <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
+        </div>
+        <p className="text-gray-300 text-sm mb-4">{description}</p>
+        <p className="text-gray-400 text-sm mb-2">
+          Type <span className="font-mono font-bold text-gray-100">{targetName}</span> to confirm:
+        </p>
+        <input
+          type="text"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          className="input font-mono"
+          placeholder={targetName}
+          autoFocus
+        />
+        {error && <ErrorDisplay error={error} title="Operation failed" />}
+        <div className="flex justify-end space-x-3 pt-4">
+          <button type="button" onClick={onCancel} className="btn btn-secondary" disabled={isPending}>
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="btn bg-red-600 hover:bg-red-700 text-white"
+            disabled={!matches || isPending}
+          >
+            {isPending ? 'Dropping...' : 'Drop'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DatabaseConnectionDetail() {
   const { name } = useParams<{ name: string }>();
   const queryClient = useQueryClient();
@@ -39,11 +97,16 @@ export function DatabaseConnectionDetail() {
   const [viewSql, setViewSql] = useState('');
   const [viewOrReplace, setViewOrReplace] = useState(false);
 
+  // Confirm-destroy modals
+  const [dropTarget, setDropTarget] = useState<{ type: 'table' | 'view'; name: string } | null>(null);
+
   const { data: connection } = useQuery({
     queryKey: ['databaseConnection', name],
     queryFn: () => apiClient.getDatabaseConnection(name!),
     enabled: !!name,
   });
+
+  const isReadOnly = connection?.read_only ?? false;
 
   const { data: schemas } = useQuery({
     queryKey: ['dbSchemas', name],
@@ -96,18 +159,20 @@ export function DatabaseConnectionDetail() {
   });
 
   const dropTableMutation = useMutation({
-    mutationFn: ({ table, cascade }: { table: string; cascade: boolean }) =>
-      apiClient.dropDbTable(name!, table, selectedSchema, cascade),
+    mutationFn: (table: string) =>
+      apiClient.dropDbTable(name!, table, selectedSchema, false),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dbTables', name, selectedSchema] });
+      setDropTarget(null);
     },
   });
 
   const dropViewMutation = useMutation({
-    mutationFn: ({ view, cascade }: { view: string; cascade: boolean }) =>
-      apiClient.dropDbView(name!, view, selectedSchema, cascade),
+    mutationFn: (view: string) =>
+      apiClient.dropDbView(name!, view, selectedSchema, false),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['dbViews', name, selectedSchema] });
+      setDropTarget(null);
     },
   });
 
@@ -152,6 +217,12 @@ export function DatabaseConnectionDetail() {
                   {connection.connection_type}
                 </span>
               )}
+              {isReadOnly && (
+                <span className="px-2 py-0.5 bg-yellow-900/30 text-yellow-300 text-xs font-medium rounded flex items-center gap-1" title="Schema Browser is read-only. Query templates are unaffected.">
+                  <Lock className="w-3 h-3" />
+                  Read-only
+                </span>
+              )}
             </div>
             {connection && (
               <p className="text-gray-400 mt-1 font-mono text-sm">
@@ -184,7 +255,7 @@ export function DatabaseConnectionDetail() {
             <Table2 className="w-5 h-5" />
             Tables
           </h2>
-          <div className="flex gap-2">
+          {!isReadOnly && (
             <button
               onClick={() => { resetTableForm(); setShowCreateTableModal(true); }}
               className="btn btn-primary text-sm flex items-center"
@@ -192,7 +263,7 @@ export function DatabaseConnectionDetail() {
               <Plus className="w-4 h-4 mr-1" />
               Create Table
             </button>
-          </div>
+          )}
         </div>
 
         {tablesLoading ? (
@@ -209,7 +280,9 @@ export function DatabaseConnectionDetail() {
                   <th className="text-left px-4 py-3 text-gray-400 font-medium">Table</th>
                   <th className="text-right px-4 py-3 text-gray-400 font-medium">Est. Rows</th>
                   <th className="text-right px-4 py-3 text-gray-400 font-medium">Size</th>
-                  <th className="text-right px-4 py-3 text-gray-400 font-medium w-20">Actions</th>
+                  {!isReadOnly && (
+                    <th className="text-right px-4 py-3 text-gray-400 font-medium w-20">Actions</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -235,19 +308,17 @@ export function DatabaseConnectionDetail() {
                     <td className="px-4 py-3 text-right text-gray-300 font-mono">
                       {formatSize(t.size_bytes)}
                     </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => {
-                          if (confirm(`Drop table "${t.table_name}"? This cannot be undone.`)) {
-                            dropTableMutation.mutate({ table: t.table_name, cascade: false });
-                          }
-                        }}
-                        className="text-red-600 hover:text-red-400"
-                        title="Drop table"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
+                    {!isReadOnly && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => setDropTarget({ type: 'table', name: t.table_name })}
+                          className="text-red-600 hover:text-red-400"
+                          title="Drop table"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -274,15 +345,17 @@ export function DatabaseConnectionDetail() {
 
         {viewsExpanded && (
           <>
-            <div className="flex justify-end mb-3">
-              <button
-                onClick={() => { setViewName(''); setViewSql(''); setViewOrReplace(false); setShowCreateViewModal(true); }}
-                className="btn btn-primary text-sm flex items-center"
-              >
-                <Plus className="w-4 h-4 mr-1" />
-                Create View
-              </button>
-            </div>
+            {!isReadOnly && (
+              <div className="flex justify-end mb-3">
+                <button
+                  onClick={() => { setViewName(''); setViewSql(''); setViewOrReplace(false); setShowCreateViewModal(true); }}
+                  className="btn btn-primary text-sm flex items-center"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Create View
+                </button>
+              </div>
+            )}
 
             {viewsLoading ? (
               <div className="text-center py-6">
@@ -302,17 +375,15 @@ export function DatabaseConnectionDetail() {
                           </pre>
                         )}
                       </div>
-                      <button
-                        onClick={() => {
-                          if (confirm(`Drop view "${v.view_name}"?`)) {
-                            dropViewMutation.mutate({ view: v.view_name, cascade: false });
-                          }
-                        }}
-                        className="text-red-600 hover:text-red-400 ml-4"
-                        title="Drop view"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {!isReadOnly && (
+                        <button
+                          onClick={() => setDropTarget({ type: 'view', name: v.view_name })}
+                          className="text-red-600 hover:text-red-400 ml-4"
+                          title="Drop view"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -323,6 +394,25 @@ export function DatabaseConnectionDetail() {
           </>
         )}
       </div>
+
+      {/* Type-to-confirm Drop Modal */}
+      {dropTarget && (
+        <ConfirmDestroyModal
+          title={`Drop ${dropTarget.type}`}
+          targetName={dropTarget.name}
+          description={`This will permanently drop the ${dropTarget.type} "${dropTarget.name}" from ${selectedSchema}. This action cannot be undone.`}
+          onConfirm={() => {
+            if (dropTarget.type === 'table') {
+              dropTableMutation.mutate(dropTarget.name);
+            } else {
+              dropViewMutation.mutate(dropTarget.name);
+            }
+          }}
+          onCancel={() => { setDropTarget(null); dropTableMutation.reset(); dropViewMutation.reset(); }}
+          isPending={dropTableMutation.isPending || dropViewMutation.isPending}
+          error={dropTableMutation.error || dropViewMutation.error}
+        />
+      )}
 
       {/* Create Table Modal */}
       {showCreateTableModal && (
@@ -369,52 +459,56 @@ export function DatabaseConnectionDetail() {
                     + Add Column
                   </button>
                 </div>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {columns.map((col, idx) => (
-                    <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={col.name}
-                        onChange={(e) => updateColumn(idx, 'name', e.target.value)}
-                        placeholder="column_name"
-                        className="input flex-1"
-                        required
-                      />
-                      <select
-                        value={col.type}
-                        onChange={(e) => updateColumn(idx, 'type', e.target.value)}
-                        className="input w-40"
-                      >
-                        {PG_TYPES.map((t) => (
-                          <option key={t} value={t}>{t}</option>
-                        ))}
-                      </select>
-                      <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap">
+                    <div key={idx} className="flex flex-wrap items-center gap-2 p-2 bg-[#111] rounded-lg">
+                      <div className="flex items-center gap-2 w-full">
                         <input
-                          type="checkbox"
-                          checked={!col.nullable}
-                          onChange={(e) => updateColumn(idx, 'nullable', !e.target.checked)}
-                          className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                          type="text"
+                          value={col.name}
+                          onChange={(e) => updateColumn(idx, 'name', e.target.value)}
+                          placeholder="column_name"
+                          className="input flex-1 min-w-0"
+                          required
                         />
-                        NOT NULL
-                      </label>
-                      <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap">
-                        <input
-                          type="checkbox"
-                          checked={col.primary_key || false}
-                          onChange={(e) => updateColumn(idx, 'primary_key', e.target.checked)}
-                          className="h-3 w-3 text-primary-600 border-white/10 rounded"
-                        />
-                        PK
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => removeColumn(idx)}
-                        className="text-red-500 hover:text-red-400"
-                        disabled={columns.length <= 1}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                        <select
+                          value={col.type}
+                          onChange={(e) => updateColumn(idx, 'type', e.target.value)}
+                          className="input w-40"
+                        >
+                          {PG_TYPES.map((t) => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={!col.nullable}
+                            onChange={(e) => updateColumn(idx, 'nullable', !e.target.checked)}
+                            className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                          />
+                          NOT NULL
+                        </label>
+                        <label className="flex items-center gap-1 text-xs text-gray-400 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={col.primary_key || false}
+                            onChange={(e) => updateColumn(idx, 'primary_key', e.target.checked)}
+                            className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                          />
+                          PK
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => removeColumn(idx)}
+                          className="text-red-500 hover:text-red-400"
+                          disabled={columns.length <= 1}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

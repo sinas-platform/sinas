@@ -30,6 +30,7 @@ class DatabaseConnection(Base):
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)  # Pool sizes, extra settings
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    read_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]

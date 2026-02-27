@@ -18,6 +18,7 @@ class DatabaseConnectionCreate(BaseModel):
     password: Optional[str] = None
     ssl_mode: Optional[str] = None
     config: Optional[dict[str, Any]] = None
+    read_only: bool = False
 
 
 class DatabaseConnectionUpdate(BaseModel):
@@ -33,6 +34,7 @@ class DatabaseConnectionUpdate(BaseModel):
     ssl_mode: Optional[str] = None
     config: Optional[dict[str, Any]] = None
     is_active: Optional[bool] = None
+    read_only: Optional[bool] = None
 
 
 class DatabaseConnectionResponse(BaseModel):
@@ -50,6 +52,7 @@ class DatabaseConnectionResponse(BaseModel):
     ssl_mode: Optional[str] = None
     config: dict[str, Any]
     is_active: bool
+    read_only: bool
     created_at: datetime
     updated_at: datetime
 

@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Cable, Plus, Trash2, Edit2, Zap, Table2 } from 'lucide-react';
+import { Cable, Plus, Trash2, Edit2, Zap, Table2, Lock } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { DatabaseConnection, DatabaseConnectionCreate, DatabaseConnectionUpdate, DatabaseConnectionTestResponse } from '../types';
@@ -136,6 +136,7 @@ export function DatabaseConnections() {
       ssl_mode: conn.ssl_mode || '',
       config: conn.config || {},
       is_active: conn.is_active,
+      read_only: conn.read_only,
     });
     setShowEditModal(true);
   };
@@ -178,6 +179,12 @@ export function DatabaseConnections() {
                         <span className="px-2 py-0.5 bg-green-900/30 text-green-300 text-xs font-medium rounded">Active</span>
                       ) : (
                         <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
+                      )}
+                      {conn.read_only && (
+                        <span className="px-2 py-0.5 bg-yellow-900/30 text-yellow-300 text-xs font-medium rounded flex items-center gap-1" title="Schema Browser is read-only. Query templates are unaffected.">
+                          <Lock className="w-3 h-3" />
+                          Read-only
+                        </span>
                       )}
                     </div>
                     <p className="text-sm text-gray-400 font-mono">
@@ -366,6 +373,21 @@ export function DatabaseConnections() {
                 />
               </div>
 
+              <div>
+                <label className="flex items-center gap-2 text-sm text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={createFormData.read_only || false}
+                    onChange={(e) => setCreateFormData({ ...createFormData, read_only: e.target.checked })}
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                  />
+                  Read-only (Schema Browser)
+                </label>
+                <p className="text-xs text-gray-500 mt-1 ml-6">
+                  Prevents table/data modifications through the Schema Browser. Query templates are unaffected.
+                </p>
+              </div>
+
               {/* Test Connection */}
               <div>
                 <button
@@ -531,6 +553,20 @@ export function DatabaseConnections() {
                   className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
                 />
                 <label className="ml-2 block text-sm text-gray-300">Active</label>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={editFormData.read_only || false}
+                    onChange={(e) => setEditFormData({ ...editFormData, read_only: e.target.checked })}
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                  />
+                  Read-only (Schema Browser)
+                </label>
+                <p className="text-xs text-gray-500 mt-1 ml-6">
+                  Prevents table/data modifications through the Schema Browser. Query templates are unaffected.
+                </p>
               </div>
 
               {/* Test Connection */}

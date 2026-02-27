@@ -55,6 +55,7 @@ async def create_database_connection(
         ssl_mode=request.ssl_mode,
         config=request.config or {},
         is_active=True,
+        read_only=request.read_only,
     )
 
     db.add(connection)
@@ -144,6 +145,8 @@ async def update_database_connection(
         connection.config = request.config
     if request.is_active is not None:
         connection.is_active = request.is_active
+    if request.read_only is not None:
+        connection.read_only = request.read_only
 
     await db.commit()
     await db.refresh(connection)

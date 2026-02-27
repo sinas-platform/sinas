@@ -691,6 +691,7 @@ export interface DatabaseConnection {
   ssl_mode: string | null;
   config: Record<string, any>;
   is_active: boolean;
+  read_only: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -706,6 +707,7 @@ export interface DatabaseConnectionCreate {
   ssl_mode?: string;
   config?: Record<string, any>;
   is_active?: boolean;
+  read_only?: boolean;
 }
 
 export interface DatabaseConnectionUpdate {
@@ -719,6 +721,7 @@ export interface DatabaseConnectionUpdate {
   ssl_mode?: string;
   config?: Record<string, any>;
   is_active?: boolean;
+  read_only?: boolean;
 }
 
 export interface DatabaseConnectionTestResponse {

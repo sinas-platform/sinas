@@ -2,6 +2,15 @@
 
 All endpoints are nested under /database-connections/{name}/...
 and use the connection *name* (not UUID) as the path parameter.
+
+Permissions:
+  schema:all        — introspection (list schemas/tables/views, get detail) + annotations + non-destructive DDL (create table/view, add column)
+  schema_destroy:all — destructive DDL (DROP TABLE, DROP VIEW, DROP COLUMN via alter)
+  data:all          — data browser (browse/insert/update/delete rows)
+
+Read-only guard:
+  Connections with read_only=True block all DDL and data mutations.
+  This does NOT affect Query template execution (queries are trusted).
 """
 
 import json
@@ -60,6 +69,15 @@ async def _get_connection_and_pool(
     return conn, pool
 
 
+def _assert_writable(conn: DatabaseConnection) -> None:
+    """Raise 403 if connection is marked read-only."""
+    if conn.read_only:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Connection '{conn.name}' is read-only. Disable read-only in connection settings to allow modifications through the Schema Browser.",
+        )
+
+
 def _pg_error_response(exc: Exception) -> HTTPException:
     """Wrap asyncpg / postgres errors as 400 responses."""
     msg = str(exc)
@@ -82,7 +100,7 @@ async def _load_annotations(
     return {(a.table_name, a.column_name): a for a in annotations}
 
 
-# ── Introspection ──────────────────────────────────────────────────
+# ── Introspection (schema:all) ─────────────────────────────────────
 
 
 @router.get(
@@ -205,7 +223,7 @@ async def list_views(
     return [ViewInfo(**v) for v in views]
 
 
-# ── DDL ────────────────────────────────────────────────────────────
+# ── Non-destructive DDL (schema:all + writable) ────────────────────
 
 
 @router.post(
@@ -220,6 +238,7 @@ async def create_table(
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     columns = [c.model_dump() for c in request.columns]
     try:
@@ -235,6 +254,33 @@ async def create_table(
     return {"status": "created", "table": f"{request.schema_name}.{request.table_name}"}
 
 
+@router.post(
+    "/{name}/views",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a view",
+)
+async def create_view(
+    name: str,
+    request: CreateViewRequest,
+    user_id: str = Depends(require_permission("sinas.database_connections.schema:all")),
+    db: AsyncSession = Depends(get_db),
+):
+    conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
+    svc = get_schema_service(conn.connection_type)
+    try:
+        await svc.create_view(
+            pool,
+            request.name,
+            request.sql,
+            schema=request.schema_name,
+            or_replace=request.or_replace,
+        )
+    except Exception as e:
+        raise _pg_error_response(e)
+    return {"status": "created", "view": f"{request.schema_name}.{request.name}"}
+
+
 @router.patch(
     "/{name}/tables/{table}",
     summary="Alter a table (add/drop/rename columns)",
@@ -247,6 +293,22 @@ async def alter_table(
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
+
+    # Drop columns is destructive — require destroy permission
+    if request.drop_columns:
+        from app.core.permissions import check_permission
+
+        # Need to load permissions for this user
+        from app.core.auth import get_user_permissions
+
+        permissions = await get_user_permissions(db, user_id)
+        if not check_permission(permissions, "sinas.database_connections.schema_destroy:all"):
+            raise HTTPException(
+                status_code=403,
+                detail="Dropping columns requires sinas.database_connections.schema_destroy:all permission",
+            )
+
     svc = get_schema_service(conn.connection_type)
     try:
         await svc.alter_table(
@@ -262,6 +324,9 @@ async def alter_table(
     return {"status": "altered", "table": f"{request.schema_name}.{table}"}
 
 
+# ── Destructive DDL (schema_destroy:all + writable) ────────────────
+
+
 @router.delete(
     "/{name}/tables/{table}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -272,41 +337,16 @@ async def drop_table(
     table: str,
     schema: str = Query("public"),
     cascade: bool = Query(False),
-    user_id: str = Depends(require_permission("sinas.database_connections.schema:all")),
+    user_id: str = Depends(require_permission("sinas.database_connections.schema_destroy:all")),
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     try:
         await svc.drop_table(pool, table, schema=schema, cascade=cascade)
     except Exception as e:
         raise _pg_error_response(e)
-
-
-@router.post(
-    "/{name}/views",
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a view",
-)
-async def create_view(
-    name: str,
-    request: CreateViewRequest,
-    user_id: str = Depends(require_permission("sinas.database_connections.schema:all")),
-    db: AsyncSession = Depends(get_db),
-):
-    conn, pool = await _get_connection_and_pool(name, db)
-    svc = get_schema_service(conn.connection_type)
-    try:
-        await svc.create_view(
-            pool,
-            request.name,
-            request.sql,
-            schema=request.schema_name,
-            or_replace=request.or_replace,
-        )
-    except Exception as e:
-        raise _pg_error_response(e)
-    return {"status": "created", "view": f"{request.schema_name}.{request.name}"}
 
 
 @router.delete(
@@ -319,10 +359,11 @@ async def drop_view(
     view: str,
     schema: str = Query("public"),
     cascade: bool = Query(False),
-    user_id: str = Depends(require_permission("sinas.database_connections.schema:all")),
+    user_id: str = Depends(require_permission("sinas.database_connections.schema_destroy:all")),
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     try:
         await svc.drop_view(pool, view, schema=schema, cascade=cascade)
@@ -393,6 +434,7 @@ async def insert_rows(
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     try:
         inserted = await svc.insert_rows(pool, table, request.rows, schema=schema)
@@ -414,6 +456,7 @@ async def update_rows(
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     try:
         affected = await svc.update_rows(
@@ -437,6 +480,7 @@ async def delete_rows(
     db: AsyncSession = Depends(get_db),
 ):
     conn, pool = await _get_connection_and_pool(name, db)
+    _assert_writable(conn)
     svc = get_schema_service(conn.connection_type)
     try:
         affected = await svc.delete_rows(pool, table, where=request.where, schema=schema)
