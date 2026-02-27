@@ -242,6 +242,14 @@ class SharedWorkerManager:
         container_name = f"sinas-worker-{num}"
 
         try:
+            # Remove stale container with same name if it exists (e.g. after crash)
+            try:
+                stale = self.client.containers.get(container_name)
+                print(f"🗑️  Removing stale container: {container_name}")
+                stale.remove(force=True)
+            except docker.errors.NotFound:
+                pass
+
             # Create worker container (same security model as user containers)
             container = self.client.containers.run(
                 image=settings.function_container_image,  # sinas-executor
@@ -467,18 +475,29 @@ class SharedWorkerManager:
                 },
             }
 
-            # Write payload to container via tar archive (avoids ARG_MAX limit
-            # for large payloads like base64 images).
+            # Write payload to container via exec_run + stdin pipe.
+            # We cannot use put_archive: it writes to the overlay layer which
+            # is invisible through tmpfs mounts on Linux.
+            # Stdin piping has no ARG_MAX limit and works with any payload size.
             payload_bytes = json.dumps(payload).encode("utf-8")
-            tar_buf = io.BytesIO()
-            with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-                info = tarfile.TarInfo(name="exec_request.json")
-                info.size = len(payload_bytes)
-                tar.addfile(info, io.BytesIO(payload_bytes))
-            tar_buf.seek(0)
-            await asyncio.to_thread(container.put_archive, "/tmp", tar_buf)
 
-            # Execute via file-based trigger (run in thread pool to avoid blocking)
+            # Step 1: Pipe payload into container via stdin (exec_create + exec_start)
+            api = container.client.api
+            exec_id = api.exec_create(
+                container.id,
+                ['python3', '-c', 'import sys; open("/tmp/exec_request.json","wb").write(sys.stdin.buffer.read())'],
+                stdin=True,
+                stdout=True,
+                stderr=True,
+            )["Id"]
+            sock = api.exec_start(exec_id, socket=True)
+            sock._sock.sendall(payload_bytes)
+            import socket as _sock_mod
+            sock._sock.shutdown(_sock_mod.SHUT_WR)
+            sock.read()  # Wait for command to finish
+            sock.close()
+
+            # Step 2: Trigger execution and poll for result
             exec_result = await asyncio.to_thread(
                 container.exec_run,
                 cmd=[
@@ -486,10 +505,8 @@ class SharedWorkerManager:
                     "-c",
                     f"""
 import sys, json, time, os
-# Trigger execution (request already written via put_archive)
 with open("/tmp/exec_trigger", "w") as f:
     f.write("1")
-# Wait for result
 max_wait = {settings.function_timeout}
 start = time.time()
 while time.time() - start < max_wait:
@@ -507,13 +524,12 @@ print(json.dumps({{"error": "Execution timeout"}}))
 sys.exit(1)
 """,
                 ],
-                demux=True,  # Separate stdout and stderr
+                demux=True,
             )
 
             stdout, stderr = exec_result.output
             stdout_str = stdout.decode() if stdout else ""
 
-            # Parse result from stdout only (ignore stderr)
             if exec_result.exit_code == 0:
                 result = json.loads(stdout_str)
 

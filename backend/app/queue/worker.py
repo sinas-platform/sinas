@@ -181,10 +181,18 @@ async def function_worker_startup(ctx: dict) -> None:
 
     ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
 
-    # Discover shared worker containers (created by backend, not by us)
+    # Discover shared worker containers (created by scheduler).
+    # Retry a few times — the scheduler may still be starting up.
     from app.services.shared_worker_manager import shared_worker_manager
 
-    await shared_worker_manager._discover_existing_workers()
+    for attempt in range(10):
+        await shared_worker_manager._discover_existing_workers()
+        if shared_worker_manager.workers:
+            break
+        if attempt < 9:
+            print(f"⏳ No shared workers found, waiting for scheduler... ({attempt + 1}/10)")
+            await asyncio.sleep(3)
+
     shared_worker_manager._initialized = True
     print(f"✅ Discovered {len(shared_worker_manager.workers)} shared workers")
 

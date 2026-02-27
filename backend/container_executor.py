@@ -3,10 +3,21 @@ Executor script that runs inside user containers.
 This script loads functions and executes them on demand.
 """
 import json
+import os
+import signal
 import sys
 import time
 import traceback
 from typing import Any
+
+
+class FunctionTimeoutError(Exception):
+    """Raised when a function exceeds its execution timeout."""
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise FunctionTimeoutError("Function execution timed out")
 
 
 class ContainerExecutor:
@@ -143,6 +154,7 @@ class ContainerExecutor:
 
                     elif action == "execute_inline":
                         # Execute function with inline code (no pre-loading required)
+                        function_timeout = request.get("timeout", 290)
                         try:
                             function_code = request["function_code"]
                             function_namespace = request.get("function_namespace", "default")
@@ -150,6 +162,8 @@ class ContainerExecutor:
                             input_data = request["input_data"]
                             context = request.get("context", {})
                             execution_id = request["execution_id"]
+
+                            print(f"[exec] Starting {function_namespace}/{function_name} (timeout={function_timeout}s)", file=sys.stderr)
 
                             # Create temporary namespace for this execution
                             temp_namespace = {
@@ -196,10 +210,18 @@ class ContainerExecutor:
                                         json.dump(result, f)
                                     continue
 
-                            # Execute function
+                            # Execute function with timeout (SIGALRM)
                             start_time = time.time()
-                            func_result = func(input_data, context)
+                            old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+                            signal.alarm(function_timeout)
+                            try:
+                                func_result = func(input_data, context)
+                            finally:
+                                signal.alarm(0)  # Cancel alarm
+                                signal.signal(signal.SIGALRM, old_handler)
                             duration_ms = int((time.time() - start_time) * 1000)
+
+                            print(f"[exec] Completed {function_namespace}/{function_name} in {duration_ms}ms", file=sys.stderr)
 
                             result = {
                                 "result": func_result,
@@ -208,7 +230,18 @@ class ContainerExecutor:
                                 "status": "completed",
                             }
 
+                        except FunctionTimeoutError:
+                            duration_ms = int((time.time() - start_time) * 1000)
+                            print(f"[exec] TIMEOUT {function_namespace}/{function_name} after {duration_ms}ms", file=sys.stderr)
+                            result = {
+                                "error": f"Function timed out after {function_timeout}s",
+                                "execution_id": execution_id,
+                                "duration_ms": duration_ms,
+                                "status": "failed",
+                            }
+
                         except Exception as e:
+                            print(f"[exec] FAILED {function_namespace}/{function_name}: {e}", file=sys.stderr)
                             result = {
                                 "error": str(e),
                                 "traceback": traceback.format_exc(),
