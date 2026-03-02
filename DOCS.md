@@ -152,6 +152,7 @@ Functions and agents can be triggered in multiple ways:
 - **Agent** — Called as a tool during a chat conversation
 - **Webhook** — Via an HTTP request to a configured endpoint
 - **Schedule** — Via a cron expression on a timer
+- **CDC** — Automatically when rows are inserted or updated in an external database table
 
 ### Declarative Configuration
 
@@ -422,7 +423,7 @@ Pass an app context via the `X-Application` header or `?app=namespace/name` quer
 
 ## Reference
 
-### Agents
+### Build
 
 #### Agents
 
@@ -509,118 +510,6 @@ curl -X POST http://localhost:8000/agents/default/default/chats \
 }
 ```
 
-#### LLM Providers
-
-LLM providers connect SINAS to language model APIs.
-
-**Supported providers:**
-
-| Type | Description |
-|---|---|
-| `openai` | OpenAI API (GPT-4, GPT-4o, o1, etc.) and OpenAI-compatible endpoints |
-| `anthropic` | Anthropic API (Claude 3, Claude 4, etc.) |
-| `mistral` | Mistral AI (Mistral Large, Pixtral, etc.) |
-| `ollama` | Local models via Ollama |
-
-**Key properties:**
-
-| Property | Description |
-|---|---|
-| `name` | Unique provider name |
-| `provider_type` | `openai`, `anthropic`, `mistral`, or `ollama` |
-| `api_key` | API key (encrypted at rest, never returned in API responses) |
-| `api_endpoint` | Custom endpoint URL (required for Ollama, useful for proxies) |
-| `default_model` | Model used when agents don't specify one |
-| `config` | Additional settings (e.g., `max_tokens`, `organization_id`) |
-| `is_default` | Whether this is the system-wide default provider |
-
-**Provider resolution for agents:**
-1. Agent's explicit `llm_provider_id` if set
-2. Agent's `model` field with the resolved provider
-3. Provider's `default_model`
-4. System default provider as final fallback
-
-**Endpoints (admin only):**
-
-```
-POST   /api/v1/llm-providers             # Create provider
-GET    /api/v1/llm-providers             # List providers
-GET    /api/v1/llm-providers/{name}      # Get provider
-PATCH  /api/v1/llm-providers/{id}        # Update provider
-DELETE /api/v1/llm-providers/{id}        # Delete provider
-```
-
-#### Skills
-
-Skills are reusable instruction documents that give agents specialized knowledge or guidelines.
-
-**Key properties:**
-
-| Property | Description |
-|---|---|
-| `namespace` / `name` | Unique identifier |
-| `description` | What the skill helps with (shown to the LLM as the tool description) |
-| `content` | Markdown instructions |
-
-**Two modes:**
-
-| Mode | Behavior | Best for |
-|---|---|---|
-| **Preloaded** (`preload: true`) | Injected into the system prompt | Tone guidelines, safety rules, persona traits |
-| **Progressive** (`preload: false`) | Exposed as a tool the LLM calls when needed | Research methods, domain expertise, task-specific instructions |
-
-Example agent configuration:
-
-```yaml
-enabled_skills:
-  - skill: "default/tone_guidelines"
-    preload: true       # Always present in system prompt
-  - skill: "default/web_research"
-    preload: false      # LLM decides when to retrieve it
-```
-
-**Endpoints:**
-
-```
-POST   /api/v1/skills                       # Create skill
-GET    /api/v1/skills                       # List skills
-GET    /api/v1/skills/{namespace}/{name}    # Get skill
-PUT    /api/v1/skills/{namespace}/{name}    # Update skill
-DELETE /api/v1/skills/{namespace}/{name}    # Delete skill
-```
-
-#### Schedules
-
-Schedules trigger functions or agents on a cron timer.
-
-**Key properties:**
-
-| Property | Description |
-|---|---|
-| `name` | Unique name (per user) |
-| `schedule_type` | `function` or `agent` |
-| `target_namespace` / `target_name` | Function or agent to trigger |
-| `cron_expression` | Standard cron expression (e.g., `0 9 * * MON-FRI`) |
-| `timezone` | Schedule timezone (default: `UTC`) |
-| `input_data` | Input passed to the function or agent |
-| `content` | Message content (agent schedules only) |
-
-For agent schedules, a new chat is created for each run with the schedule name and timestamp as the title.
-
-**Endpoints:**
-
-```
-POST   /api/v1/schedules              # Create schedule
-GET    /api/v1/schedules              # List schedules
-GET    /api/v1/schedules/{name}       # Get schedule
-PATCH  /api/v1/schedules/{name}       # Update schedule
-DELETE /api/v1/schedules/{name}       # Delete schedule
-```
-
----
-
-### Functions
-
 #### Functions
 
 Functions are Python code that runs in isolated Docker containers. They can be used as agent tools, triggered by webhooks or schedules, or executed directly.
@@ -706,6 +595,268 @@ GET    /executions/{execution_id}           # Get execution details
 GET    /executions/{execution_id}/steps     # Get execution steps (nested calls)
 ```
 
+**Input schema presets:** The function editor includes built-in presets for common input/output schemas. Use the "Load preset" dropdown when editing schemas:
+
+| Preset | Use case |
+|---|---|
+| **Pre-upload filter** | Content filtering before file upload (receives file content, returns approved/rejected) |
+| **Post-upload** | Processing after successful file upload (receives file_id, metadata) |
+| **CDC (Change Data Capture)** | Processing database changes (receives table, rows, poll_column, count) |
+
+#### Components
+
+Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINAS into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `title` | Display title |
+| `source_code` | JSX/HTML/JS source |
+| `compiled_bundle` | Auto-generated browser-ready JS |
+| `input_schema` | JSON Schema for component configuration |
+| `enabled_agents` | Agents the component can call |
+| `enabled_functions` | Functions the component can call |
+| `enabled_queries` | Queries the component can execute |
+| `enabled_components` | Other components it can embed |
+| `state_namespaces_readonly` / `state_namespaces_readwrite` | State access |
+| `css_overrides` | Custom CSS |
+| `visibility` | `private`, `shared`, or `public` |
+
+Components use the `sinas-ui` library (loaded from npm/unpkg) for a consistent look and feel.
+
+**Management endpoints:**
+
+```
+POST   /api/v1/components                                  # Create component
+GET    /api/v1/components                                  # List components
+GET    /api/v1/components/{namespace}/{name}               # Get component
+PUT    /api/v1/components/{namespace}/{name}               # Update component
+DELETE /api/v1/components/{namespace}/{name}               # Delete component
+POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
+```
+
+**Share links** allow embedding components outside SINAS with optional expiration and view limits:
+
+```
+POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
+GET    /api/v1/components/{namespace}/{name}/shares        # List share links
+DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
+```
+
+**Runtime rendering:**
+
+```
+GET    /components/{namespace}/{name}/render               # Render as full HTML page
+GET    /components/shared/{token}                          # Render via share token
+```
+
+**Proxy endpoints** allow components to call backend resources from the browser securely — the proxy enforces the component's `enabled_*` permissions:
+
+```
+POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
+POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
+POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
+```
+
+#### Queries
+
+Queries are saved SQL templates that can be executed directly or used as agent tools.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `database_connection_id` | Which database connection to use |
+| `description` | Shown to the LLM as the tool description |
+| `operation` | `read` or `write` |
+| `sql` | SQL with `:param_name` placeholders |
+| `input_schema` | JSON Schema for parameter validation |
+| `output_schema` | JSON Schema for output validation |
+| `timeout_ms` | Query timeout (default: 5000ms) |
+| `max_rows` | Max rows returned for read operations (default: 1000) |
+
+**Agent query parameters** support defaults and locking:
+
+```yaml
+query_parameters:
+  "analytics/user_orders":
+    "user_id":
+      value: "{{user_id}}"    # Jinja2 template from agent input
+      locked: true             # Hidden from LLM, always injected
+    "status":
+      value: "pending"
+      locked: false            # Shown to LLM with default, LLM can override
+```
+
+Locked parameters prevent the LLM from seeing or modifying security-sensitive values (like `user_id`).
+
+**Endpoints:**
+
+```
+POST   /queries/{namespace}/{name}/execute            # Execute with parameters (runtime)
+
+POST   /api/v1/queries                              # Create query
+GET    /api/v1/queries                              # List queries
+GET    /api/v1/queries/{namespace}/{name}           # Get query
+PUT    /api/v1/queries/{namespace}/{name}           # Update query
+DELETE /api/v1/queries/{namespace}/{name}           # Delete query
+```
+
+---
+
+### Configure
+
+#### Skills
+
+Skills are reusable instruction documents that give agents specialized knowledge or guidelines.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `description` | What the skill helps with (shown to the LLM as the tool description) |
+| `content` | Markdown instructions |
+
+**Two modes:**
+
+| Mode | Behavior | Best for |
+|---|---|---|
+| **Preloaded** (`preload: true`) | Injected into the system prompt | Tone guidelines, safety rules, persona traits |
+| **Progressive** (`preload: false`) | Exposed as a tool the LLM calls when needed | Research methods, domain expertise, task-specific instructions |
+
+Example agent configuration:
+
+```yaml
+enabled_skills:
+  - skill: "default/tone_guidelines"
+    preload: true       # Always present in system prompt
+  - skill: "default/web_research"
+    preload: false      # LLM decides when to retrieve it
+```
+
+**Endpoints:**
+
+```
+POST   /api/v1/skills                       # Create skill
+GET    /api/v1/skills                       # List skills
+GET    /api/v1/skills/{namespace}/{name}    # Get skill
+PUT    /api/v1/skills/{namespace}/{name}    # Update skill
+DELETE /api/v1/skills/{namespace}/{name}    # Delete skill
+```
+
+#### LLM Providers
+
+LLM providers connect SINAS to language model APIs.
+
+**Supported providers:**
+
+| Type | Description |
+|---|---|
+| `openai` | OpenAI API (GPT-4, GPT-4o, o1, etc.) and OpenAI-compatible endpoints |
+| `anthropic` | Anthropic API (Claude 3, Claude 4, etc.) |
+| `mistral` | Mistral AI (Mistral Large, Pixtral, etc.) |
+| `ollama` | Local models via Ollama |
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `name` | Unique provider name |
+| `provider_type` | `openai`, `anthropic`, `mistral`, or `ollama` |
+| `api_key` | API key (encrypted at rest, never returned in API responses) |
+| `api_endpoint` | Custom endpoint URL (required for Ollama, useful for proxies) |
+| `default_model` | Model used when agents don't specify one |
+| `config` | Additional settings (e.g., `max_tokens`, `organization_id`) |
+| `is_default` | Whether this is the system-wide default provider |
+
+**Provider resolution for agents:**
+1. Agent's explicit `llm_provider_id` if set
+2. Agent's `model` field with the resolved provider
+3. Provider's `default_model`
+4. System default provider as final fallback
+
+**Endpoints (admin only):**
+
+```
+POST   /api/v1/llm-providers             # Create provider
+GET    /api/v1/llm-providers             # List providers
+GET    /api/v1/llm-providers/{name}      # Get provider
+PATCH  /api/v1/llm-providers/{id}        # Update provider
+DELETE /api/v1/llm-providers/{id}        # Delete provider
+```
+
+#### Database Connections
+
+Database connections store credentials and manage connection pools for external databases.
+
+**Supported databases:** PostgreSQL, ClickHouse, Snowflake
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `name` | Unique connection name |
+| `connection_type` | `postgresql`, `clickhouse`, or `snowflake` |
+| `host`, `port`, `database`, `username`, `password` | Connection details |
+| `ssl_mode` | Optional SSL configuration |
+| `config` | Pool settings (`min_pool_size`, `max_pool_size`) |
+
+Passwords are encrypted at rest. Connection pools are managed automatically and invalidated when settings change.
+
+**Endpoints (admin only):**
+
+```
+POST   /api/v1/database-connections                    # Create connection
+GET    /api/v1/database-connections                    # List connections
+GET    /api/v1/database-connections/{name}             # Get by name
+PATCH  /api/v1/database-connections/{id}               # Update
+DELETE /api/v1/database-connections/{id}               # Delete
+POST   /api/v1/database-connections/test               # Test raw connection params
+POST   /api/v1/database-connections/{id}/test          # Test saved connection
+```
+
+#### Templates
+
+Templates are Jinja2-based documents for emails, notifications, and dynamic content.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `title` | Optional title template (e.g., email subject) |
+| `html_content` | Jinja2 HTML template |
+| `text_content` | Optional plain-text fallback |
+| `variable_schema` | JSON Schema for validating template variables |
+
+HTML output is auto-escaped to prevent XSS. Missing variables cause errors (strict mode).
+
+**Management endpoints:**
+
+```
+POST   /api/v1/templates                                   # Create template
+GET    /api/v1/templates                                   # List templates
+GET    /api/v1/templates/{id}                              # Get by ID
+GET    /api/v1/templates/by-name/{namespace}/{name}        # Get by name
+PATCH  /api/v1/templates/{id}                              # Update
+DELETE /api/v1/templates/{id}                              # Delete
+```
+
+**Runtime endpoints:**
+
+```
+POST   /templates/{id}/render        # Render template with variables
+POST   /templates/{id}/send          # Render and send as email
+```
+
+---
+
+### Triggers
+
 #### Webhooks
 
 Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, SINAS executes the linked function with the request data.
@@ -760,122 +911,119 @@ PATCH  /api/v1/webhooks/{path}       # Update webhook
 DELETE /api/v1/webhooks/{path}       # Delete webhook
 ```
 
----
+#### Schedules
 
-### Data
-
-#### Database Connections
-
-Database connections store credentials and manage connection pools for external databases.
-
-**Supported databases:** PostgreSQL, ClickHouse, Snowflake
+Schedules trigger functions or agents on a cron timer.
 
 **Key properties:**
 
 | Property | Description |
 |---|---|
-| `name` | Unique connection name |
-| `connection_type` | `postgresql`, `clickhouse`, or `snowflake` |
-| `host`, `port`, `database`, `username`, `password` | Connection details |
-| `ssl_mode` | Optional SSL configuration |
-| `config` | Pool settings (`min_pool_size`, `max_pool_size`) |
+| `name` | Unique name (per user) |
+| `schedule_type` | `function` or `agent` |
+| `target_namespace` / `target_name` | Function or agent to trigger |
+| `cron_expression` | Standard cron expression (e.g., `0 9 * * MON-FRI`) |
+| `timezone` | Schedule timezone (default: `UTC`) |
+| `input_data` | Input passed to the function or agent |
+| `content` | Message content (agent schedules only) |
 
-Passwords are encrypted at rest. Connection pools are managed automatically and invalidated when settings change.
-
-**Endpoints (admin only):**
-
-```
-POST   /api/v1/database-connections                    # Create connection
-GET    /api/v1/database-connections                    # List connections
-GET    /api/v1/database-connections/{name}             # Get by name
-PATCH  /api/v1/database-connections/{id}               # Update
-DELETE /api/v1/database-connections/{id}               # Delete
-POST   /api/v1/database-connections/test               # Test raw connection params
-POST   /api/v1/database-connections/{id}/test          # Test saved connection
-```
-
-#### Queries
-
-Queries are saved SQL templates that can be executed directly or used as agent tools.
-
-**Key properties:**
-
-| Property | Description |
-|---|---|
-| `namespace` / `name` | Unique identifier |
-| `database_connection_id` | Which database connection to use |
-| `description` | Shown to the LLM as the tool description |
-| `operation` | `read` or `write` |
-| `sql` | SQL with `:param_name` placeholders |
-| `input_schema` | JSON Schema for parameter validation |
-| `output_schema` | JSON Schema for output validation |
-| `timeout_ms` | Query timeout (default: 5000ms) |
-| `max_rows` | Max rows returned for read operations (default: 1000) |
-
-**Agent query parameters** support defaults and locking:
-
-```yaml
-query_parameters:
-  "analytics/user_orders":
-    "user_id":
-      value: "{{user_id}}"    # Jinja2 template from agent input
-      locked: true             # Hidden from LLM, always injected
-    "status":
-      value: "pending"
-      locked: false            # Shown to LLM with default, LLM can override
-```
-
-Locked parameters prevent the LLM from seeing or modifying security-sensitive values (like `user_id`).
+For agent schedules, a new chat is created for each run with the schedule name and timestamp as the title.
 
 **Endpoints:**
 
 ```
-POST   /queries/{namespace}/{name}/execute            # Execute with parameters (runtime)
-
-POST   /api/v1/queries                              # Create query
-GET    /api/v1/queries                              # List queries
-GET    /api/v1/queries/{namespace}/{name}           # Get query
-PUT    /api/v1/queries/{namespace}/{name}           # Update query
-DELETE /api/v1/queries/{namespace}/{name}           # Delete query
+POST   /api/v1/schedules              # Create schedule
+GET    /api/v1/schedules              # List schedules
+GET    /api/v1/schedules/{name}       # Get schedule
+PATCH  /api/v1/schedules/{name}       # Update schedule
+DELETE /api/v1/schedules/{name}       # Delete schedule
 ```
 
----
+#### Database Triggers (CDC)
 
-### Resources
+Database triggers watch external database tables for changes and automatically execute functions when new or updated rows are detected. This is poll-based Change Data Capture — no setup required on the source database.
 
-#### Templates
+**How it works:**
 
-Templates are Jinja2-based documents for emails, notifications, and dynamic content.
+1. A separate CDC service polls the configured table at a fixed interval
+2. It queries rows where `poll_column > last_bookmark` (e.g., `updated_at > '2026-03-01T10:00:00'`)
+3. If new rows are found, they are batched into a single function call
+4. The bookmark advances to the highest value in the batch
+5. On first activation, the bookmark is set to `MAX(poll_column)` — no backfill of existing data
 
 **Key properties:**
 
 | Property | Description |
 |---|---|
-| `namespace` / `name` | Unique identifier |
-| `title` | Optional title template (e.g., email subject) |
-| `html_content` | Jinja2 HTML template |
-| `text_content` | Optional plain-text fallback |
-| `variable_schema` | JSON Schema for validating template variables |
+| `name` | Unique trigger name (per user) |
+| `database_connection_id` | Which database connection to poll |
+| `schema_name` | Database schema (default: `public`) |
+| `table_name` | Table to watch |
+| `operations` | `["INSERT"]`, `["UPDATE"]`, or both |
+| `function_namespace` / `function_name` | Function to execute when changes are detected |
+| `poll_column` | Monotonically increasing column used as bookmark (e.g., `updated_at`, `id`) |
+| `poll_interval_seconds` | How often to poll (1–3600, default: `10`) |
+| `batch_size` | Max rows per poll (1–10000, default: `100`) |
+| `is_active` | Enable/disable without deleting |
+| `last_poll_value` | Current bookmark (managed automatically) |
+| `error_message` | Last error, if any (visible in UI) |
 
-HTML output is auto-escaped to prevent XSS. Missing variables cause errors (strict mode).
+The `poll_column` must be a column whose value only increases — timestamps, auto-increment IDs, or sequences. The column type is detected automatically and comparisons are cast to the correct type.
 
-**Management endpoints:**
+**Function input payload:**
+
+When changes are detected, the target function receives all new rows in a single call:
+
+```json
+{
+  "table": "public.orders",
+  "operation": "CHANGE",
+  "rows": [
+    {"id": 123, "status": "paid", "amount": 99.50, "updated_at": "2026-03-02T10:30:00Z"},
+    {"id": 124, "status": "pending", "amount": 45.00, "updated_at": "2026-03-02T10:30:01Z"}
+  ],
+  "poll_column": "updated_at",
+  "count": 2,
+  "timestamp": "2026-03-02T10:30:05Z"
+}
+```
+
+If a poll returns zero rows, no function call is made.
+
+**Error handling:** On failure, the trigger logs the error to `error_message` and retries with exponential backoff (up to 60 seconds). The trigger continues retrying until deactivated or the issue is resolved.
+
+**Limitations:**
+- Cannot detect `DELETE` operations (poll-based limitation)
+- Changes are detected with a delay equal to the poll interval
+- The `poll_column` must never decrease — resetting it will cause missed or duplicate rows
+
+**Endpoints:**
 
 ```
-POST   /api/v1/templates                                   # Create template
-GET    /api/v1/templates                                   # List templates
-GET    /api/v1/templates/{id}                              # Get by ID
-GET    /api/v1/templates/by-name/{namespace}/{name}        # Get by name
-PATCH  /api/v1/templates/{id}                              # Update
-DELETE /api/v1/templates/{id}                              # Delete
+POST   /api/v1/database-triggers              # Create trigger
+GET    /api/v1/database-triggers              # List triggers
+GET    /api/v1/database-triggers/{name}       # Get trigger
+PATCH  /api/v1/database-triggers/{name}       # Update trigger
+DELETE /api/v1/database-triggers/{name}       # Delete trigger
 ```
 
-**Runtime endpoints:**
+**Declarative configuration:**
 
+```yaml
+databaseTriggers:
+  - name: "customer_changes"
+    connectionName: "prod_database"
+    tableName: "customers"
+    operations: ["INSERT", "UPDATE"]
+    functionName: "sync/process_customer"
+    pollColumn: "updated_at"
+    pollIntervalSeconds: 10
+    batchSize: 100
 ```
-POST   /templates/{id}/render        # Render template with variables
-POST   /templates/{id}/send          # Render and send as email
-```
+
+---
+
+### Storage
 
 #### Collections & Files
 
@@ -963,6 +1111,81 @@ DELETE /states/{id}         # Delete state
 ---
 
 ### Admin
+
+#### Integration Packages
+
+Integration packages bundle agents, functions, skills, components, templates, and other resources into a shareable YAML file that can be installed with one click.
+
+**How packages work:**
+
+1. **Create**: Select resources from your SINAS instance → export as `SinasPackage` YAML
+2. **Share**: Distribute the YAML file (GitHub, email, package registry)
+3. **Install**: Paste/upload the YAML → preview changes → confirm install
+4. **Uninstall**: Removes all resources created by the package in one operation
+
+**Package YAML format:**
+
+```yaml
+apiVersion: sinas.co/v1
+kind: SinasPackage
+package:
+  name: crm-integration
+  version: "1.0.0"
+  description: "CRM support agents and functions"
+  author: "team@company.com"
+  url: "https://github.com/company/sinas-crm"
+spec:
+  agents: [...]
+  functions: [...]
+  skills: [...]
+  components: [...]
+  templates: [...]
+  queries: [...]
+  collections: [...]
+  webhooks: [...]
+  schedules: [...]
+  apps: [...]
+```
+
+**Key behaviors:**
+
+- Resources created by packages are tagged with `managed_by: "pkg:<name>"`
+- **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
+- **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
+- **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
+
+**Endpoints:**
+
+```
+POST   /api/v1/packages/install       # Install package from YAML
+POST   /api/v1/packages/preview       # Preview install (dry run)
+POST   /api/v1/packages/create        # Create package YAML from selected resources
+GET    /api/v1/packages               # List installed packages
+GET    /api/v1/packages/{name}        # Get package details
+DELETE /api/v1/packages/{name}        # Uninstall package
+GET    /api/v1/packages/{name}/export # Export original YAML
+```
+
+**Creating a package from existing resources:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/packages/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-package",
+    "version": "1.0.0",
+    "description": "My integration package",
+    "resources": [
+      {"type": "agent", "namespace": "support", "name": "ticket-bot"},
+      {"type": "function", "namespace": "support", "name": "lookup-customer"},
+      {"type": "template", "namespace": "support", "name": "ticket-reply"},
+      {"type": "schedule", "namespace": "default", "name": "daily-digest"}
+    ]
+  }'
+```
+
+Supported resource types: `agent`, `function`, `skill`, `app`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
 
 #### Apps
 
@@ -1259,138 +1482,6 @@ Agents and functions support configurable icons via the `icon` field. Two format
 
 Collection-based icons generate signed JWT URLs for private files and direct URLs for public collection files. Icons are resolved at read time via the icon resolver service.
 
-#### Components
-
-Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINAS into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
-
-**Key properties:**
-
-| Property | Description |
-|---|---|
-| `namespace` / `name` | Unique identifier |
-| `title` | Display title |
-| `source_code` | JSX/HTML/JS source |
-| `compiled_bundle` | Auto-generated browser-ready JS |
-| `input_schema` | JSON Schema for component configuration |
-| `enabled_agents` | Agents the component can call |
-| `enabled_functions` | Functions the component can call |
-| `enabled_queries` | Queries the component can execute |
-| `enabled_components` | Other components it can embed |
-| `state_namespaces_readonly` / `state_namespaces_readwrite` | State access |
-| `css_overrides` | Custom CSS |
-| `visibility` | `private`, `shared`, or `public` |
-
-Components use the `sinas-ui` library (loaded from npm/unpkg) for a consistent look and feel.
-
-**Management endpoints:**
-
-```
-POST   /api/v1/components                                  # Create component
-GET    /api/v1/components                                  # List components
-GET    /api/v1/components/{namespace}/{name}               # Get component
-PUT    /api/v1/components/{namespace}/{name}               # Update component
-DELETE /api/v1/components/{namespace}/{name}               # Delete component
-POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
-```
-
-**Share links** allow embedding components outside SINAS with optional expiration and view limits:
-
-```
-POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
-GET    /api/v1/components/{namespace}/{name}/shares        # List share links
-DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
-```
-
-**Runtime rendering:**
-
-```
-GET    /components/{namespace}/{name}/render               # Render as full HTML page
-GET    /components/shared/{token}                          # Render via share token
-```
-
-**Proxy endpoints** allow components to call backend resources from the browser securely — the proxy enforces the component's `enabled_*` permissions:
-
-```
-POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
-POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
-POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
-```
-
-#### Integration Packages
-
-Integration packages bundle agents, functions, skills, components, templates, and other resources into a shareable YAML file that can be installed with one click.
-
-**How packages work:**
-
-1. **Create**: Select resources from your SINAS instance → export as `SinasPackage` YAML
-2. **Share**: Distribute the YAML file (GitHub, email, package registry)
-3. **Install**: Paste/upload the YAML → preview changes → confirm install
-4. **Uninstall**: Removes all resources created by the package in one operation
-
-**Package YAML format:**
-
-```yaml
-apiVersion: sinas.co/v1
-kind: SinasPackage
-package:
-  name: crm-integration
-  version: "1.0.0"
-  description: "CRM support agents and functions"
-  author: "team@company.com"
-  url: "https://github.com/company/sinas-crm"
-spec:
-  agents: [...]
-  functions: [...]
-  skills: [...]
-  components: [...]
-  templates: [...]
-  queries: [...]
-  collections: [...]
-  webhooks: [...]
-  schedules: [...]
-  apps: [...]
-```
-
-**Key behaviors:**
-
-- Resources created by packages are tagged with `managed_by: "pkg:<name>"`
-- **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
-- **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
-- **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
-
-**Endpoints:**
-
-```
-POST   /api/v1/packages/install       # Install package from YAML
-POST   /api/v1/packages/preview       # Preview install (dry run)
-POST   /api/v1/packages/create        # Create package YAML from selected resources
-GET    /api/v1/packages               # List installed packages
-GET    /api/v1/packages/{name}        # Get package details
-DELETE /api/v1/packages/{name}        # Uninstall package
-GET    /api/v1/packages/{name}/export # Export original YAML
-```
-
-**Creating a package from existing resources:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/packages/create \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "my-package",
-    "version": "1.0.0",
-    "description": "My integration package",
-    "resources": [
-      {"type": "agent", "namespace": "support", "name": "ticket-bot"},
-      {"type": "function", "namespace": "support", "name": "lookup-customer"},
-      {"type": "template", "namespace": "support", "name": "ticket-reply"},
-      {"type": "schedule", "namespace": "default", "name": "daily-digest"}
-    ]
-  }'
-```
-
-Supported resource types: `agent`, `function`, `skill`, `app`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
-
 #### Config Manager
 
 The config manager supports GitOps-style declarative configuration. Define all your resources in a YAML file and apply it idempotently.
@@ -1418,6 +1509,7 @@ spec:
   agents:              # AI agent configurations
   webhooks:            # HTTP triggers for functions
   schedules:           # Cron-based triggers
+  databaseTriggers:    # CDC polling triggers
 ```
 
 All sections are optional — include only what you need.
