@@ -56,6 +56,29 @@ const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }>
       properties: {},
     },
   },
+  'cdc': {
+    label: 'CDC (Change Data Capture)',
+    input: {
+      type: "object",
+      properties: {
+        table: { type: "string", description: "Schema-qualified table name (e.g. public.orders)" },
+        operation: { type: "string", description: "Type of change detected (CHANGE)" },
+        rows: {
+          type: "array",
+          items: { type: "object" },
+          description: "Array of new/changed rows from the polled table",
+        },
+        poll_column: { type: "string", description: "Column used for change detection" },
+        count: { type: "integer", description: "Number of rows in this batch" },
+        timestamp: { type: "string", description: "ISO 8601 timestamp of when the poll occurred" },
+      },
+      required: ["table", "operation", "rows", "poll_column", "count", "timestamp"],
+    },
+    output: {
+      type: "object",
+      properties: {},
+    },
+  },
 };
 
 export function FunctionEditor() {

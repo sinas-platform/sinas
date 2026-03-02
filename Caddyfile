@@ -13,6 +13,11 @@
         X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
+
+    # Allow components to be embedded in iframes
+    header /components/* {
+        -X-Frame-Options
+    }
 }
 
 {$DOMAIN}:51245 {
