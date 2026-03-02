@@ -19,6 +19,7 @@ from app.models.function import Function, FunctionVersion
 from app.models.database_connection import DatabaseConnection
 from app.models.llm_provider import LLMProvider
 from app.models.query import Query
+from app.models.database_trigger import DatabaseTrigger
 from app.models.schedule import ScheduledJob
 from app.models.component import Component
 from app.models.skill import Skill
@@ -148,6 +149,8 @@ class ConfigApplyService:
                 await self._apply_webhooks(config.spec.webhooks, dry_run)
             if "schedules" not in self.skip_resource_types:
                 await self._apply_schedules(config.spec.schedules, dry_run)
+            if "databaseTriggers" not in self.skip_resource_types:
+                await self._apply_database_triggers(config.spec.databaseTriggers, dry_run)
 
             if not dry_run and self.auto_commit:
                 await self.db.commit()
@@ -1518,3 +1521,105 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying schedule '{schedule_config.name}': {str(e)}")
+
+    async def _apply_database_triggers(self, triggers, dry_run: bool):
+        """Apply database trigger (CDC) configurations"""
+        for trigger_config in triggers:
+            try:
+                # Resolve connection name -> id
+                conn_result = await self.db.execute(
+                    select(DatabaseConnection).where(
+                        DatabaseConnection.name == trigger_config.connectionName
+                    )
+                )
+                db_conn = conn_result.scalar_one_or_none()
+                if not db_conn:
+                    self.errors.append(
+                        f"Database trigger '{trigger_config.name}': "
+                        f"connection '{trigger_config.connectionName}' not found"
+                    )
+                    continue
+
+                # Parse function name (namespace/name format)
+                func_ref = trigger_config.functionName
+                if "/" in func_ref:
+                    func_namespace, func_name = func_ref.split("/", 1)
+                else:
+                    func_namespace, func_name = "default", func_ref
+
+                # Look for existing trigger
+                stmt = select(DatabaseTrigger).where(DatabaseTrigger.name == trigger_config.name)
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "name": trigger_config.name,
+                        "connection_id": str(db_conn.id),
+                        "schema_name": trigger_config.schemaName,
+                        "table_name": trigger_config.tableName,
+                        "operations": trigger_config.operations,
+                        "function_namespace": func_namespace,
+                        "function_name": func_name,
+                        "poll_column": trigger_config.pollColumn,
+                        "poll_interval_seconds": trigger_config.pollIntervalSeconds,
+                        "batch_size": trigger_config.batchSize,
+                        "is_active": trigger_config.isActive,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != self.managed_by:
+                        self.warnings.append(
+                            f"Database trigger '{trigger_config.name}' exists but is not managed by "
+                            f"'{self.managed_by}'. Skipping."
+                        )
+                        self._track_change("unchanged", "databaseTriggers", trigger_config.name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "databaseTriggers", trigger_config.name)
+                        continue
+
+                    if not dry_run:
+                        existing.database_connection_id = db_conn.id
+                        existing.schema_name = trigger_config.schemaName
+                        existing.table_name = trigger_config.tableName
+                        existing.operations = trigger_config.operations
+                        existing.function_namespace = func_namespace
+                        existing.function_name = func_name
+                        existing.poll_column = trigger_config.pollColumn
+                        existing.poll_interval_seconds = trigger_config.pollIntervalSeconds
+                        existing.batch_size = trigger_config.batchSize
+                        existing.is_active = trigger_config.isActive
+                        existing.config_checksum = config_hash
+
+                    self._track_change("update", "databaseTriggers", trigger_config.name)
+
+                else:
+                    if not dry_run:
+                        new_trigger = DatabaseTrigger(
+                            name=trigger_config.name,
+                            database_connection_id=db_conn.id,
+                            schema_name=trigger_config.schemaName,
+                            table_name=trigger_config.tableName,
+                            operations=trigger_config.operations,
+                            function_namespace=func_namespace,
+                            function_name=func_name,
+                            poll_column=trigger_config.pollColumn,
+                            poll_interval_seconds=trigger_config.pollIntervalSeconds,
+                            batch_size=trigger_config.batchSize,
+                            is_active=trigger_config.isActive,
+                            user_id=self.owner_user_id,
+                            managed_by=self.managed_by,
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_trigger)
+
+                    self._track_change("create", "databaseTriggers", trigger_config.name)
+
+            except Exception as e:
+                self.errors.append(
+                    f"Error applying database trigger '{trigger_config.name}': {str(e)}"
+                )

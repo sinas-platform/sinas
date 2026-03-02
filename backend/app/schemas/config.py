@@ -252,6 +252,29 @@ class TemplateConfig(BaseModel):
     variableSchema: Optional[dict[str, Any]] = None
 
 
+class DatabaseTriggerConfig(BaseModel):
+    """Database trigger (CDC) configuration"""
+
+    name: str
+    connectionName: str  # Reference DatabaseConnection by name
+    schemaName: str = "public"
+    tableName: str
+    operations: list[str] = Field(default=["INSERT", "UPDATE"])
+    functionName: str  # "namespace/name" format
+    pollColumn: str
+    pollIntervalSeconds: int = 10
+    batchSize: int = 100
+    isActive: bool = True
+
+    @validator("operations")
+    def validate_operations(cls, v):
+        valid = {"INSERT", "UPDATE"}
+        invalid = set(v) - valid
+        if invalid:
+            raise ValueError(f"Invalid operations: {invalid}. Must be subset of {valid}")
+        return v
+
+
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
@@ -270,6 +293,7 @@ class ConfigSpec(BaseModel):
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)
     schedules: list[ScheduleConfig] = Field(default_factory=list)
+    databaseTriggers: list[DatabaseTriggerConfig] = Field(default_factory=list)
 
 
 class PackageMetadataConfig(BaseModel):

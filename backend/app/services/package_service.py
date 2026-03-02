@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 from app.models.app import App
 from app.models.component import Component
+from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
 from app.models.function import Function
 from app.models.package import Package
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
 
 # Models that support managed_by
-MANAGED_MODELS = [Agent, App, Component, Collection, Function, Query, ScheduledJob, Skill, Template, Webhook]
+MANAGED_MODELS = [Agent, App, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Template, Webhook]
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -181,6 +182,7 @@ class PackageService:
             App: "apps",
             Component: "components",
             Collection: "collections",
+            DatabaseTrigger: "databaseTriggers",
             Function: "functions",
             Query: "queries",
             ScheduledJob: "schedules",
@@ -259,6 +261,7 @@ class PackageService:
             "template": (Template, self._export_template),
             "webhook": (Webhook, self._export_webhook),
             "schedule": (ScheduledJob, self._export_schedule),
+            "database_trigger": (DatabaseTrigger, self._export_database_trigger),
         }
 
         for ref in resources:
@@ -309,6 +312,7 @@ class PackageService:
             "template": "templates",
             "webhook": "webhooks",
             "schedule": "schedules",
+            "database_trigger": "databaseTriggers",
         }
         return mapping.get(res_type, res_type + "s")
 
@@ -485,4 +489,31 @@ class PackageService:
             "isActive": schedule.is_active,
             "timezone": schedule.timezone,
             "inputData": schedule.input_data or None,
+        })
+
+    async def _export_database_trigger(self, trigger: DatabaseTrigger) -> dict:
+        from app.models.database_connection import DatabaseConnection
+
+        conn_name = None
+        if trigger.database_connection_id:
+            result = await self.db.execute(
+                select(DatabaseConnection).where(
+                    DatabaseConnection.id == trigger.database_connection_id
+                )
+            )
+            conn = result.scalar_one_or_none()
+            if conn:
+                conn_name = conn.name
+
+        return _remove_none_values({
+            "name": trigger.name,
+            "connectionName": conn_name,
+            "schemaName": trigger.schema_name,
+            "tableName": trigger.table_name,
+            "operations": trigger.operations,
+            "functionName": f"{trigger.function_namespace}/{trigger.function_name}",
+            "pollColumn": trigger.poll_column,
+            "pollIntervalSeconds": trigger.poll_interval_seconds,
+            "batchSize": trigger.batch_size,
+            "isActive": trigger.is_active,
         })

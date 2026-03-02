@@ -34,6 +34,7 @@ export function Packages() {
   const { data: webhooks } = useQuery({ queryKey: ['webhooks'], queryFn: () => apiClient.listWebhooks(), enabled: showCreateModal });
   const { data: templates } = useQuery({ queryKey: ['templates'], queryFn: () => apiClient.listTemplates(), enabled: showCreateModal });
   const { data: schedules } = useQuery({ queryKey: ['schedules'], queryFn: () => apiClient.listSchedules(), enabled: showCreateModal });
+  const { data: databaseTriggers } = useQuery({ queryKey: ['database-triggers'], queryFn: () => apiClient.listDatabaseTriggers(), enabled: showCreateModal });
 
   const previewMutation = useMutation({
     mutationFn: (source: string) => apiClient.previewPackage(source),
@@ -167,6 +168,7 @@ export function Packages() {
     { type: 'webhook', label: 'Webhooks', items: webhooks?.map((w: any) => ({ namespace: 'default', name: w.path })) || [] },
     { type: 'template', label: 'Templates', items: templates?.map((t: any) => ({ namespace: t.namespace, name: t.name })) || [] },
     { type: 'schedule', label: 'Schedules', items: schedules?.map((s: any) => ({ namespace: 'default', name: s.name })) || [] },
+    { type: 'database_trigger', label: 'Database Triggers', items: databaseTriggers?.map((t: any) => ({ namespace: 'default', name: t.name })) || [] },
   ].filter(s => s.items.length > 0);
 
   return (

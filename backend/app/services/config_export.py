@@ -13,6 +13,8 @@ from app.models.agent import Agent
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
 
+from app.models.database_connection import DatabaseConnection
+from app.models.database_trigger import DatabaseTrigger
 from app.models.schedule import ScheduledJob
 from app.models.template import Template
 from app.models.user import Role, RolePermission, User
@@ -61,6 +63,7 @@ class ConfigExportService:
         config_dict["spec"]["agents"] = await self._export_agents()
         config_dict["spec"]["webhooks"] = await self._export_webhooks()
         config_dict["spec"]["schedules"] = await self._export_schedules()
+        config_dict["spec"]["databaseTriggers"] = await self._export_database_triggers()
 
         # Convert to YAML
         return yaml.dump(config_dict, default_flow_style=False, sort_keys=False, allow_unicode=True)
@@ -303,5 +306,45 @@ class ConfigExportService:
             }
 
             exported.append(_remove_none_values(schedule_dict))
+
+        return exported
+
+    async def _export_database_triggers(self) -> list[dict]:
+        """Export database triggers"""
+        stmt = select(DatabaseTrigger)
+        if self.managed_only:
+            stmt = stmt.where(DatabaseTrigger.managed_by == self.managed_by)
+
+        result = await self.db.execute(stmt)
+        triggers = result.scalars().all()
+
+        exported = []
+        for trigger in triggers:
+            # Resolve connection id -> name
+            conn_name = None
+            if trigger.database_connection_id:
+                conn_result = await self.db.execute(
+                    select(DatabaseConnection).where(
+                        DatabaseConnection.id == trigger.database_connection_id
+                    )
+                )
+                conn = conn_result.scalar_one_or_none()
+                if conn:
+                    conn_name = conn.name
+
+            trigger_dict = {
+                "name": trigger.name,
+                "connectionName": conn_name,
+                "schemaName": trigger.schema_name,
+                "tableName": trigger.table_name,
+                "operations": trigger.operations,
+                "functionName": f"{trigger.function_namespace}/{trigger.function_name}",
+                "pollColumn": trigger.poll_column,
+                "pollIntervalSeconds": trigger.poll_interval_seconds,
+                "batchSize": trigger.batch_size,
+                "isActive": trigger.is_active,
+            }
+
+            exported.append(_remove_none_values(trigger_dict))
 
         return exported

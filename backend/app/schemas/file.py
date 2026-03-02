@@ -64,6 +64,7 @@ class FileUpload(BaseModel):
     content_type: str = Field(..., min_length=1, max_length=255)
     visibility: str = Field(default="private", pattern=r"^(private|shared)$")
     file_metadata: dict[str, Any] = Field(default_factory=dict)
+    update_existing: bool = Field(default=False, description="If true, update existing file as new version instead of auto-renaming")
 
 
 class FileResponse(BaseModel):

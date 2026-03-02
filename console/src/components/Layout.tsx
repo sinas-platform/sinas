@@ -16,6 +16,7 @@ import {
   Brain,
   Settings,
   Activity,
+  Zap,
   Webhook,
   FileText,
   Lightbulb,
@@ -49,10 +50,16 @@ const navigationSections = [
     items: [
       { name: 'Skills', href: '/skills', icon: Lightbulb },
       { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
-      { name: 'Database Connections', href: '/database-connections', icon: Cable },
+      { name: 'Databases', href: '/database-connections', icon: Cable },
+      { name: 'Templates', href: '/templates', icon: FileText },
+    ],
+  },
+  {
+    name: 'TRIGGERS',
+    items: [
       { name: 'Webhooks', href: '/webhooks', icon: Webhook },
       { name: 'Schedules', href: '/schedules', icon: Clock },
-      { name: 'Templates', href: '/templates', icon: FileText },
+      { name: 'Database (CDC)', href: '/database-triggers', icon: Zap },
     ],
   },
   {

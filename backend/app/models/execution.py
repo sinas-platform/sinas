@@ -15,6 +15,7 @@ class TriggerType(str, enum.Enum):
     AGENT = "AGENT"  # Triggered by agent/chat tool call
     MANUAL = "MANUAL"  # Triggered manually from UI
     API = "API"  # Triggered via runtime API
+    CDC = "CDC"  # Triggered by CDC (Change Data Capture) polling
 
 
 class ExecutionStatus(str, enum.Enum):

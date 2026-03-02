@@ -566,6 +566,31 @@ class APIClient {
     await this.configClient.delete(`/schedules/${encodeURIComponent(scheduleId)}`);
   }
 
+  // Database Triggers (CDC)
+  async listDatabaseTriggers(): Promise<any[]> {
+    const response = await this.configClient.get('/database-triggers');
+    return response.data;
+  }
+
+  async getDatabaseTrigger(name: string): Promise<any> {
+    const response = await this.configClient.get(`/database-triggers/${encodeURIComponent(name)}`);
+    return response.data;
+  }
+
+  async createDatabaseTrigger(data: any): Promise<any> {
+    const response = await this.configClient.post('/database-triggers', data);
+    return response.data;
+  }
+
+  async updateDatabaseTrigger(name: string, data: any): Promise<any> {
+    const response = await this.configClient.patch(`/database-triggers/${encodeURIComponent(name)}`, data);
+    return response.data;
+  }
+
+  async deleteDatabaseTrigger(name: string): Promise<void> {
+    await this.configClient.delete(`/database-triggers/${encodeURIComponent(name)}`);
+  }
+
   // Executions
   async listExecutions(): Promise<any[]> {
     const response = await this.runtimeClient.get('/executions');

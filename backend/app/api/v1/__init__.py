@@ -11,6 +11,7 @@ from .endpoints import (
     containers,
     database_connections,
     database_schema,
+    database_triggers,
     functions,
     llm_providers,
 
@@ -52,6 +53,7 @@ router.include_router(functions.router)
 router.include_router(webhooks.router)
 router.include_router(dependencies.router)
 router.include_router(schedules.router)
+router.include_router(database_triggers.router)
 
 # Observability routes
 router.include_router(messages.router)

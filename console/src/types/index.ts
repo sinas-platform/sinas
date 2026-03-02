@@ -1040,6 +1040,49 @@ export interface FileSearchRequest {
   limit?: number;
 }
 
+export interface DatabaseTrigger {
+  id: string;
+  name: string;
+  database_connection_id: string;
+  schema_name: string;
+  table_name: string;
+  operations: string[];
+  function_namespace: string;
+  function_name: string;
+  poll_column: string;
+  poll_interval_seconds: number;
+  batch_size: number;
+  is_active: boolean;
+  last_poll_value: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatabaseTriggerCreate {
+  name: string;
+  database_connection_id: string;
+  schema_name?: string;
+  table_name: string;
+  operations: string[];
+  function_namespace?: string;
+  function_name: string;
+  poll_column: string;
+  poll_interval_seconds?: number;
+  batch_size?: number;
+}
+
+export interface DatabaseTriggerUpdate {
+  name?: string;
+  operations?: string[];
+  function_namespace?: string;
+  function_name?: string;
+  poll_column?: string;
+  poll_interval_seconds?: number;
+  batch_size?: number;
+  is_active?: boolean;
+}
+
 export interface FileSearchMatch {
   line: number;
   text: string;

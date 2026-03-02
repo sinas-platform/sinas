@@ -39,6 +39,7 @@ import { DbTableDetail } from './pages/DbTableDetail';
 import { Packages } from './pages/Packages';
 import { Queries } from './pages/Queries';
 import { QueryDetail } from './pages/QueryDetail';
+import { DatabaseTriggers } from './pages/DatabaseTriggers';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -128,6 +129,7 @@ function App() {
               <Route path="database-connections/:name/tables/:table" element={<DbTableDetail />} />
               <Route path="queries" element={<Queries />} />
               <Route path="queries/:namespace/:name" element={<QueryDetail />} />
+              <Route path="database-triggers" element={<DatabaseTriggers />} />
               <Route path="skills" element={<Skills />} />
               <Route path="components" element={<Components />} />
               <Route path="components/:namespace/:name" element={<ComponentEditor />} />
