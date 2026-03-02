@@ -502,7 +502,9 @@ export function ChatDetail() {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`flex items-start max-w-[80%] ${
+                className={`flex items-start ${
+                  msg.role === 'tool' ? 'max-w-[95%]' : 'max-w-[80%]'
+                } ${
                   msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'
                 }`}
               >
@@ -524,51 +526,54 @@ export function ChatDetail() {
                 <div className="flex-1">
                   {/* Tool response message */}
                   {msg.role === 'tool' ? (
-                    <div className="border border-purple-800/30 bg-purple-900/20 rounded-lg overflow-hidden">
-                      <button
-                        onClick={() => toggleToolCall(msg.id)}
-                        className="w-full px-3 py-2 flex items-center justify-between hover:bg-purple-900/30 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Wrench className="w-4 h-4 text-purple-400" />
-                          <span className="text-sm font-medium text-purple-900">
-                            Tool Response: {msg.name}
-                          </span>
-                        </div>
-                        {expandedToolCalls.has(msg.id) ? (
-                          <ChevronDown className="w-4 h-4 text-purple-400" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4 text-purple-400" />
-                        )}
-                      </button>
-                      {expandedToolCalls.has(msg.id) && (
-                        <div className="px-3 py-2 border-t border-purple-800/30 bg-[#161616]">
-                          {(() => {
-                            // Check if this is a component tool result
-                            try {
-                              const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
-                              if (parsed && parsed.type === 'component' && parsed.namespace && parsed.name && parsed.render_token) {
-                                const renderUrl = getComponentRenderUrl(parsed.render_token, parsed.namespace, parsed.name, parsed.input);
-                                return (
-                                  <div className="border border-gray-700 rounded-lg overflow-hidden">
-                                    <div className="flex items-center justify-between px-3 py-1.5 bg-[#111] border-b border-gray-700">
-                                      <span className="text-xs text-gray-400">{parsed.title || `${parsed.namespace}/${parsed.name}`}</span>
-                                      <a href={renderUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
-                                    </div>
-                                    <iframe src={renderUrl} className="w-full border-0 bg-white" style={{ height: '400px' }} title={parsed.title || parsed.name} />
-                                  </div>
-                                );
-                              }
-                            } catch {}
-                            return (
+                    (() => {
+                      // Check if this is a component tool result — render inline
+                      try {
+                        const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+                        if (parsed && parsed.type === 'component' && parsed.namespace && parsed.name && parsed.render_token) {
+                          const renderUrl = getComponentRenderUrl(parsed.render_token, parsed.namespace, parsed.name, parsed.input);
+                          const authToken = localStorage.getItem('auth_token');
+                          const openUrl = authToken ? `${renderUrl}#auth=${encodeURIComponent(authToken)}` : renderUrl;
+                          return (
+                            <div className="border border-gray-700 rounded-lg overflow-hidden">
+                              <div className="flex items-center justify-between px-3 py-1.5 bg-[#111] border-b border-gray-700">
+                                <span className="text-xs text-gray-400">{parsed.title || `${parsed.namespace}/${parsed.name}`}</span>
+                                <a href={openUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
+                              </div>
+                              <iframe src={renderUrl} className="w-full border-0 bg-white" style={{ height: '500px' }} title={parsed.title || parsed.name} />
+                            </div>
+                          );
+                        }
+                      } catch {}
+                      // Non-component tool responses: collapsed
+                      return (
+                        <div className="border border-purple-800/30 bg-purple-900/20 rounded-lg overflow-hidden">
+                          <button
+                            onClick={() => toggleToolCall(msg.id)}
+                            className="w-full px-3 py-2 flex items-center justify-between hover:bg-purple-900/30 transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <Wrench className="w-4 h-4 text-purple-400" />
+                              <span className="text-sm font-medium text-purple-900">
+                                Tool Response: {msg.name}
+                              </span>
+                            </div>
+                            {expandedToolCalls.has(msg.id) ? (
+                              <ChevronDown className="w-4 h-4 text-purple-400" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-purple-400" />
+                            )}
+                          </button>
+                          {expandedToolCalls.has(msg.id) && (
+                            <div className="px-3 py-2 border-t border-purple-800/30 bg-[#161616]">
                               <pre className="text-xs text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
                                 {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
                               </pre>
-                            );
-                          })()}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      );
+                    })()
                   ) : (
                     /* Regular user/assistant message */
                     <div
@@ -632,11 +637,13 @@ export function ChatDetail() {
                                   );
                                 } else if (part.type === 'component' && part.render_token) {
                                   const renderUrl = getComponentRenderUrl(part.render_token, part.namespace, part.name, part.input);
+                                  const authToken = localStorage.getItem('auth_token');
+                                  const openUrl = authToken ? `${renderUrl}#auth=${encodeURIComponent(authToken)}` : renderUrl;
                                   return (
                                     <div key={idx} className="border border-gray-700 rounded-lg overflow-hidden">
                                       <div className="flex items-center justify-between px-3 py-1.5 bg-[#161616] border-b border-gray-700">
                                         <span className="text-xs text-gray-400">{part.title || `${part.namespace}/${part.name}`}</span>
-                                        <a href={renderUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
+                                        <a href={openUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
                                       </div>
                                       <iframe
                                         src={renderUrl}

@@ -61,7 +61,13 @@ export function AgentDetail() {
   });
 
   const [formData, setFormData] = useState<AgentUpdate>({});
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections'>('assistants');
+  const { data: components } = useQuery({
+    queryKey: ['components'],
+    queryFn: () => apiClient.listComponents(),
+    retry: false,
+  });
+
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
@@ -94,6 +100,7 @@ export function AgentDetail() {
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
         enabled_collections: agent.enabled_collections || [],
+        enabled_components: agent.enabled_components || [],
         icon: agent.icon || undefined,
       });
     }
@@ -652,6 +659,17 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               }`}
             >
               Collections
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('components')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'components'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+            >
+              Components
             </button>
           </div>
 
@@ -1231,6 +1249,51 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 ) : (
                   <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
                     <p className="text-sm text-gray-500">No collections available. Create collections first.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Components Tab */}
+            {toolsTab === 'components' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable UI components for this agent to render and interact with
+                </p>
+                {components && components.length > 0 ? (
+                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
+                    {components.map((comp: any) => {
+                      const compRef = `${comp.namespace}/${comp.name}`;
+                      return (
+                        <label
+                          key={compRef}
+                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={(formData.enabled_components || agent.enabled_components || []).includes(compRef)}
+                            onChange={(e) => {
+                              const current = formData.enabled_components || agent.enabled_components || [];
+                              const updated = e.target.checked
+                                ? [...current, compRef]
+                                : current.filter((ref: string) => ref !== compRef);
+                              setFormData({ ...formData, enabled_components: updated });
+                            }}
+                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                          />
+                          <div className="ml-3 flex-1">
+                            <span className="text-sm font-medium text-gray-100 font-mono">{compRef}</span>
+                            {comp.title && (
+                              <p className="text-xs text-gray-400 mt-0.5">{comp.title}</p>
+                            )}
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                    <p className="text-sm text-gray-500">No components available. Create components first.</p>
                   </div>
                 )}
               </div>
