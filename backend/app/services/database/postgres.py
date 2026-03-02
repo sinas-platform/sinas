@@ -103,7 +103,7 @@ class PostgresSchemaService(DatabaseSchemaService):
             constraint_sql = """
                 SELECT
                     con.conname AS constraint_name,
-                    con.contype AS constraint_type,
+                    con.contype::text AS constraint_type,
                     array_agg(att.attname ORDER BY u.pos) AS columns,
                     -- FK target
                     ref_ns.nspname AS ref_schema,
