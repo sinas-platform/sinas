@@ -35,6 +35,56 @@ from app.services.template_renderer import render_template
 logger = logging.getLogger(__name__)
 
 
+def _refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Refresh expired SINAS file-serve URLs in multimodal content.
+
+    Detects image parts whose URL points to /files/serve/{jwt}, decodes the
+    expired JWT to extract file_id + version, and regenerates a fresh signed
+    URL.  External URLs are left untouched.
+    """
+    from jose import jwt as jose_jwt
+    from app.core.config import settings
+    from app.services.file_storage import generate_file_url
+
+    refreshed: list[dict[str, Any]] = []
+    for part in content_parts:
+        if part.get("type") != "image":
+            refreshed.append(part)
+            continue
+
+        url = part.get("image", "")
+        if "/files/serve/" not in url:
+            # External URL — pass through
+            refreshed.append(part)
+            continue
+
+        # Extract the JWT token (last path segment)
+        token = url.rsplit("/files/serve/", 1)[-1]
+        try:
+            payload = jose_jwt.decode(
+                token,
+                settings.secret_key,
+                algorithms=[settings.algorithm],
+                options={"verify_exp": False},
+            )
+            file_id = payload.get("file_id")
+            version = payload.get("version")
+            if file_id is None or version is None:
+                raise ValueError("Missing file_id or version in token")
+
+            new_url = generate_file_url(str(file_id), version)
+            if new_url:
+                refreshed.append({**part, "image": new_url})
+            else:
+                # Domain not set / localhost — drop image, add placeholder
+                refreshed.append({"type": "text", "text": "[Image unavailable]"})
+        except Exception:
+            logger.debug("Failed to refresh SINAS image URL, replacing with placeholder", exc_info=True)
+            refreshed.append({"type": "text", "text": "[Image no longer available]"})
+
+    return refreshed
+
+
 class MessageService:
     """Service for processing chat messages with LLM and tool calling."""
 
@@ -942,6 +992,7 @@ class MessageService:
                     parsed_content = json.loads(content)
                     # If it's a list, it might be multimodal content
                     if isinstance(parsed_content, list):
+                        parsed_content = _refresh_sinas_image_urls(parsed_content)
                         content = ContentConverter.convert_message_content(
                             parsed_content, provider_type
                         )
