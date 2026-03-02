@@ -6,18 +6,14 @@
         health_timeout 5s
     }
 
+    @notComponents not path /components/*
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
-        X-Frame-Options "SAMEORIGIN"
         X-Content-Type-Options "nosniff"
         X-XSS-Protection "1; mode=block"
         Referrer-Policy "strict-origin-when-cross-origin"
     }
-
-    # Allow components to be embedded in iframes
-    header /components/* {
-        -X-Frame-Options
-    }
+    header @notComponents X-Frame-Options "SAMEORIGIN"
 }
 
 {$DOMAIN}:51245 {
