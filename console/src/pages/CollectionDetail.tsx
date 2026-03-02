@@ -307,6 +307,7 @@ export function CollectionDetail() {
             <p className="text-gray-400 mt-1">
               Max file size: {collection.max_file_size_mb} MB
               {' | '}Max total: {collection.max_total_size_gb} GB
+              {collection.is_public && ' | Public'}
               {collection.allow_shared_files && ' | Shared files allowed'}
               {collection.allow_private_files && ' | Private files allowed'}
             </p>

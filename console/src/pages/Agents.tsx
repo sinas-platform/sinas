@@ -190,7 +190,11 @@ export function Agents() {
               <div className="flex items-center gap-4">
                 {/* Icon + status */}
                 <div className="flex-shrink-0 relative">
-                  <Bot className="w-8 h-8 text-primary-600" />
+                  {agent.icon_url ? (
+                    <img src={agent.icon_url} alt="" className="w-8 h-8 rounded-lg object-cover" />
+                  ) : (
+                    <Bot className="w-8 h-8 text-primary-600" />
+                  )}
                   <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#161616] ${agent.is_active ? 'bg-green-500' : 'bg-gray-600'}`} />
                 </div>
 

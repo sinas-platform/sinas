@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.skill import Skill
 from app.schemas import SkillCreate, SkillResponse, SkillUpdate
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/skills", tags=["skills"])
 
@@ -135,6 +136,8 @@ async def update_skill(
     )
 
     set_permission_used(request, f"sinas.skills/{namespace}/{name}.update")
+
+    detach_if_package_managed(skill)
 
     # If namespace or name is being updated, check for conflicts
     new_namespace = skill_data.namespace or skill.namespace

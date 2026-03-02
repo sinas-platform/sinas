@@ -95,10 +95,38 @@ async def main() -> None:
     if settings.config_file and settings.auto_apply_config:
         logger.info(f"🔧 AUTO_APPLY_CONFIG enabled, applying config from {settings.config_file}...")
         async with AsyncSessionLocal() as db:
+            from sqlalchemy import select
+
+            from app.models.user import Role, User, UserRole
             from app.services.config_apply import ConfigApplyService
             from app.services.config_parser import ConfigParser
 
             try:
+                # Look up superadmin user to own config-created resources
+                admin_role_result = await db.execute(
+                    select(Role).where(Role.name == "Admins")
+                )
+                admin_role = admin_role_result.scalar_one_or_none()
+                owner_user_id = None
+
+                if admin_role:
+                    admin_member_result = await db.execute(
+                        select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
+                    )
+                    admin_member = admin_member_result.scalar_one_or_none()
+                    if admin_member:
+                        owner_user_id = str(admin_member.user_id)
+
+                if not owner_user_id:
+                    # Fallback: use any user
+                    any_user_result = await db.execute(select(User).limit(1))
+                    any_user = any_user_result.scalar_one_or_none()
+                    if any_user:
+                        owner_user_id = str(any_user.id)
+
+                if not owner_user_id:
+                    raise RuntimeError("No users found in database — cannot apply config")
+
                 with open(settings.config_file) as f:
                     config_yaml = f.read()
 
@@ -117,7 +145,9 @@ async def main() -> None:
                     for warning in validation.warnings:
                         logger.warning(f"  - {warning.path}: {warning.message}")
 
-                apply_service = ConfigApplyService(db, config.metadata.name)
+                apply_service = ConfigApplyService(
+                    db, config.metadata.name, owner_user_id=owner_user_id
+                )
                 result = await apply_service.apply_config(config, dry_run=False)
 
                 if not result.success:

@@ -67,6 +67,18 @@ async def list_queue_workers(
     return await queue_service.get_active_workers()
 
 
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(
+    job_id: str,
+    user_id: str = Depends(require_permission("sinas.system.update:all")),
+) -> dict[str, Any]:
+    """Cancel a running or queued job."""
+    try:
+        return await queue_service.cancel_job(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.post("/dlq/{job_id}/retry")
 async def retry_dlq_job(
     job_id: str,

@@ -6,7 +6,7 @@ from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, Unique
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, created_at, uuid_pk
+from .base import Base, created_at, updated_at, uuid_pk
 
 
 class ScheduledJob(Base):
@@ -28,6 +28,12 @@ class ScheduledJob(Base):
     last_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_run: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[created_at]
+    updated_at: Mapped[updated_at]
+
+    # Declarative config support
+    managed_by: Mapped[Optional[str]] = mapped_column(Text)
+    config_name: Mapped[Optional[str]] = mapped_column(Text)
+    config_checksum: Mapped[Optional[str]] = mapped_column(Text)
 
     # Relationships
     user: Mapped["User"] = relationship("User")

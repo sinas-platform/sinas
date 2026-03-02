@@ -26,6 +26,7 @@ from app.services.content_converter import ContentConverter
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
 from app.services.queue_service import queue_service
+from app.services.component_tools import ComponentToolConverter
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
 from app.services.stream_relay import stream_relay
@@ -42,6 +43,7 @@ class MessageService:
         self.function_converter = FunctionToolConverter()
         self.query_converter = QueryToolConverter()
         self.skill_converter = SkillToolConverter()
+        self.component_converter = ComponentToolConverter()
         self.collection_converter = CollectionToolConverter()
         self.context_tools = StateTools()
 
@@ -1179,6 +1181,13 @@ class MessageService:
             )
             tools.extend(collection_tools)
 
+        # Get component tools (only if list has items - opt-in)
+        if agent.enabled_components and len(agent.enabled_components) > 0:
+            component_tools = await self.component_converter.get_available_components(
+                db=self.db, enabled_components=agent.enabled_components
+            )
+            tools.extend(component_tools)
+
         # Check for paused executions belonging to this chat
         result = await self.db.execute(
             select(Execution)
@@ -1430,6 +1439,15 @@ class MessageService:
                         arguments=arguments,
                         enabled_agent_ids=enabled_agent_ids,
                     )
+                elif tool_name.startswith("show_component_"):
+                    start_time = time.time()
+                    result = await self.component_converter.handle_component_tool_call(
+                        db=db, tool_name=tool_name, arguments=arguments, user_id=user_id
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Component tool completed in {elapsed:.3f}s: {tool_name}")
+                    if result is None:
+                        result = {"error": f"Component not found for tool: {tool_name}"}
                 elif tool_name.startswith("get_skill_"):
                     start_time = time.time()
                     result = await self.skill_converter.handle_skill_tool_call(

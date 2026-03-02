@@ -63,6 +63,10 @@ export function AgentDetail() {
   const [formData, setFormData] = useState<AgentUpdate>({});
   const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
+  const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
+  const [iconCollectionNs, setIconCollectionNs] = useState('');
+  const [iconCollectionName, setIconCollectionName] = useState('');
+  const [iconCollectionFiles, setIconCollectionFiles] = useState<any[]>([]);
 
   // Initialize form data when agent loads
   useEffect(() => {
@@ -90,6 +94,7 @@ export function AgentDetail() {
         state_namespaces_readonly: agent.state_namespaces_readonly || [],
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
         enabled_collections: agent.enabled_collections || [],
+        icon: agent.icon || undefined,
       });
     }
   }, [agent]);
@@ -267,6 +272,128 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 placeholder="A helpful agent that..."
                 className="input"
               />
+            </div>
+
+            {/* Icon Picker */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Icon</label>
+              <div className="flex items-start gap-4">
+                {/* Preview */}
+                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-[#1e1e1e] border border-white/[0.06] flex items-center justify-center overflow-hidden">
+                  {(agent.icon_url || (formData.icon?.startsWith('url:') && formData.icon.length > 4)) ? (
+                    <img
+                      src={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : agent.icon_url!}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                  ) : (
+                    <Bot className="w-8 h-8 text-gray-500" />
+                  )}
+                </div>
+
+                <div className="flex-1 space-y-2">
+                  {/* Mode toggle */}
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIconMode('collection')}
+                      className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}
+                    >
+                      From Collection
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIconMode('url')}
+                      className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}
+                    >
+                      External URL
+                    </button>
+                  </div>
+
+                  {iconMode === 'url' ? (
+                    <input
+                      type="url"
+                      value={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : ''}
+                      onChange={(e) => setFormData({ ...formData, icon: e.target.value ? `url:${e.target.value}` : undefined })}
+                      placeholder="https://example.com/icon.png"
+                      className="input text-sm"
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <select
+                          value={iconCollectionNs && iconCollectionName ? `${iconCollectionNs}/${iconCollectionName}` : ''}
+                          onChange={async (e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              setIconCollectionNs('');
+                              setIconCollectionName('');
+                              setIconCollectionFiles([]);
+                              return;
+                            }
+                            const [ns, cn] = val.split('/');
+                            setIconCollectionNs(ns);
+                            setIconCollectionName(cn);
+                            try {
+                              const files = await apiClient.listFiles(ns, cn);
+                              setIconCollectionFiles(files.filter((f: any) => f.content_type?.startsWith('image/')));
+                            } catch {
+                              setIconCollectionFiles([]);
+                            }
+                          }}
+                          className="input text-sm flex-1"
+                        >
+                          <option value="">Select collection...</option>
+                          {collections?.map((c: any) => (
+                            <option key={c.id} value={`${c.namespace}/${c.name}`}>
+                              {c.namespace}/{c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {iconCollectionFiles.length > 0 && (
+                        <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
+                          {iconCollectionFiles.map((f: any) => {
+                            const ref = `collection:${iconCollectionNs}/${iconCollectionName}/${f.name}`;
+                            const isSelected = formData.icon === ref;
+                            return (
+                              <button
+                                key={f.id}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, icon: ref })}
+                                className={`w-12 h-12 rounded border-2 overflow-hidden ${isSelected ? 'border-primary-500' : 'border-transparent hover:border-gray-500'}`}
+                                title={f.name}
+                              >
+                                <img
+                                  src={`${window.location.hostname === 'localhost' ? 'http://localhost:8000' : ''}/files/public/${iconCollectionNs}/${iconCollectionName}/${f.name}`}
+                                  alt={f.name}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => { (e.target as HTMLImageElement).src = ''; }}
+                                />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Current value display + remove */}
+                  {formData.icon && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 truncate">{formData.icon}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, icon: '' })}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div>

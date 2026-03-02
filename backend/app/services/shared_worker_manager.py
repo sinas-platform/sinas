@@ -298,11 +298,11 @@ class SharedWorkerManager:
 
         Shared workers execute any trusted function, so they need all packages.
         """
-        from app.models.package import InstalledPackage
+        from app.models.dependency import Dependency
 
         try:
             # Get all approved packages
-            result = await db.execute(select(InstalledPackage))
+            result = await db.execute(select(Dependency))
             approved_packages = result.scalars().all()
 
             if not approved_packages:

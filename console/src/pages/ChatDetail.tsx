@@ -1,6 +1,6 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, getComponentRenderUrl } from '../lib/api';
 import { useState, useRef, useEffect } from 'react';
 import { ArrowLeft, Send, Loader2, Bot, User, ChevronDown, ChevronRight, Wrench, Paperclip, X, Music, FileText, AlertTriangle, Check, Square } from 'lucide-react';
 import type { MessageContent, UniversalContent, ApprovalRequiredEvent } from '../types';
@@ -38,6 +38,23 @@ export function ChatDetail() {
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequiredEvent[]>([]);
   const [processingApproval, setProcessingApproval] = useState<string | null>(null);
 
+  // Forward auth token to component iframes via postMessage
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === 'sinas:ready') {
+        const token = localStorage.getItem('auth_token');
+        if (token && event.source) {
+          (event.source as Window).postMessage(
+            { type: 'sinas:auth', token },
+            '*'
+          );
+        }
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
   const toggleToolCall = (messageId: string) => {
     setExpandedToolCalls(prev => {
       const newSet = new Set(prev);
@@ -55,6 +72,12 @@ export function ChatDetail() {
     queryFn: () => apiClient.getChat(chatId!),
     enabled: !!chatId,
     // No polling needed with streaming
+  });
+
+  const { data: agent } = useQuery({
+    queryKey: ['agent', chat?.agent_namespace, chat?.agent_name],
+    queryFn: () => apiClient.getAgent(chat!.agent_namespace!, chat!.agent_name!),
+    enabled: !!chat?.agent_namespace && !!chat?.agent_name,
   });
 
   const handleApproval = async (approval: ApprovalRequiredEvent, approved: boolean) => {
@@ -450,6 +473,11 @@ export function ChatDetail() {
           <Link to="/chats" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />
           </Link>
+          {agent?.icon_url ? (
+            <img src={agent.icon_url} alt="" className="w-8 h-8 rounded-lg object-cover mr-3" />
+          ) : (
+            <Bot className="w-8 h-8 text-primary-600 mr-3" />
+          )}
           <div>
             <h1 className="text-2xl font-bold text-gray-100">{chat.title}</h1>
             <p className="text-sm text-gray-500">
@@ -487,6 +515,8 @@ export function ChatDetail() {
                 >
                   {msg.role === 'user' ? (
                     <User className="w-5 h-5" />
+                  ) : agent?.icon_url ? (
+                    <img src={agent.icon_url} alt="" className="w-5 h-5 rounded object-cover" />
                   ) : (
                     <Bot className="w-5 h-5" />
                   )}
@@ -513,9 +543,29 @@ export function ChatDetail() {
                       </button>
                       {expandedToolCalls.has(msg.id) && (
                         <div className="px-3 py-2 border-t border-purple-800/30 bg-[#161616]">
-                          <pre className="text-xs text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
-                            {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
-                          </pre>
+                          {(() => {
+                            // Check if this is a component tool result
+                            try {
+                              const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+                              if (parsed && parsed.type === 'component' && parsed.namespace && parsed.name && parsed.render_token) {
+                                const renderUrl = getComponentRenderUrl(parsed.render_token, parsed.namespace, parsed.name, parsed.input);
+                                return (
+                                  <div className="border border-gray-700 rounded-lg overflow-hidden">
+                                    <div className="flex items-center justify-between px-3 py-1.5 bg-[#111] border-b border-gray-700">
+                                      <span className="text-xs text-gray-400">{parsed.title || `${parsed.namespace}/${parsed.name}`}</span>
+                                      <a href={renderUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
+                                    </div>
+                                    <iframe src={renderUrl} className="w-full border-0 bg-white" style={{ height: '400px' }} title={parsed.title || parsed.name} />
+                                  </div>
+                                );
+                              }
+                            } catch {}
+                            return (
+                              <pre className="text-xs text-gray-200 whitespace-pre-wrap font-mono overflow-x-auto">
+                                {typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content, null, 2)}
+                              </pre>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -578,6 +628,22 @@ export function ChatDetail() {
                                     <div key={idx} className="flex items-center gap-2 p-2 bg-[#161616] bg-opacity-20 rounded">
                                       <FileText className="w-4 h-4" />
                                       <span className="text-xs">{part.filename || 'File attachment'}</span>
+                                    </div>
+                                  );
+                                } else if (part.type === 'component' && part.render_token) {
+                                  const renderUrl = getComponentRenderUrl(part.render_token, part.namespace, part.name, part.input);
+                                  return (
+                                    <div key={idx} className="border border-gray-700 rounded-lg overflow-hidden">
+                                      <div className="flex items-center justify-between px-3 py-1.5 bg-[#161616] border-b border-gray-700">
+                                        <span className="text-xs text-gray-400">{part.title || `${part.namespace}/${part.name}`}</span>
+                                        <a href={renderUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-400 hover:text-primary-300">Open</a>
+                                      </div>
+                                      <iframe
+                                        src={renderUrl}
+                                        className="w-full border-0 bg-white"
+                                        style={{ height: '400px' }}
+                                        title={part.title || part.name}
+                                      />
                                     </div>
                                   );
                                 }
@@ -649,7 +715,11 @@ export function ChatDetail() {
           <div className="flex justify-start">
             <div className="flex items-start max-w-[80%]">
               <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-[#1e1e1e] text-gray-400 mr-3">
-                <Bot className="w-5 h-5" />
+                {agent?.icon_url ? (
+                  <img src={agent.icon_url} alt="" className="w-5 h-5 rounded object-cover" />
+                ) : (
+                  <Bot className="w-5 h-5" />
+                )}
               </div>
               <div className="flex-1">
                 <div className="rounded-lg px-4 py-2 bg-[#161616] text-gray-100">

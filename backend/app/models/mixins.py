@@ -2,7 +2,7 @@
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import check_permission
@@ -17,8 +17,18 @@ class PermissionMixin:
     - namespace field = "namespace" (if exists)
     - name field = "name" (if exists)
     - ownership field = "user_id" (if exists)
+    - visibility field = "visibility" (if exists)
 
     No database changes - just adds methods.
+
+    Visibility support:
+        Models with a `visibility` column get automatic access control:
+        - "private" (default): only the owner can access
+        - "shared": owner + any authenticated user with :own permission
+        - "public": same as shared in the mixin (endpoint-level handling for
+          unauthenticated access)
+
+        Models WITHOUT a visibility column behave exactly as before.
 
     Usage:
         class Agent(Base, PermissionMixin):
@@ -49,6 +59,11 @@ class PermissionMixin:
     def _has_ownership(cls) -> bool:
         """Check if model has user_id field"""
         return hasattr(cls, "user_id")
+
+    @classmethod
+    def _has_visibility(cls) -> bool:
+        """Check if model has visibility field"""
+        return hasattr(cls, "visibility")
 
     @classmethod
     async def list_with_permissions(
@@ -98,9 +113,15 @@ class PermissionMixin:
             has_own = check_permission(permissions, own_perm)
 
             if has_own:
-                # Filter by ownership if user_id exists
+                # Filter by ownership, plus non-private resources if model has visibility
                 if cls._has_ownership():
-                    query = query.where(cls.user_id == user_id)
+                    if cls._has_visibility():
+                        # Own resources + shared/public from others
+                        query = query.where(
+                            or_(cls.user_id == user_id, cls.visibility != "private")
+                        )
+                    else:
+                        query = query.where(cls.user_id == user_id)
                 # else: has permission but no ownership = access all
             else:
                 # Check for namespace-specific permissions (if namespaced)
@@ -108,13 +129,24 @@ class PermissionMixin:
                     accessible_namespaces = cls._get_accessible_namespaces(permissions, action)
 
                     if accessible_namespaces:
-                        # User can access specific namespaces OR their own resources
-                        filters = [cls.namespace.in_(accessible_namespaces)]
-
-                        if cls._has_ownership():
-                            filters.append(cls.user_id == user_id)
-
-                        query = query.where(or_(*filters))
+                        if cls._has_ownership() and cls._has_visibility():
+                            # In accessible namespaces: own + non-private
+                            # Outside accessible namespaces: own only
+                            query = query.where(
+                                or_(
+                                    and_(
+                                        cls.namespace.in_(accessible_namespaces),
+                                        or_(cls.user_id == user_id, cls.visibility != "private"),
+                                    ),
+                                    cls.user_id == user_id,
+                                )
+                            )
+                        else:
+                            # No visibility - original behavior
+                            filters = [cls.namespace.in_(accessible_namespaces)]
+                            if cls._has_ownership():
+                                filters.append(cls.user_id == user_id)
+                            query = query.where(or_(*filters))
                     else:
                         # No access at all - return empty
                         return []
@@ -216,15 +248,20 @@ class PermissionMixin:
             # Non-namespaced: sinas.users.read
             perm_base = f"{perm_base}.{action}"
 
-        # Check :all
+        # Check :all — admin-level, sees everything regardless of visibility
         if check_permission(permissions, f"{perm_base}:all"):
             return True
 
         # Check :own
         if check_permission(permissions, f"{perm_base}:own"):
-            # Check ownership if user_id exists
             if self._has_ownership():
-                return str(self.user_id) == user_id
+                # Owner always has access
+                if str(self.user_id) == user_id:
+                    return True
+                # Non-owner: grant access if resource is non-private
+                if self._has_visibility() and getattr(self, "visibility", "private") != "private":
+                    return True
+                return False
             else:
                 # No ownership field = anyone with :own can access
                 return True

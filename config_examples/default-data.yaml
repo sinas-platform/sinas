@@ -16,7 +16,6 @@ spec:
       defaultDatabase: ${DATABASE_NAME}_managed
       defaultSchema: public
       isReadOnly: false
-      groupName: Admins
 
   # Ontology
   ontology:
@@ -25,8 +24,7 @@ spec:
         name: Customer
         displayName: Customer
         description: A customer in the CRM system
-        groupName: Admins
-        properties:
+          properties:
           - name: id
             displayName: ID
             dataType: UUID
@@ -68,8 +66,7 @@ spec:
         name: Contact
         displayName: Contact
         description: A contact person within a company
-        groupName: Admins
-        properties:
+          properties:
           - name: id
             displayName: ID
             dataType: UUID
@@ -110,8 +107,7 @@ spec:
         name: Company
         displayName: Company
         description: A company in the CRM system
-        groupName: Admins
-        properties:
+          properties:
           - name: id
             displayName: ID
             dataType: UUID
@@ -152,8 +148,7 @@ spec:
         name: Deal
         displayName: Deal
         description: Sales deals and opportunities
-        groupName: Admins
-        properties:
+          properties:
           - name: id
             displayName: ID
             dataType: UUID
@@ -241,7 +236,6 @@ spec:
   functions:
     - name: send_email
       description: Send an email to a recipient (demo implementation)
-      groupName: Admins
       code: |
         def send_email(to: str, subject: str, body: str) -> dict:
             """
@@ -301,7 +295,6 @@ spec:
 
     - name: create_customer
       description: Create a new customer in the CRM system
-      groupName: Admins
       code: |
         def create_customer(full_name: str, email: str, phone: str = None, status: str = "active") -> dict:
             """
@@ -374,7 +367,6 @@ spec:
 
   # Simple chunking function with 5000 char chunks and 1000 char overlap
     - name: chunk_simple
-      groupName: Admins
       description: Simple text chunking with 5000 character chunks and 1000 character overlap
       code: |
         async def chunk_simple(text: str, file_metadata: dict):
@@ -470,7 +462,6 @@ spec:
   assistants:
     - name: CRM Assistant
       description: Helps manage customers, contacts, companies, and deals
-      groupName: Admins
       temperature: 0.7
       systemPrompt: |
         You are a helpful CRM assistant. You can help users manage customers,
@@ -498,7 +489,6 @@ spec:
 
     - name: General Assistant
       description: General-purpose assistant with access to all tools
-      groupName: Admins
       temperature: 0.7
       systemPrompt: |
         You are a helpful general-purpose assistant. You have access to various
@@ -521,7 +511,6 @@ spec:
 
     - name: Document Tagger
       description: Extracts metadata tags from documents
-      groupName: Admins
       temperature: 0.3
       systemPrompt: |
         You are a document analysis assistant. Your job is to analyze documents

@@ -3,7 +3,7 @@ import uuid as uuid_lib
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
@@ -23,6 +23,10 @@ class State(Base):
     namespace: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Encryption
+    encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    encrypted_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Sharing control
     visibility: Mapped[str] = mapped_column(

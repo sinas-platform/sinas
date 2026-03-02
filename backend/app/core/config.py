@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     # Domain (for generating external URLs, e.g., temp file URLs)
     domain: Optional[str] = None  # FQDN like "app.example.com"; localhost or None = no external URLs
 
+    # Component builder
+    builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service
+
     # Declarative Configuration
     config_file: Optional[str] = None  # Path to YAML config file
     auto_apply_config: bool = False  # Auto-apply config file on startup

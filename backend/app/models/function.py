@@ -27,6 +27,8 @@ class Function(Base, PermissionMixin):
     enabled_namespaces: Mapped[list[str]] = mapped_column(
         JSON, default=list
     )  # Namespaces this function can call (empty = own namespace only)
+    # Icon reference ("collection:ns/coll/file" or "url:https://...")
+    icon: Mapped[Optional[str]] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     shared_pool: Mapped[bool] = mapped_column(
         Boolean, default=False

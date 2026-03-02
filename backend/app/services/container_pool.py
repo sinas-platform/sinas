@@ -457,10 +457,10 @@ sys.exit(1)
 
     async def _install_packages(self, container, db: AsyncSession):
         """Install all approved packages in a pool container."""
-        from app.models.package import InstalledPackage
+        from app.models.dependency import Dependency
 
         try:
-            result = await db.execute(select(InstalledPackage))
+            result = await db.execute(select(Dependency))
             approved_packages = result.scalars().all()
 
             if not approved_packages:

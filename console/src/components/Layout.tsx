@@ -16,13 +16,16 @@ import {
   Brain,
   Settings,
   Activity,
+  Zap,
   Webhook,
   FileText,
   Lightbulb,
+  Layers,
   Archive,
   AppWindow,
   Cable,
   SearchCode,
+  Package,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -34,32 +37,34 @@ const navigationSections = [
     ],
   },
   {
-    name: 'AGENTS',
+    name: 'BUILD',
     items: [
       { name: 'Agents', href: '/agents', icon: Bot },
-      { name: 'Skills', href: '/skills', icon: Lightbulb },
-      { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
-    ],
-  },
-  {
-    name: 'FUNCTIONS',
-    items: [
       { name: 'Functions', href: '/functions', icon: Code },
-      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
-      { name: 'Schedules', href: '/schedules', icon: Clock },
-    ],
-  },
-  {
-    name: 'DATA',
-    items: [
-      { name: 'Database Connections', href: '/database-connections', icon: Cable },
+      { name: 'Components', href: '/components', icon: Layers },
       { name: 'Queries', href: '/queries', icon: SearchCode },
     ],
   },
   {
-    name: 'RESOURCES',
+    name: 'CONFIGURE',
     items: [
+      { name: 'Skills', href: '/skills', icon: Lightbulb },
+      { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
+      { name: 'Databases', href: '/database-connections', icon: Cable },
       { name: 'Templates', href: '/templates', icon: FileText },
+    ],
+  },
+  {
+    name: 'TRIGGERS',
+    items: [
+      { name: 'Webhooks', href: '/webhooks', icon: Webhook },
+      { name: 'Schedules', href: '/schedules', icon: Clock },
+      { name: 'Database (CDC)', href: '/database-triggers', icon: Zap },
+    ],
+  },
+  {
+    name: 'STORAGE',
+    items: [
       { name: 'Collections', href: '/collections', icon: Archive },
       { name: 'States', href: '/states', icon: Database },
     ],
@@ -67,6 +72,7 @@ const navigationSections = [
   {
     name: 'ADMIN',
     items: [
+      { name: 'Packages', href: '/packages', icon: Package },
       { name: 'Apps', href: '/apps', icon: AppWindow },
       { name: 'Users & Roles', href: '/users', icon: Users },
       { name: 'API Keys', href: '/api-keys', icon: Key },

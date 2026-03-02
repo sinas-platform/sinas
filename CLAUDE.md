@@ -381,7 +381,7 @@ AUTO_APPLY_CONFIG=true
 - ✅ **Dry Run** - Preview changes without applying
 - ✅ **Validation** - Schema and reference validation before apply
 
-**See:** `FEATURES.md` Section 14 for complete documentation
+**See:** `DOCS.md` for complete documentation
 
 ### Authentication Flow
 

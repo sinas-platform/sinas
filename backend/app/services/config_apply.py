@@ -19,8 +19,11 @@ from app.models.function import Function, FunctionVersion
 from app.models.database_connection import DatabaseConnection
 from app.models.llm_provider import LLMProvider
 from app.models.query import Query
+from app.models.database_trigger import DatabaseTrigger
 from app.models.schedule import ScheduledJob
+from app.models.component import Component
 from app.models.skill import Skill
+from app.models.template import Template
 from app.models.user import Role, RolePermission, User, UserRole
 from app.models.webhook import Webhook
 from app.schemas.config import (
@@ -36,16 +39,28 @@ logger = logging.getLogger(__name__)
 class ConfigApplyService:
     """Service for applying declarative configuration"""
 
-    def __init__(self, db: AsyncSession, config_name: str):
+    def __init__(
+        self,
+        db: AsyncSession,
+        config_name: str,
+        owner_user_id: str,
+        managed_by: str = "config",
+        auto_commit: bool = True,
+        skip_resource_types: Optional[set[str]] = None,
+    ):
         self.db = db
         self.config_name = config_name
+        self.owner_user_id = owner_user_id
+        self.managed_by = managed_by
+        self.auto_commit = auto_commit
+        self.skip_resource_types = skip_resource_types or set()
         self.summary = ConfigApplySummary()
         self.changes: list[ResourceChange] = []
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
         # Resource lookup caches (name -> id)
-        self.group_ids: dict[str, str] = {}
+        self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
         self.function_ids: dict[str, str] = {}
@@ -105,21 +120,39 @@ class ConfigApplyService:
         """
         try:
             # Apply resources in dependency order
-            await self._apply_groups(config.spec.groups, dry_run)
-            await self._apply_users(config.spec.users, dry_run)
-            await self._apply_llm_providers(config.spec.llmProviders, dry_run)
-            await self._apply_database_connections(config.spec.databaseConnections, dry_run)
+            if "roles" not in self.skip_resource_types:
+                await self._apply_roles(config.spec.roles, dry_run)
+            if "users" not in self.skip_resource_types:
+                await self._apply_users(config.spec.users, dry_run)
+            if "llmProviders" not in self.skip_resource_types:
+                await self._apply_llm_providers(config.spec.llmProviders, dry_run)
+            if "databaseConnections" not in self.skip_resource_types:
+                await self._apply_database_connections(config.spec.databaseConnections, dry_run)
 
-            await self._apply_functions(config.spec.functions, dry_run)
-            await self._apply_skills(config.spec.skills, dry_run)
-            await self._apply_queries(config.spec.queries, dry_run)
-            await self._apply_collections(config.spec.collections, dry_run)
-            await self._apply_apps(config.spec.apps, dry_run)
-            await self._apply_agents(config.spec.agents, dry_run)
-            await self._apply_webhooks(config.spec.webhooks, dry_run)
-            await self._apply_schedules(config.spec.schedules, dry_run)
+            if "functions" not in self.skip_resource_types:
+                await self._apply_functions(config.spec.functions, dry_run)
+            if "skills" not in self.skip_resource_types:
+                await self._apply_skills(config.spec.skills, dry_run)
+            if "components" not in self.skip_resource_types:
+                await self._apply_components(config.spec.components, dry_run)
+            if "queries" not in self.skip_resource_types:
+                await self._apply_queries(config.spec.queries, dry_run)
+            if "collections" not in self.skip_resource_types:
+                await self._apply_collections(config.spec.collections, dry_run)
+            if "templates" not in self.skip_resource_types:
+                await self._apply_templates(config.spec.templates, dry_run)
+            if "apps" not in self.skip_resource_types:
+                await self._apply_apps(config.spec.apps, dry_run)
+            if "agents" not in self.skip_resource_types:
+                await self._apply_agents(config.spec.agents, dry_run)
+            if "webhooks" not in self.skip_resource_types:
+                await self._apply_webhooks(config.spec.webhooks, dry_run)
+            if "schedules" not in self.skip_resource_types:
+                await self._apply_schedules(config.spec.schedules, dry_run)
+            if "databaseTriggers" not in self.skip_resource_types:
+                await self._apply_database_triggers(config.spec.databaseTriggers, dry_run)
 
-            if not dry_run:
+            if not dry_run and self.auto_commit:
                 await self.db.commit()
 
             return ConfigApplyResponse(
@@ -141,100 +174,96 @@ class ConfigApplyService:
                 warnings=self.warnings,
             )
 
-    async def _apply_groups(self, groups, dry_run: bool):
-        """Apply group configurations"""
-        for group_config in groups:
+    async def _apply_roles(self, roles, dry_run: bool):
+        """Apply role configurations"""
+        for role_config in roles:
             try:
                 # Check if exists
-                stmt = select(Role).where(Role.name == group_config.name)
+                stmt = select(Role).where(Role.name == role_config.name)
                 result = await self.db.execute(stmt)
                 existing = result.scalar_one_or_none()
 
                 # Calculate hash
                 config_hash = self._calculate_hash(
                     {
-                        "name": group_config.name,
-                        "description": group_config.description,
-                        "email_domain": group_config.emailDomain,
+                        "name": role_config.name,
+                        "description": role_config.description,
+                        "email_domain": role_config.emailDomain,
                     }
                 )
 
                 if existing:
                     # Check if config-managed
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Group '{group_config.name}' exists but is not config-managed. Skipping."
+                            f"Role '{role_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
-                        self._track_change("unchanged", "groups", group_config.name)
-                        self.group_ids[group_config.name] = str(existing.id)
+                        self._track_change("unchanged", "roles", role_config.name)
+                        self.role_ids[role_config.name] = str(existing.id)
                         continue
 
                     # Check if changed
                     if existing.config_checksum == config_hash:
-                        self._track_change("unchanged", "groups", group_config.name)
-                        self.group_ids[group_config.name] = str(existing.id)
+                        self._track_change("unchanged", "roles", role_config.name)
+                        self.role_ids[role_config.name] = str(existing.id)
                         continue
 
                     # Update
                     if not dry_run:
-                        existing.description = group_config.description
-                        existing.email_domain = group_config.emailDomain
+                        existing.description = role_config.description
+                        existing.email_domain = role_config.emailDomain
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
                     self._track_change(
-                        "update", "groups", group_config.name, details="Updated group configuration"
+                        "update", "roles", role_config.name, details="Updated role configuration"
                     )
-                    self.group_ids[group_config.name] = str(existing.id)
+                    self.role_ids[role_config.name] = str(existing.id)
 
                 else:
                     # Create new
                     if not dry_run:
-                        new_group = Group(
-                            name=group_config.name,
-                            description=group_config.description,
-                            email_domain=group_config.emailDomain,
-                            managed_by="config",
+                        new_role = Role(
+                            name=role_config.name,
+                            description=role_config.description,
+                            email_domain=role_config.emailDomain,
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
-                        self.db.add(new_group)
+                        self.db.add(new_role)
                         await self.db.flush()
-                        self.group_ids[group_config.name] = str(new_group.id)
+                        self.role_ids[role_config.name] = str(new_role.id)
                     else:
-                        self.group_ids[group_config.name] = "dry-run-id"
+                        self.role_ids[role_config.name] = "dry-run-id"
 
                     self._track_change(
-                        "create", "groups", group_config.name, details="Created new group"
+                        "create", "roles", role_config.name, details="Created new role"
                     )
 
                 # Apply permissions
-                if not dry_run and group_config.permissions:
-                    await self._apply_group_permissions(
-                        self.group_ids[group_config.name], group_config.permissions
+                if not dry_run and role_config.permissions:
+                    await self._apply_role_permissions(
+                        self.role_ids[role_config.name], role_config.permissions
                     )
 
             except Exception as e:
-                self.errors.append(f"Error applying group '{group_config.name}': {str(e)}")
+                self.errors.append(f"Error applying role '{role_config.name}': {str(e)}")
 
-    async def _apply_group_permissions(self, group_id: str, permissions):
-        """Apply permissions to a group"""
-        # Delete existing config-managed permissions
+    async def _apply_role_permissions(self, role_id: str, permissions):
+        """Apply permissions to a role"""
+        # Delete existing permissions for this role
         from sqlalchemy import delete
 
-        stmt = delete(RolePermission).where(
-            and_(RolePermission.group_id == group_id, RolePermission.managed_by == "config")
-        )
+        stmt = delete(RolePermission).where(RolePermission.role_id == role_id)
         await self.db.execute(stmt)
 
         # Add new permissions
         for perm in permissions:
             perm_obj = RolePermission(
-                group_id=group_id,
+                role_id=role_id,
                 permission_key=perm.key,
                 permission_value=perm.value,
-                managed_by="config",
-                config_name=self.config_name,
             )
             self.db.add(perm_obj)
 
@@ -250,14 +279,14 @@ class ConfigApplyService:
                     {
                         "email": user_config.email,
                         "is_active": user_config.isActive,
-                        "groups": sorted(user_config.groups),
+                        "roles": sorted(user_config.roles),
                     }
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"User '{user_config.email}' exists but is not config-managed. Skipping."
+                            f"User '{user_config.email}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "users", user_config.email)
                         self.user_ids[user_config.email] = str(existing.id)
@@ -281,7 +310,7 @@ class ConfigApplyService:
                         new_user = User(
                             email=user_config.email,
                             is_active=user_config.isActive,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -293,38 +322,33 @@ class ConfigApplyService:
 
                     self._track_change("create", "users", user_config.email)
 
-                # Apply group memberships
-                if not dry_run and user_config.groups:
-                    await self._apply_user_groups(
-                        self.user_ids[user_config.email], user_config.groups
+                # Apply role memberships
+                if not dry_run and user_config.roles:
+                    await self._apply_user_roles(
+                        self.user_ids[user_config.email], user_config.roles
                     )
 
             except Exception as e:
                 self.errors.append(f"Error applying user '{user_config.email}': {str(e)}")
 
-    async def _apply_user_groups(self, user_id: str, group_names: list[str]):
-        """Apply group memberships to a user"""
-        # Remove existing config-managed memberships
+    async def _apply_user_roles(self, user_id: str, role_names: list[str]):
+        """Apply role memberships to a user"""
+        # Remove existing memberships for this user
         from sqlalchemy import delete
 
-        stmt = delete(UserRole).where(
-            and_(UserRole.user_id == user_id, UserRole.managed_by == "config")
-        )
+        stmt = delete(UserRole).where(UserRole.user_id == user_id)
         await self.db.execute(stmt)
 
         # Add new memberships
-        for group_name in group_names:
-            if group_name not in self.group_ids:
-                self.warnings.append(f"Group '{group_name}' not found for user membership")
+        for role_name in role_names:
+            if role_name not in self.role_ids:
+                self.warnings.append(f"Role '{role_name}' not found for user membership")
                 continue
 
             membership = UserRole(
                 user_id=user_id,
-                group_id=self.group_ids[group_name],
-                role="member",
-                is_active=True,
-                managed_by="config",
-                config_name=self.config_name,
+                role_id=self.role_ids[role_name],
+                active=True,
             )
             self.db.add(membership)
 
@@ -348,9 +372,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"LLM provider '{provider_config.name}' exists but is not config-managed. Skipping."
+                            f"LLM provider '{provider_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "llmProviders", provider_config.name)
                         self.llm_provider_ids[provider_config.name] = str(existing.id)
@@ -388,7 +412,7 @@ class ConfigApplyService:
                             api_endpoint=provider_config.endpoint,
                             config={"models": provider_config.models},
                             is_active=provider_config.isActive,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -430,9 +454,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Database connection '{conn_config.name}' exists but is not config-managed. Skipping."
+                            f"Database connection '{conn_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change(
                             "unchanged", "databaseConnections", conn_config.name
@@ -482,7 +506,7 @@ class ConfigApplyService:
                             ssl_mode=conn_config.sslMode,
                             config=conn_config.config,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -542,9 +566,9 @@ class ConfigApplyService:
                         continue
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Query '{resource_name}' exists but is not config-managed. Skipping."
+                            f"Query '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "queries", resource_name)
                         continue
@@ -569,32 +593,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        # Get user from group
-                        from app.models.user import Role, UserRole
-
-                        group_id = self.group_ids.get(query_config.groupName)
-                        if not group_id:
-                            stmt = select(Role).where(Role.name == query_config.groupName)
-                            result = await self.db.execute(stmt)
-                            group = result.scalar_one_or_none()
-                            if group:
-                                group_id = str(group.id)
-
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{query_config.groupName}' not found for query '{resource_name}'"
-                            )
-                            continue
-
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{query_config.groupName}' for query '{resource_name}'"
-                            )
-                            continue
-
                         new_query = Query(
                             namespace=query_config.namespace,
                             name=query_config.name,
@@ -606,9 +604,9 @@ class ConfigApplyService:
                             output_schema=query_config.outputSchema or {},
                             timeout_ms=query_config.timeoutMs,
                             max_rows=query_config.maxRows,
-                            user_id=member.user_id,
+                            user_id=self.owner_user_id,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -640,13 +638,14 @@ class ConfigApplyService:
                         if func_config.requirements
                         else [],
                         "tags": sorted(func_config.tags) if func_config.tags else [],
+                        "icon": func_config.icon,
                     }
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Function '{func_config.name}' exists but is not config-managed. Skipping."
+                            f"Function '{func_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "functions", func_config.name)
                         self.function_ids[func_config.name] = str(existing.id)
@@ -665,6 +664,7 @@ class ConfigApplyService:
                         existing.output_schema = func_config.outputSchema
                         existing.requirements = func_config.requirements
                         existing.tags = func_config.tags
+                        existing.icon = func_config.icon
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -675,7 +675,7 @@ class ConfigApplyService:
                             code=func_config.code,
                             input_schema=func_config.inputSchema,
                             output_schema=func_config.outputSchema,
-                            created_by=existing.created_by,
+                            created_by=existing.user_id,
                         )
                         self.db.add(version)
                         existing.current_version += 1
@@ -685,24 +685,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        # Get group for owner
-                        group_id = self.group_ids.get(func_config.groupName)
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{func_config.groupName}' not found for function '{func_config.name}'"
-                            )
-                            continue
-
-                        # Get a user from the group for created_by
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{func_config.groupName}' for function '{func_config.name}'"
-                            )
-                            continue
-
                         new_function = Function(
                             name=func_config.name,
                             description=func_config.description,
@@ -712,11 +694,11 @@ class ConfigApplyService:
                             requirements=func_config.requirements,
                             enabled_namespaces=func_config.enabledNamespaces,
                             tags=func_config.tags,
-                            created_by=member.user_id,
-                            group_id=group_id,
+                            icon=func_config.icon,
+                            user_id=self.owner_user_id,
                             current_version=1,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -730,7 +712,7 @@ class ConfigApplyService:
                             code=func_config.code,
                             input_schema=func_config.inputSchema,
                             output_schema=func_config.outputSchema,
-                            created_by=member.user_id,
+                            created_by=self.owner_user_id,
                         )
                         self.db.add(version)
                         self.function_ids[func_config.name] = str(new_function.id)
@@ -816,9 +798,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Skill '{skill_config.namespace}/{skill_config.name}' exists but is not config-managed. Skipping."
+                            f"Skill '{skill_config.namespace}/{skill_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change(
                             "unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}"
@@ -844,38 +826,14 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        # Get admin user for created_by (skills are typically system-wide)
-                        # Use first admin user
-                        from app.models.user import Role, UserRole
-
-                        stmt = select(Role).where(Role.name == "Admins")
-                        result = await self.db.execute(stmt)
-                        admin_role = result.scalar_one_or_none()
-
-                        if not admin_role:
-                            self.errors.append(
-                                f"Admins role not found for skill '{skill_config.namespace}/{skill_config.name}'"
-                            )
-                            continue
-
-                        stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
-                        result = await self.db.execute(stmt)
-                        admin_member = result.scalar_one_or_none()
-
-                        if not admin_member:
-                            self.errors.append(
-                                f"No admin users found for skill '{skill_config.namespace}/{skill_config.name}'"
-                            )
-                            continue
-
                         new_skill = Skill(
                             namespace=skill_config.namespace,
                             name=skill_config.name,
                             description=skill_config.description,
                             content=skill_config.content,
-                            user_id=admin_member.user_id,
+                            user_id=self.owner_user_id,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -889,6 +847,105 @@ class ConfigApplyService:
                 self.errors.append(
                     f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}"
                 )
+
+    async def _apply_components(self, components, dry_run: bool):
+        """Apply component configurations"""
+        for comp_config in components:
+            resource_name = f"{comp_config.namespace}/{comp_config.name}"
+            try:
+                stmt = select(Component).where(
+                    Component.namespace == comp_config.namespace,
+                    Component.name == comp_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": comp_config.namespace,
+                        "name": comp_config.name,
+                        "title": comp_config.title,
+                        "description": comp_config.description,
+                        "source_code": comp_config.sourceCode,
+                        "input_schema": comp_config.inputSchema or {},
+                        "enabled_agents": comp_config.enabledAgents,
+                        "enabled_functions": comp_config.enabledFunctions,
+                        "enabled_queries": comp_config.enabledQueries,
+                        "enabled_components": comp_config.enabledComponents,
+                        "state_namespaces_readonly": comp_config.stateNamespacesReadonly,
+                        "state_namespaces_readwrite": comp_config.stateNamespacesReadwrite,
+                        "css_overrides": comp_config.cssOverrides,
+                        "visibility": comp_config.visibility,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != self.managed_by:
+                        self.warnings.append(
+                            f"Component '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
+                        )
+                        self._track_change("unchanged", "components", resource_name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "components", resource_name)
+                        continue
+
+                    if not dry_run:
+                        source_changed = existing.source_code != comp_config.sourceCode
+                        existing.title = comp_config.title
+                        existing.description = comp_config.description
+                        existing.source_code = comp_config.sourceCode
+                        existing.input_schema = comp_config.inputSchema
+                        existing.enabled_agents = comp_config.enabledAgents
+                        existing.enabled_functions = comp_config.enabledFunctions
+                        existing.enabled_queries = comp_config.enabledQueries
+                        existing.enabled_components = comp_config.enabledComponents
+                        existing.state_namespaces_readonly = comp_config.stateNamespacesReadonly
+                        existing.state_namespaces_readwrite = comp_config.stateNamespacesReadwrite
+                        existing.css_overrides = comp_config.cssOverrides
+                        existing.visibility = comp_config.visibility
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+                        if source_changed:
+                            existing.compile_status = "pending"
+                            existing.compiled_bundle = None
+                            existing.source_map = None
+                            existing.compile_errors = None
+                            existing.version += 1
+
+                    self._track_change("update", "components", resource_name)
+
+                else:
+                    if not dry_run:
+                        new_component = Component(
+                            namespace=comp_config.namespace,
+                            name=comp_config.name,
+                            title=comp_config.title,
+                            description=comp_config.description,
+                            source_code=comp_config.sourceCode,
+                            input_schema=comp_config.inputSchema,
+                            enabled_agents=comp_config.enabledAgents,
+                            enabled_functions=comp_config.enabledFunctions,
+                            enabled_queries=comp_config.enabledQueries,
+                            enabled_components=comp_config.enabledComponents,
+                            state_namespaces_readonly=comp_config.stateNamespacesReadonly,
+                            state_namespaces_readwrite=comp_config.stateNamespacesReadwrite,
+                            css_overrides=comp_config.cssOverrides,
+                            visibility=comp_config.visibility,
+                            user_id=self.owner_user_id,
+                            is_active=True,
+                            managed_by=self.managed_by,
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                            compile_status="pending",
+                        )
+                        self.db.add(new_component)
+
+                    self._track_change("create", "components", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying component '{resource_name}': {str(e)}")
 
     async def _apply_collections(self, collections, dry_run: bool):
         """Apply collection configurations"""
@@ -911,15 +968,16 @@ class ConfigApplyService:
                         "post_upload_function": coll_config.postUploadFunction,
                         "max_file_size_mb": coll_config.maxFileSizeMb,
                         "max_total_size_gb": coll_config.maxTotalSizeGb,
+                        "is_public": coll_config.isPublic,
                         "allow_shared_files": coll_config.allowSharedFiles,
                         "allow_private_files": coll_config.allowPrivateFiles,
                     }
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Collection '{resource_name}' exists but is not config-managed. Skipping."
+                            f"Collection '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "collections", resource_name)
                         self.collection_ids[resource_name] = str(existing.id)
@@ -936,6 +994,7 @@ class ConfigApplyService:
                         existing.post_upload_function = coll_config.postUploadFunction
                         existing.max_file_size_mb = coll_config.maxFileSizeMb
                         existing.max_total_size_gb = coll_config.maxTotalSizeGb
+                        existing.is_public = coll_config.isPublic
                         existing.allow_shared_files = coll_config.allowSharedFiles
                         existing.allow_private_files = coll_config.allowPrivateFiles
                         existing.config_checksum = config_hash
@@ -946,35 +1005,19 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        group_id = self.group_ids.get(coll_config.groupName)
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{coll_config.groupName}' not found for collection '{resource_name}'"
-                            )
-                            continue
-
-                        # Get user from the group for ownership
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{coll_config.groupName}' for collection '{resource_name}'"
-                            )
-                            continue
-
                         new_collection = Collection(
                             namespace=coll_config.namespace,
                             name=coll_config.name,
-                            user_id=member.user_id,
+                            user_id=self.owner_user_id,
                             metadata_schema=coll_config.metadataSchema or {},
                             content_filter_function=coll_config.contentFilterFunction,
                             post_upload_function=coll_config.postUploadFunction,
                             max_file_size_mb=coll_config.maxFileSizeMb,
                             max_total_size_gb=coll_config.maxTotalSizeGb,
+                            is_public=coll_config.isPublic,
                             allow_shared_files=coll_config.allowSharedFiles,
                             allow_private_files=coll_config.allowPrivateFiles,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -1019,9 +1062,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"App '{resource_name}' exists but is not config-managed. Skipping."
+                            f"App '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "apps", resource_name)
                         continue
@@ -1046,29 +1089,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        # Get admin user for ownership
-                        from app.models.user import Role, UserRole
-
-                        stmt = select(Role).where(Role.name == "Admins")
-                        result = await self.db.execute(stmt)
-                        admin_role = result.scalar_one_or_none()
-
-                        if not admin_role:
-                            self.errors.append(
-                                f"Admins role not found for app '{resource_name}'"
-                            )
-                            continue
-
-                        stmt = select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
-                        result = await self.db.execute(stmt)
-                        admin_member = result.scalar_one_or_none()
-
-                        if not admin_member:
-                            self.errors.append(
-                                f"No admin users found for app '{resource_name}'"
-                            )
-                            continue
-
                         new_app = App(
                             namespace=app_config.namespace,
                             name=app_config.name,
@@ -1080,9 +1100,9 @@ class ConfigApplyService:
                             required_permissions=app_config.requiredPermissions,
                             optional_permissions=app_config.optionalPermissions,
                             exposed_namespaces=app_config.exposedNamespaces,
-                            user_id=admin_member.user_id,
+                            user_id=self.owner_user_id,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -1152,14 +1172,18 @@ class ConfigApplyService:
                         "enabled_collections": sorted(agent_config.enabledCollections)
                         if agent_config.enabledCollections
                         else [],
+                        "enabled_components": sorted(agent_config.enabledComponents)
+                        if agent_config.enabledComponents
+                        else [],
+                        "icon": agent_config.icon,
                         "is_default": agent_config.isDefault,
                     }
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Agent '{agent_config.name}' exists but is not config-managed. Skipping."
+                            f"Agent '{agent_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "agents", agent_config.name)
                         self.agent_ids[agent_config.name] = str(existing.id)
@@ -1193,6 +1217,8 @@ class ConfigApplyService:
                         existing.enabled_queries = agent_config.enabledQueries
                         existing.query_parameters = agent_config.queryParameters
                         existing.enabled_collections = agent_config.enabledCollections
+                        existing.enabled_components = agent_config.enabledComponents
+                        existing.icon = agent_config.icon
                         if agent_config.isDefault:
                             await self.db.execute(
                                 Agent.__table__.update()
@@ -1208,23 +1234,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        group_id = self.group_ids.get(agent_config.groupName)
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{agent_config.groupName}' not found for agent '{agent_config.name}'"
-                            )
-                            continue
-
-                        # Get user for created_by
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{agent_config.groupName}' for agent '{agent_config.name}'"
-                            )
-                            continue
-
                         # Get LLM provider ID (None if not specified = use default)
                         llm_provider_id = None
                         if agent_config.llmProviderName:
@@ -1255,11 +1264,12 @@ class ConfigApplyService:
                             enabled_queries=agent_config.enabledQueries,
                             query_parameters=agent_config.queryParameters,
                             enabled_collections=agent_config.enabledCollections,
+                            enabled_components=agent_config.enabledComponents,
+                            icon=agent_config.icon,
                             is_default=agent_config.isDefault,
-                            user_id=member.user_id,
-                            group_id=group_id,
+                            user_id=self.owner_user_id,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -1294,9 +1304,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Webhook '{webhook_config.path}' exists but is not config-managed. Skipping."
+                            f"Webhook '{webhook_config.path}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "webhooks", webhook_config.path)
                         continue
@@ -1306,10 +1316,15 @@ class ConfigApplyService:
                         continue
 
                     if not dry_run:
-                        function_id = self.function_ids.get(webhook_config.functionName)
-                        if function_id:
-                            existing.function_id = function_id
+                        # Parse function reference (may be "namespace/name" or just "name")
+                        func_ref = webhook_config.functionName
+                        if "/" in func_ref:
+                            func_ns, func_name = func_ref.split("/", 1)
+                        else:
+                            func_ns, func_name = "default", func_ref
 
+                        existing.function_namespace = func_ns
+                        existing.function_name = func_name
                         existing.http_method = webhook_config.httpMethod
                         existing.description = webhook_config.description
                         existing.requires_auth = webhook_config.requiresAuth
@@ -1321,41 +1336,24 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        function_id = self.function_ids.get(webhook_config.functionName)
-                        if not function_id:
-                            self.errors.append(
-                                f"Function '{webhook_config.functionName}' not found for webhook '{webhook_config.path}'"
-                            )
-                            continue
-
-                        group_id = self.group_ids.get(webhook_config.groupName)
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{webhook_config.groupName}' not found for webhook '{webhook_config.path}'"
-                            )
-                            continue
-
-                        # Get user for created_by
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{webhook_config.groupName}' for webhook '{webhook_config.path}'"
-                            )
-                            continue
+                        # Parse function reference (may be "namespace/name" or just "name")
+                        func_ref = webhook_config.functionName
+                        if "/" in func_ref:
+                            func_ns, func_name = func_ref.split("/", 1)
+                        else:
+                            func_ns, func_name = "default", func_ref
 
                         new_webhook = Webhook(
                             path=webhook_config.path,
-                            function_id=function_id,
+                            function_namespace=func_ns,
+                            function_name=func_name,
+                            user_id=self.owner_user_id,
                             http_method=webhook_config.httpMethod,
                             description=webhook_config.description,
                             requires_auth=webhook_config.requiresAuth,
                             default_values=webhook_config.defaultValues,
-                            created_by=member.user_id,
-                            group_id=group_id,
                             is_active=True,
-                            managed_by="config",
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -1365,6 +1363,78 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying webhook '{webhook_config.path}': {str(e)}")
+
+    async def _apply_templates(self, templates, dry_run: bool):
+        """Apply template configurations"""
+        for tmpl_config in templates:
+            resource_name = f"{tmpl_config.namespace}/{tmpl_config.name}"
+            try:
+                stmt = select(Template).where(
+                    Template.namespace == tmpl_config.namespace,
+                    Template.name == tmpl_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": tmpl_config.namespace,
+                        "name": tmpl_config.name,
+                        "description": tmpl_config.description,
+                        "title": tmpl_config.title,
+                        "html_content": tmpl_config.htmlContent,
+                        "text_content": tmpl_config.textContent,
+                        "variable_schema": tmpl_config.variableSchema or {},
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != self.managed_by:
+                        self.warnings.append(
+                            f"Template '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
+                        )
+                        self._track_change("unchanged", "templates", resource_name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "templates", resource_name)
+                        continue
+
+                    if not dry_run:
+                        existing.description = tmpl_config.description
+                        existing.title = tmpl_config.title
+                        existing.html_content = tmpl_config.htmlContent
+                        existing.text_content = tmpl_config.textContent
+                        existing.variable_schema = tmpl_config.variableSchema or {}
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "templates", resource_name)
+
+                else:
+                    if not dry_run:
+                        new_template = Template(
+                            namespace=tmpl_config.namespace,
+                            name=tmpl_config.name,
+                            description=tmpl_config.description,
+                            title=tmpl_config.title,
+                            html_content=tmpl_config.htmlContent,
+                            text_content=tmpl_config.textContent,
+                            variable_schema=tmpl_config.variableSchema or {},
+                            user_id=self.owner_user_id,
+                            created_by=self.owner_user_id,
+                            updated_by=self.owner_user_id,
+                            is_active=True,
+                            managed_by=self.managed_by,
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_template)
+
+                    self._track_change("create", "templates", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying template '{resource_name}': {str(e)}")
 
     async def _apply_schedules(self, schedules, dry_run: bool):
         """Apply schedule configurations"""
@@ -1404,9 +1474,9 @@ class ConfigApplyService:
                 )
 
                 if existing:
-                    if existing.managed_by != "config":
+                    if existing.managed_by != self.managed_by:
                         self.warnings.append(
-                            f"Schedule '{schedule_config.name}' exists but is not config-managed. Skipping."
+                            f"Schedule '{schedule_config.name}' exists but is not managed by '{self.managed_by}'. Skipping."
                         )
                         self._track_change("unchanged", "schedules", schedule_config.name)
                         continue
@@ -1430,23 +1500,6 @@ class ConfigApplyService:
 
                 else:
                     if not dry_run:
-                        group_id = self.group_ids.get(schedule_config.groupName)
-                        if not group_id:
-                            self.errors.append(
-                                f"Group '{schedule_config.groupName}' not found for schedule '{schedule_config.name}'"
-                            )
-                            continue
-
-                        # Get user for created_by
-                        stmt = select(UserRole).where(UserRole.role_id == group_id).limit(1)
-                        result = await self.db.execute(stmt)
-                        member = result.scalar_one_or_none()
-                        if not member:
-                            self.errors.append(
-                                f"No users in group '{schedule_config.groupName}' for schedule '{schedule_config.name}'"
-                            )
-                            continue
-
                         new_schedule = ScheduledJob(
                             name=schedule_config.name,
                             schedule_type=schedule_type,
@@ -1457,8 +1510,8 @@ class ConfigApplyService:
                             timezone=schedule_config.timezone,
                             input_data=schedule_config.inputData,
                             is_active=schedule_config.isActive,
-                            user_id=member.user_id,
-                            managed_by="config",
+                            user_id=self.owner_user_id,
+                            managed_by=self.managed_by,
                             config_name=self.config_name,
                             config_checksum=config_hash,
                         )
@@ -1468,3 +1521,105 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying schedule '{schedule_config.name}': {str(e)}")
+
+    async def _apply_database_triggers(self, triggers, dry_run: bool):
+        """Apply database trigger (CDC) configurations"""
+        for trigger_config in triggers:
+            try:
+                # Resolve connection name -> id
+                conn_result = await self.db.execute(
+                    select(DatabaseConnection).where(
+                        DatabaseConnection.name == trigger_config.connectionName
+                    )
+                )
+                db_conn = conn_result.scalar_one_or_none()
+                if not db_conn:
+                    self.errors.append(
+                        f"Database trigger '{trigger_config.name}': "
+                        f"connection '{trigger_config.connectionName}' not found"
+                    )
+                    continue
+
+                # Parse function name (namespace/name format)
+                func_ref = trigger_config.functionName
+                if "/" in func_ref:
+                    func_namespace, func_name = func_ref.split("/", 1)
+                else:
+                    func_namespace, func_name = "default", func_ref
+
+                # Look for existing trigger
+                stmt = select(DatabaseTrigger).where(DatabaseTrigger.name == trigger_config.name)
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "name": trigger_config.name,
+                        "connection_id": str(db_conn.id),
+                        "schema_name": trigger_config.schemaName,
+                        "table_name": trigger_config.tableName,
+                        "operations": trigger_config.operations,
+                        "function_namespace": func_namespace,
+                        "function_name": func_name,
+                        "poll_column": trigger_config.pollColumn,
+                        "poll_interval_seconds": trigger_config.pollIntervalSeconds,
+                        "batch_size": trigger_config.batchSize,
+                        "is_active": trigger_config.isActive,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != self.managed_by:
+                        self.warnings.append(
+                            f"Database trigger '{trigger_config.name}' exists but is not managed by "
+                            f"'{self.managed_by}'. Skipping."
+                        )
+                        self._track_change("unchanged", "databaseTriggers", trigger_config.name)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "databaseTriggers", trigger_config.name)
+                        continue
+
+                    if not dry_run:
+                        existing.database_connection_id = db_conn.id
+                        existing.schema_name = trigger_config.schemaName
+                        existing.table_name = trigger_config.tableName
+                        existing.operations = trigger_config.operations
+                        existing.function_namespace = func_namespace
+                        existing.function_name = func_name
+                        existing.poll_column = trigger_config.pollColumn
+                        existing.poll_interval_seconds = trigger_config.pollIntervalSeconds
+                        existing.batch_size = trigger_config.batchSize
+                        existing.is_active = trigger_config.isActive
+                        existing.config_checksum = config_hash
+
+                    self._track_change("update", "databaseTriggers", trigger_config.name)
+
+                else:
+                    if not dry_run:
+                        new_trigger = DatabaseTrigger(
+                            name=trigger_config.name,
+                            database_connection_id=db_conn.id,
+                            schema_name=trigger_config.schemaName,
+                            table_name=trigger_config.tableName,
+                            operations=trigger_config.operations,
+                            function_namespace=func_namespace,
+                            function_name=func_name,
+                            poll_column=trigger_config.pollColumn,
+                            poll_interval_seconds=trigger_config.pollIntervalSeconds,
+                            batch_size=trigger_config.batchSize,
+                            is_active=trigger_config.isActive,
+                            user_id=self.owner_user_id,
+                            managed_by=self.managed_by,
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_trigger)
+
+                    self._track_change("create", "databaseTriggers", trigger_config.name)
+
+            except Exception as e:
+                self.errors.append(
+                    f"Error applying database trigger '{trigger_config.name}': {str(e)}"
+                )

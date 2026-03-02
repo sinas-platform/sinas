@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.webhook import Webhook
 from app.schemas import WebhookCreate, WebhookResponse, WebhookUpdate
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -150,6 +151,8 @@ async def update_webhook(
             set_permission_used(request, "sinas.webhooks.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this webhook")
         set_permission_used(request, "sinas.webhooks.update:own")
+
+    detach_if_package_managed(webhook)
 
     # Update fields
     if webhook_data.function_namespace is not None or webhook_data.function_name is not None:

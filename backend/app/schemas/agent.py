@@ -47,6 +47,8 @@ class AgentCreate(BaseModel):
     state_namespaces_readonly: Optional[list[str]] = None  # Readonly state namespaces
     state_namespaces_readwrite: Optional[list[str]] = None  # Read-write state namespaces
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
+    enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
+    icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_default: Optional[bool] = False
 
 
@@ -84,6 +86,8 @@ class AgentUpdate(BaseModel):
     state_namespaces_readonly: Optional[list[str]] = None
     state_namespaces_readwrite: Optional[list[str]] = None
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
+    enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
+    icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
 
@@ -99,21 +103,21 @@ class AgentResponse(BaseModel):
     temperature: float
     max_tokens: Optional[int]
     system_prompt: Optional[str]
-    input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
+    input_schema: dict[str, Any] = {}
+    output_schema: dict[str, Any] = {}
     initial_messages: Optional[list[dict[str, str]]]
-    enabled_functions: list[str]  # List of "namespace/name" strings
-
-    enabled_agents: list[str]  # List of agent names that can be called as tools
-    enabled_skills: list[EnabledSkillConfig]  # List of skill configs with preload option
-    function_parameters: dict[str, Any]  # {"namespace/name": {"param": "value or {{template}}"}}
-
-    enabled_queries: list[str]  # List of "namespace/name" query references
-    query_parameters: dict[str, Any]  # {"namespace/name": {"param": "value or {{template}}"}}
-
-    state_namespaces_readonly: list[str]
-    state_namespaces_readwrite: list[str]
-    enabled_collections: list[str]
+    enabled_functions: list[str] = []
+    enabled_agents: list[str] = []
+    enabled_skills: list[EnabledSkillConfig] = []
+    function_parameters: dict[str, Any] = {}
+    enabled_queries: list[str] = []
+    query_parameters: dict[str, Any] = {}
+    state_namespaces_readonly: list[str] = []
+    state_namespaces_readwrite: list[str] = []
+    enabled_collections: list[str] = []
+    enabled_components: list[str] = []
+    icon: Optional[str] = None
+    icon_url: Optional[str] = None
     is_active: bool
     is_default: bool
     created_at: datetime

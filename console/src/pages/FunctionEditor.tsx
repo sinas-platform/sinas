@@ -108,12 +108,17 @@ export function FunctionEditor() {
     } as any,
     requirements: [] as string[],
     enabled_namespaces: [] as string[],
+    icon: '' as string,
     shared_pool: false,
     requires_approval: false,
   });
 
   const [requirementInput, setRequirementInput] = useState('');
   const [namespaceInput, setNamespaceInput] = useState('');
+  const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
+  const [iconCollectionNs, setIconCollectionNs] = useState('');
+  const [iconCollectionName, setIconCollectionName] = useState('');
+  const [iconCollectionFiles, setIconCollectionFiles] = useState<any[]>([]);
 
   const { data: func, isLoading } = useQuery({
     queryKey: ['function', namespace, name],
@@ -155,6 +160,7 @@ export function FunctionEditor() {
         output_schema: func.output_schema || {},
         requirements: func.requirements || [],
         enabled_namespaces: func.enabled_namespaces || [],
+        icon: func.icon || '',
         shared_pool: func.shared_pool || false,
         requires_approval: func.requires_approval || false,
       });
@@ -405,6 +411,89 @@ print(details["status"], details["output_data"])`,
                 placeholder="What does this function do?"
                 className="input"
               />
+            </div>
+
+            {/* Icon Picker */}
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Icon</label>
+              <div className="flex items-start gap-4">
+                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-[#1e1e1e] border border-white/[0.06] flex items-center justify-center overflow-hidden">
+                  {(func?.icon_url || (formData.icon?.startsWith('url:') && formData.icon.length > 4)) ? (
+                    <img
+                      src={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : func?.icon_url || ''}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : formData.icon?.startsWith('collection:') ? (
+                    <img
+                      src={(() => {
+                        const ref = formData.icon.slice(11);
+                        const parts = ref.split('/');
+                        if (parts.length === 3) return `${window.location.hostname === 'localhost' ? 'http://localhost:8000' : ''}/files/public/${parts[0]}/${parts[1]}/${parts[2]}`;
+                        return '';
+                      })()}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : null}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setIconMode('collection')} className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}>From Collection</button>
+                    <button type="button" onClick={() => setIconMode('url')} className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}>External URL</button>
+                  </div>
+                  {iconMode === 'url' ? (
+                    <input
+                      type="url"
+                      value={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : ''}
+                      onChange={(e) => setFormData({ ...formData, icon: e.target.value ? `url:${e.target.value}` : '' })}
+                      placeholder="https://example.com/icon.png"
+                      className="input text-sm"
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <select
+                        value={iconCollectionNs && iconCollectionName ? `${iconCollectionNs}/${iconCollectionName}` : ''}
+                        onChange={async (e) => {
+                          const val = e.target.value;
+                          if (!val) { setIconCollectionNs(''); setIconCollectionName(''); setIconCollectionFiles([]); return; }
+                          const [ns, cn] = val.split('/');
+                          setIconCollectionNs(ns); setIconCollectionName(cn);
+                          try {
+                            const files = await apiClient.listFiles(ns, cn);
+                            setIconCollectionFiles(files.filter((f: any) => f.content_type?.startsWith('image/')));
+                          } catch { setIconCollectionFiles([]); }
+                        }}
+                        className="input text-sm"
+                      >
+                        <option value="">Select collection...</option>
+                        {collections?.map((c: any) => (
+                          <option key={c.id} value={`${c.namespace}/${c.name}`}>{c.namespace}/{c.name}</option>
+                        ))}
+                      </select>
+                      {iconCollectionFiles.length > 0 && (
+                        <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
+                          {iconCollectionFiles.map((f: any) => {
+                            const ref = `collection:${iconCollectionNs}/${iconCollectionName}/${f.name}`;
+                            return (
+                              <button key={f.id} type="button" onClick={() => setFormData({ ...formData, icon: ref })}
+                                className={`w-10 h-10 rounded border-2 overflow-hidden ${formData.icon === ref ? 'border-primary-500' : 'border-transparent hover:border-gray-500'}`} title={f.name}>
+                                <img src={`${window.location.hostname === 'localhost' ? 'http://localhost:8000' : ''}/files/public/${iconCollectionNs}/${iconCollectionName}/${f.name}`} alt={f.name} className="w-full h-full object-cover" />
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {formData.icon && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500 truncate">{formData.icon}</span>
+                      <button type="button" onClick={() => setFormData({ ...formData, icon: '' })} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             <div className="space-y-3 pt-2 border-t border-white/[0.06]">

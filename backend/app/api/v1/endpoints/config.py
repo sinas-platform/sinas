@@ -114,7 +114,7 @@ async def apply_config(
             )
 
         # Apply configuration
-        apply_service = ConfigApplyService(db, config.metadata.name)
+        apply_service = ConfigApplyService(db, config.metadata.name, owner_user_id=user_id)
         result = await apply_service.apply_config(config, dry_run=apply_request.dryRun)
 
         # Add validation warnings to result

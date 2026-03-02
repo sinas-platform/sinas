@@ -1,4 +1,5 @@
 """App validation service — checks resource existence and permission satisfaction."""
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import check_permission
@@ -7,7 +8,8 @@ from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function
 from app.models.skill import Skill
-from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus
+from app.models.state import State
+from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus, StateDependencyStatus
 
 # Map resource type strings to SQLAlchemy models (accept both singular and plural)
 RESOURCE_TYPE_MAP = {
@@ -74,7 +76,28 @@ async def validate_app_status(
         else:
             opt_missing.append(perm)
 
-    ready = len(missing) == 0 and len(req_missing) == 0
+    # Check state dependencies
+    states_satisfied: list[StateDependencyStatus] = []
+    states_missing: list[StateDependencyStatus] = []
+    for dep in app.state_dependencies or []:
+        ns = dep.get("namespace", "")
+        key = dep.get("key")
+        status = StateDependencyStatus(namespace=ns, key=key, exists=False)
+
+        q = select(State).where(State.namespace == ns)
+        if key:
+            q = q.where(State.key == key)
+        q = q.limit(1)
+        result = await db.execute(q)
+        if result.scalar_one_or_none() is not None:
+            status.exists = True
+
+        if status.exists:
+            states_satisfied.append(status)
+        else:
+            states_missing.append(status)
+
+    ready = len(missing) == 0 and len(req_missing) == 0 and len(states_missing) == 0
 
     return AppStatusResponse(
         ready=ready,
@@ -83,4 +106,5 @@ async def validate_app_status(
             "required": PermissionStatus(granted=req_granted, missing=req_missing),
             "optional": PermissionStatus(granted=opt_granted, missing=opt_missing),
         },
+        states={"satisfied": states_satisfied, "missing": states_missing},
     )

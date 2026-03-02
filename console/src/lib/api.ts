@@ -39,6 +39,9 @@ import type {
   Skill,
   SkillCreate,
   SkillUpdate,
+  Component,
+  ComponentCreate,
+  ComponentUpdate,
   Collection,
   CollectionCreate,
   CollectionUpdate,
@@ -56,6 +59,16 @@ import type {
   DatabaseConnectionCreate,
   DatabaseConnectionUpdate,
   DatabaseConnectionTestResponse,
+  SchemaInfo,
+  DbTableInfo,
+  DbTableDetail,
+  DbViewInfo,
+  BrowseRowsResponse,
+  FilterCondition,
+  CreateTableRequest,
+  AlterTableRequest,
+  CreateViewRequest,
+  AnnotationItem,
   Query,
   QueryCreate,
   QueryUpdate,
@@ -68,6 +81,18 @@ import type {
 export const API_BASE_URL = window.location.hostname === 'localhost'
   ? 'http://localhost:8000'
   : `${window.location.protocol}//${window.location.hostname}`;
+
+/**
+ * Build a component render URL using a signed render token.
+ * Follows the same pattern as file serve tokens - purpose-scoped, short-lived JWTs
+ * that allow iframe access without Authorization headers.
+ */
+export function getComponentRenderUrl(renderToken: string, namespace: string, name: string, input?: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  params.set('token', renderToken);
+  if (input) params.set('input', JSON.stringify(input));
+  return `${API_BASE_URL}/components/${namespace}/${name}/render?${params.toString()}`;
+}
 
 const CONFIG_API_BASE_URL = `${API_BASE_URL}/api/v1`;
 const RUNTIME_API_BASE_URL = API_BASE_URL;
@@ -486,6 +511,11 @@ class APIClient {
     return response.data;
   }
 
+  async importOpenAPI(data: import('../types').OpenAPIImportRequest): Promise<import('../types').OpenAPIImportResponse> {
+    const response = await this.configClient.post('/functions/import/openapi', data);
+    return response.data;
+  }
+
   // Webhooks
   async listWebhooks(): Promise<Webhook[]> {
     const response = await this.configClient.get('/webhooks');
@@ -536,6 +566,31 @@ class APIClient {
     await this.configClient.delete(`/schedules/${encodeURIComponent(scheduleId)}`);
   }
 
+  // Database Triggers (CDC)
+  async listDatabaseTriggers(): Promise<any[]> {
+    const response = await this.configClient.get('/database-triggers');
+    return response.data;
+  }
+
+  async getDatabaseTrigger(name: string): Promise<any> {
+    const response = await this.configClient.get(`/database-triggers/${encodeURIComponent(name)}`);
+    return response.data;
+  }
+
+  async createDatabaseTrigger(data: any): Promise<any> {
+    const response = await this.configClient.post('/database-triggers', data);
+    return response.data;
+  }
+
+  async updateDatabaseTrigger(name: string, data: any): Promise<any> {
+    const response = await this.configClient.patch(`/database-triggers/${encodeURIComponent(name)}`, data);
+    return response.data;
+  }
+
+  async deleteDatabaseTrigger(name: string): Promise<void> {
+    await this.configClient.delete(`/database-triggers/${encodeURIComponent(name)}`);
+  }
+
   // Executions
   async listExecutions(): Promise<any[]> {
     const response = await this.runtimeClient.get('/executions');
@@ -547,23 +602,59 @@ class APIClient {
     return response.data;
   }
 
-  // Packages
+  // Dependencies (pip packages for function containers)
+  async listDependencies(): Promise<any[]> {
+    const response = await this.configClient.get('/dependencies');
+    return response.data;
+  }
+
+  async installDependency(data: any): Promise<any> {
+    const response = await this.configClient.post('/dependencies', data);
+    return response.data;
+  }
+
+  async deleteDependency(dependencyId: string): Promise<void> {
+    await this.configClient.delete(`/dependencies/${dependencyId}`);
+  }
+
+  async reloadWorkers(): Promise<any> {
+    const response = await this.configClient.post('/workers/reload');
+    return response.data;
+  }
+
+  // Packages (installable integration packages)
   async listPackages(): Promise<any[]> {
     const response = await this.configClient.get('/packages');
     return response.data;
   }
 
-  async installPackage(data: any): Promise<any> {
-    const response = await this.configClient.post('/packages', data);
+  async getPackage(name: string): Promise<any> {
+    const response = await this.configClient.get(`/packages/${name}`);
     return response.data;
   }
 
-  async deletePackage(packageId: string): Promise<void> {
-    await this.configClient.delete(`/packages/${packageId}`);
+  async installPackage(source: string): Promise<any> {
+    const response = await this.configClient.post('/packages/install', { source });
+    return response.data;
   }
 
-  async reloadWorkers(): Promise<any> {
-    const response = await this.configClient.post('/workers/reload');
+  async previewPackage(source: string): Promise<any> {
+    const response = await this.configClient.post('/packages/preview', { source });
+    return response.data;
+  }
+
+  async createPackageYaml(data: any): Promise<any> {
+    const response = await this.configClient.post('/packages/create', data);
+    return response.data;
+  }
+
+  async uninstallPackage(name: string): Promise<any> {
+    const response = await this.configClient.delete(`/packages/${name}`);
+    return response.data;
+  }
+
+  async exportPackage(name: string): Promise<string> {
+    const response = await this.configClient.get(`/packages/${name}/export`);
     return response.data;
   }
 
@@ -632,6 +723,89 @@ class APIClient {
     ssl_mode?: string;
   }): Promise<DatabaseConnectionTestResponse> {
     const response = await this.configClient.post('/database-connections/test', data);
+    return response.data;
+  }
+
+  // Database Schema Browser
+  async listDbSchemas(connectionName: string): Promise<SchemaInfo[]> {
+    const response = await this.configClient.get(`/database-connections/${connectionName}/schemas`);
+    return response.data;
+  }
+
+  async listDbTables(connectionName: string, schema: string = 'public'): Promise<DbTableInfo[]> {
+    const response = await this.configClient.get(`/database-connections/${connectionName}/tables`, { params: { schema } });
+    return response.data;
+  }
+
+  async getDbTableDetail(connectionName: string, table: string, schema: string = 'public'): Promise<DbTableDetail> {
+    const response = await this.configClient.get(`/database-connections/${connectionName}/tables/${table}`, { params: { schema } });
+    return response.data;
+  }
+
+  async listDbViews(connectionName: string, schema: string = 'public'): Promise<DbViewInfo[]> {
+    const response = await this.configClient.get(`/database-connections/${connectionName}/views`, { params: { schema } });
+    return response.data;
+  }
+
+  async createDbTable(connectionName: string, data: CreateTableRequest): Promise<any> {
+    const response = await this.configClient.post(`/database-connections/${connectionName}/tables`, data);
+    return response.data;
+  }
+
+  async alterDbTable(connectionName: string, table: string, data: AlterTableRequest): Promise<any> {
+    const response = await this.configClient.patch(`/database-connections/${connectionName}/tables/${table}`, data);
+    return response.data;
+  }
+
+  async dropDbTable(connectionName: string, table: string, schema: string = 'public', cascade: boolean = false): Promise<void> {
+    await this.configClient.delete(`/database-connections/${connectionName}/tables/${table}`, { params: { schema, cascade } });
+  }
+
+  async createDbView(connectionName: string, data: CreateViewRequest): Promise<any> {
+    const response = await this.configClient.post(`/database-connections/${connectionName}/views`, data);
+    return response.data;
+  }
+
+  async dropDbView(connectionName: string, view: string, schema: string = 'public', cascade: boolean = false): Promise<void> {
+    await this.configClient.delete(`/database-connections/${connectionName}/views/${view}`, { params: { schema, cascade } });
+  }
+
+  async browseDbRows(
+    connectionName: string,
+    table: string,
+    params: { schema?: string; limit?: number; offset?: number; sort_by?: string; sort_order?: string; filters?: FilterCondition[] } = {}
+  ): Promise<BrowseRowsResponse> {
+    const { filters, ...rest } = params;
+    const queryParams: Record<string, any> = { ...rest };
+    if (filters && filters.length > 0) {
+      queryParams.filters = JSON.stringify(filters);
+    }
+    const response = await this.configClient.get(`/database-connections/${connectionName}/tables/${table}/rows`, { params: queryParams });
+    return response.data;
+  }
+
+  async insertDbRows(connectionName: string, table: string, rows: Record<string, any>[], schema: string = 'public'): Promise<any> {
+    const response = await this.configClient.post(`/database-connections/${connectionName}/tables/${table}/rows`, { rows }, { params: { schema } });
+    return response.data;
+  }
+
+  async updateDbRows(connectionName: string, table: string, where: Record<string, any>, set_values: Record<string, any>, schema: string = 'public'): Promise<any> {
+    const response = await this.configClient.patch(`/database-connections/${connectionName}/tables/${table}/rows`, { where, set_values }, { params: { schema } });
+    return response.data;
+  }
+
+  async deleteDbRows(connectionName: string, table: string, where: Record<string, any>, schema: string = 'public'): Promise<any> {
+    const response = await this.configClient.delete(`/database-connections/${connectionName}/tables/${table}/rows`, { data: { where }, params: { schema } });
+    return response.data;
+  }
+
+  async getDbAnnotations(connectionName: string): Promise<AnnotationItem[]> {
+    const response = await this.configClient.get(`/database-connections/${connectionName}/annotations`);
+    return response.data;
+  }
+
+  async upsertDbAnnotations(connectionName: string, annotations: AnnotationItem[]): Promise<any> {
+    const response = await this.configClient.put(`/database-connections/${connectionName}/annotations`, { annotations });
     return response.data;
   }
 
@@ -716,6 +890,11 @@ class APIClient {
     return response.data;
   }
 
+  async cancelJob(jobId: string): Promise<any> {
+    const response = await this.configClient.post(`/queue/jobs/${jobId}/cancel`);
+    return response.data;
+  }
+
   async retryDLQJob(jobId: string): Promise<any> {
     const response = await this.configClient.post(`/queue/dlq/${jobId}/retry`);
     return response.data;
@@ -760,6 +939,36 @@ class APIClient {
 
   async deleteSkill(namespace: string, name: string): Promise<void> {
     await this.configClient.delete(`/skills/${namespace}/${name}`);
+  }
+
+  // Components
+  async listComponents(): Promise<Component[]> {
+    const response = await this.configClient.get('/components');
+    return response.data;
+  }
+
+  async getComponent(namespace: string, name: string): Promise<Component> {
+    const response = await this.configClient.get(`/components/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createComponent(data: ComponentCreate): Promise<Component> {
+    const response = await this.configClient.post('/components', data);
+    return response.data;
+  }
+
+  async updateComponent(namespace: string, name: string, data: ComponentUpdate): Promise<Component> {
+    const response = await this.configClient.put(`/components/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteComponent(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/components/${namespace}/${name}`);
+  }
+
+  async compileComponent(namespace: string, name: string): Promise<Component> {
+    const response = await this.configClient.post(`/components/${namespace}/${name}/compile`);
+    return response.data;
   }
 
   // Templates

@@ -43,6 +43,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _unique_filename(name: str) -> str:
+    """Append a compact unique suffix before the file extension."""
+    suffix = uuid_lib.uuid4().hex[:8]
+    stem, dot, ext = name.rpartition(".")
+    if dot:
+        return f"{stem}_{suffix}.{ext}"
+    return f"{name}_{suffix}"
+
+
 @router.get("/serve/{token}")
 async def serve_file(
     token: str,
@@ -96,6 +105,68 @@ async def serve_file(
         content=content,
         media_type=file_record.content_type,
         headers={"Content-Disposition": f'inline; filename="{file_record.name}"'},
+    )
+
+
+@router.get("/public/{namespace}/{collection}/{filename}")
+async def serve_public_file(
+    namespace: str,
+    collection: str,
+    filename: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Serve a file from a public collection (no auth required).
+
+    Only works if the collection has is_public=True. Returns 404 otherwise
+    to avoid revealing collection existence.
+    """
+    # Get collection and check is_public
+    coll = await Collection.get_by_name(db, namespace, collection)
+    if not coll or not coll.is_public:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Get file (prefer shared for public access)
+    result = await db.execute(
+        select(File).where(
+            and_(
+                File.collection_id == coll.id,
+                File.name == filename,
+                File.visibility == "shared",
+            )
+        ).limit(1)
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Get current version
+    result = await db.execute(
+        select(FileVersion).where(
+            and_(
+                FileVersion.file_id == file_record.id,
+                FileVersion.version_number == file_record.current_version,
+            )
+        ).limit(1)
+    )
+    file_version = result.scalar_one_or_none()
+    if not file_version:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Read content
+    storage: FileStorage = get_storage()
+    try:
+        content = await storage.read(file_version.storage_path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    return Response(
+        content=content,
+        media_type=file_record.content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{file_record.name}"',
+            "Cache-Control": "public, max-age=3600",
+        },
     )
 
 
@@ -241,7 +312,7 @@ async def upload_file(
             if not filter_result.get("approved", True):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Content filter rejected file: {filter_result.get('reason', 'No reason provided')}"
+                    detail=filter_result.get('reason', 'No reason provided')
                 )
 
             # Apply modifications if provided
@@ -267,44 +338,37 @@ async def upload_file(
                 detail=f"Content filter execution failed: {str(e)}"
             )
 
-    # Check if file name already exists, using FOR UPDATE to prevent race conditions
+    # Check if file name already exists
     existing_query = select(File).where(
         and_(
             File.collection_id == coll.id,
-            File.name == file_data.name
+            File.name == file_data.name,
         )
     )
-
-    # Apply uniqueness rule: can't create file with name you can see
+    # Scope to files this user can see
     if file_data.visibility == "private":
-        # Check if user has a private file OR if shared file exists
         existing_query = existing_query.where(
-            or_(
-                File.user_id == user_id,
-                File.visibility == "shared"
-            )
+            or_(File.user_id == user_id, File.visibility == "shared")
         )
     else:
-        # Check if shared file exists (anyone's)
         existing_query = existing_query.where(File.visibility == "shared")
 
-    # Lock the row to prevent concurrent modifications
     existing_query = existing_query.with_for_update()
-
     result = await db.execute(existing_query)
-    existing_file = result.scalar_one_or_none()
+    existing_file = result.scalars().first()
 
-    if existing_file:
-        # Update existing file with new version
+    if existing_file and file_data.update_existing:
+        # Explicit version update
         file_record = existing_file
         file_record.current_version += 1
         file_record.content_type = file_data.content_type
         file_record.file_metadata = approved_metadata
     else:
-        # Create new file
+        # Create new file — auto-rename if name is taken
+        final_name = _unique_filename(file_data.name) if existing_file else file_data.name
         file_record = File(
             collection_id=coll.id,
-            name=file_data.name,
+            name=final_name,
             user_id=user_id,
             content_type=file_data.content_type,
             current_version=1,
@@ -313,15 +377,32 @@ async def upload_file(
         )
         db.add(file_record)
 
-    # Flush to get file_record.id without committing
+    # Flush to get file_record.id — retry with unique name on race condition
     try:
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail=f"Concurrent upload conflict for file '{file_data.name}'"
+        # Race condition: another concurrent upload grabbed this name.
+        # Retry once with a unique name.
+        final_name = _unique_filename(file_data.name)
+        file_record = File(
+            collection_id=coll.id,
+            name=final_name,
+            user_id=user_id,
+            content_type=file_data.content_type,
+            current_version=1,
+            file_metadata=approved_metadata,
+            visibility=file_data.visibility,
         )
+        db.add(file_record)
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail=f"Could not create file '{file_data.name}' — concurrent conflict",
+            )
 
     # Determine storage path (always unique per version)
     storage_path = f"{namespace}/{collection}/{file_record.id}/v{file_record.current_version}"
@@ -448,22 +529,28 @@ async def download_file(
     if not coll:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Get file
-    result = await db.execute(
-        select(File).where(
-            and_(
-                File.collection_id == coll.id,
-                File.name == filename
-            )
+    # Get file — prefer user's own, then shared
+    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.download:all")
+    file_query = select(File).where(
+        and_(
+            File.collection_id == coll.id,
+            File.name == filename,
         )
     )
+    if not has_all_perm:
+        file_query = file_query.where(
+            or_(File.user_id == user_id, File.visibility == "shared")
+        )
+    file_query = file_query.order_by(
+        (File.user_id == user_id).desc()
+    ).limit(1)
+
+    result = await db.execute(file_query)
     file_record = result.scalar_one_or_none()
 
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Check visibility
-    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.download:all")
     if file_record.visibility == "private" and str(file_record.user_id) != user_id and not has_all_perm:
         raise HTTPException(status_code=403, detail="Not authorized to access this private file")
 
@@ -475,7 +562,7 @@ async def download_file(
                 FileVersion.file_id == file_record.id,
                 FileVersion.version_number == version_number
             )
-        )
+        ).limit(1)
     )
     file_version = result.scalar_one_or_none()
 
@@ -530,21 +617,27 @@ async def generate_temp_url(
     if not coll:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Get file
-    result = await db.execute(
-        select(File).where(
-            and_(
-                File.collection_id == coll.id,
-                File.name == filename,
-            )
+    # Get file — prefer user's own, then shared
+    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.download:all")
+    file_query = select(File).where(
+        and_(
+            File.collection_id == coll.id,
+            File.name == filename,
         )
     )
+    if not has_all_perm:
+        file_query = file_query.where(
+            or_(File.user_id == user_id, File.visibility == "shared")
+        )
+    file_query = file_query.order_by(
+        (File.user_id == user_id).desc()
+    ).limit(1)
+
+    result = await db.execute(file_query)
     file_record = result.scalar_one_or_none()
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Check visibility
-    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.download:all")
     if file_record.visibility == "private" and str(file_record.user_id) != user_id and not has_all_perm:
         raise HTTPException(status_code=403, detail="Not authorized to access this private file")
 
@@ -558,7 +651,7 @@ async def generate_temp_url(
                 FileVersion.file_id == file_record.id,
                 FileVersion.version_number == version_number,
             )
-        )
+        ).limit(1)
     )
     file_version = ver_result.scalar_one_or_none()
     if not file_version:
@@ -610,11 +703,11 @@ async def list_files(
     query = select(File).where(File.collection_id == coll.id)
 
     if not has_all_perm:
-        # Only show user's private files + all shared files
+        # Own files (any visibility) + non-private files from others
         query = query.where(
             or_(
                 File.user_id == user_id,
-                File.visibility == "shared"
+                File.visibility != "private"
             )
         )
 
@@ -804,22 +897,28 @@ async def update_file_metadata(
     if not coll:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Get file
-    result = await db.execute(
-        select(File).where(
-            and_(
-                File.collection_id == coll.id,
-                File.name == filename
-            )
+    # Get file — prefer user's own, then shared
+    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.upload:all")
+    file_query = select(File).where(
+        and_(
+            File.collection_id == coll.id,
+            File.name == filename,
         )
     )
+    if not has_all_perm:
+        file_query = file_query.where(
+            or_(File.user_id == user_id, File.visibility == "shared")
+        )
+    file_query = file_query.order_by(
+        (File.user_id == user_id).desc()
+    ).limit(1)
+
+    result = await db.execute(file_query)
     file_record = result.scalar_one_or_none()
 
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Check ownership
-    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.upload:all")
     if str(file_record.user_id) != user_id and not has_all_perm:
         raise HTTPException(status_code=403, detail="Not authorized to update this file")
 
@@ -876,22 +975,28 @@ async def delete_file(
     if not coll:
         raise HTTPException(status_code=404, detail="Collection not found")
 
-    # Get file
-    result = await db.execute(
-        select(File).where(
-            and_(
-                File.collection_id == coll.id,
-                File.name == filename
-            )
+    # Get file — prefer user's own, then shared
+    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.delete_files:all")
+    file_query = select(File).where(
+        and_(
+            File.collection_id == coll.id,
+            File.name == filename,
         )
     )
+    if not has_all_perm:
+        file_query = file_query.where(
+            or_(File.user_id == user_id, File.visibility == "shared")
+        )
+    file_query = file_query.order_by(
+        (File.user_id == user_id).desc()
+    ).limit(1)
+
+    result = await db.execute(file_query)
     file_record = result.scalar_one_or_none()
 
     if not file_record:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Check ownership for private files
-    has_all_perm = check_permission(permissions, f"sinas.collections/{namespace}/{collection}.delete_files:all")
     if file_record.visibility == "private" and str(file_record.user_id) != user_id and not has_all_perm:
         raise HTTPException(status_code=403, detail="Not authorized to delete this private file")
 

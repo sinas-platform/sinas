@@ -345,7 +345,7 @@ poetry run black . && poetry run ruff check .   # Format & lint
 ```
 
 **Documentation:**
-- [FEATURES.md](FEATURES.md) - Complete feature reference
+- [DOCS.md](DOCS.md) - Complete feature reference
 - [CLAUDE.md](CLAUDE.md) - Development guide for Claude Code
 
 ---

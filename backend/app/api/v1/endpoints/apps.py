@@ -9,6 +9,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.app import App
 from app.schemas.app import AppCreate, AppResponse, AppUpdate
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/apps", tags=["apps"])
 
@@ -48,6 +49,7 @@ async def create_app(
         required_permissions=app_data.required_permissions,
         optional_permissions=app_data.optional_permissions,
         exposed_namespaces=app_data.exposed_namespaces,
+        state_dependencies=[s.model_dump() for s in app_data.state_dependencies],
     )
 
     db.add(app)
@@ -132,6 +134,8 @@ async def update_app(
 
     set_permission_used(request, f"sinas.apps/{namespace}/{name}.update")
 
+    detach_if_package_managed(app)
+
     # If namespace or name is being updated, check for conflicts
     new_namespace = app_data.namespace or app.namespace
     new_name = app_data.name or app.name
@@ -161,6 +165,8 @@ async def update_app(
         app.optional_permissions = app_data.optional_permissions
     if app_data.exposed_namespaces is not None:
         app.exposed_namespaces = app_data.exposed_namespaces
+    if app_data.state_dependencies is not None:
+        app.state_dependencies = [s.model_dump() for s in app_data.state_dependencies]
     if app_data.is_active is not None:
         app.is_active = app_data.is_active
 

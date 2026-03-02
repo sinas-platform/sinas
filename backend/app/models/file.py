@@ -2,7 +2,7 @@
 import uuid as uuid_lib
 from typing import Any, Optional
 
-from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, Text, UniqueConstraint, select
+from sqlalchemy import JSON, BigInteger, ForeignKey, Index, Integer, String, Text, UniqueConstraint, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +39,7 @@ class Collection(Base, PermissionMixin):
     max_total_size_gb: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
     # Access control
+    is_public: Mapped[bool] = mapped_column(default=False, nullable=False)
     allow_shared_files: Mapped[bool] = mapped_column(default=True, nullable=False)
     allow_private_files: Mapped[bool] = mapped_column(default=True, nullable=False)
 
@@ -104,6 +105,19 @@ class File(Base):
         # Performance indexes
         Index("ix_files_collection_visibility", "collection_id", "visibility"),
         Index("ix_files_user_collection", "user_id", "collection_id"),
+        # Prevent duplicate filenames: one per user (private), one globally (shared)
+        Index(
+            "uix_files_private_name",
+            "collection_id", "name", "user_id",
+            unique=True,
+            postgresql_where=text("visibility = 'private'"),
+        ),
+        Index(
+            "uix_files_shared_name",
+            "collection_id", "name",
+            unique=True,
+            postgresql_where=text("visibility = 'shared'"),
+        ),
     )
 
 

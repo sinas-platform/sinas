@@ -111,7 +111,17 @@ export type FileContent = {
   mime_type?: string;
 };
 
-export type UniversalContent = TextContent | ImageContent | AudioContent | FileContent;
+export type ComponentContent = {
+  type: "component";
+  namespace: string;
+  name: string;
+  title?: string;
+  input?: Record<string, unknown>;
+  compile_status?: string;
+  render_token?: string;
+};
+
+export type UniversalContent = TextContent | ImageContent | AudioContent | FileContent | ComponentContent;
 
 export type MessageContent = string | UniversalContent[];
 
@@ -194,6 +204,8 @@ export interface Agent {
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
   enabled_collections: string[];
+  icon: string | null;
+  icon_url: string | null;
   is_active: boolean;
   is_default: boolean;
   created_at: string;
@@ -221,6 +233,7 @@ export interface AgentCreate {
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
+  icon?: string;
   is_default?: boolean;
 }
 
@@ -245,6 +258,7 @@ export interface AgentUpdate {
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
+  icon?: string;
   is_active?: boolean;
   is_default?: boolean;
 }
@@ -296,6 +310,8 @@ export interface Function {
   output_schema: Record<string, any>;
   requirements: string[];
   enabled_namespaces: string[];
+  icon: string | null;
+  icon_url: string | null;
   shared_pool: boolean;
   requires_approval: boolean;
   is_active: boolean;
@@ -312,6 +328,7 @@ export interface FunctionCreate {
   output_schema?: Record<string, any>;
   requirements?: string[];
   enabled_namespaces?: string[];
+  icon?: string;
   shared_pool?: boolean;
   requires_approval?: boolean;
 }
@@ -325,9 +342,45 @@ export interface FunctionUpdate {
   output_schema?: Record<string, any>;
   requirements?: string[];
   enabled_namespaces?: string[];
+  icon?: string;
   shared_pool?: boolean;
   requires_approval?: boolean;
   is_active?: boolean;
+}
+
+// OpenAPI Import
+export interface OpenAPIImportRequest {
+  spec?: string;
+  spec_url?: string;
+  namespace?: string;
+  base_url_override?: string;
+  auth_type: string;
+  auth_header: string;
+  auth_state_namespace?: string;
+  auth_state_key?: string;
+  operations?: string[];
+  dry_run: boolean;
+}
+
+export interface OpenAPIFunctionPreview {
+  name: string;
+  description: string | null;
+  method: string;
+  path: string;
+  operation_id: string | null;
+  input_schema: Record<string, any>;
+  output_schema: Record<string, any>;
+  code: string;
+  status: string;
+  requirements: string[];
+}
+
+export interface OpenAPIImportResponse {
+  namespace: string;
+  functions: OpenAPIFunctionPreview[];
+  warnings: string[];
+  created: number;
+  skipped: number;
 }
 
 // Webhooks
@@ -543,6 +596,72 @@ export interface SkillUpdate {
   is_active?: boolean;
 }
 
+// Components
+export interface Component {
+  id: string;
+  user_id?: string;
+  namespace: string;
+  name: string;
+  title?: string;
+  description?: string;
+  source_code: string;
+  compiled_bundle?: string;
+  source_map?: string;
+  compile_status: string;
+  compile_errors?: Array<{ text: string; location?: { line: number; column: number } | null }>;
+  input_schema?: Record<string, unknown>;
+  enabled_agents: string[];
+  enabled_functions: string[];
+  enabled_queries: string[];
+  enabled_components: string[];
+  state_namespaces_readonly: string[];
+  state_namespaces_readwrite: string[];
+  css_overrides?: string;
+  visibility: string;
+  version: number;
+  is_published: boolean;
+  is_active: boolean;
+  render_token?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ComponentCreate {
+  namespace?: string;
+  name: string;
+  title?: string;
+  description?: string;
+  source_code: string;
+  input_schema?: Record<string, unknown>;
+  enabled_agents?: string[];
+  enabled_functions?: string[];
+  enabled_queries?: string[];
+  enabled_components?: string[];
+  state_namespaces_readonly?: string[];
+  state_namespaces_readwrite?: string[];
+  css_overrides?: string;
+  visibility?: string;
+}
+
+export interface ComponentUpdate {
+  namespace?: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  source_code?: string;
+  input_schema?: Record<string, unknown>;
+  enabled_agents?: string[];
+  enabled_functions?: string[];
+  enabled_queries?: string[];
+  enabled_components?: string[];
+  state_namespaces_readonly?: string[];
+  state_namespaces_readwrite?: string[];
+  css_overrides?: string;
+  visibility?: string;
+  is_active?: boolean;
+  is_published?: boolean;
+}
+
 // Collections
 export interface Collection {
   id: string;
@@ -554,6 +673,7 @@ export interface Collection {
   post_upload_function: string | null;
   max_file_size_mb: number;
   max_total_size_gb: number;
+  is_public: boolean;
   allow_shared_files: boolean;
   allow_private_files: boolean;
   managed_by?: string | null;
@@ -570,6 +690,7 @@ export interface CollectionCreate {
   post_upload_function?: string;
   max_file_size_mb?: number;
   max_total_size_gb?: number;
+  is_public?: boolean;
   allow_shared_files?: boolean;
   allow_private_files?: boolean;
 }
@@ -580,6 +701,7 @@ export interface CollectionUpdate {
   post_upload_function?: string | null;
   max_file_size_mb?: number;
   max_total_size_gb?: number;
+  is_public?: boolean;
   allow_shared_files?: boolean;
   allow_private_files?: boolean;
 }
@@ -634,6 +756,17 @@ export interface AppResourceRef {
   name: string;
 }
 
+export interface AppStateDependency {
+  namespace: string;
+  key?: string | null;
+}
+
+export interface AppStateDependencyStatus {
+  namespace: string;
+  key?: string | null;
+  exists: boolean;
+}
+
 export interface App {
   id: string;
   user_id: string;
@@ -644,6 +777,7 @@ export interface App {
   required_permissions: string[];
   optional_permissions: string[];
   exposed_namespaces: Record<string, string[]>;
+  state_dependencies: AppStateDependency[];
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
@@ -657,6 +791,7 @@ export interface AppCreate {
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
+  state_dependencies?: AppStateDependency[];
 }
 
 export interface AppUpdate {
@@ -667,6 +802,7 @@ export interface AppUpdate {
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
+  state_dependencies?: AppStateDependency[];
   is_active?: boolean;
 }
 
@@ -677,6 +813,7 @@ export interface AppStatus {
     required: { granted: string[]; missing: string[] };
     optional: { granted: string[]; missing: string[] };
   };
+  states: { satisfied: AppStateDependencyStatus[]; missing: AppStateDependencyStatus[] };
 }
 
 // Database Connections
@@ -691,6 +828,7 @@ export interface DatabaseConnection {
   ssl_mode: string | null;
   config: Record<string, any>;
   is_active: boolean;
+  read_only: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -706,6 +844,7 @@ export interface DatabaseConnectionCreate {
   ssl_mode?: string;
   config?: Record<string, any>;
   is_active?: boolean;
+  read_only?: boolean;
 }
 
 export interface DatabaseConnectionUpdate {
@@ -719,12 +858,120 @@ export interface DatabaseConnectionUpdate {
   ssl_mode?: string;
   config?: Record<string, any>;
   is_active?: boolean;
+  read_only?: boolean;
 }
 
 export interface DatabaseConnectionTestResponse {
   success: boolean;
   message: string;
   latency_ms?: number;
+}
+
+// Database Schema Browser
+export interface SchemaInfo {
+  schema_name: string;
+}
+
+export interface ColumnInfo {
+  column_name: string;
+  data_type: string;
+  udt_name: string;
+  is_nullable: string;
+  column_default: string | null;
+  character_maximum_length: number | null;
+  numeric_precision: number | null;
+  numeric_scale: number | null;
+  ordinal_position: number;
+  is_primary_key: boolean;
+  display_name: string | null;
+  description: string | null;
+}
+
+export interface ConstraintInfo {
+  constraint_name: string;
+  constraint_type: string;
+  columns: string[];
+  definition: string | null;
+  ref_schema: string | null;
+  ref_table: string | null;
+  ref_columns: string[] | null;
+}
+
+export interface IndexInfo {
+  index_name: string;
+  definition: string;
+}
+
+export interface DbTableInfo {
+  table_name: string;
+  table_type: string;
+  estimated_rows: number;
+  size_bytes: number;
+  display_name: string | null;
+  description: string | null;
+}
+
+export interface DbTableDetail {
+  table_name: string;
+  schema_name: string;
+  columns: ColumnInfo[];
+  constraints: ConstraintInfo[];
+  indexes: IndexInfo[];
+  display_name: string | null;
+  description: string | null;
+}
+
+export interface DbViewInfo {
+  view_name: string;
+  view_definition: string | null;
+}
+
+export interface BrowseRowsResponse {
+  rows: Record<string, any>[];
+  total_count: number;
+}
+
+export interface FilterCondition {
+  column: string;
+  operator: string;
+  value?: any;
+}
+
+export interface ColumnDefinition {
+  name: string;
+  type: string;
+  nullable?: boolean;
+  default?: string;
+  primary_key?: boolean;
+}
+
+export interface CreateTableRequest {
+  table_name: string;
+  schema_name?: string;
+  columns: ColumnDefinition[];
+  if_not_exists?: boolean;
+}
+
+export interface AlterTableRequest {
+  schema_name?: string;
+  add_columns?: ColumnDefinition[];
+  drop_columns?: string[];
+  rename_columns?: Record<string, string>;
+}
+
+export interface CreateViewRequest {
+  name: string;
+  schema_name?: string;
+  sql: string;
+  or_replace?: boolean;
+}
+
+export interface AnnotationItem {
+  schema_name: string;
+  table_name: string;
+  column_name: string | null;
+  display_name: string | null;
+  description: string | null;
 }
 
 // Queries
@@ -791,6 +1038,49 @@ export interface FileSearchRequest {
   query?: string;
   metadata_filter?: Record<string, any>;
   limit?: number;
+}
+
+export interface DatabaseTrigger {
+  id: string;
+  name: string;
+  database_connection_id: string;
+  schema_name: string;
+  table_name: string;
+  operations: string[];
+  function_namespace: string;
+  function_name: string;
+  poll_column: string;
+  poll_interval_seconds: number;
+  batch_size: number;
+  is_active: boolean;
+  last_poll_value: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DatabaseTriggerCreate {
+  name: string;
+  database_connection_id: string;
+  schema_name?: string;
+  table_name: string;
+  operations: string[];
+  function_namespace?: string;
+  function_name: string;
+  poll_column: string;
+  poll_interval_seconds?: number;
+  batch_size?: number;
+}
+
+export interface DatabaseTriggerUpdate {
+  name?: string;
+  operations?: string[];
+  function_namespace?: string;
+  function_name?: string;
+  poll_column?: string;
+  poll_interval_seconds?: number;
+  batch_size?: number;
+  is_active?: boolean;
 }
 
 export interface FileSearchMatch {

@@ -31,8 +31,11 @@ class App(Base, PermissionMixin):
     optional_permissions = Column(JSON, nullable=False, default=list)  # List of permission strings
 
     # Namespaces exposed to end users per resource type (soft filtering)
-    # {"agents": ["default", "support"], "functions": ["default"], ...}
+    # {"agents": ["default", "support"], "functions": ["default"], "states": ["preferences"], ...}
     exposed_namespaces = Column(JSON, nullable=False, default=dict)
+
+    # Expected state dependencies: [{"namespace": "preferences"}, {"namespace": "memory", "key": "name"}, ...]
+    state_dependencies = Column(JSON, nullable=False, default=list)
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     is_active = Column(Boolean, default=True)

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { useState } from 'react';
-import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box } from 'lucide-react';
+import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, X } from 'lucide-react';
 
 function formatAge(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -89,6 +89,14 @@ export function System() {
     },
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (jobId: string) => apiClient.cancelJob(jobId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['queue-stats'] });
+    },
+  });
+
   const handlePoolScale = (delta: number) => {
     const current = poolStats?.total ?? 0;
     const target = Math.max(0, current + delta);
@@ -107,6 +115,7 @@ export function System() {
       case 'completed': return 'bg-green-900/30 text-green-300';
       case 'queued': return 'bg-[#161616] text-gray-200';
       case 'failed': return 'bg-red-900/30 text-red-300';
+      case 'cancelled': return 'bg-yellow-900/30 text-yellow-300';
       default: return 'bg-[#161616] text-gray-200';
     }
   };
@@ -181,12 +190,13 @@ export function System() {
         {/* Jobs */}
         <div className="card">
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Jobs (24h)</h3>
-          <div className="mt-3 grid grid-cols-4 gap-1 text-center">
+          <div className="mt-3 grid grid-cols-5 gap-1 text-center">
             {[
               { label: 'Q', value: stats?.jobs?.queued ?? 0, color: 'text-gray-300' },
               { label: 'Run', value: stats?.jobs?.running ?? 0, color: 'text-blue-600' },
               { label: 'Done', value: stats?.jobs?.completed ?? 0, color: 'text-green-600' },
               { label: 'Fail', value: stats?.jobs?.failed ?? 0, color: stats?.jobs?.failed ? 'text-red-600' : 'text-gray-500' },
+              { label: 'Can', value: stats?.jobs?.cancelled ?? 0, color: stats?.jobs?.cancelled ? 'text-yellow-500' : 'text-gray-500' },
             ].map(s => (
               <div key={s.label}>
                 <div className={`text-lg font-bold ${s.color}`}>{s.value}</div>
@@ -423,6 +433,7 @@ export function System() {
             <option value="running">Running</option>
             <option value="completed">Completed</option>
             <option value="failed">Failed</option>
+            <option value="cancelled">Cancelled</option>
           </select>
         </div>
 
@@ -438,7 +449,8 @@ export function System() {
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Status</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Description</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Time</th>
-                  <th className="text-left py-2 font-medium text-gray-500">Error</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Error</th>
+                  <th className="text-right py-2 font-medium text-gray-500">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
@@ -471,8 +483,21 @@ export function System() {
                         ? new Date(job.enqueued_at * 1000).toLocaleTimeString()
                         : '-'}
                     </td>
-                    <td className="py-2 text-xs text-red-500 max-w-xs truncate">
+                    <td className="py-2 pr-4 text-xs text-red-500 max-w-xs truncate">
                       {job.error || ''}
+                    </td>
+                    <td className="py-2 text-right">
+                      {(job.status === 'running' || job.status === 'queued') && (
+                        <button
+                          onClick={() => cancelMutation.mutate(job.job_id)}
+                          disabled={cancelMutation.isPending}
+                          className="btn btn-secondary text-xs py-1 px-2 inline-flex items-center gap-1"
+                          title="Cancel job"
+                        >
+                          <X className="w-3 h-3" />
+                          Cancel
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

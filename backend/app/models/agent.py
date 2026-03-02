@@ -59,36 +59,46 @@ class Agent(Base, PermissionMixin):
 
     # Tool access
     enabled_functions: Mapped[list[str]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # List of "namespace/name" strings
-    enabled_agents: Mapped[list[str]] = mapped_column(JSON, default=list)  # List of agent names
+    enabled_agents: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )  # List of agent names
     enabled_skills: Mapped[list[dict[str, Any]]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # List of {"skill": "namespace/name", "preload": bool}
     function_parameters: Mapped[dict[str, Any]] = mapped_column(
-        JSON, default=dict
+        JSON, nullable=False, default=dict, server_default="{}"
     )  # {"namespace/name": {"param": "value or {{template}}"}}
 
     # Query access
     enabled_queries: Mapped[list[str]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # List of "namespace/name" query references
     query_parameters: Mapped[dict[str, Any]] = mapped_column(
-        JSON, default=dict
+        JSON, nullable=False, default=dict, server_default="{}"
     )  # {"namespace/name": {"param": "value or {{template}}"}}
 
     # State access
     state_namespaces_readonly: Mapped[list[str]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # Readonly state namespaces
     state_namespaces_readwrite: Mapped[list[str]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # Read-write state namespaces
 
     # Collection access
     enabled_collections: Mapped[list[str]] = mapped_column(
-        JSON, default=list
+        JSON, nullable=False, default=list, server_default="[]"
     )  # List of "namespace/name" collection references
+
+    # Component access
+    enabled_components: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )  # List of "namespace/name" component references
+
+    # Icon reference ("collection:ns/coll/file" or "url:https://...")
+    icon: Mapped[Optional[str]] = mapped_column(String(512))
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

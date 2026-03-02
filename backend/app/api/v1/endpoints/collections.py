@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.file import Collection
 from app.schemas.file import CollectionCreate, CollectionResponse, CollectionUpdate
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/collections", tags=["collections"])
 
@@ -57,6 +58,7 @@ async def create_collection(
         post_upload_function=collection_data.post_upload_function,
         max_file_size_mb=collection_data.max_file_size_mb,
         max_total_size_gb=collection_data.max_total_size_gb,
+        is_public=collection_data.is_public,
         allow_shared_files=collection_data.allow_shared_files,
         allow_private_files=collection_data.allow_private_files,
     )
@@ -146,6 +148,8 @@ async def update_collection(
 
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.update")
 
+    detach_if_package_managed(collection)
+
     # Update fields
     if collection_data.metadata_schema is not None:
         collection.metadata_schema = collection_data.metadata_schema
@@ -157,6 +161,8 @@ async def update_collection(
         collection.max_file_size_mb = collection_data.max_file_size_mb
     if collection_data.max_total_size_gb is not None:
         collection.max_total_size_gb = collection_data.max_total_size_gb
+    if collection_data.is_public is not None:
+        collection.is_public = collection_data.is_public
     if collection_data.allow_shared_files is not None:
         collection.allow_shared_files = collection_data.allow_shared_files
     if collection_data.allow_private_files is not None:

@@ -2,10 +2,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { AppWindow, Plus, Trash2, Edit2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
-import type { App, AppCreate, AppUpdate, AppStatus, AppResourceRef } from '../types';
+import type { App, AppCreate, AppUpdate, AppStatus, AppResourceRef, AppStateDependency } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 
-const RESOURCE_TYPES = ['agents', 'functions', 'skills', 'templates', 'collections'];
+const RESOURCE_TYPES = ['agents', 'functions', 'skills', 'templates', 'collections', 'states'];
 
 const DEFAULT_EXPOSED_NAMESPACES: Record<string, string[]> = Object.fromEntries(
   RESOURCE_TYPES.map((t) => [t, ['*']])
@@ -147,6 +147,58 @@ function PermissionListEditor({
   );
 }
 
+function StateDependencyEditor({
+  value,
+  onChange,
+}: {
+  value: AppStateDependency[];
+  onChange: (v: AppStateDependency[]) => void;
+}) {
+  const add = () => onChange([...value, { namespace: '' }]);
+  const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
+  const update = (idx: number, field: keyof AppStateDependency, val: string) => {
+    const next = [...value];
+    next[idx] = { ...next[idx], [field]: val || undefined };
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="grid grid-cols-[3fr_3fr_auto] gap-2 text-xs font-medium text-gray-500">
+          <span>Namespace</span>
+          <span>Key (optional)</span>
+          <span className="w-8" />
+        </div>
+      )}
+      {value.map((dep, idx) => (
+        <div key={idx} className="grid grid-cols-[3fr_3fr_auto] gap-2 items-center">
+          <input
+            type="text"
+            className="input"
+            placeholder="e.g. preferences"
+            value={dep.namespace}
+            onChange={(e) => update(idx, 'namespace', e.target.value)}
+          />
+          <input
+            type="text"
+            className="input"
+            placeholder="any (leave empty)"
+            value={dep.key || ''}
+            onChange={(e) => update(idx, 'key', e.target.value)}
+          />
+          <button type="button" onClick={() => remove(idx)} className="text-red-500 hover:text-red-400 p-1">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+      <button type="button" onClick={add} className="btn btn-sm btn-secondary">
+        <Plus className="w-4 h-4 mr-1" /> Add State
+      </button>
+    </div>
+  );
+}
+
 function StatusBanner({ status }: { status?: AppStatus }) {
   if (!status) return null;
 
@@ -162,6 +214,9 @@ function StatusBanner({ status }: { status?: AppStatus }) {
   const lines: string[] = [];
   for (const r of status.resources.missing) {
     lines.push(`Resource: ${r.type}/${r.namespace}/${r.name}`);
+  }
+  for (const s of (status.states?.missing || [])) {
+    lines.push(`State: ${s.namespace}${s.key ? `/${s.key}` : ''}`);
   }
   for (const p of status.permissions.required.missing) {
     lines.push(`Required: ${p}`);
@@ -201,6 +256,7 @@ export function Apps() {
     required_permissions: [],
     optional_permissions: [],
     exposed_namespaces: { ...DEFAULT_EXPOSED_NAMESPACES },
+    state_dependencies: [],
   });
   const [editFormData, setEditFormData] = useState<AppUpdate>({});
 
@@ -247,6 +303,7 @@ export function Apps() {
       required_permissions: [],
       optional_permissions: [],
       exposed_namespaces: { ...DEFAULT_EXPOSED_NAMESPACES },
+      state_dependencies: [],
     });
   };
 
@@ -278,6 +335,7 @@ export function Apps() {
       required_permissions: app.required_permissions || [],
       optional_permissions: app.optional_permissions || [],
       exposed_namespaces: app.exposed_namespaces || {},
+      state_dependencies: app.state_dependencies || [],
       is_active: app.is_active,
     });
     setShowEditModal(true);
@@ -390,6 +448,11 @@ export function Apps() {
                       {(app.optional_permissions || []).length > 0 && (
                         <span className="px-2 py-1 text-xs bg-yellow-900/30 text-yellow-400 rounded">
                           {app.optional_permissions.length} optional perm{app.optional_permissions.length !== 1 ? 's' : ''}
+                        </span>
+                      )}
+                      {(app.state_dependencies || []).length > 0 && (
+                        <span className="px-2 py-1 text-xs bg-cyan-900/30 text-cyan-400 rounded">
+                          {app.state_dependencies.length} state dep{app.state_dependencies.length !== 1 ? 's' : ''}
                         </span>
                       )}
                       {Object.entries(app.exposed_namespaces || {}).map(([type, namespaces]) => (
@@ -514,6 +577,17 @@ export function Apps() {
                   />
                 </div>
 
+                <div>
+                  <label className="label">State Dependencies</label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    State namespaces (and optional keys) this app expects to exist
+                  </p>
+                  <StateDependencyEditor
+                    value={createFormData.state_dependencies || []}
+                    onChange={(v) => setCreateFormData({ ...createFormData, state_dependencies: v })}
+                  />
+                </div>
+
                 <div className="flex justify-end space-x-2 pt-4">
                   <button
                     type="button"
@@ -608,6 +682,17 @@ export function Apps() {
                     value={editFormData.optional_permissions ?? selectedApp.optional_permissions ?? []}
                     onChange={(v) => setEditFormData({ ...editFormData, optional_permissions: v })}
                     placeholder="e.g. sinas.states/preferences.read:own (one per line)"
+                  />
+                </div>
+
+                <div>
+                  <label className="label">State Dependencies</label>
+                  <p className="text-xs text-gray-500 mb-2">
+                    State namespaces (and optional keys) this app expects to exist
+                  </p>
+                  <StateDependencyEditor
+                    value={editFormData.state_dependencies ?? selectedApp.state_dependencies ?? []}
+                    onChange={(v) => setEditFormData({ ...editFormData, state_dependencies: v })}
                   />
                 </div>
 

@@ -1,7 +1,7 @@
 """Runtime API - Data Plane for execution, authentication, and runtime state."""
 from fastapi import APIRouter
 
-from app.api.runtime.endpoints import apps, authentication, chats, discovery, executions, files, functions, queries, states, templates, webhooks
+from app.api.runtime.endpoints import apps, authentication, chats, components, discovery, executions, files, functions, queries, states, templates, webhooks
 
 runtime_router = APIRouter()
 
@@ -35,6 +35,9 @@ runtime_router.include_router(templates.router, tags=["runtime-templates"])
 
 # Apps - app status validation
 runtime_router.include_router(apps.router, tags=["runtime-apps"])
+
+# Components - render and proxy
+runtime_router.include_router(components.router, tags=["runtime-components"])
 
 # Discovery - list resources visible to the current user
 runtime_router.include_router(discovery.router, tags=["runtime-discovery"])

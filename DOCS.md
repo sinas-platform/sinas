@@ -354,6 +354,8 @@ The runtime API is mounted at the root. It handles authentication, chat, executi
 /states/...            # Key-value state storage
 /files/...             # Upload, download, search files
 /templates/...         # Render and send templates
+/components/...        # Render components, proxy endpoints
+/apps/...              # App status validation
 /discovery/...         # List resources visible to the current user
 ```
 
@@ -372,20 +374,35 @@ The management API handles CRUD operations on all resources. These are typically
 /api/v1/templates/...             # Template CRUD
 /api/v1/webhooks/...              # Webhook CRUD
 /api/v1/schedules/...             # Schedule CRUD
+/api/v1/components/...            # Component CRUD + compilation + share links
 /api/v1/apps/...                  # App registration CRUD
 /api/v1/roles/...                 # Role & permission management
 /api/v1/users/...                 # User management
 /api/v1/api-keys/...              # API key management
-/api/v1/packages/...              # Package approval (admin)
+/api/v1/dependencies/...          # Python dependency approval (admin)
+/api/v1/packages/...              # Integration package management
 /api/v1/workers/...               # Worker management (admin)
 /api/v1/containers/...            # Container pool management (admin)
 /api/v1/config/...                # Declarative config apply/validate/export (admin)
+/api/v1/queue/...                 # Queue stats, job list, DLQ, cancel (admin)
 /api/v1/request-logs/...          # Request log search (admin)
 ```
 
+### OpenAI SDK Adapter (`/adapters/openai`)
+
+An OpenAI SDK-compatible API that maps to SINAS agents and LLM providers. Point any OpenAI SDK client at this endpoint to use SINAS agents.
+
+```
+POST   /adapters/openai/v1/chat/completions     # Chat completion (maps to agent or direct LLM)
+GET    /adapters/openai/v1/models               # List available models (agents + provider models)
+GET    /adapters/openai/v1/models/{model_id}    # Get model info
+```
+
+Agents are listed as models with names like `agent:namespace/name`. Provider models are listed with their provider prefix.
+
 ### Interactive API Docs
 
-Swagger UI is available at `/docs` (runtime API) and `/api/v1/docs` (management API) for exploring all endpoints and schemas interactively.
+Swagger UI is available at `/docs` (runtime API), `/api/v1/docs` (management API), and `/adapters/openai/docs` (OpenAI adapter) for exploring all endpoints and schemas interactively.
 
 ### Discovery Endpoints
 
@@ -433,6 +450,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `enabled_collections` | File collections the agent can search |
 | `state_namespaces_readonly` | State namespaces the agent can read |
 | `state_namespaces_readwrite` | State namespaces the agent can read and write |
+| `icon` | Icon reference (see [Icons](#icons)) |
 
 **Management endpoints:**
 
@@ -465,6 +483,18 @@ POST   /chats/{id}/approve-tool/{tool_call_id}       # Approve/reject a tool cal
 3. The LLM generates a response, possibly calling tools
 4. If tools are called, SINAS executes them (in parallel where possible) and sends results back to the LLM for a follow-up response
 5. The final response is streamed to the client via Server-Sent Events
+
+**Ephemeral chats** can be created with a TTL by passing `expires_in` (seconds) when creating the chat. Expired chats are automatically hard-deleted (with all messages) by a scheduled cleanup job:
+
+```bash
+# Create an ephemeral chat that expires in 1 hour
+curl -X POST http://localhost:8000/agents/default/default/chats \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expires_in": 3600}'
+```
+
+**Chat archiving** — Chats can be archived via `PUT /chats/{id}` with `{"archived": true}`. Archived chats are hidden from the default list but can be included with `?include_archived=true`.
 
 **Agent-to-agent calls** go through the Redis queue so sub-agents run in separate workers, avoiding recursive blocking. Results stream back via Redis Streams.
 
@@ -642,7 +672,31 @@ GET    /api/v1/functions/{namespace}/{name}                # Get function
 PUT    /api/v1/functions/{namespace}/{name}                # Update function
 DELETE /api/v1/functions/{namespace}/{name}                # Delete function
 GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
+POST   /api/v1/functions/import/openapi                    # Import functions from OpenAPI spec
 ```
+
+##### OpenAPI Import
+
+Import functions from an OpenAPI v3 specification. Each API operation becomes a SINAS function with generated Python code that calls the external API.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/functions/import/openapi \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec": "... OpenAPI YAML or JSON ...",
+    "namespace": "stripe",
+    "base_url": "https://api.stripe.com",
+    "auth_type": "bearer",
+    "dry_run": true
+  }'
+```
+
+- **`auth_type`**: `bearer` (Authorization header), `api_key` (X-API-Key header), or `none`
+- **`dry_run`**: Preview which functions would be created without making changes
+- Generated functions include proper HTTP method routing, parameter handling (path, query, body), and error handling
+- Input/output schemas are extracted from the OpenAPI spec
+- Function names are derived from `operationId` or method+path
 
 **Execution history:**
 
@@ -882,7 +936,10 @@ States are a persistent key-value store organized by namespace. Agents use state
 | `description` | Optional description |
 | `tags` | Tags for filtering and search |
 | `relevance_score` | Priority for context retrieval (0.0–1.0, default: 1.0) |
+| `encrypted` | If `true`, value is encrypted at rest with Fernet and decrypted on read |
 | `expires_at` | Optional expiration time |
+
+**Encrypted states:** Set `encrypted: true` when creating or updating a state to store the value encrypted. The plaintext value is stored in `encrypted_value` (Fernet-encrypted) while `value` is set to `{}`. On read, the value is transparently decrypted. This is useful for storing API keys, tokens, or other secrets.
 
 **Agent state access** is declared per agent:
 
@@ -1115,22 +1172,32 @@ GET /jobs/{job_id}/result
 # → {function output}
 ```
 
-Jobs go through states: `queued` → `running` → `completed` or `failed`. Results are stored in Redis with a 24-hour TTL.
+Jobs go through states: `queued` → `running` → `completed` or `failed`. Stale or orphaned jobs can be cancelled via the admin API:
 
-##### Package Management
+```bash
+# Cancel a running or queued job
+POST /api/v1/queue/jobs/{job_id}/cancel
+# → {"status": "cancelled", "job_id": "..."}
+```
+
+Cancellation updates the Redis status to `cancelled` and marks the DB execution record as `CANCELLED`. It also publishes to the done channel so any waiters unblock. This is a soft cancel — it does not kill running containers.
+
+Results are stored in Redis with a 24-hour TTL.
+
+##### Dependencies (Python Packages)
 
 Functions can only use Python packages that have been approved by an admin. This prevents untrusted code from installing arbitrary dependencies.
 
 **Approval flow:**
 
-1. Admin approves a package (optionally pinning a version)
+1. Admin approves a dependency (optionally pinning a version)
 2. Package becomes available in newly created containers and workers
 3. Use `POST /containers/reload` or `POST /workers/reload` to install into existing containers
 
 ```
-POST   /api/v1/packages              # Approve package (admin)
-GET    /api/v1/packages              # List approved packages
-DELETE /api/v1/packages/{id}         # Remove approval (admin)
+POST   /api/v1/dependencies              # Approve dependency (admin)
+GET    /api/v1/dependencies              # List approved dependencies
+DELETE /api/v1/dependencies/{id}         # Remove approval (admin)
 ```
 
 Optionally restrict which packages can be approved with a whitelist:
@@ -1181,6 +1248,149 @@ ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 | `ALLOW_PACKAGE_INSTALLATION` | true | Enable pip in containers |
 | `ALLOWED_PACKAGES` | _(empty)_ | Comma-separated whitelist (empty = all allowed) |
 
+#### Icons
+
+Agents and functions support configurable icons via the `icon` field. Two formats are supported:
+
+| Format | Example | Description |
+|---|---|---|
+| `url:<url>` | `url:https://example.com/icon.png` | Direct URL to an image |
+| `collection:<ns>/<coll>/<file>` | `collection:assets/icons/bot.png` | File stored in a SINAS collection |
+
+Collection-based icons generate signed JWT URLs for private files and direct URLs for public collection files. Icons are resolved at read time via the icon resolver service.
+
+#### Components
+
+Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINAS into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `title` | Display title |
+| `source_code` | JSX/HTML/JS source |
+| `compiled_bundle` | Auto-generated browser-ready JS |
+| `input_schema` | JSON Schema for component configuration |
+| `enabled_agents` | Agents the component can call |
+| `enabled_functions` | Functions the component can call |
+| `enabled_queries` | Queries the component can execute |
+| `enabled_components` | Other components it can embed |
+| `state_namespaces_readonly` / `state_namespaces_readwrite` | State access |
+| `css_overrides` | Custom CSS |
+| `visibility` | `private`, `shared`, or `public` |
+
+Components use the `sinas-ui` library (loaded from npm/unpkg) for a consistent look and feel.
+
+**Management endpoints:**
+
+```
+POST   /api/v1/components                                  # Create component
+GET    /api/v1/components                                  # List components
+GET    /api/v1/components/{namespace}/{name}               # Get component
+PUT    /api/v1/components/{namespace}/{name}               # Update component
+DELETE /api/v1/components/{namespace}/{name}               # Delete component
+POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
+```
+
+**Share links** allow embedding components outside SINAS with optional expiration and view limits:
+
+```
+POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
+GET    /api/v1/components/{namespace}/{name}/shares        # List share links
+DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
+```
+
+**Runtime rendering:**
+
+```
+GET    /components/{namespace}/{name}/render               # Render as full HTML page
+GET    /components/shared/{token}                          # Render via share token
+```
+
+**Proxy endpoints** allow components to call backend resources from the browser securely — the proxy enforces the component's `enabled_*` permissions:
+
+```
+POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
+POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
+POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
+```
+
+#### Integration Packages
+
+Integration packages bundle agents, functions, skills, components, templates, and other resources into a shareable YAML file that can be installed with one click.
+
+**How packages work:**
+
+1. **Create**: Select resources from your SINAS instance → export as `SinasPackage` YAML
+2. **Share**: Distribute the YAML file (GitHub, email, package registry)
+3. **Install**: Paste/upload the YAML → preview changes → confirm install
+4. **Uninstall**: Removes all resources created by the package in one operation
+
+**Package YAML format:**
+
+```yaml
+apiVersion: sinas.co/v1
+kind: SinasPackage
+package:
+  name: crm-integration
+  version: "1.0.0"
+  description: "CRM support agents and functions"
+  author: "team@company.com"
+  url: "https://github.com/company/sinas-crm"
+spec:
+  agents: [...]
+  functions: [...]
+  skills: [...]
+  components: [...]
+  templates: [...]
+  queries: [...]
+  collections: [...]
+  webhooks: [...]
+  schedules: [...]
+  apps: [...]
+```
+
+**Key behaviors:**
+
+- Resources created by packages are tagged with `managed_by: "pkg:<name>"`
+- **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
+- **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
+- **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
+
+**Endpoints:**
+
+```
+POST   /api/v1/packages/install       # Install package from YAML
+POST   /api/v1/packages/preview       # Preview install (dry run)
+POST   /api/v1/packages/create        # Create package YAML from selected resources
+GET    /api/v1/packages               # List installed packages
+GET    /api/v1/packages/{name}        # Get package details
+DELETE /api/v1/packages/{name}        # Uninstall package
+GET    /api/v1/packages/{name}/export # Export original YAML
+```
+
+**Creating a package from existing resources:**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/packages/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-package",
+    "version": "1.0.0",
+    "description": "My integration package",
+    "resources": [
+      {"type": "agent", "namespace": "support", "name": "ticket-bot"},
+      {"type": "function", "namespace": "support", "name": "lookup-customer"},
+      {"type": "template", "namespace": "support", "name": "ticket-reply"},
+      {"type": "schedule", "namespace": "default", "name": "daily-digest"}
+    ]
+  }'
+```
+
+Supported resource types: `agent`, `function`, `skill`, `app`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
+
 #### Config Manager
 
 The config manager supports GitOps-style declarative configuration. Define all your resources in a YAML file and apply it idempotently.
@@ -1194,14 +1404,16 @@ metadata:
   name: my-config
   description: Production configuration
 spec:
-  groups:              # Roles and permissions
+  roles:               # Roles and permissions
   users:               # User provisioning
   llmProviders:        # LLM provider connections
   databaseConnections: # External database credentials
   skills:              # Instruction documents
+  components:          # UI components
   functions:           # Python functions
   queries:             # Saved SQL templates
   collections:         # File storage collections
+  templates:           # Jinja2 templates
   apps:                # App registrations
   agents:              # AI agent configurations
   webhooks:            # HTTP triggers for functions

@@ -16,6 +16,7 @@ class CollectionCreate(BaseModel):
     post_upload_function: Optional[str] = Field(None, pattern=r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$")
     max_file_size_mb: int = Field(default=100, ge=1, le=1000)
     max_total_size_gb: int = Field(default=10, ge=1, le=1000)
+    is_public: bool = False
     allow_shared_files: bool = True
     allow_private_files: bool = True
 
@@ -28,6 +29,7 @@ class CollectionUpdate(BaseModel):
     post_upload_function: Optional[str] = Field(None, pattern=r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$")
     max_file_size_mb: Optional[int] = Field(None, ge=1, le=1000)
     max_total_size_gb: Optional[int] = Field(None, ge=1, le=1000)
+    is_public: Optional[bool] = None
     allow_shared_files: Optional[bool] = None
     allow_private_files: Optional[bool] = None
 
@@ -44,6 +46,7 @@ class CollectionResponse(BaseModel):
     post_upload_function: Optional[str]
     max_file_size_mb: int
     max_total_size_gb: int
+    is_public: bool
     allow_shared_files: bool
     allow_private_files: bool
     created_at: datetime
@@ -61,6 +64,7 @@ class FileUpload(BaseModel):
     content_type: str = Field(..., min_length=1, max_length=255)
     visibility: str = Field(default="private", pattern=r"^(private|shared)$")
     file_metadata: dict[str, Any] = Field(default_factory=dict)
+    update_existing: bool = Field(default=False, description="If true, update existing file as new version instead of auto-renaming")
 
 
 class FileResponse(BaseModel):

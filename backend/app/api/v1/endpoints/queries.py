@@ -18,6 +18,7 @@ from app.schemas.query import (
     QueryUpdate,
 )
 from app.services.database_pool import DatabasePoolManager
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/queries", tags=["queries"])
 
@@ -145,6 +146,8 @@ async def update_query(
     )
 
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.update")
+
+    detach_if_package_managed(query)
 
     # Check for namespace/name conflicts
     new_namespace = query_data.namespace or query.namespace

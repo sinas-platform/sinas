@@ -9,6 +9,7 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Template
+from app.services.package_service import detach_if_package_managed
 from app.schemas.template import (
     TemplateCreate,
     TemplateRenderRequest,
@@ -170,6 +171,8 @@ async def update_template(
         raise HTTPException(status_code=403, detail="Not authorized to update this template")
 
     set_permission_used(req, f"sinas.templates/{template.namespace}/{template.name}.update")
+
+    detach_if_package_managed(template)
 
     # Check for namespace/name conflict if renaming
     new_namespace = template_data.namespace or template.namespace

@@ -92,6 +92,18 @@ services:
     deploy:
       replicas: 0  # Don't actually run this service
 
+  builder:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.builder
+    container_name: sinas-builder
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -142,12 +154,15 @@ services:
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      BUILDER_URL: http://sinas-builder:3000
     depends_on:
       clickhouse:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      builder:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
@@ -252,6 +267,33 @@ services:
       pgbouncer:
         condition: service_healthy
     command: python -m app.scheduler.service
+    deploy:
+      replicas: 1
+
+  cdc-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m app.cdc.service
     deploy:
       replicas: 1
 

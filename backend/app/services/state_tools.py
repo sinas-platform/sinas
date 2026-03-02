@@ -1,4 +1,5 @@
 """Context store tools for LLM to save/retrieve context."""
+import json
 import uuid as uuid_lib
 from datetime import datetime
 from typing import Any, Optional
@@ -6,7 +7,15 @@ from typing import Any, Optional
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.encryption import encryption_service
 from app.models.state import State
+
+
+def _decrypt_state_value(state: State) -> dict:
+    """Return the decrypted value for a state, handling both encrypted and plain states."""
+    if state.encrypted and state.encrypted_value:
+        return json.loads(encryption_service.decrypt(state.encrypted_value))
+    return state.value
 
 
 class StateTools:
@@ -471,7 +480,7 @@ class StateTools:
                 {
                     "namespace": ctx.namespace,
                     "key": ctx.key,
-                    "value": ctx.value,
+                    "value": _decrypt_state_value(ctx),
                     "description": ctx.description,
                     "tags": ctx.tags,
                     "visibility": ctx.visibility,
@@ -509,7 +518,11 @@ class StateTools:
 
         # Update fields
         if "value" in args:
-            context.value = args["value"]
+            if context.encrypted:
+                context.encrypted_value = encryption_service.encrypt(json.dumps(args["value"]))
+                context.value = {}
+            else:
+                context.value = args["value"]
         if "description" in args:
             context.description = args["description"]
         if "tags" in args:
@@ -521,7 +534,7 @@ class StateTools:
         return {
             "success": True,
             "message": f"Updated context: {args['namespace']}/{args['key']}",
-            "value": context.value,
+            "value": _decrypt_state_value(context),
         }
 
     @staticmethod

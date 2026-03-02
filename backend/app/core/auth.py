@@ -627,6 +627,8 @@ async def get_current_user_with_permissions(
     return user_id, permissions
 
 
+
+
 def set_permission_used(request: Request, permission: str, has_perm: bool = True):
     """
     Store permission decision in request state for compliance logging.

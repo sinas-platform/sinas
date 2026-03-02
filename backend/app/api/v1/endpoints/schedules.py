@@ -12,6 +12,7 @@ from app.core.permissions import check_permission
 from app.core.redis import get_redis
 from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
@@ -185,6 +186,8 @@ async def update_schedule(
             set_permission_used(request, "sinas.schedules.update:own", has_perm=False)
             raise HTTPException(status_code=403, detail="Not authorized to update this schedule")
         set_permission_used(request, "sinas.schedules.update:own")
+
+    detach_if_package_managed(schedule)
 
     # Update fields
     if schedule_data.name is not None:

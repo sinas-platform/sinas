@@ -20,6 +20,7 @@ export function Collections() {
     post_upload_function: '',
     max_file_size_mb: 100,
     max_total_size_gb: 10,
+    is_public: false,
     allow_shared_files: true,
     allow_private_files: true,
     metadata_schema: {},
@@ -74,6 +75,7 @@ export function Collections() {
       post_upload_function: '',
       max_file_size_mb: 100,
       max_total_size_gb: 10,
+      is_public: false,
       allow_shared_files: true,
       allow_private_files: true,
       metadata_schema: {},
@@ -115,6 +117,7 @@ export function Collections() {
       post_upload_function: collection.post_upload_function,
       max_file_size_mb: collection.max_file_size_mb,
       max_total_size_gb: collection.max_total_size_gb,
+      is_public: collection.is_public,
       allow_shared_files: collection.allow_shared_files,
       allow_private_files: collection.allow_private_files,
       metadata_schema: collection.metadata_schema,
@@ -175,6 +178,7 @@ export function Collections() {
                       Max file size: {collection.max_file_size_mb} MB | Max total size: {collection.max_total_size_gb} GB
                     </p>
                     <p>
+                      {collection.is_public && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-900/30 text-green-300 mr-2">Public</span>}
                       {collection.allow_shared_files ? 'Shared files allowed' : 'Shared files not allowed'}
                       {' | '}
                       {collection.allow_private_files ? 'Private files allowed' : 'Private files not allowed'}
@@ -316,7 +320,15 @@ export function Collections() {
                 </div>
               </div>
 
-              <div className="flex space-x-6">
+              <div className="flex space-x-6 flex-wrap gap-y-2">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={createFormData.is_public}
+                    onChange={(e) => setCreateFormData({ ...createFormData, is_public: e.target.checked })}
+                  />
+                  <span>Public</span>
+                </label>
                 <label className="flex items-center space-x-2">
                   <input
                     type="checkbox"
@@ -449,7 +461,15 @@ export function Collections() {
                 </div>
               </div>
 
-              <div className="flex space-x-6">
+              <div className="flex space-x-6 flex-wrap gap-y-2">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={editFormData.is_public ?? selectedCollection.is_public}
+                    onChange={(e) => setEditFormData({ ...editFormData, is_public: e.target.checked })}
+                  />
+                  <span>Public</span>
+                </label>
                 <label className="flex items-center space-x-2">
                   <input
                     type="checkbox"

@@ -14,20 +14,20 @@ class ConfigMetadata(BaseModel):
     labels: Optional[dict[str, str]] = Field(default_factory=dict)
 
 
-class GroupPermissionConfig(BaseModel):
-    """Group permission configuration"""
+class RolePermissionConfig(BaseModel):
+    """Role permission configuration"""
 
     key: str
     value: bool
 
 
-class GroupConfig(BaseModel):
-    """Group configuration"""
+class RoleConfig(BaseModel):
+    """Role configuration"""
 
     name: str
     description: Optional[str] = None
     emailDomain: Optional[str] = None
-    permissions: list[GroupPermissionConfig] = Field(default_factory=list)
+    permissions: list[RolePermissionConfig] = Field(default_factory=list)
 
 
 class UserPermissionConfig(BaseModel):
@@ -42,7 +42,7 @@ class UserConfig(BaseModel):
 
     email: str
     isActive: bool = True
-    groups: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
     permissions: list[UserPermissionConfig] = Field(default_factory=list)
 
 
@@ -80,7 +80,6 @@ class QueryConfig(BaseModel):
     connectionName: str  # Ref to DatabaseConnection by name
     operation: str  # "read" or "write"
     sql: str
-    groupName: str
     inputSchema: Optional[dict[str, Any]] = None
     outputSchema: Optional[dict[str, Any]] = None
     timeoutMs: int = 5000
@@ -92,13 +91,13 @@ class FunctionConfig(BaseModel):
 
     name: str
     description: Optional[str] = None
-    groupName: str
     code: str
     inputSchema: Optional[dict[str, Any]] = None
     outputSchema: Optional[dict[str, Any]] = None
     requirements: list[str] = Field(default_factory=list)
     enabledNamespaces: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+    icon: Optional[str] = None
 
 
 class SkillConfig(BaseModel):
@@ -108,6 +107,25 @@ class SkillConfig(BaseModel):
     name: str
     description: str  # What this skill helps with (shown to LLM)
     content: str  # Markdown instructions (retrieved on demand)
+
+
+class ComponentConfig(BaseModel):
+    """Component configuration"""
+
+    namespace: str = "default"
+    name: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    sourceCode: str
+    inputSchema: Optional[dict[str, Any]] = None
+    enabledAgents: list[str] = Field(default_factory=list)
+    enabledFunctions: list[str] = Field(default_factory=list)
+    enabledQueries: list[str] = Field(default_factory=list)
+    enabledComponents: list[str] = Field(default_factory=list)
+    stateNamespacesReadonly: list[str] = Field(default_factory=list)
+    stateNamespacesReadwrite: list[str] = Field(default_factory=list)
+    cssOverrides: Optional[str] = None
+    visibility: str = "private"
 
 
 class EnabledSkillConfigYaml(BaseModel):
@@ -125,7 +143,6 @@ class AgentConfig(BaseModel):
     namespace: str = "default"
     name: str
     description: Optional[str] = None
-    groupName: str
     llmProviderName: Optional[str] = None  # NULL = use default provider
     model: Optional[str] = None  # NULL = use provider's default model
     temperature: float = 0.7
@@ -146,6 +163,8 @@ class AgentConfig(BaseModel):
         default_factory=dict
     )  # {"namespace/name": {"param": "value or {{template}}"}}
     enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
+    enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
+    icon: Optional[str] = None
     isDefault: bool = False
 
 
@@ -157,7 +176,6 @@ class WebhookConfig(BaseModel):
     httpMethod: str = "POST"
     description: Optional[str] = None
     requiresAuth: bool = True
-    groupName: str
     defaultValues: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -172,7 +190,6 @@ class ScheduleConfig(BaseModel):
     description: Optional[str] = None
     cronExpression: str
     timezone: str = "UTC"
-    groupName: str
     inputData: dict[str, Any] = Field(default_factory=dict)
     isActive: bool = True
 
@@ -213,46 +230,109 @@ class CollectionConfig(BaseModel):
 
     namespace: str = "default"
     name: str
-    groupName: str
     metadataSchema: Optional[dict[str, Any]] = None
     contentFilterFunction: Optional[str] = None  # "namespace/name" format
     postUploadFunction: Optional[str] = None  # "namespace/name" format
     maxFileSizeMb: int = 100
     maxTotalSizeGb: int = 10
+    isPublic: bool = False
     allowSharedFiles: bool = True
     allowPrivateFiles: bool = True
+
+
+class TemplateConfig(BaseModel):
+    """Template configuration"""
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    title: Optional[str] = None
+    htmlContent: str
+    textContent: Optional[str] = None
+    variableSchema: Optional[dict[str, Any]] = None
+
+
+class DatabaseTriggerConfig(BaseModel):
+    """Database trigger (CDC) configuration"""
+
+    name: str
+    connectionName: str  # Reference DatabaseConnection by name
+    schemaName: str = "public"
+    tableName: str
+    operations: list[str] = Field(default=["INSERT", "UPDATE"])
+    functionName: str  # "namespace/name" format
+    pollColumn: str
+    pollIntervalSeconds: int = 10
+    batchSize: int = 100
+    isActive: bool = True
+
+    @validator("operations")
+    def validate_operations(cls, v):
+        valid = {"INSERT", "UPDATE"}
+        invalid = set(v) - valid
+        if invalid:
+            raise ValueError(f"Invalid operations: {invalid}. Must be subset of {valid}")
+        return v
 
 
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
-    groups: list[GroupConfig] = Field(default_factory=list)
+    roles: list[RoleConfig] = Field(default_factory=list)
     users: list[UserConfig] = Field(default_factory=list)
     llmProviders: list[LLMProviderConfig] = Field(default_factory=list)
     databaseConnections: list[DatabaseConnectionConfig] = Field(default_factory=list)
 
     skills: list[SkillConfig] = Field(default_factory=list)
+    components: list[ComponentConfig] = Field(default_factory=list)
     functions: list[FunctionConfig] = Field(default_factory=list)
     queries: list[QueryConfig] = Field(default_factory=list)
     collections: list[CollectionConfig] = Field(default_factory=list)
+    templates: list[TemplateConfig] = Field(default_factory=list)
     apps: list[AppConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)
     schedules: list[ScheduleConfig] = Field(default_factory=list)
+    databaseTriggers: list[DatabaseTriggerConfig] = Field(default_factory=list)
+
+
+class PackageMetadataConfig(BaseModel):
+    """Package metadata for SinasPackage kind"""
+
+    name: str
+    version: str = "1.0.0"
+    description: Optional[str] = None
+    author: Optional[str] = None
+    url: Optional[str] = None
 
 
 class SinasConfig(BaseModel):
     """Root configuration schema"""
 
     apiVersion: str = Field(..., pattern=r"^sinas\.co/v\d+$")
-    kind: str = Field(..., pattern=r"^SinasConfig$")
-    metadata: ConfigMetadata
+    kind: str = Field(..., pattern=r"^(SinasConfig|SinasPackage)$")
+    metadata: Optional[ConfigMetadata] = None
+    package: Optional[PackageMetadataConfig] = None
     spec: ConfigSpec
 
     @validator("apiVersion")
     def validate_api_version(cls, v):
         if v != "sinas.co/v1":
             raise ValueError("Only apiVersion 'sinas.co/v1' is currently supported")
+        return v
+
+    @validator("metadata", always=True)
+    def validate_metadata(cls, v, values):
+        kind = values.get("kind")
+        if kind == "SinasConfig" and v is None:
+            raise ValueError("'metadata' is required for SinasConfig kind")
+        return v
+
+    @validator("package", always=True)
+    def validate_package(cls, v, values):
+        kind = values.get("kind")
+        if kind == "SinasPackage" and v is None:
+            raise ValueError("'package' is required for SinasPackage kind")
         return v
 
 

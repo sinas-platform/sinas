@@ -16,8 +16,17 @@ from app.schemas.agent import (
     AgentResponse,
     AgentUpdate,
 )
+from app.services.icon_resolver import resolve_icon_url
+from app.services.package_service import detach_if_package_managed
 
 router = APIRouter()
+
+
+async def _agent_response(agent: Agent, db: AsyncSession) -> AgentResponse:
+    """Build AgentResponse with resolved icon_url."""
+    resp = AgentResponse.model_validate(agent)
+    resp.icon_url = await resolve_icon_url(agent.icon, db)
+    return resp
 
 
 # Agent endpoints
@@ -79,6 +88,7 @@ async def create_agent(
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
         enabled_collections=agent_data.enabled_collections or [],
+        icon=agent_data.icon,
         is_active=True,
         is_default=agent_data.is_default or False,
     )
@@ -87,9 +97,7 @@ async def create_agent(
     await db.commit()
     await db.refresh(agent)
 
-    response = AgentResponse.model_validate(agent)
-
-    return response
+    return await _agent_response(agent, db)
 
 
 @router.get("", response_model=list[AgentResponse])
@@ -112,7 +120,7 @@ async def list_agents(
 
     set_permission_used(req, "sinas.agents.read")
 
-    return [AgentResponse.model_validate(agent) for agent in agents]
+    return [await _agent_response(agent, db) for agent in agents]
 
 
 @router.get("/{namespace}/{name}", response_model=AgentResponse)
@@ -138,7 +146,7 @@ async def get_agent(
 
     set_permission_used(req, f"sinas.agents/{namespace}/{name}.read")
 
-    return AgentResponse.model_validate(agent)
+    return await _agent_response(agent, db)
 
 
 @router.put("/{namespace}/{name}", response_model=AgentResponse)
@@ -173,6 +181,8 @@ async def update_agent(
     # Additional ownership check for non-admin users
     if not has_all_permission and agent.user_id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to update this agent")
+
+    detach_if_package_managed(agent)
 
     # Update fields
     if agent_data.namespace is not None:
@@ -215,6 +225,8 @@ async def update_agent(
         agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
     if agent_data.enabled_collections is not None:
         agent.enabled_collections = agent_data.enabled_collections
+    if agent_data.icon is not None:
+        agent.icon = agent_data.icon
     if agent_data.is_active is not None:
         agent.is_active = agent_data.is_active
     if agent_data.is_default is not None:
@@ -226,9 +238,7 @@ async def update_agent(
     await db.commit()
     await db.refresh(agent)
 
-    response = AgentResponse.model_validate(agent)
-
-    return response
+    return await _agent_response(agent, db)
 
 
 @router.delete("/{namespace}/{name}", status_code=status.HTTP_204_NO_CONTENT)
