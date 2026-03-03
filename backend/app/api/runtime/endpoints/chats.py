@@ -33,7 +33,7 @@ from app.schemas.chat import (
     ToolApprovalRequest,
     ToolApprovalResponse,
 )
-from app.services.message_service import MessageService
+from app.services.message_service import MessageService, refresh_message_tokens
 from app.services.queue_service import queue_service
 from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
@@ -599,6 +599,13 @@ async def get_chat(
     # Calculate last message timestamp
     last_message_at = messages[-1].created_at if messages else None
 
+    # Refresh expired tokens (image URLs + component render tokens) in message content
+    message_responses = []
+    for msg in messages:
+        resp = MessageResponse.model_validate(msg)
+        resp.content = refresh_message_tokens(resp.content, user_id)
+        message_responses.append(resp)
+
     return ChatWithMessages(
         id=chat.id,
         user_id=chat.user_id,
@@ -612,7 +619,7 @@ async def get_chat(
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
-        messages=[MessageResponse.model_validate(msg) for msg in messages],
+        messages=message_responses,
     )
 
 

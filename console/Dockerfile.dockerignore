@@ -1,0 +1,16 @@
+# Only include what the Dockerfile needs
+*
+
+# SDK and UI packages (dist only)
+!sinas-js/package.json
+!sinas-js/dist
+!sinas-ui/package.json
+!sinas-ui/dist
+
+# Console source
+!SINAS/console
+
+# Exclude console artifacts
+SINAS/console/node_modules
+SINAS/console/dist
+SINAS/console/.git
