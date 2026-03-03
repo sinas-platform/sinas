@@ -299,8 +299,7 @@ services:
 
   console:
     build:
-      context: ..
-      dockerfile: SINAS/console/Dockerfile
+      context: ./console
     container_name: sinas-console
     restart: unless-stopped
     ports:
