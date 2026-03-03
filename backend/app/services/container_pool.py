@@ -641,7 +641,7 @@ sys.exit(1)
         return {"action": "no_change", "current": current}
 
     async def reload_packages(self, db: AsyncSession) -> dict[str, Any]:
-        """Reinstall all approved packages in every idle container."""
+        """Reinstall all approved packages in every idle container and restart them."""
         if not self.idle:
             return {"status": "no_idle_containers", "message": "No idle containers to reload"}
 
@@ -655,6 +655,8 @@ sys.exit(1)
                     self.client.containers.get, pc.name
                 )
                 await self._install_packages(container, db)
+                # Restart container so the executor process reloads modules
+                await asyncio.to_thread(container.restart, timeout=10)
                 success += 1
             except Exception as e:
                 failed += 1

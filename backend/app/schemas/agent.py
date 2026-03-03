@@ -38,6 +38,9 @@ class AgentCreate(BaseModel):
     function_parameters: Optional[
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
+    status_templates: Optional[
+        dict[str, str]
+    ] = None  # {"function:web/search": "Searching for {{query}}...", "agent:support/helper": "Asking support..."}
 
     enabled_queries: Optional[list[str]] = None  # List of "namespace/name" query references
     query_parameters: Optional[
@@ -77,6 +80,9 @@ class AgentUpdate(BaseModel):
     function_parameters: Optional[
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
+    status_templates: Optional[
+        dict[str, str]
+    ] = None  # {"function:web/search": "Searching for {{query}}...", "agent:support/helper": "Asking support..."}
 
     enabled_queries: Optional[list[str]] = None  # List of "namespace/name" query references
     query_parameters: Optional[
@@ -110,6 +116,7 @@ class AgentResponse(BaseModel):
     enabled_agents: list[str] = []
     enabled_skills: list[EnabledSkillConfig] = []
     function_parameters: dict[str, Any] = {}
+    status_templates: dict[str, str] = {}
     enabled_queries: list[str] = []
     query_parameters: dict[str, Any] = {}
     state_namespaces_readonly: list[str] = []

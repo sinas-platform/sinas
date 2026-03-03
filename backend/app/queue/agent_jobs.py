@@ -175,6 +175,20 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
 
             message_service = MessageService(db)
 
+            # Load agent status_templates for tool status events
+            status_templates = {}
+            chat_result = await db.execute(
+                select(Chat).where(Chat.id == chat_id)
+            )
+            chat_obj = chat_result.scalar_one_or_none()
+            if chat_obj and chat_obj.agent_id:
+                agent_result = await db.execute(
+                    select(Agent).where(Agent.id == chat_obj.agent_id)
+                )
+                agent_obj = agent_result.scalar_one_or_none()
+                if agent_obj:
+                    status_templates = agent_obj.status_templates or {}
+
             if approved:
                 # Execute the approved tool calls and stream the LLM response
                 async for chunk in message_service._handle_tool_calls(
@@ -188,6 +202,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     temperature=pending_approval.conversation_context.get("temperature", 0.7),
                     max_tokens=pending_approval.conversation_context.get("max_tokens"),
                     tools=pending_approval.conversation_context.get("tools", []),
+                    status_templates=status_templates,
                 ):
                     if isinstance(chunk, dict):
                         await stream_relay.publish(channel_id, chunk)

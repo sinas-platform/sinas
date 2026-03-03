@@ -216,6 +216,9 @@ class ConfigExportService:
                 "functionParameters": agent.function_parameters
                 if agent.function_parameters
                 else None,
+                "statusTemplates": agent.status_templates
+                if agent.status_templates
+                else None,
                 "enabledAgents": agent.enabled_agents if agent.enabled_agents else None,
                 "stateNamespacesReadonly": agent.state_namespaces_readonly
                 if agent.state_namespaces_readonly

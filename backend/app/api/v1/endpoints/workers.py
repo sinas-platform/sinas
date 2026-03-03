@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
+from app.services.container_pool import container_pool
 from app.services.shared_worker_manager import shared_worker_manager
 
 router = APIRouter(prefix="/workers", tags=["workers"])
@@ -140,7 +141,11 @@ async def reload_worker_packages(
 
     set_permission_used(request, permission)
 
-    # Reload packages
-    result = await shared_worker_manager.reload_packages(db)
+    # Reload packages in both shared workers and pool containers
+    worker_result = await shared_worker_manager.reload_packages(db)
+    pool_result = await container_pool.reload_packages(db)
 
-    return result
+    return {
+        "workers": worker_result,
+        "pool": pool_result,
+    }
