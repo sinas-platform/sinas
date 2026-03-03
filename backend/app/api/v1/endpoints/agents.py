@@ -88,6 +88,7 @@ async def create_agent(
         state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
         state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
         enabled_collections=agent_data.enabled_collections or [],
+        enabled_components=agent_data.enabled_components or [],
         icon=agent_data.icon,
         is_active=True,
         is_default=agent_data.is_default or False,
@@ -225,6 +226,8 @@ async def update_agent(
         agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
     if agent_data.enabled_collections is not None:
         agent.enabled_collections = agent_data.enabled_collections
+    if agent_data.enabled_components is not None:
+        agent.enabled_components = agent_data.enabled_components
     if agent_data.icon is not None:
         agent.icon = agent_data.icon
     if agent_data.is_active is not None:

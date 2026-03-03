@@ -204,6 +204,7 @@ export interface Agent {
   state_namespaces_readonly: string[] | null;
   state_namespaces_readwrite: string[] | null;
   enabled_collections: string[];
+  enabled_components: string[];
   icon: string | null;
   icon_url: string | null;
   is_active: boolean;
@@ -258,6 +259,7 @@ export interface AgentUpdate {
   state_namespaces_readonly?: string[];
   state_namespaces_readwrite?: string[];
   enabled_collections?: string[];
+  enabled_components?: string[];
   icon?: string;
   is_active?: boolean;
   is_default?: boolean;

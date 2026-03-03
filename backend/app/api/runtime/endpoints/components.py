@@ -77,7 +77,57 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{component.title or component.name}</title>
 <style>
-  #root {{ min-height: 100vh; padding: 16px; }}
+  body {{
+    min-height: 100vh;
+    background:
+      radial-gradient(ellipse at bottom right, rgba(249,115,22,0.35) 0%, transparent 55%),
+      radial-gradient(ellipse at top left, rgba(168,34,50,0.30) 0%, transparent 55%),
+      #0a0a0a;
+    background-attachment: fixed;
+    overflow-x: hidden;
+  }}
+
+  /* Subtle animated shimmer */
+  body::before, body::after {{
+    content: '';
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(80px);
+    pointer-events: none;
+    z-index: 0;
+    animation: sinas-drift 8s ease-in-out infinite alternate;
+  }}
+  body::before {{
+    width: 500px; height: 500px;
+    bottom: -120px; right: -120px;
+    background: radial-gradient(circle, rgba(249,115,22,0.25), rgba(234,88,12,0.10), transparent);
+  }}
+  body::after {{
+    width: 400px; height: 400px;
+    top: -100px; left: -100px;
+    background: radial-gradient(circle, rgba(168,34,50,0.22), rgba(127,29,29,0.08), transparent);
+    animation-delay: -4s;
+    animation-direction: alternate-reverse;
+  }}
+
+  @keyframes sinas-drift {{
+    0%   {{ transform: translate(0, 0) scale(1); opacity: 0.7; }}
+    100% {{ transform: translate(20px, -15px) scale(1.08); opacity: 1; }}
+  }}
+
+  #root {{
+    position: relative;
+    z-index: 1;
+    min-height: 100vh;
+    padding: 24px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+  }}
+  #sinas-card {{
+    width: 100%;
+    max-width: 960px;
+  }}
   {css_overrides}
 </style>
 </head>
@@ -93,6 +143,11 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
 <script crossorigin src="https://unpkg.com/@sinas/ui@0.2.0/dist/sinas-ui.umd.js"></script>
 
 <script>
+  // Inject SINAS UI base styles (CSS variables, fonts, dark theme)
+  if (window.SinasUI && window.SinasUI.injectBaseStyles) {{
+    window.SinasUI.injectBaseStyles();
+  }}
+
   // SINAS runtime config
   window.__SINAS_CONFIG__ = {config_json};
   window.__SINAS_AUTH_TOKEN__ = null;
@@ -142,15 +197,29 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
     booted = true;
     var root = ReactDOM.createRoot(document.getElementById('root'));
     var input = window.__SINAS_CONFIG__.input || {{}};
-    root.render(React.createElement(Component, input));
+    var Card = window.SinasUI && window.SinasUI.Card;
+    var content = React.createElement(Component, input);
+    if (Card) {{
+      content = React.createElement('div', {{ id: 'sinas-card' }},
+        React.createElement(Card, null, content)
+      );
+    }}
+    root.render(content);
   }}
 
-  // If embedded in iframe, wait for auth; otherwise bootstrap immediately
+  // If embedded in iframe, wait for auth; otherwise check URL hash for auth token
   if (window.parent !== window) {{
     window.addEventListener('sinas:authenticated', bootstrap, {{ once: true }});
     // Fallback: bootstrap after 3s even without auth (for public components)
     setTimeout(bootstrap, 3000);
   }} else {{
+    // Opened directly (e.g. "Open" link) — read auth token from URL hash
+    var hash = window.location.hash;
+    if (hash && hash.indexOf('#auth=') === 0) {{
+      window.__SINAS_AUTH_TOKEN__ = decodeURIComponent(hash.substring(6));
+      // Clean the token from the URL bar
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }}
     bootstrap();
   }}
 }})();

@@ -85,6 +85,70 @@ def _refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[
     return refreshed
 
 
+def _refresh_component_render_tokens(
+    content_parts: list[dict[str, Any]], user_id: str
+) -> list[dict[str, Any]]:
+    """Refresh expired component render tokens in multimodal content.
+
+    Detects component parts with a render_token, decodes the (possibly expired)
+    JWT to extract namespace + name, and regenerates a fresh signed token.
+    """
+    from jose import jwt as jose_jwt
+    from app.core.config import settings
+    from app.api.runtime.endpoints.components import generate_component_render_token
+
+    refreshed: list[dict[str, Any]] = []
+    for part in content_parts:
+        if part.get("type") != "component" or not part.get("render_token"):
+            refreshed.append(part)
+            continue
+
+        token = part["render_token"]
+        try:
+            payload = jose_jwt.decode(
+                token,
+                settings.secret_key,
+                algorithms=[settings.algorithm],
+                options={"verify_exp": False},
+            )
+            namespace = payload.get("namespace")
+            name = payload.get("name")
+            if not namespace or not name:
+                raise ValueError("Missing namespace or name in token")
+
+            new_token = generate_component_render_token(namespace, name, user_id)
+            refreshed.append({**part, "render_token": new_token})
+        except Exception:
+            logger.debug(
+                "Failed to refresh component render token", exc_info=True
+            )
+            refreshed.append(part)
+
+    return refreshed
+
+
+def refresh_message_tokens(content: str | None, user_id: str) -> str | None:
+    """Refresh expired tokens (image URLs + component render tokens) in message content."""
+    if not content:
+        return content
+
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return content
+
+    if isinstance(parsed, list):
+        parsed = _refresh_sinas_image_urls(parsed)
+        parsed = _refresh_component_render_tokens(parsed, user_id)
+        return json.dumps(parsed)
+
+    if isinstance(parsed, dict) and parsed.get("type") == "component" and parsed.get("render_token"):
+        refreshed = _refresh_component_render_tokens([parsed], user_id)
+        return json.dumps(refreshed[0])
+
+    return content
+
+
 class MessageService:
     """Service for processing chat messages with LLM and tool calling."""
 

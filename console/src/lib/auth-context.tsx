@@ -1,6 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { apiClient } from './api';
+import { apiClient, API_BASE_URL } from './api';
 import type { User } from '../types';
+import type { SinasConfig } from '@sinas/sdk';
+
+declare global {
+  interface Window {
+    __SINAS_AUTH_TOKEN__?: string | null;
+    __SINAS_CONFIG__?: SinasConfig;
+  }
+}
 
 interface AuthContextType {
   user: User | null;
@@ -87,6 +95,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => clearRefreshTimer();
   }, []);
 
+  // Sync auth token to window global for @sinas/sdk
+  useEffect(() => {
+    window.__SINAS_AUTH_TOKEN__ = token;
+  }, [token]);
+
+  // Set SINAS config for @sinas/sdk (once)
+  useEffect(() => {
+    if (!window.__SINAS_CONFIG__) {
+      window.__SINAS_CONFIG__ = {
+        apiBase: API_BASE_URL,
+        component: { namespace: '', name: '', version: '' },
+        resources: {
+          enabledAgents: [],
+          enabledFunctions: [],
+          enabledQueries: [],
+          enabledComponents: [],
+          stateNamespacesReadonly: [],
+          stateNamespacesReadwrite: [],
+        },
+        input: {},
+      };
+    }
+  }, []);
+
   const login = async (email: string): Promise<string> => {
     const response = await apiClient.login({ email });
     return response.session_id;
@@ -123,6 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Clear local state
     setToken(null);
     setUser(null);
+    window.__SINAS_AUTH_TOKEN__ = null;
     localStorage.removeItem('auth_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
