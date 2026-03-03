@@ -3,12 +3,12 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json package-lock.json* ./
+# Copy package.json only (lockfile has file: paths that get rewritten)
+COPY package.json ./
 
 # Replace local file: deps with npm versions for Docker build
-RUN sed -i 's|"file:../../sinas-js"|"*"|g' package.json && \
-    sed -i 's|"file:../../sinas-ui"|"*"|g' package.json
+RUN sed -i 's|"file:../../sinas-js"|"latest"|g' package.json && \
+    sed -i 's|"file:../../sinas-ui"|"latest"|g' package.json
 
 # Install dependencies
 RUN npm install
