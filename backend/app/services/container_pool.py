@@ -479,7 +479,7 @@ sys.exit(1)
                 f"{', '.join(packages_to_install)}"
             )
 
-            install_cmd = ["pip", "install", "--no-cache-dir"] + packages_to_install
+            install_cmd = ["pip", "install", "--no-cache-dir", "--upgrade"] + packages_to_install
 
             exec_result = await asyncio.to_thread(
                 container.exec_run,
