@@ -371,7 +371,8 @@ class SharedWorkerManager:
     async def reload_packages(self, db: AsyncSession) -> dict[str, Any]:
         """
         Reload packages in all shared workers.
-        Reinstalls all approved packages in each worker.
+        Reinstalls all approved packages and restarts each container
+        so the executor process picks up the new modules.
         """
         async with self._lock:
             if not self.workers:
@@ -386,6 +387,8 @@ class SharedWorkerManager:
                 try:
                     container = self.client.containers.get(container_name)
                     await self._install_packages(container, db)
+                    # Restart container so the executor process reloads modules
+                    await asyncio.to_thread(container.restart, timeout=10)
                     success_count += 1
                     print(f"✅ Reloaded packages in worker: {container_name}")
                 except Exception as e:

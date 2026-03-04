@@ -136,13 +136,15 @@ class ComponentToolConverter:
             component.namespace, component.name, user_id
         )
 
-        # Return component reference block
+        # Return component reference block (rendered client-side in iframe)
+        display_name = component.title or f"{component.namespace}/{component.name}"
         return {
             "type": "component",
             "namespace": component.namespace,
             "name": component.name,
-            "title": component.title or component.name,
+            "title": display_name,
             "input": arguments,
             "compile_status": component.compile_status,
             "render_token": render_token,
+            "display": f"[USER WILL SEE COMPONENT '{display_name}' HERE]",
         }

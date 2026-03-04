@@ -1151,6 +1151,9 @@ class ConfigApplyService:
                         "function_parameters": agent_config.functionParameters
                         if agent_config.functionParameters
                         else {},
+                        "status_templates": agent_config.statusTemplates
+                        if agent_config.statusTemplates
+                        else {},
                         "enabled_agents": sorted(agent_config.enabledAgents)
                         if agent_config.enabledAgents
                         else [],
@@ -1210,6 +1213,7 @@ class ConfigApplyService:
                         existing.system_prompt = agent_config.systemPrompt
                         existing.enabled_functions = normalized_functions
                         existing.function_parameters = agent_config.functionParameters
+                        existing.status_templates = agent_config.statusTemplates
                         existing.enabled_agents = agent_config.enabledAgents
                         existing.enabled_skills = normalized_skills
                         existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
@@ -1257,6 +1261,7 @@ class ConfigApplyService:
                             system_prompt=agent_config.systemPrompt,
                             enabled_functions=normalized_functions,
                             function_parameters=agent_config.functionParameters,
+                            status_templates=agent_config.statusTemplates,
                             enabled_agents=agent_config.enabledAgents,
                             enabled_skills=normalized_skills,
                             state_namespaces_readonly=agent_config.stateNamespacesReadonly,

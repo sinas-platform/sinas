@@ -454,6 +454,7 @@ class MessageService:
             "final_temperature": final_temperature,
             "final_max_tokens": final_max_tokens,
             "response_format": response_format,
+            "status_templates": agent.status_templates if agent else {},
         }
 
     async def send_message(
@@ -602,6 +603,7 @@ class MessageService:
             user_id=user_id,
             user_token=user_token,
             provider_name=prep["provider_name"],
+            status_templates=prep["status_templates"],
         ):
             yield chunk
 
@@ -646,6 +648,7 @@ class MessageService:
         user_id: str,
         user_token: str,
         provider_name: Optional[str],
+        status_templates: dict[str, str] = {},
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Stream LLM response.
@@ -795,6 +798,7 @@ class MessageService:
                 temperature=final_temperature,
                 max_tokens=max_tokens,
                 tools=tools,
+                status_templates=status_templates,
             ):
                 yield chunk
 
@@ -1687,6 +1691,80 @@ class MessageService:
 
         return (tool_call["id"], tool_name, result_content)
 
+    def _safe_parse_arguments(self, arguments: Any) -> dict:
+        """Safely parse tool call arguments to a dict."""
+        if isinstance(arguments, dict):
+            return arguments
+        if isinstance(arguments, str) and arguments.strip():
+            try:
+                return json.loads(arguments)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return {}
+
+    def _tool_name_to_status_key(self, tool_name: str) -> str:
+        """Convert LLM tool name to status_templates lookup key.
+
+        LLM tool names -> prefixed keys:
+          "default__search_web"                -> "function:default/search_web"
+          "call_agent_support__helper"         -> "agent:support/helper"
+          "query_analytics__daily_report"      -> "query:analytics/daily_report"
+          "search_collection_docs__manuals"    -> "collection:docs/manuals"
+          "get_file_docs__manuals"             -> "collection:docs/manuals"
+          "get_skill_default__tone"            -> "skill:default/tone"
+          "show_component_ui__chart"           -> "component:ui/chart"
+          "save_context"                       -> "state:save_context"
+        """
+        if tool_name.startswith("call_agent_"):
+            return "agent:" + tool_name[len("call_agent_"):].replace("__", "/", 1)
+        if tool_name.startswith("get_skill_"):
+            return "skill:" + tool_name[len("get_skill_"):].replace("__", "/", 1)
+        if tool_name.startswith("query_"):
+            return "query:" + tool_name[len("query_"):].replace("__", "/", 1)
+        if tool_name.startswith("search_collection_"):
+            return "collection:" + tool_name[len("search_collection_"):].replace("__", "/", 1)
+        if tool_name.startswith("get_file_"):
+            return "collection:" + tool_name[len("get_file_"):].replace("__", "/", 1)
+        if tool_name.startswith("show_component_"):
+            return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
+        if tool_name in ("save_context", "retrieve_context", "update_context", "delete_context"):
+            return f"state:{tool_name}"
+        # Default: function
+        return "function:" + tool_name.replace("__", "/", 1)
+
+    def _build_tool_status(self, tool_name: str, arguments: dict, status_templates: dict[str, str]) -> str:
+        """Build human-readable status for a tool call.
+
+        Looks up status_templates by type-prefixed key (e.g. "function:web/search").
+        Falls back to humanized tool name.
+        """
+        key = self._tool_name_to_status_key(tool_name)
+        template = status_templates.get(key)
+        if template:
+            try:
+                return render_template(template, arguments)
+            except Exception:
+                pass
+
+        # Fallback: humanize by tool type
+        if key.startswith("agent:"):
+            return f"Calling {key[6:]}"
+        if key.startswith("skill:"):
+            return f"Loading skill {key[6:]}"
+        if key.startswith("query:"):
+            ref = key[6:]
+            return f"Running query {ref.split('/')[-1].replace('_', ' ')}"
+        if key.startswith("collection:"):
+            return "Searching files"
+        if key.startswith("component:"):
+            return f"Rendering {key[10:]}"
+        if key.startswith("state:"):
+            verb = tool_name.split("_")[0].capitalize()
+            return f"{verb} state"
+        # function:ns/name
+        ref = key[9:]  # strip "function:"
+        return f"Running {ref.split('/')[-1].replace('_', ' ')}"
+
     async def _handle_tool_calls(
         self,
         chat_id: str,
@@ -1700,6 +1778,7 @@ class MessageService:
         max_tokens: Optional[int],
         tools: list[dict[str, Any]],
         permissions: Optional[dict[str, bool]] = None,
+        status_templates: dict[str, str] = {},
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute tool calls, stream LLM follow-up response, and save final message."""
         # Get permissions if not provided
@@ -1755,13 +1834,28 @@ class MessageService:
 
         # Execute parallel tools concurrently
         if parallel_calls:
+            # Emit tool_start for all parallel tools before execution
+            for tc in parallel_calls:
+                args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                yield {
+                    "type": "tool_start",
+                    "tool_call_id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"].get("arguments", "{}"),
+                    "description": self._build_tool_status(tc["function"]["name"], args, status_templates),
+                }
+
             parallel_tasks = [
                 self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
                 for tc in parallel_calls
             ]
             parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+
+            # Emit tool_end for all parallel tools
             for i, res in enumerate(parallel_results):
                 tc = parallel_calls[i]
+                result_content = json.dumps({"error": str(res)}) if isinstance(res, Exception) else res[2]
+                yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": result_content}
                 if isinstance(res, Exception):
                     logger.error(f"Parallel tool execution failed: {res}")
                     tool_results[tc["id"]] = (
@@ -1774,7 +1868,16 @@ class MessageService:
 
         # Execute sequential tools one by one
         for tc in sequential_calls:
+            args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+            yield {
+                "type": "tool_start",
+                "tool_call_id": tc["id"],
+                "name": tc["function"]["name"],
+                "arguments": tc["function"].get("arguments", "{}"),
+                "description": self._build_tool_status(tc["function"]["name"], args, status_templates),
+            }
             res = await self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
+            yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": res[2]}
             tool_results[tc["id"]] = res
 
         # Save all tool result messages in original order
@@ -1926,6 +2029,7 @@ class MessageService:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 tools=tools,
+                status_templates=status_templates,
             ):
                 yield result_chunk
             return

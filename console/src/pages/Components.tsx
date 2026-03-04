@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Layers, Plus, Trash2, ExternalLink, RefreshCw } from 'lucide-react';
+import { Layers, Plus, Trash2, ExternalLink, RefreshCw, Edit } from 'lucide-react';
 import { apiClient, getComponentRenderUrl } from '../lib/api';
 import type { ComponentCreate } from '../types';
 
@@ -138,6 +138,13 @@ export function Components() {
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
                 <span className="text-xs text-gray-500">v{comp.version}</span>
                 <div className="flex items-center gap-2">
+                  <Link
+                    to={`/components/${comp.namespace}/${comp.name}`}
+                    className="p-1 text-gray-500 hover:text-primary-400 transition-colors"
+                    title="Edit"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </Link>
                   {comp.compile_status !== 'compiling' && (
                     <button
                       onClick={() => compileMutation.mutate({ namespace: comp.namespace, name: comp.name })}

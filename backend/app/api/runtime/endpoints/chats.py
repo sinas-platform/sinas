@@ -297,7 +297,12 @@ async def stream_message(
                 try:
                     if not isinstance(chunk, dict):
                         chunk = {"content": str(chunk)}
-                    yield {"event": "message", "data": json.dumps(chunk)}
+                    # Route special event types to their own SSE event names
+                    chunk_type = chunk.get("type")
+                    if chunk_type in ("approval_required", "tool_start", "tool_end"):
+                        yield {"event": chunk_type, "data": json.dumps(chunk)}
+                    else:
+                        yield {"event": "message", "data": json.dumps(chunk)}
                 except (ConnectionResetError, BrokenPipeError, asyncio.CancelledError):
                     if accumulated_content["content"]:
                         try:
@@ -406,6 +411,8 @@ async def reconnect_stream(
                         "data": json.dumps({"error": event.get("error", "An error occurred")}),
                     }
                     return
+                elif event_type in ("approval_required", "tool_start", "tool_end"):
+                    yield {"event": event_type, "data": json.dumps(event)}
                 else:
                     yield {"event": "message", "data": json.dumps(event)}
         except asyncio.CancelledError:

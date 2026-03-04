@@ -152,6 +152,9 @@ class AgentConfig(BaseModel):
     functionParameters: dict[str, Any] = Field(
         default_factory=dict
     )  # {"namespace/name": {"param": "value or {{template}}"}}
+    statusTemplates: dict[str, str] = Field(
+        default_factory=dict
+    )  # {"function:web/search": "Searching for {{query}}...", "agent:support/helper": "Asking support..."}
     enabledAgents: list[str] = Field(default_factory=list)  # Other agents this agent can call
     enabledSkills: list[Union[str, EnabledSkillConfigYaml]] = Field(
         default_factory=list

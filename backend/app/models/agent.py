@@ -70,6 +70,9 @@ class Agent(Base, PermissionMixin):
     function_parameters: Mapped[dict[str, Any]] = mapped_column(
         JSON, nullable=False, default=dict, server_default="{}"
     )  # {"namespace/name": {"param": "value or {{template}}"}}
+    status_templates: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )  # {"function:web/search": "Searching for {{query}}...", "agent:support/helper": "Asking support..."}
 
     # Query access
     enabled_queries: Mapped[list[str]] = mapped_column(

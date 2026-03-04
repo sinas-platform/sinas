@@ -293,6 +293,14 @@ export function ComponentEditor() {
                 className="w-full bg-transparent text-sm text-white focus:outline-none"
               />
             </div>
+            <div className="flex-1">
+              <input
+                value={description}
+                onChange={(e) => { setDescription(e.target.value); setDirty(true); }}
+                placeholder="Description"
+                className="w-full bg-transparent text-sm text-gray-400 focus:outline-none"
+              />
+            </div>
             <select
               value={visibility}
               onChange={(e) => { setVisibility(e.target.value); setDirty(true); }}
