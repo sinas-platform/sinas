@@ -5,11 +5,78 @@ import { useState, useEffect, useCallback } from 'react';
 import type { App, AppCreate, AppUpdate, AppStatus, AppResourceRef, AppStateDependency } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 
-const RESOURCE_TYPES = ['agents', 'functions', 'skills', 'templates', 'collections', 'states'];
+const RESOURCE_TYPES = ['agents', 'functions', 'skills', 'templates', 'collections', 'components', 'states'];
 
 const DEFAULT_EXPOSED_NAMESPACES: Record<string, string[]> = Object.fromEntries(
   RESOURCE_TYPES.map((t) => [t, ['*']])
 );
+
+function TagInput({
+  tags,
+  onChange,
+  placeholder,
+}: {
+  tags: string[];
+  onChange: (tags: string[]) => void;
+  placeholder?: string;
+}) {
+  const [input, setInput] = useState('');
+
+  const addTag = (raw: string) => {
+    const tag = raw.trim();
+    if (tag && !tags.includes(tag)) {
+      onChange([...tags, tag]);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(input);
+      setInput('');
+    } else if (e.key === 'Backspace' && !input && tags.length > 0) {
+      onChange(tags.slice(0, -1));
+    }
+  };
+
+  const handleBlur = () => {
+    if (input.trim()) {
+      addTag(input);
+      setInput('');
+    }
+  };
+
+  return (
+    <div className="input flex flex-wrap items-center gap-1.5 min-h-[2.25rem] py-1 px-2 cursor-text"
+      onClick={(e) => (e.currentTarget.querySelector('input') as HTMLInputElement)?.focus()}
+    >
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded bg-primary-900/40 text-primary-300 border border-primary-800/50"
+        >
+          {tag}
+          <button
+            type="button"
+            onClick={() => onChange(tags.filter((t) => t !== tag))}
+            className="hover:text-red-400"
+          >
+            &times;
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        className="flex-1 min-w-[80px] bg-transparent outline-none text-sm text-gray-200 placeholder-gray-500"
+        placeholder={tags.length === 0 ? placeholder : ''}
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+      />
+    </div>
+  );
+}
 
 function ExposedNamespacesEditor({
   value,
@@ -23,25 +90,21 @@ function ExposedNamespacesEditor({
       {RESOURCE_TYPES.map((type) => (
         <div key={type} className="flex items-center space-x-3">
           <label className="w-28 text-sm font-medium text-gray-300 capitalize">{type}</label>
-          <input
-            type="text"
-            className="input flex-1"
-            placeholder="* = all, or comma-separated: default, shared"
-            value={(value[type] || []).join(', ')}
-            onChange={(e) => {
-              const namespaces = e.target.value
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean);
-              const next = { ...value };
-              if (namespaces.length > 0) {
-                next[type] = namespaces;
-              } else {
-                delete next[type];
-              }
-              onChange(next);
-            }}
-          />
+          <div className="flex-1">
+            <TagInput
+              tags={value[type] || []}
+              onChange={(tags) => {
+                const next = { ...value };
+                if (tags.length > 0) {
+                  next[type] = tags;
+                } else {
+                  delete next[type];
+                }
+                onChange(next);
+              }}
+              placeholder="* = all, or type namespaces (comma/enter to add)"
+            />
+          </div>
         </div>
       ))}
     </div>

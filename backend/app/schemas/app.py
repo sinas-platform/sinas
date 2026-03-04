@@ -36,7 +36,7 @@ class AppCreate(BaseModel):
     @field_validator("exposed_namespaces")
     @classmethod
     def validate_exposed_namespace_keys(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
-        allowed = {"agents", "functions", "skills", "templates", "collections", "states"}
+        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "states"}
         invalid = set(v.keys()) - allowed
         if invalid:
             raise ValueError(f"Invalid exposed_namespaces keys: {invalid}. Allowed: {allowed}")
@@ -63,7 +63,7 @@ class AppUpdate(BaseModel):
     def validate_exposed_namespace_keys(cls, v: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
         if v is None:
             return v
-        allowed = {"agents", "functions", "skills", "templates", "collections", "states"}
+        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "states"}
         invalid = set(v.keys()) - allowed
         if invalid:
             raise ValueError(f"Invalid exposed_namespaces keys: {invalid}. Allowed: {allowed}")
