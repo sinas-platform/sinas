@@ -127,6 +127,45 @@ def _refresh_component_render_tokens(
     return refreshed
 
 
+def strip_base64_data(content: str | None) -> str | None:
+    """Strip inline base64 data from message content to reduce payload size.
+
+    Replaces base64 data URIs with a placeholder while keeping URLs intact.
+    """
+    if not content:
+        return content
+
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return content
+
+    if not isinstance(parsed, list):
+        return content
+
+    stripped = []
+    for part in parsed:
+        if not isinstance(part, dict):
+            stripped.append(part)
+            continue
+
+        p = dict(part)
+        # Image: strip data URIs (data:image/...) but keep regular URLs
+        if p.get("type") == "image" and isinstance(p.get("image"), str):
+            if p["image"].startswith("data:"):
+                p["image"] = "data:stripped"
+        # Audio: always inline base64
+        if p.get("type") == "audio" and p.get("data"):
+            p["data"] = "stripped"
+        # File: strip inline base64 file data
+        if p.get("type") == "file" and p.get("file_data"):
+            p["file_data"] = "stripped"
+
+        stripped.append(p)
+
+    return json.dumps(stripped)
+
+
 def refresh_message_tokens(content: str | None, user_id: str) -> str | None:
     """Refresh expired tokens (image URLs + component render tokens) in message content."""
     if not content:
@@ -376,8 +415,8 @@ class MessageService:
                 if not final_model:
                     final_model = provider_config.default_model
 
-        # Save user message
-        user_message = Message(chat_id=chat_id, role="user", content=content)
+        # Save user message (strip inline base64 before persisting — URLs are kept)
+        user_message = Message(chat_id=chat_id, role="user", content=strip_base64_data(content))
         self.db.add(user_message)
         await self.db.commit()
         await self.db.refresh(user_message)
@@ -387,7 +426,8 @@ class MessageService:
         if final_template_variables is None and chat.chat_metadata:
             final_template_variables = chat.chat_metadata.get("agent_input")
 
-        # Build conversation history (with content conversion)
+        # Build conversation history (with content conversion).
+        # Pass original (unstripped) content so the LLM sees full data for the current turn.
         messages = await self._build_conversation_history(
             chat=chat,
             inject_context=inject_context,
@@ -396,6 +436,7 @@ class MessageService:
             context_limit=context_limit,
             template_variables=final_template_variables,
             provider_type=provider_type,
+            current_user_content=content,
         )
 
         # Get available tools
@@ -913,6 +954,7 @@ class MessageService:
         context_limit: int = 5,
         template_variables: Optional[dict[str, Any]] = None,
         provider_type: Optional[str] = None,
+        current_user_content: Optional[str] = None,
     ) -> list[dict[str, Any]]:
         """
         Build conversation history for LLM with optional context injection.
@@ -1049,11 +1091,17 @@ class MessageService:
         else:
             chat_messages = all_messages
 
-        for msg in chat_messages:
+        for idx, msg in enumerate(chat_messages):
             message_dict = {"role": msg.role}
 
-            # Convert content to provider-specific format if needed
-            content = msg.content
+            # For the last user message, use original unstripped content so the
+            # LLM sees full base64 data for the current turn (DB has the stripped version).
+            is_last_user = (
+                current_user_content is not None
+                and idx == len(chat_messages) - 1
+                and msg.role == "user"
+            )
+            content = current_user_content if is_last_user else msg.content
             if content and provider_type:
                 # Try to parse JSON content (might be multimodal)
                 try:

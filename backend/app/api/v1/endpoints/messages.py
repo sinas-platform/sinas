@@ -9,6 +9,7 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Chat, Message, User
+from app.services.message_service import strip_base64_data
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
@@ -114,7 +115,7 @@ async def list_messages(
                 "id": str(msg.id),
                 "chat_id": str(msg.chat_id),
                 "role": msg.role,
-                "content": msg.content,
+                "content": strip_base64_data(msg.content),
                 "tool_calls": msg.tool_calls,
                 "tool_call_id": msg.tool_call_id,
                 "created_at": msg.created_at.isoformat(),
