@@ -67,7 +67,7 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'status'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
@@ -101,6 +101,7 @@ export function AgentDetail() {
         state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
         enabled_collections: agent.enabled_collections || [],
         enabled_components: agent.enabled_components || [],
+        status_templates: agent.status_templates || {},
         icon: agent.icon || undefined,
       });
     }
@@ -670,6 +671,22 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               }`}
             >
               Components
+            </button>
+            <div className="mx-1 w-px bg-white/[0.06] self-stretch" />
+            <button
+              type="button"
+              onClick={() => setToolsTab('status')}
+              className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                toolsTab === 'status'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+              title="Status templates shown during tool execution"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
+              </svg>
+              Status
             </button>
           </div>
 
@@ -1298,6 +1315,79 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 )}
               </div>
             )}
+
+            {toolsTab === 'status' && (() => {
+              const templates = formData.status_templates || {};
+              const enabledTools: { key: string; label: string; type: string }[] = [];
+
+              // Functions
+              (formData.enabled_functions || agent.enabled_functions || []).forEach((ref: string) => {
+                enabledTools.push({ key: `function:${ref}`, label: ref, type: 'Function' });
+              });
+              // Agents
+              (formData.enabled_agents || agent.enabled_agents || []).forEach((ref: string) => {
+                enabledTools.push({ key: `agent:${ref}`, label: ref, type: 'Agent' });
+              });
+              // Skills (non-preloaded only — preloaded don't produce tool calls)
+              (formData.enabled_skills || agent.enabled_skills || []).forEach((entry: any) => {
+                const ref = typeof entry === 'string' ? entry : entry.skill;
+                const preload = typeof entry === 'object' && entry.preload;
+                if (!preload) {
+                  enabledTools.push({ key: `skill:${ref}`, label: ref, type: 'Skill' });
+                }
+              });
+              // Queries
+              (formData.enabled_queries || agent.enabled_queries || []).forEach((ref: string) => {
+                enabledTools.push({ key: `query:${ref}`, label: ref, type: 'Query' });
+              });
+              // Collections
+              (formData.enabled_collections || agent.enabled_collections || []).forEach((ref: string) => {
+                enabledTools.push({ key: `collection:${ref}`, label: ref, type: 'Collection' });
+              });
+              // Components
+              (formData.enabled_components || agent.enabled_components || []).forEach((ref: string) => {
+                enabledTools.push({ key: `component:${ref}`, label: ref, type: 'Component' });
+              });
+
+              return (
+                <div>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Status templates shown in the chat UI while a tool is running. Use Jinja2 syntax to reference arguments, e.g. <code className="text-xs bg-[#161616] px-1 rounded">{'Searching for {{query}}...'}</code>
+                  </p>
+                  {enabledTools.length > 0 ? (
+                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-80 overflow-y-auto">
+                      {enabledTools.map(({ key, label, type }) => (
+                        <div key={key} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded">
+                          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/[0.04] text-gray-500 border border-white/[0.06]">
+                            {type}
+                          </span>
+                          <span className="shrink-0 text-sm font-mono text-gray-300 min-w-[140px]">{label}</span>
+                          <input
+                            type="text"
+                            value={templates[key] || ''}
+                            onChange={(e) => {
+                              const updated = { ...templates };
+                              if (e.target.value) {
+                                updated[key] = e.target.value;
+                              } else {
+                                delete updated[key];
+                              }
+                              setFormData({ ...formData, status_templates: updated });
+                            }}
+                            placeholder="e.g. Searching for {{query}}..."
+                            className="flex-1 bg-transparent text-sm text-gray-200 border border-white/[0.06] rounded px-2.5 py-1.5 placeholder-gray-600 focus:outline-none focus:border-primary-600/50"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                      <p className="text-sm text-gray-500">No tools enabled. Enable functions, agents, or other tools first.</p>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         </div>
 
