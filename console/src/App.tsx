@@ -19,7 +19,6 @@ import { WebhookEditor } from './pages/WebhookEditor';
 import { Schedules } from './pages/Schedules';
 import { ScheduleEditor } from './pages/ScheduleEditor';
 import { RequestLogs } from './pages/RequestLogs';
-import { States } from './pages/States';
 import { LLMProviders } from './pages/LLMProviders';
 import { ConfigManager } from './pages/ConfigManager';
 import { Permissions } from './pages/Permissions';
@@ -40,6 +39,7 @@ import { Packages } from './pages/Packages';
 import { Queries } from './pages/Queries';
 import { QueryDetail } from './pages/QueryDetail';
 import { DatabaseTriggers } from './pages/DatabaseTriggers';
+import { Stores } from './pages/Stores';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -139,7 +139,7 @@ function App() {
               <Route path="packages" element={<Packages />} />
               <Route path="apps" element={<Apps />} />
               <Route path="config" element={<ConfigManager />} />
-              <Route path="states" element={<States />} />
+              <Route path="stores" element={<Stores />} />
               <Route path="logs" element={<RequestLogs />} />
               <Route path="system" element={<System />} />
               <Route path="users" element={<Users />} />

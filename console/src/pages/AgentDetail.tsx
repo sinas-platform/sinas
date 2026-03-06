@@ -30,9 +30,9 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const { data: states } = useQuery({
-    queryKey: ['states'],
-    queryFn: () => apiClient.listStates(),
+  const { data: stores } = useQuery({
+    queryKey: ['stores'],
+    queryFn: () => apiClient.listStores(),
     retry: false,
   });
 
@@ -97,8 +97,7 @@ export function AgentDetail() {
         function_parameters: agent.function_parameters || {},
         enabled_queries: agent.enabled_queries || [],
         query_parameters: agent.query_parameters || {},
-        state_namespaces_readonly: agent.state_namespaces_readonly || [],
-        state_namespaces_readwrite: agent.state_namespaces_readwrite || [],
+        enabled_stores: agent.enabled_stores || [],
         enabled_collections: agent.enabled_collections || [],
         enabled_components: agent.enabled_components || [],
         status_templates: agent.status_templates || {},
@@ -1090,87 +1089,59 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               </div>
             )}
 
-            {/* States Tab */}
+            {/* Stores Tab */}
             {toolsTab === 'states' && (
               <div className="space-y-4">
-                {/* Read-only Namespaces */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-100 mb-2">Read-only State Namespaces</h3>
+                  <h3 className="text-sm font-semibold text-gray-100 mb-2">Stores</h3>
                   <p className="text-xs text-gray-500 mb-3">
-                    This agent can retrieve states from these namespaces (read-only)
+                    Configure which stores this agent can access and the access level for each.
                   </p>
-                  {states && states.length > 0 ? (
-                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
-                      {Array.from(new Set(states.map((c: any) => c.namespace))).map((namespace: string) => (
-                        <label
-                          key={namespace}
-                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(formData.state_namespaces_readonly || agent.state_namespaces_readonly || []).includes(namespace)}
-                            onChange={(e) => {
-                              const current = formData.state_namespaces_readonly || agent.state_namespaces_readonly || [];
-                              const updated = e.target.checked
-                                ? [...current, namespace]
-                                : current.filter((ns: string) => ns !== namespace);
-                              setFormData({ ...formData, state_namespaces_readonly: updated });
-                            }}
-                            className="mt-1 w-4 h-4 text-blue-600 border-white/10 rounded focus:ring-blue-500"
-                          />
-                          <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-100 font-mono">{namespace}</span>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              {states.filter((c: any) => c.namespace === namespace).length} state(s)
-                            </p>
+                  {stores && stores.length > 0 ? (
+                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-80 overflow-y-auto">
+                      {stores.map((store: any) => {
+                        const storeRef = `${store.namespace}/${store.name}`;
+                        const currentStores = formData.enabled_stores || agent.enabled_stores || [];
+                        const existing = currentStores.find((s: any) => s.store === storeRef);
+                        const accessMode = existing?.access || 'none';
+                        return (
+                          <div
+                            key={storeRef}
+                            className="flex items-center justify-between p-2 hover:bg-white/5 rounded"
+                          >
+                            <div className="flex-1">
+                              <span className="text-sm font-medium text-gray-100 font-mono">{storeRef}</span>
+                              {store.description && (
+                                <p className="text-xs text-gray-500 mt-0.5">{store.description}</p>
+                              )}
+                              <div className="flex gap-1.5 mt-1">
+                                {store.strict && <span className="text-[10px] px-1.5 py-0.5 bg-yellow-900/30 text-yellow-300 rounded">strict</span>}
+                                {store.encrypted && <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/30 text-purple-300 rounded">encrypted</span>}
+                              </div>
+                            </div>
+                            <select
+                              value={accessMode}
+                              onChange={(e) => {
+                                const newAccess = e.target.value as 'readonly' | 'readwrite';
+                                let updated = currentStores.filter((s: any) => s.store !== storeRef);
+                                if (e.target.value !== 'none') {
+                                  updated = [...updated, { store: storeRef, access: newAccess }];
+                                }
+                                setFormData({ ...formData, enabled_stores: updated });
+                              }}
+                              className="input text-xs w-32"
+                            >
+                              <option value="none">None</option>
+                              <option value="readonly">Read-only</option>
+                              <option value="readwrite">Read-write</option>
+                            </select>
                           </div>
-                        </label>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
-                      <p className="text-sm text-gray-500">No states available. Create states first.</p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Read-write Namespaces */}
-                <div>
-                  <h3 className="text-sm font-semibold text-gray-100 mb-2">Read-write State Namespaces</h3>
-                  <p className="text-xs text-gray-500 mb-3">
-                    This agent can save, update, and delete states in these namespaces (full access)
-                  </p>
-                  {states && states.length > 0 ? (
-                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
-                      {Array.from(new Set(states.map((c: any) => c.namespace))).map((namespace: string) => (
-                        <label
-                          key={namespace}
-                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={(formData.state_namespaces_readwrite || agent.state_namespaces_readwrite || []).includes(namespace)}
-                            onChange={(e) => {
-                              const current = formData.state_namespaces_readwrite || agent.state_namespaces_readwrite || [];
-                              const updated = e.target.checked
-                                ? [...current, namespace]
-                                : current.filter((ns: string) => ns !== namespace);
-                              setFormData({ ...formData, state_namespaces_readwrite: updated });
-                            }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
-                          />
-                          <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-100 font-mono">{namespace}</span>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              {states.filter((c: any) => c.namespace === namespace).length} state(s)
-                            </p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
-                      <p className="text-sm text-gray-500">No states available. Create states first.</p>
+                      <p className="text-sm text-gray-500">No stores available. Create stores first.</p>
                     </div>
                   )}
                 </div>

@@ -60,8 +60,7 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
             "enabledFunctions": component.enabled_functions,
             "enabledQueries": component.enabled_queries,
             "enabledComponents": component.enabled_components,
-            "stateNamespacesReadonly": component.state_namespaces_readonly,
-            "stateNamespacesReadwrite": component.state_namespaces_readwrite,
+            "enabledStores": component.enabled_stores,
         },
         "input": input_vars,
     }
@@ -523,18 +522,19 @@ async def proxy_state(
     user_id, permissions = current_user_data
     component = await _get_component_or_404(db, ns, name)
 
-    readonly_ns = component.state_namespaces_readonly or []
-    readwrite_ns = component.state_namespaces_readwrite or []
-    all_ns = readonly_ns + readwrite_ns
+    enabled_stores = component.enabled_stores or []
+    # Build lookup: find matching store entries by namespace prefix
+    matching_stores = [s for s in enabled_stores if s.get("store", "").startswith(state_ns + "/") or s.get("store") == state_ns]
 
-    if state_ns not in all_ns:
+    if not matching_stores:
         raise HTTPException(
             status_code=403,
             detail=f"State namespace '{state_ns}' is not enabled for this component",
         )
 
     # Write operations require readwrite access
-    if body.action in ("set", "delete") and state_ns not in readwrite_ns:
+    readwrite_stores = [s for s in matching_stores if s.get("access") == "readwrite"]
+    if body.action in ("set", "delete") and not readwrite_stores:
         raise HTTPException(
             status_code=403,
             detail=f"State namespace '{state_ns}' is read-only for this component",

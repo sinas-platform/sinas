@@ -4,6 +4,8 @@ import base64
 import logging
 import re
 import uuid as uuid_lib
+from datetime import timezone
+from email.utils import format_datetime, parsedate_to_datetime
 from typing import Optional
 
 import jsonschema
@@ -52,9 +54,20 @@ def _unique_filename(name: str) -> str:
     return f"{name}_{suffix}"
 
 
+def _parse_etags(header: str) -> set[str]:
+    """Parse an If-None-Match header into a set of ETag values (unquoted)."""
+    etags: set[str] = set()
+    for part in header.split(","):
+        tag = part.strip().strip('"')
+        if tag:
+            etags.add(tag)
+    return etags
+
+
 @router.get("/serve/{token}")
 async def serve_file(
     token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -94,6 +107,33 @@ async def serve_file(
     if not file_version:
         raise HTTPException(status_code=404, detail="File version not found")
 
+    # Build caching headers
+    etag = f'"{file_version.hash_sha256}"'
+    last_modified_dt = file_version.created_at.replace(tzinfo=timezone.utc)
+    last_modified = format_datetime(last_modified_dt, usegmt=True)
+    cache_headers = {
+        "Cache-Control": "private, max-age=300, immutable",
+        "ETag": etag,
+        "Last-Modified": last_modified,
+    }
+
+    # Conditional request: If-None-Match
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match:
+        client_etags = _parse_etags(if_none_match)
+        if file_version.hash_sha256 in client_etags:
+            return Response(status_code=304, headers=cache_headers)
+
+    # Conditional request: If-Modified-Since
+    if_modified_since = request.headers.get("if-modified-since")
+    if if_modified_since and not if_none_match:
+        try:
+            ims_dt = parsedate_to_datetime(if_modified_since)
+            if last_modified_dt <= ims_dt:
+                return Response(status_code=304, headers=cache_headers)
+        except (ValueError, TypeError):
+            pass
+
     # Read content
     storage: FileStorage = get_storage()
     try:
@@ -104,7 +144,10 @@ async def serve_file(
     return Response(
         content=content,
         media_type=file_record.content_type,
-        headers={"Content-Disposition": f'inline; filename="{file_record.name}"'},
+        headers={
+            "Content-Disposition": f'inline; filename="{file_record.name}"',
+            **cache_headers,
+        },
     )
 
 

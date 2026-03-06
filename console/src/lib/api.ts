@@ -481,6 +481,51 @@ class APIClient {
     await this.runtimeClient.delete(`/states/${stateId}`);
   }
 
+  // Store management (admin CRUD)
+  async listStores(params?: { namespace?: string }): Promise<any[]> {
+    const response = await this.configClient.get('/stores', { params });
+    return response.data;
+  }
+
+  async getStore(namespace: string, name: string): Promise<any> {
+    const response = await this.configClient.get(`/stores/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createStore(data: any): Promise<any> {
+    const response = await this.configClient.post('/stores', data);
+    return response.data;
+  }
+
+  async updateStore(namespace: string, name: string, data: any): Promise<any> {
+    const response = await this.configClient.put(`/stores/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteStore(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/stores/${namespace}/${name}`);
+  }
+
+  // Store-based state operations (runtime)
+  async listStoreStates(namespace: string, name: string, params?: any): Promise<any[]> {
+    const response = await this.runtimeClient.get(`/stores/${namespace}/${name}/states`, { params });
+    return response.data;
+  }
+
+  async createStoreState(namespace: string, name: string, data: any): Promise<any> {
+    const response = await this.runtimeClient.post(`/stores/${namespace}/${name}/states`, data);
+    return response.data;
+  }
+
+  async updateStoreState(namespace: string, name: string, key: string, data: any): Promise<any> {
+    const response = await this.runtimeClient.put(`/stores/${namespace}/${name}/states/${key}`, data);
+    return response.data;
+  }
+
+  async deleteStoreState(namespace: string, name: string, key: string): Promise<void> {
+    await this.runtimeClient.delete(`/stores/${namespace}/${name}/states/${key}`);
+  }
+
   // Functions
   async listFunctions(): Promise<Function[]> {
     const response = await this.configClient.get('/functions');

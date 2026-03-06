@@ -14,11 +14,11 @@ class ResourceRef(BaseModel):
     name: str = Field(..., description="Resource name")
 
 
-class StateDependency(BaseModel):
-    """Expected state namespace (and optional key) that an app depends on."""
+class StoreDependency(BaseModel):
+    """Expected store (and optional key) that an app depends on."""
 
-    namespace: str = Field(..., description="State namespace")
-    key: Optional[str] = Field(None, description="Optional specific key within namespace")
+    store: str = Field(..., description="Store reference in format 'namespace/name'")
+    key: Optional[str] = Field(None, description="Optional specific key within store")
 
 
 class AppCreate(BaseModel):
@@ -31,12 +31,12 @@ class AppCreate(BaseModel):
     required_permissions: list[str] = Field(default_factory=list)
     optional_permissions: list[str] = Field(default_factory=list)
     exposed_namespaces: dict[str, list[str]] = Field(default_factory=dict)
-    state_dependencies: list[StateDependency] = Field(default_factory=list)
+    store_dependencies: list[StoreDependency] = Field(default_factory=list)
 
     @field_validator("exposed_namespaces")
     @classmethod
     def validate_exposed_namespace_keys(cls, v: dict[str, list[str]]) -> dict[str, list[str]]:
-        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "states"}
+        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "stores"}
         invalid = set(v.keys()) - allowed
         if invalid:
             raise ValueError(f"Invalid exposed_namespaces keys: {invalid}. Allowed: {allowed}")
@@ -55,7 +55,7 @@ class AppUpdate(BaseModel):
     required_permissions: Optional[list[str]] = None
     optional_permissions: Optional[list[str]] = None
     exposed_namespaces: Optional[dict[str, list[str]]] = None
-    state_dependencies: Optional[list[StateDependency]] = None
+    store_dependencies: Optional[list[StoreDependency]] = None
     is_active: Optional[bool] = None
 
     @field_validator("exposed_namespaces")
@@ -63,7 +63,7 @@ class AppUpdate(BaseModel):
     def validate_exposed_namespace_keys(cls, v: dict[str, list[str]] | None) -> dict[str, list[str]] | None:
         if v is None:
             return v
-        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "states"}
+        allowed = {"agents", "functions", "skills", "templates", "collections", "components", "stores"}
         invalid = set(v.keys()) - allowed
         if invalid:
             raise ValueError(f"Invalid exposed_namespaces keys: {invalid}. Allowed: {allowed}")
@@ -80,7 +80,7 @@ class AppResponse(BaseModel):
     required_permissions: list[str]
     optional_permissions: list[str]
     exposed_namespaces: dict[str, list[str]]
-    state_dependencies: list[StateDependency]
+    store_dependencies: list[StoreDependency]
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime]
@@ -105,10 +105,10 @@ class PermissionStatus(BaseModel):
     missing: list[str] = Field(default_factory=list)
 
 
-class StateDependencyStatus(BaseModel):
-    """Status of a single state dependency."""
+class StoreDependencyStatus(BaseModel):
+    """Status of a single store dependency."""
 
-    namespace: str
+    store: str
     key: Optional[str] = None
     exists: bool
 
@@ -123,6 +123,6 @@ class AppStatusResponse(BaseModel):
     permissions: dict[str, PermissionStatus] = Field(
         default_factory=lambda: {"required": PermissionStatus(), "optional": PermissionStatus()}
     )
-    states: dict[str, list[StateDependencyStatus]] = Field(
+    stores: dict[str, list[StoreDependencyStatus]] = Field(
         default_factory=lambda: {"satisfied": [], "missing": []}
     )

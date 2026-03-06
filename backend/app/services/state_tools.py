@@ -1,14 +1,16 @@
-"""Context store tools for LLM to save/retrieve context."""
+"""State store tools for LLM to save/retrieve state within stores."""
 import json
 import uuid as uuid_lib
 from datetime import datetime
 from typing import Any, Optional
 
+import jsonschema
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import encryption_service
 from app.models.state import State
+from app.models.store import Store
 
 
 def _decrypt_state_value(state: State) -> dict:
@@ -19,14 +21,13 @@ def _decrypt_state_value(state: State) -> dict:
 
 
 class StateTools:
-    """Provides LLM tools for interacting with context store."""
+    """Provides LLM tools for interacting with state stores."""
 
     @staticmethod
     async def get_tool_definitions(
         db: Optional[AsyncSession] = None,
         user_id: Optional[str] = None,
-        agent_state_namespaces_readonly: Optional[list[str]] = None,
-        agent_state_namespaces_readwrite: Optional[list[str]] = None,
+        enabled_stores: Optional[list[dict[str, str]]] = None,
     ) -> list[dict[str, Any]]:
         """
         Get OpenAI-compatible tool definitions for state operations.
@@ -34,78 +35,69 @@ class StateTools:
         Args:
             db: Optional database session for enriching tool descriptions
             user_id: Optional user ID for personalizing tool descriptions
-            agent_state_namespaces_readonly: Readonly state namespaces (retrieve only)
-            agent_state_namespaces_readwrite: Read-write state namespaces (full access)
-
-        Returns:
-            List of tool definitions
+            enabled_stores: List of {"store": "namespace/name", "access": "readonly|readwrite"}
         """
-        # Normalize inputs
-        readonly_namespaces = agent_state_namespaces_readonly or []
-        readwrite_namespaces = agent_state_namespaces_readwrite or []
-        all_namespaces = readonly_namespaces + readwrite_namespaces
+        if not enabled_stores:
+            return []
 
-        # Get available context keys if db and user_id provided
+        readonly_stores = [s["store"] for s in enabled_stores if s.get("access") == "readonly"]
+        readwrite_stores = [s["store"] for s in enabled_stores if s.get("access") == "readwrite"]
+        all_stores = readonly_stores + readwrite_stores
+
+        if not all_stores:
+            return []
+
+        # Get available keys info
         available_keys_info = ""
         if db and user_id:
             available_keys_info = await StateTools._get_available_keys_description(
-                db, user_id, allowed_namespaces=all_namespaces or None
+                db, user_id, allowed_stores=all_stores
             )
 
-        # Opt-in: if no namespaces at all, return no tools
-        if len(all_namespaces) == 0:
-            return []
-
-        # Build namespace info for allowed namespaces
-        readonly_ns_list = (
-            ", ".join([f"'{ns}'" for ns in readonly_namespaces]) if readonly_namespaces else ""
-        )
-        readwrite_ns_list = (
-            ", ".join([f"'{ns}'" for ns in readwrite_namespaces]) if readwrite_namespaces else ""
-        )
-
-        namespace_info = ""
-        if readwrite_namespaces:
-            namespace_info += f"\n\nRead-write namespaces: {readwrite_ns_list}. You can save/update/delete context in these namespaces."
-        if readonly_namespaces:
-            namespace_info += f"\n\nRead-only namespaces: {readonly_ns_list}. You can only retrieve context from these namespaces."
+        # Build store info
+        store_info = ""
+        if readwrite_stores:
+            rw_list = ", ".join([f"'{s}'" for s in readwrite_stores])
+            store_info += f"\n\nRead-write stores: {rw_list}. You can save/update/delete state in these stores."
+        if readonly_stores:
+            ro_list = ", ".join([f"'{s}'" for s in readonly_stores])
+            store_info += f"\n\nRead-only stores: {ro_list}. You can only retrieve state from these stores."
 
         save_description = (
-            "Save information to context store for future recall. Use this to remember "
+            "Save information to a state store for future recall. Use this to remember "
             "user preferences, facts learned during conversation, important decisions, "
-            "or any information that should persist across conversations. "
-            "Examples: user's timezone, preferred communication style, project details, etc."
+            "or any information that should persist across conversations."
         )
-        if namespace_info:
-            save_description += namespace_info
+        if store_info:
+            save_description += store_info
 
         retrieve_description = (
-            "Retrieve saved context by namespace and/or key. Use this to recall "
+            "Retrieve saved state by store and/or key. Use this to recall "
             "previously saved information, preferences, or facts about the user or project."
         )
-
         if available_keys_info:
             retrieve_description += f"\n\n{available_keys_info}"
 
         tools = []
 
-        # Always include retrieve_context for all namespaces (readonly + readwrite)
+        # retrieve_state for all stores
         tools.append(
             {
                 "type": "function",
                 "function": {
-                    "name": "retrieve_context",
+                    "name": "retrieve_state",
                     "description": retrieve_description,
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "namespace": {
+                            "store": {
                                 "type": "string",
-                                "description": "Filter by namespace (e.g., 'preferences', 'facts')",
+                                "description": "Store reference (e.g., 'default/memory')",
+                                "enum": all_stores,
                             },
                             "key": {
                                 "type": "string",
-                                "description": "Specific key to retrieve (optional, omit to get all in namespace)",
+                                "description": "Specific key to retrieve (optional, omit to get all in store)",
                             },
                             "search": {
                                 "type": "string",
@@ -126,27 +118,25 @@ class StateTools:
             }
         )
 
-        # Only include write tools if there are readwrite namespaces
-        if readwrite_namespaces:
+        # Write tools only for readwrite stores
+        if readwrite_stores:
             tools.append(
                 {
                     "type": "function",
                     "function": {
-                        "name": "save_context",
+                        "name": "save_state",
                         "description": save_description,
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "namespace": {
+                                "store": {
                                     "type": "string",
-                                    "description": (
-                                        "Category/namespace for organization. Use one of the read-write namespaces."
-                                    ),
-                                    "enum": readwrite_namespaces,  # Only allow readwrite namespaces
+                                    "description": "Store to save in",
+                                    "enum": readwrite_stores,
                                 },
                                 "key": {
                                     "type": "string",
-                                    "description": "Unique identifier within the namespace (e.g., 'timezone', 'favorite_language')",
+                                    "description": "Unique identifier within the store",
                                 },
                                 "value": {
                                     "type": "object",
@@ -154,7 +144,7 @@ class StateTools:
                                 },
                                 "description": {
                                     "type": "string",
-                                    "description": "Human-readable description of what this context contains",
+                                    "description": "Human-readable description of what this state contains",
                                 },
                                 "tags": {
                                     "type": "array",
@@ -164,11 +154,11 @@ class StateTools:
                                 "visibility": {
                                     "type": "string",
                                     "enum": ["private", "shared"],
-                                    "description": "Who can access this context: 'private' (user only) or 'group' (permitted users)",
+                                    "description": "Who can access: 'private' (user only) or 'shared' (permitted users)",
                                     "default": "private",
                                 },
                             },
-                            "required": ["namespace", "key", "value"],
+                            "required": ["store", "key", "value"],
                         },
                     },
                 }
@@ -178,22 +168,22 @@ class StateTools:
                 {
                     "type": "function",
                     "function": {
-                        "name": "update_context",
+                        "name": "update_state",
                         "description": (
-                            "Update existing context entry. Use this to modify previously saved information "
+                            "Update existing state entry. Use this to modify previously saved information "
                             "when new details are learned or preferences change."
                         ),
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "namespace": {
+                                "store": {
                                     "type": "string",
-                                    "description": "Namespace of the context to update",
-                                    "enum": readwrite_namespaces,
+                                    "description": "Store containing the state",
+                                    "enum": readwrite_stores,
                                 },
                                 "key": {
                                     "type": "string",
-                                    "description": "Key of the context to update",
+                                    "description": "Key of the state to update",
                                 },
                                 "value": {
                                     "type": "object",
@@ -209,7 +199,7 @@ class StateTools:
                                     "description": "Updated tags",
                                 },
                             },
-                            "required": ["namespace", "key"],
+                            "required": ["store", "key"],
                         },
                     },
                 }
@@ -219,22 +209,22 @@ class StateTools:
                 {
                     "type": "function",
                     "function": {
-                        "name": "delete_context",
-                        "description": "Delete a context entry when it's no longer needed or is outdated.",
+                        "name": "delete_state",
+                        "description": "Delete a state entry when it's no longer needed or is outdated.",
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "namespace": {
+                                "store": {
                                     "type": "string",
-                                    "description": "Namespace of the context to delete",
-                                    "enum": readwrite_namespaces,
+                                    "description": "Store containing the state",
+                                    "enum": readwrite_stores,
                                 },
                                 "key": {
                                     "type": "string",
-                                    "description": "Key of the context to delete",
+                                    "description": "Key of the state to delete",
                                 },
                             },
-                            "required": ["namespace", "key"],
+                            "required": ["store", "key"],
                         },
                     },
                 }
@@ -243,41 +233,51 @@ class StateTools:
         return tools
 
     @staticmethod
+    async def _resolve_store(db: AsyncSession, store_ref: str) -> Optional[Store]:
+        """Resolve a store reference like 'namespace/name' to a Store object."""
+        parts = store_ref.split("/", 1)
+        if len(parts) != 2:
+            return None
+        return await Store.get_by_name(db, parts[0], parts[1])
+
+    @staticmethod
     async def _get_available_keys_description(
         db: AsyncSession,
         user_id: str,
-        allowed_namespaces: Optional[list[str]] = None,
+        allowed_stores: Optional[list[str]] = None,
     ) -> str:
-        """
-        Get a summary of available context keys for this user.
-
-        Args:
-            db: Database session
-            user_id: User ID
-            allowed_namespaces: Namespaces the agent may access (restricts shared state visibility)
-
-        Returns:
-            Formatted string describing available context keys
-        """
+        """Get a summary of available state keys for this user."""
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Own states are always visible; shared states only in allowed namespaces
-        visibility_filter = State.user_id == user_uuid
-        if allowed_namespaces:
-            visibility_filter = or_(
-                visibility_filter,
-                and_(State.visibility == "shared", State.namespace.in_(allowed_namespaces)),
-            )
+        if not allowed_stores:
+            return ""
+
+        # Resolve store refs to IDs
+        store_ids = {}
+        for store_ref in allowed_stores:
+            store = await StateTools._resolve_store(db, store_ref)
+            if store:
+                store_ids[store.id] = store_ref
+
+        if not store_ids:
+            return ""
+
+        # Own states and shared states in allowed stores
+        visibility_filter = or_(
+            State.user_id == user_uuid,
+            and_(State.visibility == "shared", State.store_id.in_(store_ids.keys())),
+        )
 
         query = (
-            select(State.namespace, State.key, State.description)
+            select(State.store_id, State.key, State.description)
             .where(
                 and_(
+                    State.store_id.in_(store_ids.keys()),
                     or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
                     visibility_filter,
                 )
             )
-            .order_by(State.namespace, State.key)
+            .order_by(State.store_id, State.key)
         )
 
         result = await db.execute(query)
@@ -286,19 +286,19 @@ class StateTools:
         if not contexts:
             return ""
 
-        # Group by namespace
-        by_namespace: dict[str, list[tuple]] = {}
-        for namespace, key, description in contexts:
-            if namespace not in by_namespace:
-                by_namespace[namespace] = []
-            by_namespace[namespace].append((key, description))
+        # Group by store
+        by_store: dict[str, list[tuple]] = {}
+        for store_id, key, description in contexts:
+            store_ref = store_ids.get(store_id, str(store_id))
+            if store_ref not in by_store:
+                by_store[store_ref] = []
+            by_store[store_ref].append((key, description))
 
-        # Format as readable list
-        lines = ["Currently available context:"]
-        for namespace in sorted(by_namespace.keys()):
-            keys = by_namespace[namespace]
+        lines = ["Currently available state:"]
+        for store_ref in sorted(by_store.keys()):
+            keys = by_store[store_ref]
             key_list = ", ".join([f"'{key}'" for key, _ in keys])
-            lines.append(f"  • {namespace}: {key_list}")
+            lines.append(f"  • {store_ref}: {key_list}")
 
         return "\n".join(lines)
 
@@ -311,75 +311,83 @@ class StateTools:
         chat_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        """
-        Execute a context tool.
-
-        Args:
-            db: Database session
-            tool_name: Name of the tool to execute
-            arguments: Tool arguments
-            user_id: User ID
-            chat_id: Optional chat ID
-                        agent_id: Optional agent ID for namespace validation
-
-        Returns:
-            Tool execution result
-        """
-        # Get agent's allowed context namespaces for validation
-        write_namespaces = None
-        all_allowed_namespaces = None
+        """Execute a state tool."""
+        # Get agent's enabled_stores for validation
+        write_stores = None
+        all_allowed_stores = None
         if agent_id:
             from app.models.agent import Agent
 
             result = await db.execute(select(Agent).where(Agent.id == uuid_lib.UUID(agent_id)))
             agent = result.scalar_one_or_none()
-            if agent:
-                write_namespaces = agent.state_namespaces_readwrite
-                all_allowed_namespaces = (agent.state_namespaces_readonly or []) + (
-                    agent.state_namespaces_readwrite or []
-                ) or None
+            if agent and agent.enabled_stores:
+                write_stores = [s["store"] for s in agent.enabled_stores if s.get("access") == "readwrite"]
+                all_allowed_stores = [s["store"] for s in agent.enabled_stores]
 
-        # Check namespace access for write operations
-        if tool_name in ["save_context", "update_context"] and write_namespaces is not None:
-            requested_namespace = arguments.get("namespace")
-            if not requested_namespace or requested_namespace not in write_namespaces:
+        # Check store access for write operations
+        if tool_name in ["save_state", "update_state", "delete_state"] and write_stores is not None:
+            requested_store = arguments.get("store")
+            if not requested_store or requested_store not in write_stores:
                 return {
-                    "error": f"Agent not authorized to write to namespace '{requested_namespace}'",
-                    "allowed_namespaces": write_namespaces if write_namespaces else [],
+                    "error": f"Agent not authorized to write to store '{requested_store}'",
+                    "allowed_stores": write_stores,
                 }
 
-        if tool_name == "save_context":
-            return await StateTools._save_context(
-                db,
-                user_id,
-                arguments,
-            )
-        elif tool_name == "retrieve_context":
-            return await StateTools._retrieve_context(
-                db, user_id, arguments, allowed_namespaces=all_allowed_namespaces
-            )
-        elif tool_name == "update_context":
-            return await StateTools._update_context(db, user_id, arguments)
-        elif tool_name == "delete_context":
-            return await StateTools._delete_context(db, user_id, arguments)
+        # Map old tool names for backward compatibility
+        tool_map = {
+            "retrieve_context": "retrieve_state",
+            "save_context": "save_state",
+            "update_context": "update_state",
+            "delete_context": "delete_state",
+        }
+        tool_name = tool_map.get(tool_name, tool_name)
+
+        if tool_name == "save_state":
+            return await StateTools._save_state(db, user_id, arguments)
+        elif tool_name == "retrieve_state":
+            return await StateTools._retrieve_state(db, user_id, arguments, allowed_stores=all_allowed_stores)
+        elif tool_name == "update_state":
+            return await StateTools._update_state(db, user_id, arguments)
+        elif tool_name == "delete_state":
+            return await StateTools._delete_state(db, user_id, arguments)
         else:
-            return {"error": f"Unknown context tool: {tool_name}"}
+            return {"error": f"Unknown state tool: {tool_name}"}
 
     @staticmethod
-    async def _save_context(
+    async def _save_state(
         db: AsyncSession,
         user_id: str,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Save context to store."""
+        """Save state to store."""
         user_uuid = uuid_lib.UUID(user_id)
+        store_ref = args.get("store", "")
 
-        # Check if context already exists
+        store = await StateTools._resolve_store(db, store_ref)
+        if not store:
+            return {"error": f"Store '{store_ref}' not found"}
+
+        # Schema validation for strict stores
+        if store.strict and store.schema:
+            schema = store.schema
+            if schema.get("properties") and args["key"] not in schema.get("properties", {}):
+                return {
+                    "error": f"Key '{args['key']}' is not allowed in strict store '{store_ref}'. "
+                             f"Allowed keys: {list(schema.get('properties', {}).keys())}",
+                }
+            prop_schema = schema.get("properties", {}).get(args["key"])
+            if prop_schema:
+                try:
+                    jsonschema.validate(instance=args["value"], schema=prop_schema)
+                except jsonschema.ValidationError as e:
+                    return {"error": f"Value validation failed for key '{args['key']}': {e.message}"}
+
+        # Check if already exists
         result = await db.execute(
             select(State).where(
                 and_(
                     State.user_id == user_uuid,
-                    State.namespace == args["namespace"],
+                    State.store_id == store.id,
                     State.key == args["key"],
                 )
             )
@@ -388,54 +396,77 @@ class StateTools:
 
         if existing:
             return {
-                "error": f"Context already exists for namespace '{args['namespace']}' and key '{args['key']}'. Use update_context to modify it.",
-                "existing_value": existing.value,
+                "error": f"State already exists for store '{store_ref}' and key '{args['key']}'. Use update_state to modify it.",
+                "existing_value": _decrypt_state_value(existing),
             }
 
-        # Validate visibility
-        visibility = args.get("visibility", "private")
-        # Shared states can be created - namespace permission check happens at API level
+        visibility = args.get("visibility", store.default_visibility)
 
-        # Create context
-        context = State(
+        # Auto-encrypt if store requires it
+        should_encrypt = store.encrypted
+        encrypted_value = None
+        value = args["value"]
+        if should_encrypt:
+            encrypted_value = encryption_service.encrypt(json.dumps(value))
+            value = {}
+
+        state = State(
             user_id=user_uuid,
-            namespace=args["namespace"],
+            store_id=store.id,
             key=args["key"],
-            value=args["value"],
+            value=value,
+            encrypted=should_encrypt,
+            encrypted_value=encrypted_value,
             visibility=visibility,
             description=args.get("description"),
             tags=args.get("tags", []),
             relevance_score=1.0,
         )
 
-        db.add(context)
+        db.add(state)
         await db.commit()
-        await db.refresh(context)
+        await db.refresh(state)
 
         return {
             "success": True,
-            "message": f"Saved context: {args['namespace']}/{args['key']}",
-            "context_id": str(context.id),
-            "value": context.value,
+            "message": f"Saved state: {store_ref}/{args['key']}",
+            "state_id": str(state.id),
+            "value": _decrypt_state_value(state),
         }
 
     @staticmethod
-    async def _retrieve_context(
+    async def _retrieve_state(
         db: AsyncSession,
         user_id: str,
         args: dict[str, Any],
-        allowed_namespaces: Optional[list[str]] = None,
+        allowed_stores: Optional[list[str]] = None,
     ) -> dict[str, Any]:
-        """Retrieve context from store."""
+        """Retrieve state from store."""
         user_uuid = uuid_lib.UUID(user_id)
+        store_ref = args.get("store")
 
-        # Own states always visible; shared states only in allowed namespaces
+        # If specific store requested, resolve it
+        store = None
+        if store_ref:
+            store = await StateTools._resolve_store(db, store_ref)
+            if not store:
+                return {"error": f"Store '{store_ref}' not found"}
+
+        # Build query
         visibility_filter = State.user_id == user_uuid
-        if allowed_namespaces:
-            visibility_filter = or_(
-                visibility_filter,
-                and_(State.visibility == "shared", State.namespace.in_(allowed_namespaces)),
-            )
+
+        # Also include shared states from allowed stores
+        if allowed_stores:
+            store_ids = []
+            for s_ref in allowed_stores:
+                s = await StateTools._resolve_store(db, s_ref)
+                if s:
+                    store_ids.append(s.id)
+            if store_ids:
+                visibility_filter = or_(
+                    visibility_filter,
+                    and_(State.visibility == "shared", State.store_id.in_(store_ids)),
+                )
 
         query = select(State).where(
             and_(
@@ -444,9 +475,8 @@ class StateTools:
             )
         )
 
-        # Apply filters
-        if "namespace" in args and args["namespace"]:
-            query = query.where(State.namespace == args["namespace"])
+        if store:
+            query = query.where(State.store_id == store.id)
 
         if "key" in args and args["key"]:
             query = query.where(State.key == args["key"])
@@ -462,153 +492,168 @@ class StateTools:
             for tag in tag_list:
                 query = query.where(State.tags.contains([tag]))
 
-        # Order by relevance and limit
         query = query.order_by(State.relevance_score.desc())
         limit = args.get("limit", 10)
         query = query.limit(limit)
 
         result = await db.execute(query)
-        contexts = result.scalars().all()
+        states = result.scalars().all()
 
-        if not contexts:
-            return {"success": True, "message": "No matching contexts found", "contexts": []}
+        if not states:
+            return {"success": True, "message": "No matching states found", "states": []}
+
+        # Resolve store refs for display
+        store_cache: dict[Any, Store] = {}
+        state_list = []
+        for s in states:
+            if s.store_id not in store_cache:
+                store_result = await db.execute(select(Store).where(Store.id == s.store_id))
+                store_cache[s.store_id] = store_result.scalar_one_or_none()
+            st = store_cache[s.store_id]
+            state_list.append({
+                "store": f"{st.namespace}/{st.name}" if st else "unknown",
+                "key": s.key,
+                "value": _decrypt_state_value(s),
+                "description": s.description,
+                "tags": s.tags,
+                "visibility": s.visibility,
+                "created_at": s.created_at.isoformat(),
+                "updated_at": s.updated_at.isoformat(),
+            })
 
         return {
             "success": True,
-            "count": len(contexts),
-            "contexts": [
-                {
-                    "namespace": ctx.namespace,
-                    "key": ctx.key,
-                    "value": _decrypt_state_value(ctx),
-                    "description": ctx.description,
-                    "tags": ctx.tags,
-                    "visibility": ctx.visibility,
-                    "created_at": ctx.created_at.isoformat(),
-                    "updated_at": ctx.updated_at.isoformat(),
-                }
-                for ctx in contexts
-            ],
+            "count": len(state_list),
+            "states": state_list,
         }
 
     @staticmethod
-    async def _update_context(
+    async def _update_state(
         db: AsyncSession, user_id: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Update existing context."""
+        """Update existing state."""
         user_uuid = uuid_lib.UUID(user_id)
+        store_ref = args.get("store", "")
 
-        # Find context
+        store = await StateTools._resolve_store(db, store_ref)
+        if not store:
+            return {"error": f"Store '{store_ref}' not found"}
+
         result = await db.execute(
             select(State).where(
                 and_(
                     State.user_id == user_uuid,
-                    State.namespace == args["namespace"],
+                    State.store_id == store.id,
                     State.key == args["key"],
                 )
             )
         )
-        context = result.scalar_one_or_none()
+        state = result.scalar_one_or_none()
 
-        if not context:
+        if not state:
             return {
-                "error": f"Context not found for namespace '{args['namespace']}' and key '{args['key']}'",
-                "suggestion": "Use save_context to create a new context entry",
+                "error": f"State not found for store '{store_ref}' and key '{args['key']}'",
+                "suggestion": "Use save_state to create a new state entry",
             }
 
-        # Update fields
+        # Schema validation
+        if "value" in args and store.strict and store.schema:
+            prop_schema = store.schema.get("properties", {}).get(args["key"])
+            if prop_schema:
+                try:
+                    jsonschema.validate(instance=args["value"], schema=prop_schema)
+                except jsonschema.ValidationError as e:
+                    return {"error": f"Value validation failed for key '{args['key']}': {e.message}"}
+
         if "value" in args:
-            if context.encrypted:
-                context.encrypted_value = encryption_service.encrypt(json.dumps(args["value"]))
-                context.value = {}
+            if state.encrypted:
+                state.encrypted_value = encryption_service.encrypt(json.dumps(args["value"]))
+                state.value = {}
             else:
-                context.value = args["value"]
+                state.value = args["value"]
         if "description" in args:
-            context.description = args["description"]
+            state.description = args["description"]
         if "tags" in args:
-            context.tags = args["tags"]
+            state.tags = args["tags"]
 
         await db.commit()
-        await db.refresh(context)
+        await db.refresh(state)
 
         return {
             "success": True,
-            "message": f"Updated context: {args['namespace']}/{args['key']}",
-            "value": _decrypt_state_value(context),
+            "message": f"Updated state: {store_ref}/{args['key']}",
+            "value": _decrypt_state_value(state),
         }
 
     @staticmethod
-    async def _delete_context(
+    async def _delete_state(
         db: AsyncSession, user_id: str, args: dict[str, Any]
     ) -> dict[str, Any]:
-        """Delete context."""
+        """Delete state."""
         user_uuid = uuid_lib.UUID(user_id)
+        store_ref = args.get("store", "")
 
-        # Find context
+        store = await StateTools._resolve_store(db, store_ref)
+        if not store:
+            return {"error": f"Store '{store_ref}' not found"}
+
         result = await db.execute(
             select(State).where(
                 and_(
                     State.user_id == user_uuid,
-                    State.namespace == args["namespace"],
+                    State.store_id == store.id,
                     State.key == args["key"],
                 )
             )
         )
-        context = result.scalar_one_or_none()
+        state = result.scalar_one_or_none()
 
-        if not context:
-            return {
-                "error": f"Context not found for namespace '{args['namespace']}' and key '{args['key']}'"
-            }
+        if not state:
+            return {"error": f"State not found for store '{store_ref}' and key '{args['key']}'"}
 
-        await db.delete(context)
+        await db.delete(state)
         await db.commit()
 
-        return {"success": True, "message": f"Deleted context: {args['namespace']}/{args['key']}"}
+        return {"success": True, "message": f"Deleted state: {store_ref}/{args['key']}"}
 
     @staticmethod
     async def get_relevant_contexts(
         db: AsyncSession,
         user_id: str,
         agent_id: Optional[str] = None,
-        namespaces: Optional[list[str]] = None,
+        enabled_stores: Optional[list[dict[str, str]]] = None,
         limit: int = 5,
     ) -> list[State]:
-        """
-        Get relevant contexts for auto-injection into prompts.
-
-        Args:
-            db: Database session
-            user_id: User ID
-            agent_id: Optional agent ID to filter contexts
-                        namespaces: Optional list of namespaces to include
-            limit: Maximum number of contexts to return
-
-        Returns:
-            List of relevant context entries
-        """
+        """Get relevant states for auto-injection into prompts."""
         user_uuid = uuid_lib.UUID(user_id)
 
-        # Own states always visible; shared states only in allowed namespaces
-        visibility_filter = State.user_id == user_uuid
-        if namespaces:
-            visibility_filter = or_(
-                visibility_filter,
-                and_(State.visibility == "shared", State.namespace.in_(namespaces)),
-            )
+        if not enabled_stores:
+            return []
+
+        # Resolve store refs
+        store_refs = [s["store"] for s in enabled_stores]
+        store_ids = []
+        for ref in store_refs:
+            store = await StateTools._resolve_store(db, ref)
+            if store:
+                store_ids.append(store.id)
+
+        if not store_ids:
+            return []
+
+        visibility_filter = or_(
+            State.user_id == user_uuid,
+            and_(State.visibility == "shared", State.store_id.in_(store_ids)),
+        )
 
         query = select(State).where(
             and_(
+                State.store_id.in_(store_ids),
                 or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
                 visibility_filter,
             )
         )
 
-        # Filter by namespaces if provided
-        if namespaces:
-            query = query.where(State.namespace.in_(namespaces))
-
-        # Order by relevance and limit
         query = query.order_by(State.relevance_score.desc()).limit(limit)
 
         result = await db.execute(query)

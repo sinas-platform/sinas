@@ -84,8 +84,7 @@ export function Agents() {
         enabled_agents: agent.enabled_agents || undefined,
         enabled_skills: agent.enabled_skills || undefined,
         function_parameters: agent.function_parameters,
-        state_namespaces_readonly: agent.state_namespaces_readonly || undefined,
-        state_namespaces_readwrite: agent.state_namespaces_readwrite || undefined,
+        enabled_stores: agent.enabled_stores || undefined,
       };
       return apiClient.createAgent(duplicateData);
     },

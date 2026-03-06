@@ -15,6 +15,15 @@ class EnabledSkillConfig(BaseModel):
     )
 
 
+class EnabledStoreConfig(BaseModel):
+    """Configuration for an enabled store."""
+
+    store: str = Field(..., description="Store identifier in format 'namespace/name'")
+    access: str = Field(
+        default="readonly", description="Access mode: 'readonly' or 'readwrite'", pattern=r"^(readonly|readwrite)$"
+    )
+
+
 class AgentCreate(BaseModel):
     namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -47,8 +56,7 @@ class AgentCreate(BaseModel):
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
-    state_namespaces_readonly: Optional[list[str]] = None  # Readonly state namespaces
-    state_namespaces_readwrite: Optional[list[str]] = None  # Read-write state namespaces
+    enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
@@ -89,8 +97,7 @@ class AgentUpdate(BaseModel):
         dict[str, Any]
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
-    state_namespaces_readonly: Optional[list[str]] = None
-    state_namespaces_readwrite: Optional[list[str]] = None
+    enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
@@ -119,8 +126,7 @@ class AgentResponse(BaseModel):
     status_templates: dict[str, str] = {}
     enabled_queries: list[str] = []
     query_parameters: dict[str, Any] = {}
-    state_namespaces_readonly: list[str] = []
-    state_namespaces_readwrite: list[str] = []
+    enabled_stores: list[EnabledStoreConfig] = []
     enabled_collections: list[str] = []
     enabled_components: list[str] = []
     icon: Optional[str] = None
@@ -146,6 +152,23 @@ class AgentResponse(BaseModel):
             else:
                 # Fallback for unexpected types
                 result.append(EnabledSkillConfig(skill=str(item), preload=False))
+        return result
+
+    @field_validator("enabled_stores", mode="before")
+    @classmethod
+    def convert_enabled_stores(cls, v):
+        """Convert dicts from database to EnabledStoreConfig objects."""
+        if not v:
+            return []
+
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(EnabledStoreConfig(**item))
+            elif isinstance(item, EnabledStoreConfig):
+                result.append(item)
+            else:
+                result.append(EnabledStoreConfig(store=str(item), access="readonly"))
         return result
 
     class Config:

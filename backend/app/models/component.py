@@ -47,8 +47,9 @@ class Component(Base, PermissionMixin):
     enabled_functions: Mapped[list[str]] = mapped_column(JSON, default=list)
     enabled_queries: Mapped[list[str]] = mapped_column(JSON, default=list)
     enabled_components: Mapped[list[str]] = mapped_column(JSON, default=list)
-    state_namespaces_readonly: Mapped[list[str]] = mapped_column(JSON, default=list)
-    state_namespaces_readwrite: Mapped[list[str]] = mapped_column(JSON, default=list)
+    enabled_stores: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )  # List of {"store": "namespace/name", "access": "readonly|readwrite"}
 
     # Display and publishing
     css_overrides: Mapped[Optional[str]] = mapped_column(Text)

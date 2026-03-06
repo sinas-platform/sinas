@@ -22,6 +22,54 @@ interface SchemaProperty {
   [key: string]: any;
 }
 
+function EnumValuesEditor({ type, values, onChange }: { type: string; values: any[]; onChange: (v: any[]) => void }) {
+  const [inputValue, setInputValue] = useState('');
+
+  const addValue = () => {
+    const trimmed = inputValue.trim();
+    if (!trimmed) return;
+    const parsed = type === 'string' ? trimmed : Number(trimmed);
+    if (type !== 'string' && isNaN(parsed as number)) return;
+    if (!values.includes(parsed)) {
+      onChange([...values, parsed]);
+    }
+    setInputValue('');
+  };
+
+  return (
+    <div className="space-y-1">
+      <label className="block text-xs text-gray-500">Enum values (optional)</label>
+      <div className="flex flex-wrap gap-1.5 min-h-[28px]">
+        {values.map((v, i) => (
+          <span key={i} className="inline-flex items-center gap-1 bg-[#0d0d0d] border border-white/[0.06] rounded px-2 py-0.5 text-xs text-gray-300">
+            {String(v)}
+            <button
+              type="button"
+              onClick={() => onChange(values.filter((_, idx) => idx !== i))}
+              className="text-gray-500 hover:text-red-400"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-1">
+        <input
+          type={type === 'string' ? 'text' : 'number'}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addValue(); } }}
+          placeholder="Add enum value..."
+          className="input text-xs flex-1"
+        />
+        <button type="button" onClick={addValue} className="text-xs text-primary-600 hover:text-primary-400 px-2">
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function JSONSchemaEditor({ value, onChange, className = '', label, description }: JSONSchemaEditorProps) {
   const [mode, setMode] = useState<'guided' | 'raw'>('guided');
   const [rawValue, setRawValue] = useState(JSON.stringify(value || {}, null, 2));
@@ -279,17 +327,24 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
             )}
 
             {(propType === 'string' || propType === 'number' || propType === 'integer') && (
-              <input
-                type={propType === 'string' ? 'text' : 'number'}
-                value={localDefault}
-                onChange={(e) => setLocalDefault(e.target.value)}
-                onBlur={() => {
-                  const val = propType === 'string' ? localDefault : Number(localDefault);
-                  updateProperty(propKey, { default: val || undefined });
-                }}
-                placeholder="Default value (optional)"
-                className="input text-sm w-full"
-              />
+              <>
+                <input
+                  type={propType === 'string' ? 'text' : 'number'}
+                  value={localDefault}
+                  onChange={(e) => setLocalDefault(e.target.value)}
+                  onBlur={() => {
+                    const val = propType === 'string' ? localDefault : Number(localDefault);
+                    updateProperty(propKey, { default: val || undefined });
+                  }}
+                  placeholder="Default value (optional)"
+                  className="input text-sm w-full"
+                />
+                <EnumValuesEditor
+                  type={propType}
+                  values={prop.enum || []}
+                  onChange={(enumVals) => updateProperty(propKey, { enum: enumVals.length > 0 ? enumVals : undefined })}
+                />
+              </>
             )}
           </div>
         </div>

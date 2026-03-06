@@ -12,7 +12,6 @@ import {
   X,
   Code,
   Clock,
-  Database,
   Brain,
   Settings,
   Activity,
@@ -26,6 +25,7 @@ import {
   Cable,
   SearchCode,
   Package,
+  HardDrive,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -66,7 +66,7 @@ const navigationSections = [
     name: 'STORAGE',
     items: [
       { name: 'Collections', href: '/collections', icon: Archive },
-      { name: 'States', href: '/states', icon: Database },
+      { name: 'State Stores', href: '/stores', icon: HardDrive },
     ],
   },
   {

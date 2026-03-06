@@ -82,13 +82,10 @@ class Agent(Base, PermissionMixin):
         JSON, nullable=False, default=dict, server_default="{}"
     )  # {"namespace/name": {"param": "value or {{template}}"}}
 
-    # State access
-    state_namespaces_readonly: Mapped[list[str]] = mapped_column(
+    # Store access
+    enabled_stores: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
-    )  # Readonly state namespaces
-    state_namespaces_readwrite: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list, server_default="[]"
-    )  # Read-write state namespaces
+    )  # List of {"store": "namespace/name", "access": "readonly|readwrite"}
 
     # Collection access
     enabled_collections: Mapped[list[str]] = mapped_column(

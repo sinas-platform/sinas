@@ -109,6 +109,13 @@ class SkillConfig(BaseModel):
     content: str  # Markdown instructions (retrieved on demand)
 
 
+class EnabledStoreConfigYaml(BaseModel):
+    """Configuration for an enabled store in agent/component config"""
+
+    store: str = Field(..., description="Store identifier in format 'namespace/name'")
+    access: str = Field(default="readonly", description="Access mode: 'readonly' or 'readwrite'")
+
+
 class ComponentConfig(BaseModel):
     """Component configuration"""
 
@@ -122,8 +129,7 @@ class ComponentConfig(BaseModel):
     enabledFunctions: list[str] = Field(default_factory=list)
     enabledQueries: list[str] = Field(default_factory=list)
     enabledComponents: list[str] = Field(default_factory=list)
-    stateNamespacesReadonly: list[str] = Field(default_factory=list)
-    stateNamespacesReadwrite: list[str] = Field(default_factory=list)
+    enabledStores: list[Union[str, EnabledStoreConfigYaml]] = Field(default_factory=list)
     cssOverrides: Optional[str] = None
     visibility: str = "private"
 
@@ -159,8 +165,7 @@ class AgentConfig(BaseModel):
     enabledSkills: list[Union[str, EnabledSkillConfigYaml]] = Field(
         default_factory=list
     )  # List of skill configs (string for backward compat, dict for preload)
-    stateNamespacesReadonly: list[str] = Field(default_factory=list)  # Readonly state namespaces
-    stateNamespacesReadwrite: list[str] = Field(default_factory=list)  # Read-write state namespaces
+    enabledStores: list[Union[str, EnabledStoreConfigYaml]] = Field(default_factory=list)
     enabledQueries: list[str] = Field(default_factory=list)  # List of "namespace/name" query refs
     queryParameters: dict[str, Any] = Field(
         default_factory=dict
@@ -226,6 +231,7 @@ class AppConfig(BaseModel):
     requiredPermissions: list[str] = Field(default_factory=list)
     optionalPermissions: list[str] = Field(default_factory=list)
     exposedNamespaces: dict[str, list[str]] = Field(default_factory=dict)
+    storeDependencies: list[dict] = Field(default_factory=list)
 
 
 class CollectionConfig(BaseModel):
@@ -241,6 +247,18 @@ class CollectionConfig(BaseModel):
     isPublic: bool = False
     allowSharedFiles: bool = True
     allowPrivateFiles: bool = True
+
+
+class StoreConfig(BaseModel):
+    """Store configuration"""
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    schema: Optional[dict[str, Any]] = None
+    strict: bool = False
+    defaultVisibility: str = "private"
+    encrypted: bool = False
 
 
 class TemplateConfig(BaseModel):
@@ -292,6 +310,7 @@ class ConfigSpec(BaseModel):
     queries: list[QueryConfig] = Field(default_factory=list)
     collections: list[CollectionConfig] = Field(default_factory=list)
     templates: list[TemplateConfig] = Field(default_factory=list)
+    stores: list[StoreConfig] = Field(default_factory=list)
     apps: list[AppConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)

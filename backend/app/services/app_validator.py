@@ -1,5 +1,5 @@
 """App validation service — checks resource existence and permission satisfaction."""
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import check_permission
@@ -9,7 +9,7 @@ from app.models.file import Collection
 from app.models.function import Function
 from app.models.skill import Skill
 from app.models.state import State
-from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus, StateDependencyStatus
+from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus, StoreDependencyStatus
 
 # Map resource type strings to SQLAlchemy models (accept both singular and plural)
 RESOURCE_TYPE_MAP = {
@@ -76,28 +76,34 @@ async def validate_app_status(
         else:
             opt_missing.append(perm)
 
-    # Check state dependencies
-    states_satisfied: list[StateDependencyStatus] = []
-    states_missing: list[StateDependencyStatus] = []
-    for dep in app.state_dependencies or []:
-        ns = dep.get("namespace", "")
+    # Check store dependencies
+    stores_satisfied: list[StoreDependencyStatus] = []
+    stores_missing: list[StoreDependencyStatus] = []
+    for dep in app.store_dependencies or []:
+        store_ref = dep.get("store", "")
         key = dep.get("key")
-        status = StateDependencyStatus(namespace=ns, key=key, exists=False)
+        status = StoreDependencyStatus(store=store_ref, key=key, exists=False)
 
-        q = select(State).where(State.namespace == ns)
-        if key:
-            q = q.where(State.key == key)
-        q = q.limit(1)
-        result = await db.execute(q)
-        if result.scalar_one_or_none() is not None:
-            status.exists = True
+        # Parse store ref
+        parts = store_ref.split("/", 1)
+        if len(parts) == 2:
+            from app.models.store import Store
+
+            store = await Store.get_by_name(db, parts[0], parts[1])
+            if store:
+                if key:
+                    q = select(State).where(and_(State.store_id == store.id, State.key == key)).limit(1)
+                    result = await db.execute(q)
+                    status.exists = result.scalar_one_or_none() is not None
+                else:
+                    status.exists = True  # Store exists, no specific key required
 
         if status.exists:
-            states_satisfied.append(status)
+            stores_satisfied.append(status)
         else:
-            states_missing.append(status)
+            stores_missing.append(status)
 
-    ready = len(missing) == 0 and len(req_missing) == 0 and len(states_missing) == 0
+    ready = len(missing) == 0 and len(req_missing) == 0 and len(stores_missing) == 0
 
     return AppStatusResponse(
         ready=ready,
@@ -106,5 +112,5 @@ async def validate_app_status(
             "required": PermissionStatus(granted=req_granted, missing=req_missing),
             "optional": PermissionStatus(granted=opt_granted, missing=opt_missing),
         },
-        states={"satisfied": states_satisfied, "missing": states_missing},
+        stores={"satisfied": stores_satisfied, "missing": stores_missing},
     )

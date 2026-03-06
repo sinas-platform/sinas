@@ -18,6 +18,7 @@ from app.models.package import Package
 from app.models.query import Query
 from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
+from app.models.store import Store
 from app.models.template import Template
 from app.models.webhook import Webhook
 from app.schemas.config import ConfigApplyResponse, SinasConfig
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
 
 # Models that support managed_by
-MANAGED_MODELS = [Agent, App, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Template, Webhook]
+MANAGED_MODELS = [Agent, App, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -187,6 +188,7 @@ class PackageService:
             Query: "queries",
             ScheduledJob: "schedules",
             Skill: "skills",
+            Store: "stores",
             Template: "templates",
             Webhook: "webhooks",
         }
@@ -261,6 +263,7 @@ class PackageService:
             "template": (Template, self._export_template),
             "webhook": (Webhook, self._export_webhook),
             "schedule": (ScheduledJob, self._export_schedule),
+            "store": (Store, self._export_store),
             "database_trigger": (DatabaseTrigger, self._export_database_trigger),
         }
 
@@ -312,6 +315,7 @@ class PackageService:
             "template": "templates",
             "webhook": "webhooks",
             "schedule": "schedules",
+            "store": "stores",
             "database_trigger": "databaseTriggers",
         }
         return mapping.get(res_type, res_type + "s")
@@ -355,8 +359,7 @@ class PackageService:
             "functionParameters": agent.function_parameters or None,
             "enabledAgents": agent.enabled_agents or None,
             "enabledSkills": agent.enabled_skills or None,
-            "stateNamespacesReadonly": agent.state_namespaces_readonly or None,
-            "stateNamespacesReadwrite": agent.state_namespaces_readwrite or None,
+            "enabledStores": agent.enabled_stores or None,
             "enabledQueries": agent.enabled_queries or None,
             "queryParameters": agent.query_parameters or None,
             "enabledCollections": agent.enabled_collections or None,
@@ -408,8 +411,7 @@ class PackageService:
             "enabledFunctions": component.enabled_functions or None,
             "enabledQueries": component.enabled_queries or None,
             "enabledComponents": component.enabled_components or None,
-            "stateNamespacesReadonly": component.state_namespaces_readonly or None,
-            "stateNamespacesReadwrite": component.state_namespaces_readwrite or None,
+            "enabledStores": component.enabled_stores or None,
             "cssOverrides": component.css_overrides,
             "visibility": component.visibility,
         })
@@ -451,6 +453,17 @@ class PackageService:
             "isPublic": collection.is_public,
             "allowSharedFiles": collection.allow_shared_files,
             "allowPrivateFiles": collection.allow_private_files,
+        })
+
+    async def _export_store(self, store: Store) -> dict:
+        return _remove_none_values({
+            "namespace": store.namespace,
+            "name": store.name,
+            "description": store.description,
+            "schema": store.schema or None,
+            "strict": store.strict,
+            "defaultVisibility": store.default_visibility,
+            "encrypted": store.encrypted,
         })
 
     async def _export_template(self, template: Template) -> dict:

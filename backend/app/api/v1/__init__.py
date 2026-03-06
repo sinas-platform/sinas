@@ -24,6 +24,7 @@ from .endpoints import (
     roles,
     schedules,
     skills,
+    stores,
     templates,
     users,
     webhooks,
@@ -38,6 +39,7 @@ router.include_router(apps.router)
 router.include_router(skills.router)
 router.include_router(components.router)
 router.include_router(collections.router)
+router.include_router(stores.router)
 router.include_router(llm_providers.router, prefix="/llm-providers", tags=["llm-providers"])
 router.include_router(database_connections.router, prefix="/database-connections", tags=["database-connections"])
 router.include_router(database_schema.router, prefix="/database-connections", tags=["database-schema"])

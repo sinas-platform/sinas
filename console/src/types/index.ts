@@ -169,6 +169,12 @@ export interface EnabledSkillConfig {
   preload: boolean;  // If true, inject into system prompt instead of exposing as tool
 }
 
+// Store access configuration for agents
+export interface EnabledStoreConfig {
+  store: string;  // "namespace/name"
+  access: 'readonly' | 'readwrite';
+}
+
 // Function parameter configuration (supports both legacy and new format)
 export type FunctionParameterValue =
   | string  // Legacy format: simple string value (treated as overridable)
@@ -201,8 +207,7 @@ export interface Agent {
   function_parameters: FunctionParameters;
   enabled_queries: string[];
   query_parameters: FunctionParameters;
-  state_namespaces_readonly: string[] | null;
-  state_namespaces_readwrite: string[] | null;
+  enabled_stores: EnabledStoreConfig[];
   enabled_collections: string[];
   enabled_components: string[];
   status_templates: Record<string, string>;
@@ -232,8 +237,7 @@ export interface AgentCreate {
   function_parameters?: FunctionParameters;
   enabled_queries?: string[];
   query_parameters?: FunctionParameters;
-  state_namespaces_readonly?: string[];
-  state_namespaces_readwrite?: string[];
+  enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: string[];
   icon?: string;
   is_default?: boolean;
@@ -257,8 +261,7 @@ export interface AgentUpdate {
   function_parameters?: FunctionParameters;
   enabled_queries?: string[];
   query_parameters?: FunctionParameters;
-  state_namespaces_readonly?: string[];
-  state_namespaces_readwrite?: string[];
+  enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: string[];
   enabled_components?: string[];
   status_templates?: Record<string, string>;
@@ -618,8 +621,7 @@ export interface Component {
   enabled_functions: string[];
   enabled_queries: string[];
   enabled_components: string[];
-  state_namespaces_readonly: string[];
-  state_namespaces_readwrite: string[];
+  enabled_stores: EnabledStoreConfig[];
   css_overrides?: string;
   visibility: string;
   version: number;
@@ -641,8 +643,7 @@ export interface ComponentCreate {
   enabled_functions?: string[];
   enabled_queries?: string[];
   enabled_components?: string[];
-  state_namespaces_readonly?: string[];
-  state_namespaces_readwrite?: string[];
+  enabled_stores?: EnabledStoreConfig[];
   css_overrides?: string;
   visibility?: string;
 }
@@ -658,8 +659,7 @@ export interface ComponentUpdate {
   enabled_functions?: string[];
   enabled_queries?: string[];
   enabled_components?: string[];
-  state_namespaces_readonly?: string[];
-  state_namespaces_readwrite?: string[];
+  enabled_stores?: EnabledStoreConfig[];
   css_overrides?: string;
   visibility?: string;
   is_active?: boolean;
@@ -760,13 +760,13 @@ export interface AppResourceRef {
   name: string;
 }
 
-export interface AppStateDependency {
-  namespace: string;
+export interface AppStoreDependency {
+  store: string;
   key?: string | null;
 }
 
-export interface AppStateDependencyStatus {
-  namespace: string;
+export interface AppStoreDependencyStatus {
+  store: string;
   key?: string | null;
   exists: boolean;
 }
@@ -781,7 +781,7 @@ export interface App {
   required_permissions: string[];
   optional_permissions: string[];
   exposed_namespaces: Record<string, string[]>;
-  state_dependencies: AppStateDependency[];
+  store_dependencies: AppStoreDependency[];
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
@@ -795,7 +795,7 @@ export interface AppCreate {
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
-  state_dependencies?: AppStateDependency[];
+  store_dependencies?: AppStoreDependency[];
 }
 
 export interface AppUpdate {
@@ -806,7 +806,7 @@ export interface AppUpdate {
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
-  state_dependencies?: AppStateDependency[];
+  store_dependencies?: AppStoreDependency[];
   is_active?: boolean;
 }
 
@@ -817,7 +817,7 @@ export interface AppStatus {
     required: { granted: string[]; missing: string[] };
     optional: { granted: string[]; missing: string[] };
   };
-  states: { satisfied: AppStateDependencyStatus[]; missing: AppStateDependencyStatus[] };
+  stores: { satisfied: AppStoreDependencyStatus[]; missing: AppStoreDependencyStatus[] };
 }
 
 // Database Connections

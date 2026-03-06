@@ -72,6 +72,12 @@ def _refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[
             if file_id is None or version is None:
                 raise ValueError("Missing file_id or version in token")
 
+            # Keep existing URL if token still has > 10 min remaining
+            exp = payload.get("exp", 0)
+            if exp - time.time() > 600:
+                refreshed.append(part)
+                continue
+
             new_url = generate_file_url(str(file_id), version)
             if new_url:
                 refreshed.append({**part, "image": new_url})
@@ -115,6 +121,12 @@ def _refresh_component_render_tokens(
             name = payload.get("name")
             if not namespace or not name:
                 raise ValueError("Missing namespace or name in token")
+
+            # Keep existing token if still > 10 min remaining
+            exp = payload.get("exp", 0)
+            if exp - time.time() > 600:
+                refreshed.append(part)
+                continue
 
             new_token = generate_component_render_token(namespace, name, user_id)
             refreshed.append({**part, "render_token": new_token})
@@ -308,7 +320,6 @@ class MessageService:
         model: Optional[str],
         temperature: float,
         inject_context: bool,
-        state_namespaces: Optional[list[str]],
         context_limit: int,
         template_variables: Optional[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -432,7 +443,6 @@ class MessageService:
             chat=chat,
             inject_context=inject_context,
             user_id=user_id,
-            state_namespaces=state_namespaces,
             context_limit=context_limit,
             template_variables=final_template_variables,
             provider_type=provider_type,
@@ -515,7 +525,7 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-            state_namespaces=None,
+
             context_limit=5,
             template_variables=None,
         )
@@ -627,7 +637,7 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-            state_namespaces=None,
+
             context_limit=5,
             template_variables=None,
         )
@@ -854,10 +864,10 @@ class MessageService:
         """
         # Skip non-function tools
         if tool_name in [
-            "save_context",
-            "retrieve_context",
-            "update_context",
-            "delete_context",
+            "save_state",
+            "retrieve_state",
+            "update_state",
+            "delete_state",
             "continue_execution",
         ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
             return None, None
@@ -950,7 +960,6 @@ class MessageService:
         chat: Chat,
         inject_context: bool = False,
         user_id: Optional[str] = None,
-        state_namespaces: Optional[list[str]] = None,
         context_limit: int = 5,
         template_variables: Optional[dict[str, Any]] = None,
         provider_type: Optional[str] = None,
@@ -963,7 +972,7 @@ class MessageService:
             chat: Chat object
             inject_context: Whether to inject stored context
             user_id: User ID for context retrieval
-            state_namespaces: Namespaces to filter context
+
             context_limit: Max context items to inject
             template_variables: Variables for Jinja2 template rendering in system_prompt
 
@@ -1004,29 +1013,23 @@ class MessageService:
         # Inject relevant context if enabled
         # No agent = no context injection
         if inject_context and user_id and chat.agent_id:
-            # Determine which namespaces to use:
-            # 1. Message-level state_namespaces (most specific)
-            # 2. Agent-level state_namespaces
-            final_namespaces = state_namespaces
-            if final_namespaces is None:
-                result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
-                agent = result.scalar_one_or_none()
-                if agent:
-                    # Combine readonly and readwrite namespaces for context injection
-                    final_namespaces = (agent.state_namespaces_readonly or []) + (
-                        agent.state_namespaces_readwrite or []
-                    )
+            # Determine which stores to use for context injection
+            final_stores = None
+            result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
+            agent = result.scalar_one_or_none()
+            if agent:
+                final_stores = agent.enabled_stores or []
 
             # Context access is opt-in: None or [] means no access
-            if final_namespaces is None or len(final_namespaces) == 0:
-                # No namespaces = no context injection
+            if not final_stores:
+                # No stores = no context injection
                 pass
             else:
                 relevant_contexts = await StateTools.get_relevant_contexts(
                     db=self.db,
                     user_id=user_id,
                     agent_id=str(chat.agent_id) if chat.agent_id else None,
-                    namespaces=final_namespaces,
+                    enabled_stores=final_stores,
                     limit=context_limit,
                 )
 
@@ -1282,12 +1285,11 @@ class MessageService:
         if not agent:
             return tools
 
-        # Add state tools (based on agent's state namespace access)
+        # Add state tools (based on agent's enabled stores)
         context_tool_defs = await StateTools.get_tool_definitions(
             db=self.db,
             user_id=user_id,
-            agent_state_namespaces_readonly=agent.state_namespaces_readonly,
-            agent_state_namespaces_readwrite=agent.state_namespaces_readwrite,
+            enabled_stores=agent.enabled_stores,
         )
         tools.extend(context_tool_defs)
 
@@ -1537,10 +1539,10 @@ class MessageService:
                 chat = result_chat.scalar_one_or_none()
 
                 if tool_name in [
-                    "save_context",
-                    "retrieve_context",
-                    "update_context",
-                    "delete_context",
+                    "save_state",
+                    "retrieve_state",
+                    "update_state",
+                    "delete_state",
                 ]:
                     result = await StateTools.execute_tool(
                         db=db,
@@ -1761,7 +1763,7 @@ class MessageService:
           "get_file_docs__manuals"             -> "collection:docs/manuals"
           "get_skill_default__tone"            -> "skill:default/tone"
           "show_component_ui__chart"           -> "component:ui/chart"
-          "save_context"                       -> "state:save_context"
+          "save_state"                         -> "state:save_state"
         """
         if tool_name.startswith("call_agent_"):
             return "agent:" + tool_name[len("call_agent_"):].replace("__", "/", 1)
@@ -1775,7 +1777,7 @@ class MessageService:
             return "collection:" + tool_name[len("get_file_"):].replace("__", "/", 1)
         if tool_name.startswith("show_component_"):
             return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
-        if tool_name in ("save_context", "retrieve_context", "update_context", "delete_context"):
+        if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
             return f"state:{tool_name}"
         # Default: function
         return "function:" + tool_name.replace("__", "/", 1)

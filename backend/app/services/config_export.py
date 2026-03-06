@@ -60,6 +60,7 @@ class ConfigExportService:
 
         config_dict["spec"]["functions"] = await self._export_functions()
         config_dict["spec"]["templates"] = await self._export_templates()
+        config_dict["spec"]["stores"] = await self._export_stores()
         config_dict["spec"]["agents"] = await self._export_agents()
         config_dict["spec"]["webhooks"] = await self._export_webhooks()
         config_dict["spec"]["schedules"] = await self._export_schedules()
@@ -220,17 +221,37 @@ class ConfigExportService:
                 if agent.status_templates
                 else None,
                 "enabledAgents": agent.enabled_agents if agent.enabled_agents else None,
-                "stateNamespacesReadonly": agent.state_namespaces_readonly
-                if agent.state_namespaces_readonly
-                else None,
-                "stateNamespacesReadwrite": agent.state_namespaces_readwrite
-                if agent.state_namespaces_readwrite
+                "enabledStores": agent.enabled_stores
+                if agent.enabled_stores
                 else None,
                 "icon": agent.icon,
             }
 
             exported.append(_remove_none_values(agent_dict))
 
+        return exported
+
+    async def _export_stores(self) -> list[dict]:
+        """Export stores"""
+        from app.models.store import Store
+        stmt = select(Store)
+        if self.managed_only:
+            stmt = stmt.where(Store.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        stores = result.scalars().all()
+        exported = []
+        for store in stores:
+            store_dict = {
+                "namespace": store.namespace,
+                "name": store.name,
+                "description": store.description,
+                "strict": store.strict,
+                "defaultVisibility": store.default_visibility,
+                "encrypted": store.encrypted,
+            }
+            if store.schema:
+                store_dict["schema"] = store.schema
+            exported.append(_remove_none_values(store_dict))
         return exported
 
     async def _export_webhooks(self) -> list[dict]:

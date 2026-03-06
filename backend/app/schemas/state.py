@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class StateCreate(BaseModel):
-    namespace: str = Field(..., min_length=1, max_length=100)
     key: str = Field(..., min_length=1, max_length=255)
     value: dict[str, Any] = Field(...)
     visibility: str = Field(default="private", pattern=r"^(private|shared)$")
@@ -31,7 +30,9 @@ class StateUpdate(BaseModel):
 class StateResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
-    namespace: str
+    store_id: uuid.UUID
+    store_namespace: Optional[str] = None
+    store_name: Optional[str] = None
     key: str
     value: dict[str, Any]
     visibility: str
