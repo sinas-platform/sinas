@@ -14,7 +14,7 @@ from app.models.state import State
 from app.models.store import Store
 
 
-def _decrypt_state_value(state: State) -> dict:
+def _decrypt_state_value(state: State) -> Any:
     """Return the decrypted value for a state, handling both encrypted and plain states."""
     if state.encrypted and state.encrypted_value:
         return json.loads(encryption_service.decrypt(state.encrypted_value))
@@ -55,6 +55,14 @@ class StateTools:
                 db, user_id, allowed_stores=all_stores
             )
 
+        # Load store objects for schema/strict info
+        store_objects: dict[str, Store] = {}
+        if db:
+            for store_ref in all_stores:
+                store_obj = await StateTools._resolve_store(db, store_ref)
+                if store_obj:
+                    store_objects[store_ref] = store_obj
+
         # Build store info
         store_info = ""
         if readwrite_stores:
@@ -63,6 +71,22 @@ class StateTools:
         if readonly_stores:
             ro_list = ", ".join([f"'{s}'" for s in readonly_stores])
             store_info += f"\n\nRead-only stores: {ro_list}. You can only retrieve state from these stores."
+
+        # Add schema info per store
+        for ref, store_obj in store_objects.items():
+            if store_obj.description:
+                store_info += f"\n\nStore '{ref}': {store_obj.description}"
+            if store_obj.schema and store_obj.schema.get("properties"):
+                keys_desc = []
+                for key, prop_schema in store_obj.schema["properties"].items():
+                    prop_type = prop_schema.get("type", "any")
+                    prop_desc = prop_schema.get("description", "")
+                    entry = f"'{key}' ({prop_type})"
+                    if prop_desc:
+                        entry += f" - {prop_desc}"
+                    keys_desc.append(entry)
+                mode = "strict (values must match schema)" if store_obj.strict else "non-strict (schema is advisory)"
+                store_info += f"\n\nStore '{ref}' schema ({mode}): {', '.join(keys_desc)}"
 
         save_description = (
             "Save information to a state store for future recall. Use this to remember "
@@ -140,8 +164,7 @@ class StateTools:
                                     "description": "Unique identifier within the store",
                                 },
                                 "value": {
-                                    "type": "object",
-                                    "description": "Data to store (as JSON object)",
+                                    "description": "Data to store (any valid JSON value)",
                                 },
                                 "description": {
                                     "type": "string",
@@ -187,7 +210,6 @@ class StateTools:
                                     "description": "Key of the state to update",
                                 },
                                 "value": {
-                                    "type": "object",
                                     "description": "New value to store (replaces existing)",
                                 },
                                 "description": {

@@ -167,7 +167,22 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
     });
   };
 
-  const PropertyEditor = ({ propKey, prop, path }: { propKey: string; prop: SchemaProperty; path: string }) => {
+  const PropertyEditor = ({ propKey, prop, path, onRename, onRemove, onUpdate, onToggleRequired, parentRequired }: {
+    propKey: string;
+    prop: SchemaProperty;
+    path: string;
+    onRename?: (oldKey: string, newKey: string) => void;
+    onRemove?: (key: string) => void;
+    onUpdate?: (key: string, updates: Partial<SchemaProperty>) => void;
+    onToggleRequired?: (key: string) => void;
+    parentRequired?: string[];
+  }) => {
+    const renameFn = onRename || renameProperty;
+    const removeFn = onRemove || removeProperty;
+    const updateFn = onUpdate || updateProperty;
+    const toggleReqFn = onToggleRequired || toggleRequired;
+    const requiredList = parentRequired || value?.required || [];
+
     const [localKey, setLocalKey] = useState(propKey);
     const [localDescription, setLocalDescription] = useState(prop.description || '');
     const [localDefault, setLocalDefault] = useState(prop.default ?? '');
@@ -186,7 +201,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
     }, [prop.default]);
 
     const isExpanded = expandedPaths.has(path);
-    const isRequired = (value?.required || []).includes(propKey);
+    const isRequired = requiredList.includes(propKey);
     const propType = Array.isArray(prop.type) ? prop.type[0] : prop.type || 'string';
     const isComplex = propType === 'object' || propType === 'array';
 
@@ -212,7 +227,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                 onChange={(e) => setLocalKey(e.target.value)}
                 onBlur={() => {
                   if (localKey && localKey !== propKey) {
-                    renameProperty(propKey, localKey);
+                    renameFn(propKey, localKey);
                   }
                 }}
                 className="input text-sm font-medium w-40"
@@ -231,7 +246,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                     updates.items = prop.items || { type: 'string' };
                   }
 
-                  updateProperty(propKey, updates);
+                  updateFn(propKey, updates);
                 }}
                 className="input text-sm w-32"
               >
@@ -247,7 +262,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                 <input
                   type="checkbox"
                   checked={isRequired}
-                  onChange={() => toggleRequired(propKey)}
+                  onChange={() => toggleReqFn(propKey)}
                   className="mr-1"
                 />
                 Required
@@ -255,7 +270,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
 
               <button
                 type="button"
-                onClick={() => removeProperty(propKey)}
+                onClick={() => removeFn(propKey)}
                 className="ml-auto text-red-600 hover:text-red-400"
               >
                 <Trash2 className="w-4 h-4" />
@@ -268,7 +283,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
               value={localDescription}
               onChange={(e) => setLocalDescription(e.target.value)}
               onBlur={() => {
-                updateProperty(propKey, { description: localDescription || undefined });
+                updateFn(propKey, { description: localDescription || undefined });
               }}
               placeholder="Description (optional)"
               className="input text-sm w-full"
@@ -280,7 +295,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                 <label className="block text-xs font-medium text-gray-300">Array Item Type</label>
                 <select
                   value={(prop.items as any)?.type || 'string'}
-                  onChange={(e) => updateProperty(propKey, {
+                  onChange={(e) => updateFn(propKey, {
                     items: {
                       ...(prop.items as any || {}),
                       type: e.target.value
@@ -301,21 +316,53 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
               <div className="ml-4 pl-4 border-l-2 border-white/[0.06]">
                 <div className="text-xs font-medium text-gray-300 mb-2">Nested Properties</div>
                 <div className="space-y-2">
-                  {Object.entries(prop.properties || {}).map(([nestedKey, nestedProp], nestedIndex) => (
-                    <PropertyEditor
-                      key={`${path}.${nestedKey}-${nestedIndex}`}
-                      propKey={nestedKey}
-                      prop={nestedProp as SchemaProperty}
-                      path={`${path}.${nestedKey}`}
-                    />
-                  ))}
+                  {Object.entries(prop.properties || {}).map(([nestedKey, nestedProp], nestedIndex) => {
+                    if (!nestedProp || typeof nestedProp !== 'object') return null;
+                    // Scoped callbacks for nested properties
+                    const nestedRename = (oldK: string, newK: string) => {
+                      if (oldK === newK || !newK) return;
+                      const nested = { ...(prop.properties || {}) };
+                      const val = nested[oldK];
+                      delete nested[oldK];
+                      nested[newK] = val;
+                      updateFn(propKey, { properties: nested });
+                    };
+                    const nestedRemove = (k: string) => {
+                      const nested = { ...(prop.properties || {}) };
+                      delete nested[k];
+                      updateFn(propKey, { properties: nested });
+                    };
+                    const nestedUpdate = (k: string, updates: Partial<SchemaProperty>) => {
+                      const nested = { ...(prop.properties || {}) };
+                      nested[k] = { ...nested[k], ...updates };
+                      updateFn(propKey, { properties: nested });
+                    };
+                    const nestedToggleReq = (k: string) => {
+                      const req = (prop as any).required || [];
+                      const newReq = req.includes(k) ? req.filter((r: string) => r !== k) : [...req, k];
+                      updateFn(propKey, { required: newReq.length > 0 ? newReq : undefined });
+                    };
+                    return (
+                      <PropertyEditor
+                        key={`${path}.${nestedKey}-${nestedIndex}`}
+                        propKey={nestedKey}
+                        prop={nestedProp as SchemaProperty}
+                        path={`${path}.${nestedKey}`}
+                        onRename={nestedRename}
+                        onRemove={nestedRemove}
+                        onUpdate={nestedUpdate}
+                        onToggleRequired={nestedToggleReq}
+                        parentRequired={(prop as any).required || []}
+                      />
+                    );
+                  })}
                   <button
                     type="button"
                     onClick={() => {
                       const nested = { ...(prop.properties || {}) };
                       const newKey = `nested_${Object.keys(nested).length + 1}`;
                       nested[newKey] = { type: 'string' };
-                      updateProperty(propKey, { properties: nested });
+                      updateFn(propKey, { properties: nested });
                     }}
                     className="text-sm text-primary-600 hover:text-primary-700 flex items-center"
                   >
@@ -334,7 +381,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                   onChange={(e) => setLocalDefault(e.target.value)}
                   onBlur={() => {
                     const val = propType === 'string' ? localDefault : Number(localDefault);
-                    updateProperty(propKey, { default: val || undefined });
+                    updateFn(propKey, { default: val || undefined });
                   }}
                   placeholder="Default value (optional)"
                   className="input text-sm w-full"
@@ -342,7 +389,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
                 <EnumValuesEditor
                   type={propType}
                   values={prop.enum || []}
-                  onChange={(enumVals) => updateProperty(propKey, { enum: enumVals.length > 0 ? enumVals : undefined })}
+                  onChange={(enumVals) => updateFn(propKey, { enum: enumVals.length > 0 ? enumVals : undefined })}
                 />
               </>
             )}
@@ -395,14 +442,17 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
       {mode === 'guided' ? (
         <div className="space-y-3">
           <div className="space-y-2">
-            {Object.entries(value?.properties || {}).map(([key, prop], index) => (
-              <PropertyEditor
-                key={`root.${key}-${index}`}
-                propKey={key}
-                prop={prop as SchemaProperty}
-                path={`root.${key}`}
-              />
-            ))}
+            {Object.entries(value?.properties || {}).map(([key, prop], index) => {
+              if (!prop || typeof prop !== 'object') return null;
+              return (
+                <PropertyEditor
+                  key={`root.${key}-${index}`}
+                  propKey={key}
+                  prop={prop as SchemaProperty}
+                  path={`root.${key}`}
+                />
+              );
+            })}
           </div>
 
           <button

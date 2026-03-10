@@ -26,7 +26,7 @@ class State(Base):
 
     # Core key-value structure
     key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    value: Mapped[Any] = mapped_column(JSON, nullable=False)
 
     # Encryption
     encrypted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
