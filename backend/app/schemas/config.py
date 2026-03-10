@@ -57,6 +57,16 @@ class LLMProviderConfig(BaseModel):
     isActive: bool = True
 
 
+class DatabaseAnnotationConfig(BaseModel):
+    """Table/column annotation for semantic layer"""
+
+    schemaName: str = "public"
+    tableName: str
+    columnName: Optional[str] = None
+    displayName: Optional[str] = None
+    description: Optional[str] = None
+
+
 class DatabaseConnectionConfig(BaseModel):
     """Database connection configuration"""
 
@@ -69,6 +79,7 @@ class DatabaseConnectionConfig(BaseModel):
     password: Optional[str] = None  # Supports ${ENV_VAR}
     sslMode: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
+    annotations: list[DatabaseAnnotationConfig] = Field(default_factory=list)
 
 
 class QueryConfig(BaseModel):

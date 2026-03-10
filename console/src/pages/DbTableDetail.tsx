@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ArrowUpDown, Filter, X, AlertTriangle, Lock,
 } from 'lucide-react';
 import { ErrorDisplay } from '../components/ErrorDisplay';
-import type { ColumnInfo, ConstraintInfo, IndexInfo, FilterCondition, ColumnDefinition } from '../types';
+import type { ColumnInfo, ConstraintInfo, IndexInfo, FilterCondition, ColumnDefinition, AnnotationItem } from '../types';
 
 const PG_TYPES = [
   'integer', 'bigint', 'smallint', 'serial', 'bigserial',
@@ -187,6 +187,39 @@ export function DbTableDetail() {
     },
   });
 
+  const annotationMutation = useMutation({
+    mutationFn: (annotations: AnnotationItem[]) =>
+      apiClient.upsertDbAnnotations(connectionName!, annotations),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dbTableDetail', connectionName, table, schema] });
+    },
+  });
+
+  // Annotation inline editing
+  const [editingAnnotation, setEditingAnnotation] = useState<{ target: string; field: 'display_name' | 'description' } | null>(null);
+  const [annotationValue, setAnnotationValue] = useState('');
+
+  const startEditAnnotation = (target: string, field: 'display_name' | 'description', currentValue: string) => {
+    setEditingAnnotation({ target, field });
+    setAnnotationValue(currentValue || '');
+  };
+
+  const saveAnnotation = (columnName: string | null) => {
+    if (!editingAnnotation) return;
+    const annotation: AnnotationItem = {
+      schema_name: schema,
+      table_name: table!,
+      column_name: columnName ?? undefined,
+      [editingAnnotation.field]: annotationValue,
+    };
+    annotationMutation.mutate([annotation]);
+    setEditingAnnotation(null);
+  };
+
+  const cancelAnnotation = () => {
+    setEditingAnnotation(null);
+  };
+
   // Derived data
   const pkColumns = useMemo(() => {
     if (!tableDetail) return [];
@@ -319,9 +352,27 @@ export function DbTableDetail() {
           <div>
             <div className="flex items-center gap-3">
               <Table2 className="w-6 h-6 text-primary-600" />
-              <h1 className="text-3xl font-bold text-gray-100">
-                {tableDetail?.display_name || table}
-              </h1>
+              {editingAnnotation?.target === '_table_' && editingAnnotation.field === 'display_name' ? (
+                <input
+                  autoFocus
+                  type="text"
+                  value={annotationValue}
+                  onChange={(e) => setAnnotationValue(e.target.value)}
+                  onBlur={() => saveAnnotation(null)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAnnotation(null); if (e.key === 'Escape') cancelAnnotation(); }}
+                  className="input text-2xl font-bold !py-0.5 !px-2 w-64"
+                  placeholder="Display name..."
+                />
+              ) : (
+                <h1
+                  className="text-3xl font-bold text-gray-100 group cursor-pointer flex items-center gap-2"
+                  onClick={() => startEditAnnotation('_table_', 'display_name', tableDetail?.display_name || '')}
+                  title="Click to edit display name"
+                >
+                  {tableDetail?.display_name || table}
+                  <Pencil className="w-4 h-4 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </h1>
+              )}
               {tableDetail?.display_name && (
                 <span className="text-gray-500 text-sm">{table}</span>
               )}
@@ -332,12 +383,31 @@ export function DbTableDetail() {
                 </span>
               )}
             </div>
-            <p className="text-gray-400 mt-1 text-sm">
+            <div className="text-gray-400 mt-1 text-sm flex items-center gap-1">
               {connectionName} / {schema}
-              {tableDetail?.description && (
-                <span className="ml-2 text-gray-500">- {tableDetail.description}</span>
+              <span className="mx-1 text-gray-600">—</span>
+              {editingAnnotation?.target === '_table_' && editingAnnotation.field === 'description' ? (
+                <input
+                  autoFocus
+                  type="text"
+                  value={annotationValue}
+                  onChange={(e) => setAnnotationValue(e.target.value)}
+                  onBlur={() => saveAnnotation(null)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveAnnotation(null); if (e.key === 'Escape') cancelAnnotation(); }}
+                  className="input !py-0 !px-1.5 !text-sm flex-1 max-w-md"
+                  placeholder="Add table description..."
+                />
+              ) : (
+                <span
+                  className="text-gray-500 cursor-pointer hover:text-gray-300 group flex items-center gap-1"
+                  onClick={() => startEditAnnotation('_table_', 'description', tableDetail?.description || '')}
+                  title="Click to edit description"
+                >
+                  {tableDetail?.description || <span className="text-gray-600 italic">Add description...</span>}
+                  <Pencil className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </span>
               )}
-            </p>
+            </div>
           </div>
         </div>
         {!isReadOnly && (
@@ -382,6 +452,8 @@ export function DbTableDetail() {
                 <thead>
                   <tr className="border-b border-white/5">
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Name</th>
+                    <th className="text-left px-3 py-2 text-gray-400 font-medium">Display Name</th>
+                    <th className="text-left px-3 py-2 text-gray-400 font-medium">Description</th>
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Type</th>
                     <th className="text-center px-3 py-2 text-gray-400 font-medium">Nullable</th>
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Default</th>
@@ -398,11 +470,49 @@ export function DbTableDetail() {
                       <tr key={col.column_name} className="hover:bg-white/[0.02]">
                         <td className="px-3 py-2">
                           <span className="text-gray-100 font-mono">{col.column_name}</span>
-                          {col.display_name && (
-                            <span className="text-gray-500 text-xs ml-2">{col.display_name}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          {editingAnnotation?.target === col.column_name && editingAnnotation.field === 'display_name' ? (
+                            <input
+                              autoFocus
+                              type="text"
+                              value={annotationValue}
+                              onChange={(e) => setAnnotationValue(e.target.value)}
+                              onBlur={() => saveAnnotation(col.column_name)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') saveAnnotation(col.column_name); if (e.key === 'Escape') cancelAnnotation(); }}
+                              className="input !py-0 !px-1.5 !text-xs w-full"
+                              placeholder="Display name..."
+                            />
+                          ) : (
+                            <span
+                              className="text-gray-400 text-xs cursor-pointer hover:text-gray-200 group flex items-center gap-1"
+                              onClick={() => startEditAnnotation(col.column_name, 'display_name', col.display_name || '')}
+                            >
+                              {col.display_name || <span className="text-gray-600 italic">—</span>}
+                              <Pencil className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                            </span>
                           )}
-                          {col.description && (
-                            <p className="text-gray-500 text-xs">{col.description}</p>
+                        </td>
+                        <td className="px-3 py-2">
+                          {editingAnnotation?.target === col.column_name && editingAnnotation.field === 'description' ? (
+                            <input
+                              autoFocus
+                              type="text"
+                              value={annotationValue}
+                              onChange={(e) => setAnnotationValue(e.target.value)}
+                              onBlur={() => saveAnnotation(col.column_name)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') saveAnnotation(col.column_name); if (e.key === 'Escape') cancelAnnotation(); }}
+                              className="input !py-0 !px-1.5 !text-xs w-full"
+                              placeholder="Description..."
+                            />
+                          ) : (
+                            <span
+                              className="text-gray-500 text-xs cursor-pointer hover:text-gray-200 group flex items-center gap-1"
+                              onClick={() => startEditAnnotation(col.column_name, 'description', col.description || '')}
+                            >
+                              {col.description || <span className="text-gray-600 italic">—</span>}
+                              <Pencil className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 flex-shrink-0" />
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-gray-300 font-mono text-xs">{col.data_type}</td>

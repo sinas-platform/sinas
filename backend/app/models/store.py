@@ -2,7 +2,7 @@
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
@@ -20,7 +20,7 @@ class Store(Base, PermissionMixin):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        nullable=False, index=True
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
     # Schema enforcement
@@ -32,9 +32,9 @@ class Store(Base, PermissionMixin):
     encrypted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
 
     # Config management
-    managed_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    config_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    config_checksum: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    managed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_checksum: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]
