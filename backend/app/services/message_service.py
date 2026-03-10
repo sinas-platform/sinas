@@ -7,6 +7,7 @@ import traceback
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import jsonschema
@@ -20,6 +21,7 @@ from app.models.llm_provider import LLMProvider
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
+from app.core.config import settings
 from app.core.permissions import check_permission
 from app.services.content_converter import ContentConverter
 
@@ -72,6 +74,12 @@ def _refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[
             if file_id is None or version is None:
                 raise ValueError("Missing file_id or version in token")
 
+            # Keep existing URL if token still has > 10 min remaining
+            exp = payload.get("exp", 0)
+            if exp - time.time() > 600:
+                refreshed.append(part)
+                continue
+
             new_url = generate_file_url(str(file_id), version)
             if new_url:
                 refreshed.append({**part, "image": new_url})
@@ -116,6 +124,12 @@ def _refresh_component_render_tokens(
             if not namespace or not name:
                 raise ValueError("Missing namespace or name in token")
 
+            # Keep existing token if still > 10 min remaining
+            exp = payload.get("exp", 0)
+            if exp - time.time() > 600:
+                refreshed.append(part)
+                continue
+
             new_token = generate_component_render_token(namespace, name, user_id)
             refreshed.append({**part, "render_token": new_token})
         except Exception:
@@ -131,7 +145,13 @@ def strip_base64_data(content: str | None) -> str | None:
     """Strip inline base64 data from message content to reduce payload size.
 
     Replaces base64 data URIs with a placeholder while keeping URLs intact.
+    Skipped on localhost (no DOMAIN) since LLMs can't fetch local URLs and need
+    the inline data.
     """
+    domain = settings.domain
+    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
+        return content
+
     if not content:
         return content
 
@@ -308,7 +328,6 @@ class MessageService:
         model: Optional[str],
         temperature: float,
         inject_context: bool,
-        state_namespaces: Optional[list[str]],
         context_limit: int,
         template_variables: Optional[dict[str, Any]],
     ) -> dict[str, Any]:
@@ -432,7 +451,6 @@ class MessageService:
             chat=chat,
             inject_context=inject_context,
             user_id=user_id,
-            state_namespaces=state_namespaces,
             context_limit=context_limit,
             template_variables=final_template_variables,
             provider_type=provider_type,
@@ -515,7 +533,7 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-            state_namespaces=None,
+
             context_limit=5,
             template_variables=None,
         )
@@ -627,7 +645,7 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-            state_namespaces=None,
+
             context_limit=5,
             template_variables=None,
         )
@@ -769,6 +787,10 @@ class MessageService:
         # Validate tool calls before saving
         if tool_calls:
             tool_calls = self._validate_tool_calls(tool_calls)
+            # Persist resolved status description on each tool call
+            for tc in tool_calls:
+                args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
 
         # Save assistant message after streaming completes
         assistant_message = Message(
@@ -854,10 +876,10 @@ class MessageService:
         """
         # Skip non-function tools
         if tool_name in [
-            "save_context",
-            "retrieve_context",
-            "update_context",
-            "delete_context",
+            "save_state",
+            "retrieve_state",
+            "update_state",
+            "delete_state",
             "continue_execution",
         ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
             return None, None
@@ -950,7 +972,6 @@ class MessageService:
         chat: Chat,
         inject_context: bool = False,
         user_id: Optional[str] = None,
-        state_namespaces: Optional[list[str]] = None,
         context_limit: int = 5,
         template_variables: Optional[dict[str, Any]] = None,
         provider_type: Optional[str] = None,
@@ -963,7 +984,7 @@ class MessageService:
             chat: Chat object
             inject_context: Whether to inject stored context
             user_id: User ID for context retrieval
-            state_namespaces: Namespaces to filter context
+
             context_limit: Max context items to inject
             template_variables: Variables for Jinja2 template rendering in system_prompt
 
@@ -1004,29 +1025,23 @@ class MessageService:
         # Inject relevant context if enabled
         # No agent = no context injection
         if inject_context and user_id and chat.agent_id:
-            # Determine which namespaces to use:
-            # 1. Message-level state_namespaces (most specific)
-            # 2. Agent-level state_namespaces
-            final_namespaces = state_namespaces
-            if final_namespaces is None:
-                result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
-                agent = result.scalar_one_or_none()
-                if agent:
-                    # Combine readonly and readwrite namespaces for context injection
-                    final_namespaces = (agent.state_namespaces_readonly or []) + (
-                        agent.state_namespaces_readwrite or []
-                    )
+            # Determine which stores to use for context injection
+            final_stores = None
+            result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
+            agent = result.scalar_one_or_none()
+            if agent:
+                final_stores = agent.enabled_stores or []
 
             # Context access is opt-in: None or [] means no access
-            if final_namespaces is None or len(final_namespaces) == 0:
-                # No namespaces = no context injection
+            if not final_stores:
+                # No stores = no context injection
                 pass
             else:
                 relevant_contexts = await StateTools.get_relevant_contexts(
                     db=self.db,
                     user_id=user_id,
                     agent_id=str(chat.agent_id) if chat.agent_id else None,
-                    namespaces=final_namespaces,
+                    enabled_stores=final_stores,
                     limit=context_limit,
                 )
 
@@ -1035,7 +1050,8 @@ class MessageService:
                     context_section += "The following information has been saved about the user and should inform your responses:\n\n"
 
                     for ctx in relevant_contexts:
-                        context_section += f"**{ctx.namespace}/{ctx.key}**"
+                        store_label = f"{ctx.store.namespace}/{ctx.store.name}" if ctx.store else "unknown"
+                        context_section += f"**{store_label}/{ctx.key}**"
                         if ctx.description:
                             context_section += f" - {ctx.description}"
                         context_section += "\n"
@@ -1091,6 +1107,36 @@ class MessageService:
         else:
             chat_messages = all_messages
 
+        # Repair orphaned tool calls: if an assistant message has tool_calls
+        # but some don't have matching tool result messages, inject synthetic
+        # error results so the LLM provider doesn't reject the history.
+        chat_messages = list(chat_messages)
+        existing_tool_result_ids = {
+            msg.tool_call_id for msg in chat_messages
+            if msg.role == "tool" and msg.tool_call_id
+        }
+        repairs: list[tuple[int, list[dict]]] = []  # (insert_after_idx, messages)
+        for idx, msg in enumerate(chat_messages):
+            if msg.tool_calls:
+                missing = []
+                for tc in msg.tool_calls:
+                    tc_id = tc.get("id")
+                    if tc_id and tc_id not in existing_tool_result_ids:
+                        missing.append(SimpleNamespace(
+                            role="tool",
+                            content="[Error: function call was interrupted or timed out]",
+                            tool_call_id=tc_id,
+                            tool_calls=None,
+                            name=tc.get("function", {}).get("name", "unknown"),
+                        ))
+                if missing:
+                    repairs.append((idx, missing))
+
+        # Insert repairs in reverse order to preserve indices
+        for insert_idx, repair_msgs in reversed(repairs):
+            for i, rm in enumerate(repair_msgs):
+                chat_messages.insert(insert_idx + 1 + i, rm)
+
         for idx, msg in enumerate(chat_messages):
             message_dict = {"role": msg.role}
 
@@ -1120,7 +1166,11 @@ class MessageService:
             message_dict["content"] = content
 
             if msg.tool_calls:
-                message_dict["tool_calls"] = msg.tool_calls
+                # Strip UI-only fields (e.g. description) before sending to LLM
+                message_dict["tool_calls"] = [
+                    {k: v for k, v in tc.items() if k != "description"}
+                    for tc in msg.tool_calls
+                ]
 
             if msg.tool_call_id:
                 message_dict["tool_call_id"] = msg.tool_call_id
@@ -1282,12 +1332,11 @@ class MessageService:
         if not agent:
             return tools
 
-        # Add state tools (based on agent's state namespace access)
+        # Add state tools (based on agent's enabled stores)
         context_tool_defs = await StateTools.get_tool_definitions(
             db=self.db,
             user_id=user_id,
-            agent_state_namespaces_readonly=agent.state_namespaces_readonly,
-            agent_state_namespaces_readwrite=agent.state_namespaces_readwrite,
+            enabled_stores=agent.enabled_stores,
         )
         tools.extend(context_tool_defs)
 
@@ -1537,10 +1586,10 @@ class MessageService:
                 chat = result_chat.scalar_one_or_none()
 
                 if tool_name in [
-                    "save_context",
-                    "retrieve_context",
-                    "update_context",
-                    "delete_context",
+                    "save_state",
+                    "retrieve_state",
+                    "update_state",
+                    "delete_state",
                 ]:
                     result = await StateTools.execute_tool(
                         db=db,
@@ -1761,7 +1810,7 @@ class MessageService:
           "get_file_docs__manuals"             -> "collection:docs/manuals"
           "get_skill_default__tone"            -> "skill:default/tone"
           "show_component_ui__chart"           -> "component:ui/chart"
-          "save_context"                       -> "state:save_context"
+          "save_state"                         -> "state:save_state"
         """
         if tool_name.startswith("call_agent_"):
             return "agent:" + tool_name[len("call_agent_"):].replace("__", "/", 1)
@@ -1775,7 +1824,7 @@ class MessageService:
             return "collection:" + tool_name[len("get_file_"):].replace("__", "/", 1)
         if tool_name.startswith("show_component_"):
             return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
-        if tool_name in ("save_context", "retrieve_context", "update_context", "delete_context"):
+        if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
             return f"state:{tool_name}"
         # Default: function
         return "function:" + tool_name.replace("__", "/", 1)
@@ -1859,6 +1908,11 @@ class MessageService:
 
         # Only create assistant message if it doesn't already exist
         if not existing_message:
+            # Persist resolved status description on each tool call
+            for tc in tool_calls:
+                if "description" not in tc:
+                    args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                    tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
             assistant_message = Message(
                 chat_id=chat_id, role="assistant", content=None, tool_calls=tool_calls
             )
@@ -1983,7 +2037,11 @@ class MessageService:
                 # Validate tool calls when loading from DB to filter out corrupted ones
                 validated_tool_calls = self._validate_tool_calls(msg.tool_calls)
                 if validated_tool_calls:
-                    message_dict["tool_calls"] = validated_tool_calls
+                    # Strip UI-only fields (e.g. description) before sending to LLM
+                    message_dict["tool_calls"] = [
+                        {k: v for k, v in tc.items() if k != "description"}
+                        for tc in validated_tool_calls
+                    ]
                 elif msg.tool_calls:  # Had tool calls but all were invalid
                     # Skip this message entirely to avoid breaking the conversation
                     print(f"⚠️ Skipping message {msg.id} with corrupted tool calls")

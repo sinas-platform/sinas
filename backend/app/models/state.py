@@ -10,7 +10,7 @@ from .base import Base, created_at, updated_at, uuid_pk
 
 
 class State(Base):
-    """Flexible key-value store for agent states, function states, workflow states, and preferences."""
+    """Key-value state entry belonging to a Store."""
 
     __tablename__ = "states"
 
@@ -19,8 +19,12 @@ class State(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
+    # Store reference (replaces raw namespace)
+    store_id: Mapped[uuid_lib.UUID] = mapped_column(
+        ForeignKey("stores.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
     # Core key-value structure
-    namespace: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
@@ -32,7 +36,7 @@ class State(Base):
     visibility: Mapped[str] = mapped_column(
         String(20), nullable=False, default="private", index=True
     )
-    # Options: "private" (owner only), "shared" (accessible by users with namespace permissions)
+    # Options: "private" (owner only), "shared" (accessible by users with store permissions)
 
     # Metadata
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -47,11 +51,12 @@ class State(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="states")
+    store: Mapped["Store"] = relationship("Store", back_populates="states")
 
     __table_args__ = (
-        # Unique constraint: one key per user/namespace combination
-        Index("uq_state_user_namespace_key", "user_id", "namespace", "key", unique=True),
+        # Unique constraint: one key per user/store combination
+        Index("uq_state_user_store_key", "user_id", "store_id", "key", unique=True),
         # Performance indexes
-        Index("ix_states_namespace_visibility", "namespace", "visibility"),
+        Index("ix_states_store_visibility", "store_id", "visibility"),
         Index("ix_states_expires_at", "expires_at"),
     )

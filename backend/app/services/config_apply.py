@@ -23,6 +23,7 @@ from app.models.database_trigger import DatabaseTrigger
 from app.models.schedule import ScheduledJob
 from app.models.component import Component
 from app.models.skill import Skill
+from app.models.store import Store
 from app.models.template import Template
 from app.models.user import Role, RolePermission, User, UserRole
 from app.models.webhook import Webhook
@@ -69,6 +70,7 @@ class ConfigApplyService:
         self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
         self.collection_ids: dict[str, str] = {}
+        self.store_ids: dict[str, str] = {}
         self.folder_ids: dict[str, str] = {}  # Alias for collection_ids
 
     def _calculate_hash(self, data: dict[str, Any]) -> str:
@@ -141,6 +143,8 @@ class ConfigApplyService:
                 await self._apply_collections(config.spec.collections, dry_run)
             if "templates" not in self.skip_resource_types:
                 await self._apply_templates(config.spec.templates, dry_run)
+            if "stores" not in self.skip_resource_types:
+                await self._apply_stores(config.spec.stores, dry_run)
             if "apps" not in self.skip_resource_types:
                 await self._apply_apps(config.spec.apps, dry_run)
             if "agents" not in self.skip_resource_types:
@@ -639,6 +643,7 @@ class ConfigApplyService:
                         else [],
                         "tags": sorted(func_config.tags) if func_config.tags else [],
                         "icon": func_config.icon,
+                        "timeout": func_config.timeout,
                     }
                 )
 
@@ -665,6 +670,7 @@ class ConfigApplyService:
                         existing.requirements = func_config.requirements
                         existing.tags = func_config.tags
                         existing.icon = func_config.icon
+                        existing.timeout = func_config.timeout
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -695,6 +701,7 @@ class ConfigApplyService:
                             enabled_namespaces=func_config.enabledNamespaces,
                             tags=func_config.tags,
                             icon=func_config.icon,
+                            timeout=func_config.timeout,
                             user_id=self.owner_user_id,
                             current_version=1,
                             is_active=True,
@@ -872,8 +879,7 @@ class ConfigApplyService:
                         "enabled_functions": comp_config.enabledFunctions,
                         "enabled_queries": comp_config.enabledQueries,
                         "enabled_components": comp_config.enabledComponents,
-                        "state_namespaces_readonly": comp_config.stateNamespacesReadonly,
-                        "state_namespaces_readwrite": comp_config.stateNamespacesReadwrite,
+                        "enabled_stores": self._normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
                         "css_overrides": comp_config.cssOverrides,
                         "visibility": comp_config.visibility,
                     }
@@ -901,8 +907,7 @@ class ConfigApplyService:
                         existing.enabled_functions = comp_config.enabledFunctions
                         existing.enabled_queries = comp_config.enabledQueries
                         existing.enabled_components = comp_config.enabledComponents
-                        existing.state_namespaces_readonly = comp_config.stateNamespacesReadonly
-                        existing.state_namespaces_readwrite = comp_config.stateNamespacesReadwrite
+                        existing.enabled_stores = self._normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else []
                         existing.css_overrides = comp_config.cssOverrides
                         existing.visibility = comp_config.visibility
                         existing.config_checksum = config_hash
@@ -929,8 +934,7 @@ class ConfigApplyService:
                             enabled_functions=comp_config.enabledFunctions,
                             enabled_queries=comp_config.enabledQueries,
                             enabled_components=comp_config.enabledComponents,
-                            state_namespaces_readonly=comp_config.stateNamespacesReadonly,
-                            state_namespaces_readwrite=comp_config.stateNamespacesReadwrite,
+                            enabled_stores=self._normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
                             css_overrides=comp_config.cssOverrides,
                             visibility=comp_config.visibility,
                             user_id=self.owner_user_id,
@@ -1031,6 +1035,94 @@ class ConfigApplyService:
 
             except Exception as e:
                 self.errors.append(f"Error applying collection '{resource_name}': {str(e)}")
+
+    def _normalize_store_references(self, store_refs: list) -> list[dict]:
+        """Normalize store references to dict format."""
+        normalized = []
+        for ref in store_refs:
+            if isinstance(ref, str):
+                normalized.append({"store": ref, "access": "readwrite"})
+            elif hasattr(ref, 'model_dump'):
+                normalized.append(ref.model_dump())
+            elif isinstance(ref, dict):
+                normalized.append(ref)
+        return normalized
+
+    async def _apply_stores(self, stores, dry_run: bool):
+        """Apply store configurations"""
+        for store_config in stores:
+            resource_name = f"{store_config.namespace}/{store_config.name}"
+            try:
+                stmt = select(Store).where(
+                    Store.namespace == store_config.namespace,
+                    Store.name == store_config.name,
+                )
+                result = await self.db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                config_hash = self._calculate_hash(
+                    {
+                        "namespace": store_config.namespace,
+                        "name": store_config.name,
+                        "description": store_config.description,
+                        "schema": store_config.schema or {},
+                        "strict": store_config.strict,
+                        "default_visibility": store_config.defaultVisibility,
+                        "encrypted": store_config.encrypted,
+                    }
+                )
+
+                if existing:
+                    if existing.managed_by != self.managed_by:
+                        self.warnings.append(
+                            f"Store '{resource_name}' exists but is not managed by '{self.managed_by}'. Skipping."
+                        )
+                        self._track_change("unchanged", "stores", resource_name)
+                        self.store_ids[resource_name] = str(existing.id)
+                        continue
+
+                    if existing.config_checksum == config_hash:
+                        self._track_change("unchanged", "stores", resource_name)
+                        self.store_ids[resource_name] = str(existing.id)
+                        continue
+
+                    if not dry_run:
+                        existing.description = store_config.description
+                        existing.schema = store_config.schema or {}
+                        existing.strict = store_config.strict
+                        existing.default_visibility = store_config.defaultVisibility
+                        existing.encrypted = store_config.encrypted
+                        existing.config_checksum = config_hash
+                        existing.updated_at = datetime.utcnow()
+
+                    self._track_change("update", "stores", resource_name)
+                    self.store_ids[resource_name] = str(existing.id)
+
+                else:
+                    if not dry_run:
+                        new_store = Store(
+                            namespace=store_config.namespace,
+                            name=store_config.name,
+                            description=store_config.description,
+                            schema=store_config.schema or {},
+                            strict=store_config.strict,
+                            default_visibility=store_config.defaultVisibility,
+                            encrypted=store_config.encrypted,
+                            user_id=self.owner_user_id,
+                            managed_by=self.managed_by,
+                            config_name=self.config_name,
+                            config_checksum=config_hash,
+                        )
+                        self.db.add(new_store)
+                        await self.db.flush()
+                        self.store_ids[resource_name] = str(new_store.id)
+                    else:
+                        self.store_ids[resource_name] = "dry-run-id"
+
+                    self._track_change("create", "stores", resource_name)
+
+            except Exception as e:
+                self.errors.append(f"Error applying store '{resource_name}': {str(e)}")
 
     async def _apply_apps(self, apps, dry_run: bool):
         """Apply app registration configurations"""
@@ -1137,6 +1229,13 @@ class ConfigApplyService:
                     else []
                 )
 
+                # Normalize store references to dict format
+                normalized_stores = (
+                    self._normalize_store_references(agent_config.enabledStores)
+                    if agent_config.enabledStores
+                    else []
+                )
+
                 config_hash = self._calculate_hash(
                     {
                         "namespace": agent_config.namespace,
@@ -1160,11 +1259,8 @@ class ConfigApplyService:
                         "enabled_skills": sorted(normalized_skills, key=lambda x: x["skill"])
                         if normalized_skills
                         else [],
-                        "state_namespaces_readonly": sorted(agent_config.stateNamespacesReadonly)
-                        if agent_config.stateNamespacesReadonly
-                        else [],
-                        "state_namespaces_readwrite": sorted(agent_config.stateNamespacesReadwrite)
-                        if agent_config.stateNamespacesReadwrite
+                        "enabled_stores": sorted(normalized_stores, key=lambda x: x["store"])
+                        if normalized_stores
                         else [],
                         "enabled_queries": sorted(agent_config.enabledQueries)
                         if agent_config.enabledQueries
@@ -1216,8 +1312,7 @@ class ConfigApplyService:
                         existing.status_templates = agent_config.statusTemplates
                         existing.enabled_agents = agent_config.enabledAgents
                         existing.enabled_skills = normalized_skills
-                        existing.state_namespaces_readonly = agent_config.stateNamespacesReadonly
-                        existing.state_namespaces_readwrite = agent_config.stateNamespacesReadwrite
+                        existing.enabled_stores = normalized_stores
                         existing.enabled_queries = agent_config.enabledQueries
                         existing.query_parameters = agent_config.queryParameters
                         existing.enabled_collections = agent_config.enabledCollections
@@ -1264,8 +1359,7 @@ class ConfigApplyService:
                             status_templates=agent_config.statusTemplates,
                             enabled_agents=agent_config.enabledAgents,
                             enabled_skills=normalized_skills,
-                            state_namespaces_readonly=agent_config.stateNamespacesReadonly,
-                            state_namespaces_readwrite=agent_config.stateNamespacesReadwrite,
+                            enabled_stores=normalized_stores,
                             enabled_queries=agent_config.enabledQueries,
                             query_parameters=agent_config.queryParameters,
                             enabled_collections=agent_config.enabledCollections,

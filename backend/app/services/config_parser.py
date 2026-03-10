@@ -170,6 +170,16 @@ class ConfigParser:
             result = await db.execute(select(QueryModel.namespace, QueryModel.name))
             db_query_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
 
+        store_names = {
+            f"{s.get('namespace', 'default')}/{s['name']}" for s in spec.get("stores", [])
+        }
+        db_store_names: set[str] = set()
+        if db:
+            from app.models.store import Store
+
+            result = await db.execute(select(Store.namespace, Store.name))
+            db_store_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
+
         component_names = {
             f"{c.get('namespace', 'default')}/{c['name']}" for c in spec.get("components", [])
         }
@@ -186,6 +196,7 @@ class ConfigParser:
         all_agent_names = agent_names | db_agent_names
         all_skill_names = skill_names | db_skill_names
         all_collection_names = collection_names | db_collection_names
+        all_store_names = store_names | db_store_names
         all_component_names = component_names | db_component_names
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
         all_database_connection_names = database_connection_names | db_database_connection_names
@@ -300,6 +311,18 @@ class ConfigParser:
                             ConfigValidationError(
                                 path=f"spec.agents[{i}].enabledComponents",
                                 message=f"Referenced component '{comp_ref}' not defined",
+                            )
+                        )
+
+            # Validate enabled store references
+            if "enabledStores" in agent and agent["enabledStores"]:
+                for store_entry in agent["enabledStores"]:
+                    store_ref = store_entry if isinstance(store_entry, str) else store_entry.get("store", "")
+                    if store_ref not in all_store_names:
+                        errors.append(
+                            ConfigValidationError(
+                                path=f"spec.agents[{i}].enabledStores",
+                                message=f"Referenced store '{store_ref}' not defined",
                             )
                         )
 

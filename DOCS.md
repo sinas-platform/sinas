@@ -162,9 +162,9 @@ All resources can be defined in a YAML file and applied idempotently via the API
 
 ## Authentication
 
-SINAS supports two authentication methods: OTP (email-based) and external OIDC providers.
+SINAS uses email-based OTP authentication, with API keys available for programmatic access.
 
-### OTP Authentication (Built-in)
+### OTP Authentication
 
 1. Client sends email to `POST /auth/login`
 2. SINAS sends a 6-digit code to that email (valid for 10 minutes by default)
@@ -182,21 +182,6 @@ POST   /auth/refresh              # Get new access token using refresh token
 POST   /auth/logout               # Revoke refresh token
 GET    /auth/me                   # Get current user info
 ```
-
-### External Authentication (OIDC)
-
-SINAS can authenticate users via external OIDC providers (Authentik, Auth0, Keycloak, etc.). Configure in `.env`:
-
-```bash
-EXTERNAL_AUTH_ENABLED=true
-OIDC_ISSUER=https://authentik.company.com/application/o/sinas/
-OIDC_AUDIENCE=sinas
-OIDC_GROUPS_CLAIM=groups           # JWT claim containing user groups
-AUTO_PROVISION_USERS=true          # Create users on first login
-DEFAULT_GROUP_NAME=Users           # Fallback role for new users
-```
-
-External groups can be mapped to SINAS roles via the Roles API.
 
 ### API Keys
 
@@ -423,9 +408,9 @@ Pass an app context via the `X-Application` header or `?app=namespace/name` quer
 
 ## Reference
 
-### Build
+## Build
 
-#### Agents
+### Agents
 
 Agents are configurable AI assistants. Each agent has an LLM provider, a system prompt, and a set of enabled tools.
 
@@ -510,7 +495,7 @@ curl -X POST http://localhost:8000/agents/default/default/chats \
 }
 ```
 
-#### Functions
+### Functions
 
 Functions are Python code that runs in isolated Docker containers. They can be used as agent tools, triggered by webhooks or schedules, or executed directly.
 
@@ -564,7 +549,7 @@ GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
 POST   /api/v1/functions/import/openapi                    # Import functions from OpenAPI spec
 ```
 
-##### OpenAPI Import
+#### OpenAPI Import
 
 Import functions from an OpenAPI v3 specification. Each API operation becomes a SINAS function with generated Python code that calls the external API.
 
@@ -603,7 +588,7 @@ GET    /executions/{execution_id}/steps     # Get execution steps (nested calls)
 | **Post-upload** | Processing after successful file upload (receives file_id, metadata) |
 | **CDC (Change Data Capture)** | Processing database changes (receives table, rows, poll_column, count) |
 
-#### Components
+### Components
 
 Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINAS into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
 
@@ -660,7 +645,7 @@ POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execu
 POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
 ```
 
-#### Queries
+### Queries
 
 Queries are saved SQL templates that can be executed directly or used as agent tools.
 
@@ -707,9 +692,9 @@ DELETE /api/v1/queries/{namespace}/{name}           # Delete query
 
 ---
 
-### Configure
+## Configure
 
-#### Skills
+### Skills
 
 Skills are reusable instruction documents that give agents specialized knowledge or guidelines.
 
@@ -748,7 +733,7 @@ PUT    /api/v1/skills/{namespace}/{name}    # Update skill
 DELETE /api/v1/skills/{namespace}/{name}    # Delete skill
 ```
 
-#### LLM Providers
+### LLM Providers
 
 LLM providers connect SINAS to language model APIs.
 
@@ -789,7 +774,7 @@ PATCH  /api/v1/llm-providers/{id}        # Update provider
 DELETE /api/v1/llm-providers/{id}        # Delete provider
 ```
 
-#### Database Connections
+### Database Connections
 
 Database connections store credentials and manage connection pools for external databases.
 
@@ -819,7 +804,7 @@ POST   /api/v1/database-connections/test               # Test raw connection par
 POST   /api/v1/database-connections/{id}/test          # Test saved connection
 ```
 
-#### Templates
+### Templates
 
 Templates are Jinja2-based documents for emails, notifications, and dynamic content.
 
@@ -855,9 +840,9 @@ POST   /templates/{id}/send          # Render and send as email
 
 ---
 
-### Triggers
+## Triggers
 
-#### Webhooks
+### Webhooks
 
 Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, SINAS executes the linked function with the request data.
 
@@ -911,7 +896,7 @@ PATCH  /api/v1/webhooks/{path}       # Update webhook
 DELETE /api/v1/webhooks/{path}       # Delete webhook
 ```
 
-#### Schedules
+### Schedules
 
 Schedules trigger functions or agents on a cron timer.
 
@@ -939,7 +924,7 @@ PATCH  /api/v1/schedules/{name}       # Update schedule
 DELETE /api/v1/schedules/{name}       # Delete schedule
 ```
 
-#### Database Triggers (CDC)
+### Database Triggers (CDC)
 
 Database triggers watch external database tables for changes and automatically execute functions when new or updated rows are detected. This is poll-based Change Data Capture — no setup required on the source database.
 
@@ -1023,9 +1008,9 @@ databaseTriggers:
 
 ---
 
-### Storage
+## Storage
 
-#### Collections & Files
+### Collections & Files
 
 Collections are containers for file uploads with versioning, metadata validation, and processing hooks.
 
@@ -1069,7 +1054,7 @@ POST   /files/{namespace}/{collection}/{filename}/url    # Generate temporary do
 POST   /files/{namespace}/{collection}/search            # Search files
 ```
 
-#### States
+### States
 
 States are a persistent key-value store organized by namespace. Agents use states to maintain memory and context across conversations.
 
@@ -1110,9 +1095,9 @@ DELETE /states/{id}         # Delete state
 
 ---
 
-### Admin
+## Admin
 
-#### Integration Packages
+### Integration Packages
 
 Integration packages bundle agents, functions, skills, components, templates, and other resources into a shareable YAML file that can be installed with one click.
 
@@ -1187,7 +1172,7 @@ curl -X POST http://localhost:8000/api/v1/packages/create \
 
 Supported resource types: `agent`, `function`, `skill`, `app`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
 
-#### Apps
+### Apps
 
 Apps are registered applications that declare their resource dependencies. They serve as an organizational and discovery mechanism — when an app context is active, discovery endpoints filter results to show only the app's relevant resources.
 
@@ -1212,7 +1197,7 @@ PUT    /api/v1/apps/{namespace}/{name}           # Update
 DELETE /api/v1/apps/{namespace}/{name}           # Delete
 ```
 
-#### Users & Roles
+### Users & Roles
 
 **Users** are identified by email. They can be created automatically on first login (OTP or OIDC) or provisioned via the management API or declarative config.
 
@@ -1230,7 +1215,7 @@ DELETE /api/v1/users/{id}              # Delete user (admin)
 
 **Role endpoints:** See [Managing Roles](#managing-roles).
 
-#### Permissions
+### Permissions
 
 See [Role-Based Access Control (RBAC)](#role-based-access-control-rbac) for the full permission system documentation, including format, matching rules, custom permissions, and the check-permissions endpoint.
 
@@ -1250,11 +1235,11 @@ See [Role-Based Access Control (RBAC)](#role-based-access-control-rbac) for the 
 | `download` | Download a file |
 | `install` | Approve a package |
 
-#### System Workers & Containers
+### System Workers & Containers
 
 SINAS has a dual-execution model for functions, plus dedicated queue workers for async job processing.
 
-##### Sandbox Container Pool
+#### Sandbox Container Pool
 
 The sandbox pool is a set of **pre-warmed, generic Docker containers** for executing untrusted user code. This is the default execution mode for all functions (`shared_pool=false`).
 
@@ -1312,7 +1297,7 @@ POST /api/v1/containers/reload
 
 Containers that are currently executing are unaffected. New containers created by the replenishment loop automatically include all approved packages.
 
-##### Shared Worker Pool
+#### Shared Worker Pool
 
 Functions marked `shared_pool=true` run in **persistent worker containers** instead of the sandbox pool. This is an admin-only option for trusted code that benefits from longer-lived containers.
 
@@ -1353,7 +1338,7 @@ POST /api/v1/workers/reload
 # → {"status": "completed", "total_workers": 6, "success": 6, "failed": 0}
 ```
 
-##### Queue Workers
+#### Queue Workers
 
 All function and agent executions are processed asynchronously through Redis-based queues (arq). Two separate worker types handle different workloads:
 
@@ -1407,7 +1392,7 @@ Cancellation updates the Redis status to `cancelled` and marks the DB execution 
 
 Results are stored in Redis with a 24-hour TTL.
 
-##### Dependencies (Python Packages)
+#### Dependencies (Python Packages)
 
 Functions can only use Python packages that have been approved by an admin. This prevents untrusted code from installing arbitrary dependencies.
 
@@ -1430,7 +1415,7 @@ Optionally restrict which packages can be approved with a whitelist:
 ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 ```
 
-##### Configuration Reference
+#### Configuration Reference
 
 **Container pool:**
 
@@ -1471,7 +1456,7 @@ ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 | `ALLOW_PACKAGE_INSTALLATION` | true | Enable pip in containers |
 | `ALLOWED_PACKAGES` | _(empty)_ | Comma-separated whitelist (empty = all allowed) |
 
-#### Icons
+### Icons
 
 Agents and functions support configurable icons via the `icon` field. Two formats are supported:
 
@@ -1482,7 +1467,7 @@ Agents and functions support configurable icons via the `icon` field. Two format
 
 Collection-based icons generate signed JWT URLs for private files and direct URLs for public collection files. Icons are resolved at read time via the icon resolver service.
 
-#### Config Manager
+### Config Manager
 
 The config manager supports GitOps-style declarative configuration. Define all your resources in a YAML file and apply it idempotently.
 

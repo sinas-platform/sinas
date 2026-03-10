@@ -86,8 +86,7 @@ async def create_agent(
         status_templates=agent_data.status_templates or {},
         enabled_queries=agent_data.enabled_queries or [],
         query_parameters=agent_data.query_parameters or {},
-        state_namespaces_readonly=agent_data.state_namespaces_readonly or [],
-        state_namespaces_readwrite=agent_data.state_namespaces_readwrite or [],
+        enabled_stores=[s.model_dump() for s in agent_data.enabled_stores] if agent_data.enabled_stores else [],
         enabled_collections=agent_data.enabled_collections or [],
         enabled_components=agent_data.enabled_components or [],
         icon=agent_data.icon,
@@ -223,10 +222,8 @@ async def update_agent(
         agent.enabled_queries = agent_data.enabled_queries
     if agent_data.query_parameters is not None:
         agent.query_parameters = agent_data.query_parameters
-    if agent_data.state_namespaces_readonly is not None:
-        agent.state_namespaces_readonly = agent_data.state_namespaces_readonly
-    if agent_data.state_namespaces_readwrite is not None:
-        agent.state_namespaces_readwrite = agent_data.state_namespaces_readwrite
+    if agent_data.enabled_stores is not None:
+        agent.enabled_stores = [s.model_dump() for s in agent_data.enabled_stores]
     if agent_data.enabled_collections is not None:
         agent.enabled_collections = agent_data.enabled_collections
     if agent_data.enabled_components is not None:

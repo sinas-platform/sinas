@@ -111,8 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           enabledFunctions: [],
           enabledQueries: [],
           enabledComponents: [],
-          stateNamespacesReadonly: [],
-          stateNamespacesReadwrite: [],
+          enabledStores: [] as Array<{ store: string; access: 'readonly' | 'readwrite' }>,
         },
         input: {},
       };

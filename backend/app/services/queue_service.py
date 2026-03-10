@@ -130,30 +130,32 @@ class QueueService:
         """
         Enqueue a function job and wait for its result.
 
-        Uses Redis pub/sub to get notified when the job completes.
+        Subscribes to the Redis pub/sub completion channel BEFORE enqueuing
+        so that fast-completing jobs can't be missed.
         """
         redis = await get_redis()
         timeout = timeout or settings.queue_default_timeout
 
-        job_id = await self.enqueue_function(
-            function_namespace=function_namespace,
-            function_name=function_name,
-            input_data=input_data,
-            execution_id=execution_id,
-            trigger_type=trigger_type,
-            trigger_id=trigger_id,
-            user_id=user_id,
-            chat_id=chat_id,
-            resume_data=resume_data,
-        )
-
-        # Subscribe to completion channel
+        # Subscribe BEFORE enqueuing to eliminate the race where the worker
+        # publishes the result before we start listening.
         channel = f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}"
         pubsub = redis.pubsub()
         await pubsub.subscribe(channel)
 
         try:
-            # Poll for result with timeout
+            job_id = await self.enqueue_function(
+                function_namespace=function_namespace,
+                function_name=function_name,
+                input_data=input_data,
+                execution_id=execution_id,
+                trigger_type=trigger_type,
+                trigger_id=trigger_id,
+                user_id=user_id,
+                chat_id=chat_id,
+                resume_data=resume_data,
+            )
+
+            # Wait for result with timeout
             deadline = asyncio.get_event_loop().time() + timeout
             while asyncio.get_event_loop().time() < deadline:
                 msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
@@ -161,9 +163,13 @@ class QueueService:
                     result_data = json.loads(msg["data"])
                     if result_data.get("status") == "failed":
                         raise Exception(result_data.get("error", "Job failed"))
+                    if result_data.get("status") == "cancelled":
+                        raise Exception("Job cancelled")
                     return result_data.get("result")
 
-                # Also check if result is already stored (race condition safety)
+                # Fallback: check Redis status key in case pub/sub message
+                # was delivered before subscription was fully active (unlikely
+                # now but keeps the safety net).
                 status = await self.get_job_status(job_id)
                 if status and status.get("status") == "completed":
                     result = await self.get_job_result(job_id)

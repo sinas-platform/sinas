@@ -49,7 +49,7 @@ async def create_app(
         required_permissions=app_data.required_permissions,
         optional_permissions=app_data.optional_permissions,
         exposed_namespaces=app_data.exposed_namespaces,
-        state_dependencies=[s.model_dump() for s in app_data.state_dependencies],
+        store_dependencies=[s.model_dump() for s in app_data.store_dependencies],
     )
 
     db.add(app)
@@ -165,8 +165,8 @@ async def update_app(
         app.optional_permissions = app_data.optional_permissions
     if app_data.exposed_namespaces is not None:
         app.exposed_namespaces = app_data.exposed_namespaces
-    if app_data.state_dependencies is not None:
-        app.state_dependencies = [s.model_dump() for s in app_data.state_dependencies]
+    if app_data.store_dependencies is not None:
+        app.store_dependencies = [s.model_dump() for s in app_data.store_dependencies]
     if app_data.is_active is not None:
         app.is_active = app_data.is_active
 

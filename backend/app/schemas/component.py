@@ -19,8 +19,7 @@ class ComponentCreate(BaseModel):
     enabled_functions: Optional[list[str]] = None
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
-    state_namespaces_readonly: Optional[list[str]] = None
-    state_namespaces_readwrite: Optional[list[str]] = None
+    enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
     css_overrides: Optional[str] = None
     visibility: str = Field(default="private", pattern=r"^(private|shared|public)$")
 
@@ -40,8 +39,7 @@ class ComponentUpdate(BaseModel):
     enabled_functions: Optional[list[str]] = None
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
-    state_namespaces_readonly: Optional[list[str]] = None
-    state_namespaces_readwrite: Optional[list[str]] = None
+    enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
     css_overrides: Optional[str] = None
     visibility: Optional[str] = Field(None, pattern=r"^(private|shared|public)$")
     is_active: Optional[bool] = None
@@ -65,8 +63,7 @@ class ComponentResponse(BaseModel):
     enabled_functions: list[str]
     enabled_queries: list[str]
     enabled_components: list[str]
-    state_namespaces_readonly: list[str]
-    state_namespaces_readwrite: list[str]
+    enabled_stores: list[dict]
     css_overrides: Optional[str]
     visibility: str
     version: int
@@ -96,8 +93,7 @@ class ComponentListResponse(BaseModel):
     enabled_functions: list[str]
     enabled_queries: list[str]
     enabled_components: list[str]
-    state_namespaces_readonly: list[str]
-    state_namespaces_readwrite: list[str]
+    enabled_stores: list[dict]
     visibility: str
     version: int
     is_published: bool

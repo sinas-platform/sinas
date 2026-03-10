@@ -18,6 +18,7 @@ from .pending_approval import PendingToolApproval
 from .schedule import ScheduledJob
 from .skill import Skill
 from .state import State
+from .store import Store
 from .table_annotation import TableAnnotation
 from .template import Template
 from .user import APIKey, OTPSession, RefreshToken, Role, RolePermission, User, UserRole
@@ -51,6 +52,7 @@ __all__ = [
     "DatabaseTrigger",
     "Query",
     "State",
+    "Store",
     "PendingToolApproval",
     "Template",
     "Skill",

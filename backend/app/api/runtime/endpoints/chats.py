@@ -613,6 +613,24 @@ async def get_chat(
         resp.content = refresh_message_tokens(resp.content, user_id)
         message_responses.append(resp)
 
+    # Load any unresolved pending approvals for this chat
+    from app.schemas.chat import PendingApprovalResponse
+    approval_result = await db.execute(
+        select(PendingToolApproval).where(
+            PendingToolApproval.chat_id == chat_id,
+            PendingToolApproval.approved == None,
+        )
+    )
+    pending = [
+        PendingApprovalResponse(
+            tool_call_id=pa.tool_call_id,
+            function_namespace=pa.function_namespace,
+            function_name=pa.function_name,
+            arguments=pa.arguments or {},
+        )
+        for pa in approval_result.scalars().all()
+    ]
+
     return ChatWithMessages(
         id=chat.id,
         user_id=chat.user_id,
@@ -627,6 +645,7 @@ async def get_chat(
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
         messages=message_responses,
+        pending_approvals=pending,
     )
 
 

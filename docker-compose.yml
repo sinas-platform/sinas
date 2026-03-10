@@ -300,6 +300,8 @@ services:
   console:
     build:
       context: ./console
+      args:
+        USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
     container_name: sinas-console
     restart: unless-stopped
     ports:

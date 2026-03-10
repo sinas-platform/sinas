@@ -29,6 +29,9 @@ class FunctionCreate(BaseModel):
     requires_approval: bool = Field(
         default=False, description="Require user approval before execution"
     )
+    timeout: Optional[int] = Field(
+        default=None, description="Per-function timeout in seconds (null = use global default)"
+    )
 
     @validator("code")
     def validate_code(cls, v):
@@ -69,6 +72,7 @@ class FunctionUpdate(BaseModel):
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     shared_pool: Optional[bool] = None
     requires_approval: Optional[bool] = None
+    timeout: Optional[int] = None
     is_active: Optional[bool] = None
 
     @validator("code")
@@ -108,6 +112,7 @@ class FunctionResponse(BaseModel):
     icon_url: Optional[str] = None
     shared_pool: bool
     requires_approval: bool
+    timeout: Optional[int] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime

@@ -418,9 +418,14 @@ class SharedWorkerManager:
         trigger_type: str,
         chat_id: Optional[str],
         db: AsyncSession,
+        timeout: Optional[int] = None,
     ) -> dict[str, Any]:
         """
         Execute function in a worker container using round-robin load balancing.
+
+        Each execution uses unique file paths (/tmp/exec_{request,trigger,result}_{eid})
+        so multiple executions can be in-flight on the same container concurrently.
+        The container executor processes them one at a time but no requests are lost.
         """
         async with self._lock:
             if not self.workers:
@@ -439,6 +444,13 @@ class SharedWorkerManager:
 
         try:
             container = self.client.containers.get(container_name)
+
+            # Verify container is actually running (not crashed/stopped)
+            if container.status != "running":
+                logger.warning(f"Worker {container_name} not running (status={container.status}), removing")
+                async with self._lock:
+                    self.workers.pop(worker_id, None)
+                return {"status": "failed", "error": f"Worker {container_name} not running"}
 
             # Fetch function code from database
             from app.models.function import Function
@@ -460,6 +472,7 @@ class SharedWorkerManager:
                 }
 
             # Prepare execution payload with inline code
+            effective_timeout = timeout or settings.function_timeout
             payload = {
                 "action": "execute_inline",
                 "function_code": function.code,
@@ -467,6 +480,7 @@ class SharedWorkerManager:
                 "function_namespace": function_namespace,
                 "function_name": function_name,
                 "enabled_namespaces": enabled_namespaces,
+                "timeout": effective_timeout,
                 "input_data": input_data,
                 "context": {
                     "user_id": user_id,
@@ -478,6 +492,12 @@ class SharedWorkerManager:
                 },
             }
 
+            # Per-execution file paths so concurrent requests don't collide
+            eid = execution_id
+            request_file = f"/tmp/exec_request_{eid}.json"
+            trigger_file = f"/tmp/exec_trigger_{eid}"
+            result_file = f"/tmp/exec_result_{eid}.json"
+
             # Write payload to container via exec_run + stdin pipe.
             # We cannot use put_archive: it writes to the overlay layer which
             # is invisible through tmpfs mounts on Linux.
@@ -488,7 +508,7 @@ class SharedWorkerManager:
             api = container.client.api
             exec_id = api.exec_create(
                 container.id,
-                ['python3', '-c', 'import sys; open("/tmp/exec_request.json","wb").write(sys.stdin.buffer.read())'],
+                ['python3', '-c', f'import sys; open("{request_file}","wb").write(sys.stdin.buffer.read())'],
                 stdin=True,
                 stdout=True,
                 stderr=True,
@@ -508,22 +528,20 @@ class SharedWorkerManager:
                     "-c",
                     f"""
 import sys, json, time, os
-with open("/tmp/exec_trigger", "w") as f:
+with open("{trigger_file}", "w") as f:
     f.write("1")
-max_wait = {settings.function_timeout}
+max_wait = {effective_timeout}
 start = time.time()
 while time.time() - start < max_wait:
     try:
-        with open("/tmp/exec_result.json", "r") as f:
+        with open("{result_file}", "r") as f:
             result = json.load(f)
-            os.remove("/tmp/exec_result.json")
-            os.remove("/tmp/exec_trigger")
             print(json.dumps(result))
             sys.exit(0)
     except FileNotFoundError:
         time.sleep(0.1)
         continue
-print(json.dumps({{"error": "Execution timeout"}}))
+print(json.dumps({{"error": "Execution timeout after {effective_timeout}s"}}))
 sys.exit(1)
 """,
                 ],

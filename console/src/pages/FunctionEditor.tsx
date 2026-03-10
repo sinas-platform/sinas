@@ -134,6 +134,7 @@ export function FunctionEditor() {
     icon: '' as string,
     shared_pool: false,
     requires_approval: false,
+    timeout: null as number | null,
   });
 
   const [requirementInput, setRequirementInput] = useState('');
@@ -186,6 +187,7 @@ export function FunctionEditor() {
         icon: func.icon || '',
         shared_pool: func.shared_pool || false,
         requires_approval: func.requires_approval || false,
+        timeout: func.timeout || null,
       });
     }
   }, [func, isNew]);
@@ -552,6 +554,24 @@ print(details["status"], details["output_data"])`,
                     LLM must ask user for approval before calling this function. Use for dangerous operations (delete, send email, etc.).
                   </span>
                 </label>
+              </div>
+
+              <div>
+                <label htmlFor="timeout" className="block text-sm font-medium text-gray-300">
+                  Timeout (seconds)
+                </label>
+                <span className="block text-xs text-gray-500 mt-0.5 mb-1.5">
+                  Override the global function timeout. Leave empty to use the default.
+                </span>
+                <input
+                  type="number"
+                  id="timeout"
+                  min={1}
+                  placeholder="Default"
+                  value={formData.timeout ?? ''}
+                  onChange={(e) => setFormData({ ...formData, timeout: e.target.value ? parseInt(e.target.value, 10) : null })}
+                  className="w-32 px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-gray-100 text-sm focus:ring-primary-500 focus:border-primary-500"
+                />
               </div>
             </div>
           </div>

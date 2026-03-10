@@ -120,8 +120,7 @@ async def create_component(
         enabled_functions=component_data.enabled_functions or [],
         enabled_queries=component_data.enabled_queries or [],
         enabled_components=component_data.enabled_components or [],
-        state_namespaces_readonly=component_data.state_namespaces_readonly or [],
-        state_namespaces_readwrite=component_data.state_namespaces_readwrite or [],
+        enabled_stores=component_data.enabled_stores or [],
         css_overrides=component_data.css_overrides,
         visibility=component_data.visibility,
         compile_status="pending",
@@ -265,10 +264,8 @@ async def update_component(
         component.enabled_queries = component_data.enabled_queries
     if component_data.enabled_components is not None:
         component.enabled_components = component_data.enabled_components
-    if component_data.state_namespaces_readonly is not None:
-        component.state_namespaces_readonly = component_data.state_namespaces_readonly
-    if component_data.state_namespaces_readwrite is not None:
-        component.state_namespaces_readwrite = component_data.state_namespaces_readwrite
+    if component_data.enabled_stores is not None:
+        component.enabled_stores = component_data.enabled_stores
     if component_data.css_overrides is not None:
         component.css_overrides = component_data.css_overrides
     if component_data.visibility is not None:

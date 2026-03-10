@@ -271,24 +271,6 @@ These have sensible defaults but can be customized:
   - For local development, leave as `localhost` (no HTTPS)
   - For production, set to your domain (e.g., `api.yourdomain.com`)
 
-#### External Authentication (OIDC/OAuth2)
-
-Enable integration with external identity providers (Authentik, Auth0, Keycloak, etc.):
-
-- `EXTERNAL_AUTH_ENABLED` - Enable external auth (default: `false`)
-- `OIDC_ISSUER` - OIDC provider issuer URL
-  - Example: `https://authentik.company.com/application/o/sinas/`
-- `OIDC_AUDIENCE` - Expected audience claim (default: `sinas`)
-- `OIDC_GROUPS_CLAIM` - JWT claim containing user groups (default: `groups`)
-
-**User/Group Provisioning:**
-- `AUTO_PROVISION_USERS` - Auto-create users on first login (default: `true`)
-- `AUTO_PROVISION_GROUPS` - Auto-create SINAS groups for unmapped external groups (default: `false`)
-- `DEFAULT_GROUP_NAME` - Fallback group for users without mapped groups (default: `Users`)
-
-**Note:** Map external groups to SINAS groups via Management API:
-`PATCH /api/v1/groups/{group_id}` with `{"external_group_id": "external-group-id"}`
-
 #### Application Container Resources
 
 Docker resource limits for the SINAS application container:

@@ -3,9 +3,9 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, RefreshCw, ExternalLink, AlertCircle, Settings2, X } from 'lucide-react';
 import { apiClient, getComponentRenderUrl } from '../lib/api';
-import type { ComponentUpdate } from '../types';
+import type { ComponentUpdate, EnabledStoreConfig } from '../types';
 
-type ResourceTab = 'queries' | 'functions' | 'agents' | 'states';
+type ResourceTab = 'queries' | 'functions' | 'agents' | 'stores';
 
 export function ComponentEditor() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
@@ -19,8 +19,7 @@ export function ComponentEditor() {
   const [enabledQueries, setEnabledQueries] = useState<string[]>([]);
   const [enabledFunctions, setEnabledFunctions] = useState<string[]>([]);
   const [enabledAgents, setEnabledAgents] = useState<string[]>([]);
-  const [stateNamespacesReadonly, setStateNamespacesReadonly] = useState<string[]>([]);
-  const [stateNamespacesReadwrite, setStateNamespacesReadwrite] = useState<string[]>([]);
+  const [enabledStores, setEnabledStores] = useState<EnabledStoreConfig[]>([]);
   const [dirty, setDirty] = useState(false);
   const [showResources, setShowResources] = useState(false);
   const [resourceTab, setResourceTab] = useState<ResourceTab>('queries');
@@ -75,9 +74,9 @@ export function ComponentEditor() {
     retry: false,
   });
 
-  const { data: states } = useQuery({
-    queryKey: ['states'],
-    queryFn: () => apiClient.listStates(),
+  const { data: stores } = useQuery({
+    queryKey: ['stores'],
+    queryFn: () => apiClient.listStores(),
     enabled: showResources,
     retry: false,
   });
@@ -92,8 +91,7 @@ export function ComponentEditor() {
       setEnabledQueries(component.enabled_queries || []);
       setEnabledFunctions(component.enabled_functions || []);
       setEnabledAgents(component.enabled_agents || []);
-      setStateNamespacesReadonly(component.state_namespaces_readonly || []);
-      setStateNamespacesReadwrite(component.state_namespaces_readwrite || []);
+      setEnabledStores(component.enabled_stores || []);
       setDirty(false);
     }
   }, [component]);
@@ -133,14 +131,12 @@ export function ComponentEditor() {
       data.enabled_functions = enabledFunctions;
     if (JSON.stringify(enabledAgents) !== JSON.stringify(component?.enabled_agents || []))
       data.enabled_agents = enabledAgents;
-    if (JSON.stringify(stateNamespacesReadonly) !== JSON.stringify(component?.state_namespaces_readonly || []))
-      data.state_namespaces_readonly = stateNamespacesReadonly;
-    if (JSON.stringify(stateNamespacesReadwrite) !== JSON.stringify(component?.state_namespaces_readwrite || []))
-      data.state_namespaces_readwrite = stateNamespacesReadwrite;
+    if (JSON.stringify(enabledStores) !== JSON.stringify(component?.enabled_stores || []))
+      data.enabled_stores = enabledStores;
 
     if (Object.keys(data).length === 0) return;
     updateMutation.mutate(data);
-  }, [sourceCode, title, description, cssOverrides, visibility, enabledQueries, enabledFunctions, enabledAgents, stateNamespacesReadonly, stateNamespacesReadwrite, component, updateMutation]);
+  }, [sourceCode, title, description, cssOverrides, visibility, enabledQueries, enabledFunctions, enabledAgents, enabledStores, component, updateMutation]);
 
   // Ctrl+S save shortcut
   useEffect(() => {
@@ -156,7 +152,7 @@ export function ComponentEditor() {
 
   // Count total enabled resources for the badge
   const resourceCount = enabledQueries.length + enabledFunctions.length + enabledAgents.length
-    + stateNamespacesReadonly.length + stateNamespacesReadwrite.length;
+    + enabledStores.length;
 
   const getStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
@@ -180,11 +176,6 @@ export function ComponentEditor() {
     setter(next);
     setDirty(true);
   };
-
-  // Get unique state namespaces from existing states
-  const stateNamespaces = states
-    ? Array.from(new Set((states as any[]).map((s: any) => s.namespace))).sort()
-    : [];
 
   if (isLoading) {
     return (
@@ -350,7 +341,7 @@ export function ComponentEditor() {
                 ['queries', 'Queries'],
                 ['functions', 'Functions'],
                 ['agents', 'Agents'],
-                ['states', 'States'],
+                ['stores', 'Stores'],
               ] as [ResourceTab, string][]).map(([tab, label]) => (
                 <button
                   key={tab}
@@ -469,58 +460,55 @@ export function ComponentEditor() {
                 </div>
               )}
 
-              {/* States tab */}
-              {resourceTab === 'states' && (
-                <div className="space-y-4">
-                  {/* Read-only */}
-                  <div>
-                    <h4 className="text-xs font-semibold text-gray-300 mb-1">Read-only</h4>
-                    <p className="text-xs text-gray-500 mb-2">
-                      Component can read states from these namespaces.
-                    </p>
-                    {stateNamespaces.length > 0 ? (
-                      <div className="space-y-1">
-                        {stateNamespaces.map((ns: string) => (
-                          <label key={`ro-${ns}`} className="flex items-center gap-2 p-2 hover:bg-white/5 rounded cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={stateNamespacesReadonly.includes(ns)}
-                              onChange={() => toggleItem(stateNamespacesReadonly, setStateNamespacesReadonly, ns)}
-                              className="w-4 h-4 text-blue-600 border-white/10 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-sm font-mono text-gray-200">{ns}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-600">No state namespaces found</p>
-                    )}
-                  </div>
-
-                  {/* Read-write */}
-                  <div>
-                    <h4 className="text-xs font-semibold text-gray-300 mb-1">Read-write</h4>
-                    <p className="text-xs text-gray-500 mb-2">
-                      Component can read, write, and delete states in these namespaces.
-                    </p>
-                    {stateNamespaces.length > 0 ? (
-                      <div className="space-y-1">
-                        {stateNamespaces.map((ns: string) => (
-                          <label key={`rw-${ns}`} className="flex items-center gap-2 p-2 hover:bg-white/5 rounded cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={stateNamespacesReadwrite.includes(ns)}
-                              onChange={() => toggleItem(stateNamespacesReadwrite, setStateNamespacesReadwrite, ns)}
-                              className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
-                            />
-                            <span className="text-sm font-mono text-gray-200">{ns}</span>
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-600">No state namespaces found</p>
-                    )}
-                  </div>
+              {/* Stores tab */}
+              {resourceTab === 'stores' && (
+                <div className="space-y-1">
+                  <p className="text-xs text-gray-500 mb-2">
+                    Configure which stores this component can access and the access level for each.
+                  </p>
+                  {stores && (stores as any[]).length > 0 ? (
+                    <div className="space-y-1">
+                      {(stores as any[]).map((store: any) => {
+                        const ref = `${store.namespace}/${store.name}`;
+                        const currentStores = enabledStores;
+                        const existing = currentStores.find((s: any) => s.store === ref);
+                        const access = existing?.access || 'none';
+                        return (
+                          <div key={ref} className="flex items-center justify-between p-2 hover:bg-white/5 rounded">
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-mono text-gray-200 truncate">{ref}</div>
+                              {store.description && (
+                                <p className="text-xs text-gray-500 mt-0.5 truncate">{store.description}</p>
+                              )}
+                            </div>
+                            <select
+                              value={access}
+                              onChange={(e) => {
+                                const newAccess = e.target.value as 'readonly' | 'readwrite';
+                                let updated: EnabledStoreConfig[];
+                                if (e.target.value === 'none') {
+                                  updated = currentStores.filter((s) => s.store !== ref);
+                                } else if (existing) {
+                                  updated = currentStores.map((s) => s.store === ref ? { ...s, access: newAccess } : s);
+                                } else {
+                                  updated = [...currentStores, { store: ref, access: newAccess }];
+                                }
+                                setEnabledStores(updated);
+                                setDirty(true);
+                              }}
+                              className="bg-[#0d0d0d] border border-gray-800 rounded text-xs text-gray-400 px-2 py-1 ml-2"
+                            >
+                              <option value="none">None</option>
+                              <option value="readonly">Read-only</option>
+                              <option value="readwrite">Read-write</option>
+                            </select>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-600">No stores available. Create stores first.</p>
+                  )}
                 </div>
               )}
             </div>

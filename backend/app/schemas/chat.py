@@ -135,8 +135,17 @@ class MessageSendRequest(BaseModel):
     )
 
 
+class PendingApprovalResponse(BaseModel):
+    """A tool call awaiting user approval."""
+    tool_call_id: str
+    function_namespace: str
+    function_name: str
+    arguments: dict[str, Any] = {}
+
+
 class ChatWithMessages(ChatResponse):
     messages: list[MessageResponse]
+    pending_approvals: list[PendingApprovalResponse] = []
 
 
 class ToolApprovalRequest(BaseModel):

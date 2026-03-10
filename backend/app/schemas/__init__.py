@@ -14,5 +14,6 @@ from .role import *
 from .schedule import *
 from .skill import *
 from .state import *
+from .store import *
 from .user import *
 from .webhook import *
