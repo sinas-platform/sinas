@@ -321,6 +321,7 @@ export interface Function {
   icon_url: string | null;
   shared_pool: boolean;
   requires_approval: boolean;
+  timeout: number | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;

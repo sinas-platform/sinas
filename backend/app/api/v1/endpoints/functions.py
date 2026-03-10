@@ -168,6 +168,7 @@ async def create_function(
         icon=function_data.icon,
         shared_pool=function_data.shared_pool,
         requires_approval=function_data.requires_approval,
+        timeout=function_data.timeout,
     )
 
     db.add(function)
@@ -344,6 +345,8 @@ async def update_function(
         function.shared_pool = function_data.shared_pool
     if function_data.requires_approval is not None:
         function.requires_approval = function_data.requires_approval
+    if function_data.timeout is not None:
+        function.timeout = function_data.timeout
     if function_data.is_active is not None:
         function.is_active = function_data.is_active
     if function_data.enabled_namespaces is not None:

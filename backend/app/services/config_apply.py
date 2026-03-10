@@ -643,6 +643,7 @@ class ConfigApplyService:
                         else [],
                         "tags": sorted(func_config.tags) if func_config.tags else [],
                         "icon": func_config.icon,
+                        "timeout": func_config.timeout,
                     }
                 )
 
@@ -669,6 +670,7 @@ class ConfigApplyService:
                         existing.requirements = func_config.requirements
                         existing.tags = func_config.tags
                         existing.icon = func_config.icon
+                        existing.timeout = func_config.timeout
                         existing.config_checksum = config_hash
                         existing.updated_at = datetime.utcnow()
 
@@ -699,6 +701,7 @@ class ConfigApplyService:
                             enabled_namespaces=func_config.enabledNamespaces,
                             tags=func_config.tags,
                             icon=func_config.icon,
+                            timeout=func_config.timeout,
                             user_id=self.owner_user_id,
                             current_version=1,
                             is_active=True,

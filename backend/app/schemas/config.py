@@ -98,6 +98,7 @@ class FunctionConfig(BaseModel):
     enabledNamespaces: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     icon: Optional[str] = None
+    timeout: Optional[int] = None
 
 
 class SkillConfig(BaseModel):
