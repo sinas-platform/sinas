@@ -22,6 +22,7 @@ services:
       - ./backend/clickhouse/entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
       - ./backend/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
       - ./backend/clickhouse/resource-limits.xml:/etc/clickhouse-server/config.d/resource-limits.xml:ro
+      - ./backend/clickhouse/network.xml:/etc/clickhouse-server/config.d/network.xml:ro
       - ./backend/clickhouse/user-limits.xml:/etc/clickhouse-server/users.d/user-limits.xml:ro
     ulimits:
       nofile:
