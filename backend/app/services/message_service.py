@@ -7,6 +7,7 @@ import traceback
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Optional
 
 import jsonschema
@@ -20,6 +21,7 @@ from app.models.llm_provider import LLMProvider
 from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
+from app.core.config import settings
 from app.core.permissions import check_permission
 from app.services.content_converter import ContentConverter
 
@@ -143,7 +145,13 @@ def strip_base64_data(content: str | None) -> str | None:
     """Strip inline base64 data from message content to reduce payload size.
 
     Replaces base64 data URIs with a placeholder while keeping URLs intact.
+    Skipped on localhost (no DOMAIN) since LLMs can't fetch local URLs and need
+    the inline data.
     """
+    domain = settings.domain
+    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
+        return content
+
     if not content:
         return content
 
@@ -779,6 +787,10 @@ class MessageService:
         # Validate tool calls before saving
         if tool_calls:
             tool_calls = self._validate_tool_calls(tool_calls)
+            # Persist resolved status description on each tool call
+            for tc in tool_calls:
+                args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
 
         # Save assistant message after streaming completes
         assistant_message = Message(
@@ -1038,7 +1050,8 @@ class MessageService:
                     context_section += "The following information has been saved about the user and should inform your responses:\n\n"
 
                     for ctx in relevant_contexts:
-                        context_section += f"**{ctx.namespace}/{ctx.key}**"
+                        store_label = f"{ctx.store.namespace}/{ctx.store.name}" if ctx.store else "unknown"
+                        context_section += f"**{store_label}/{ctx.key}**"
                         if ctx.description:
                             context_section += f" - {ctx.description}"
                         context_section += "\n"
@@ -1094,6 +1107,36 @@ class MessageService:
         else:
             chat_messages = all_messages
 
+        # Repair orphaned tool calls: if an assistant message has tool_calls
+        # but some don't have matching tool result messages, inject synthetic
+        # error results so the LLM provider doesn't reject the history.
+        chat_messages = list(chat_messages)
+        existing_tool_result_ids = {
+            msg.tool_call_id for msg in chat_messages
+            if msg.role == "tool" and msg.tool_call_id
+        }
+        repairs: list[tuple[int, list[dict]]] = []  # (insert_after_idx, messages)
+        for idx, msg in enumerate(chat_messages):
+            if msg.tool_calls:
+                missing = []
+                for tc in msg.tool_calls:
+                    tc_id = tc.get("id")
+                    if tc_id and tc_id not in existing_tool_result_ids:
+                        missing.append(SimpleNamespace(
+                            role="tool",
+                            content="[Error: function call was interrupted or timed out]",
+                            tool_call_id=tc_id,
+                            tool_calls=None,
+                            name=tc.get("function", {}).get("name", "unknown"),
+                        ))
+                if missing:
+                    repairs.append((idx, missing))
+
+        # Insert repairs in reverse order to preserve indices
+        for insert_idx, repair_msgs in reversed(repairs):
+            for i, rm in enumerate(repair_msgs):
+                chat_messages.insert(insert_idx + 1 + i, rm)
+
         for idx, msg in enumerate(chat_messages):
             message_dict = {"role": msg.role}
 
@@ -1123,7 +1166,11 @@ class MessageService:
             message_dict["content"] = content
 
             if msg.tool_calls:
-                message_dict["tool_calls"] = msg.tool_calls
+                # Strip UI-only fields (e.g. description) before sending to LLM
+                message_dict["tool_calls"] = [
+                    {k: v for k, v in tc.items() if k != "description"}
+                    for tc in msg.tool_calls
+                ]
 
             if msg.tool_call_id:
                 message_dict["tool_call_id"] = msg.tool_call_id
@@ -1861,6 +1908,11 @@ class MessageService:
 
         # Only create assistant message if it doesn't already exist
         if not existing_message:
+            # Persist resolved status description on each tool call
+            for tc in tool_calls:
+                if "description" not in tc:
+                    args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                    tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
             assistant_message = Message(
                 chat_id=chat_id, role="assistant", content=None, tool_calls=tool_calls
             )
@@ -1985,7 +2037,11 @@ class MessageService:
                 # Validate tool calls when loading from DB to filter out corrupted ones
                 validated_tool_calls = self._validate_tool_calls(msg.tool_calls)
                 if validated_tool_calls:
-                    message_dict["tool_calls"] = validated_tool_calls
+                    # Strip UI-only fields (e.g. description) before sending to LLM
+                    message_dict["tool_calls"] = [
+                        {k: v for k, v in tc.items() if k != "description"}
+                        for tc in validated_tool_calls
+                    ]
                 elif msg.tool_calls:  # Had tool calls but all were invalid
                     # Skip this message entirely to avoid breaking the conversation
                     print(f"⚠️ Skipping message {msg.id} with corrupted tool calls")

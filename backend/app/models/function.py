@@ -36,6 +36,9 @@ class Function(Base, PermissionMixin):
     requires_approval: Mapped[bool] = mapped_column(
         Boolean, default=False
     )  # If True, LLM must ask user before calling
+    timeout: Mapped[Optional[int]] = mapped_column(
+        Integer
+    )  # Per-function timeout in seconds (null = use global default)
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]
 

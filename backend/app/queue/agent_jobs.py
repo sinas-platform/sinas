@@ -60,6 +60,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
         ex=JOB_TTL,
     )
 
+    completed = False
     try:
         async with AsyncSessionLocal() as db:
             message_service = MessageService(db)
@@ -86,6 +87,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
             ex=JOB_TTL,
         )
 
+        completed = True
         logger.info(f"Agent message job {job_id} completed")
 
     except Exception as e:
@@ -102,7 +104,21 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
             ex=JOB_TTL,
         )
 
+        completed = True
         raise
+
+    finally:
+        if not completed:
+            logger.warning(f"Agent message job {job_id} cancelled/timed out")
+            try:
+                await stream_relay.publish_error(channel_id, "Job cancelled or timed out")
+                await redis.set(
+                    f"{JOB_STATUS_PREFIX}{job_id}",
+                    json.dumps({**base_fields, "status": "failed", "error": "Job cancelled or timed out"}),
+                    ex=JOB_TTL,
+                )
+            except Exception:
+                logger.error(f"Failed to update status for cancelled agent job {job_id}")
 
 
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
@@ -159,6 +175,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         ex=JOB_TTL,
     )
 
+    completed = False
     try:
         async with AsyncSessionLocal() as db:
             # Load pending approval
@@ -223,6 +240,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
             ex=JOB_TTL,
         )
 
+        completed = True
         logger.info(f"Agent resume job {job_id} completed")
 
     except Exception as e:
@@ -237,4 +255,18 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
             ex=JOB_TTL,
         )
 
+        completed = True
         raise
+
+    finally:
+        if not completed:
+            logger.warning(f"Agent resume job {job_id} cancelled/timed out")
+            try:
+                await stream_relay.publish_error(channel_id, "Job cancelled or timed out")
+                await redis.set(
+                    f"{JOB_STATUS_PREFIX}{job_id}",
+                    json.dumps({**base_fields, "status": "failed", "error": "Job cancelled or timed out"}),
+                    ex=JOB_TTL,
+                )
+            except Exception:
+                logger.error(f"Failed to update status for cancelled agent resume job {job_id}")

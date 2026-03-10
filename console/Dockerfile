@@ -1,14 +1,25 @@
 # Stage 1: Build the frontend
 FROM node:20-alpine AS builder
 
+# Set to "true" to use locally built @sinas/sdk and @sinas/ui instead of npm
+ARG USE_LOCAL_PACKAGES=false
+
 WORKDIR /app
 
 # Copy package.json only (lockfile has file: paths that get rewritten)
 COPY package.json ./
 
-# Replace local file: deps with npm versions for Docker build
-RUN sed -i 's|"file:../../sinas-js"|"latest"|g' package.json && \
-    sed -i 's|"file:../../sinas-ui"|"latest"|g' package.json
+# Copy local packages (only used when USE_LOCAL_PACKAGES=true)
+COPY sinas-sdk.tgz* sinas-ui.tgz* ./
+
+# Replace file: deps with either local tarballs or npm latest
+RUN if [ "$USE_LOCAL_PACKAGES" = "true" ]; then \
+      sed -i 's|"file:../../sinas-js"|"file:./sinas-sdk.tgz"|g' package.json && \
+      sed -i 's|"file:../../sinas-ui"|"file:./sinas-ui.tgz"|g' package.json; \
+    else \
+      sed -i 's|"file:../../sinas-js"|"latest"|g' package.json && \
+      sed -i 's|"file:../../sinas-ui"|"latest"|g' package.json; \
+    fi
 
 # Install dependencies
 RUN npm install

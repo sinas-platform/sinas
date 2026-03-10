@@ -7,6 +7,7 @@ from typing import Any, Optional
 import jsonschema
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.encryption import encryption_service
 from app.models.state import State
@@ -646,7 +647,7 @@ class StateTools:
             and_(State.visibility == "shared", State.store_id.in_(store_ids)),
         )
 
-        query = select(State).where(
+        query = select(State).options(selectinload(State.store)).where(
             and_(
                 State.store_id.in_(store_ids),
                 or_(State.expires_at == None, State.expires_at > datetime.utcnow()),

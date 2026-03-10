@@ -91,6 +91,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         ex=JOB_TTL,
     )
 
+    completed = False
     try:
         from app.services.execution_engine import executor
 
@@ -126,6 +127,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             json.dumps({"status": "completed", "result": result}, default=str),
         )
 
+        completed = True
         logger.info(f"Function job {job_id} completed successfully")
         return result
 
@@ -144,6 +146,8 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
             json.dumps({"status": "failed", "error": str(e)}),
         )
+
+        completed = True
 
         # Check if retries exhausted (arq handles retry count internally)
         job_try = ctx.get("job_try", 1)
@@ -169,6 +173,25 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             logger.warning(f"Job {job_id} moved to DLQ after {job_try} attempts")
 
         raise  # Re-raise for arq retry
+
+    finally:
+        # Catch CancelledError/timeout — in Python 3.9+ CancelledError is a
+        # BaseException, not Exception, so the except block above misses it.
+        # Ensure job status is always updated so it doesn't stay "running" forever.
+        if not completed:
+            logger.warning(f"Function job {job_id} cancelled/timed out")
+            try:
+                await redis.set(
+                    f"{JOB_STATUS_PREFIX}{job_id}",
+                    json.dumps({**base_fields, "status": "failed", "error": "Job cancelled or timed out"}),
+                    ex=JOB_TTL,
+                )
+                await redis.publish(
+                    f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+                    json.dumps({"status": "failed", "error": "Job cancelled or timed out"}),
+                )
+            except Exception:
+                logger.error(f"Failed to update status for cancelled job {job_id}")
 
 
 async def function_worker_startup(ctx: dict) -> None:

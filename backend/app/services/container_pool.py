@@ -267,6 +267,7 @@ class ContainerPool:
         trigger_type: str,
         chat_id: Optional[str],
         db: AsyncSession,
+        timeout: Optional[int] = None,
     ) -> dict[str, Any]:
         """
         Execute a function in a pooled container.
@@ -306,6 +307,7 @@ class ContainerPool:
             container = await asyncio.to_thread(self.client.containers.get, pc.name)
 
             # Same IPC protocol as the old per-user containers
+            effective_timeout = timeout or settings.function_timeout
             payload = {
                 "action": "execute_inline",
                 "function_code": function.code,
@@ -313,6 +315,7 @@ class ContainerPool:
                 "function_namespace": function_namespace,
                 "function_name": function_name,
                 "enabled_namespaces": enabled_namespaces,
+                "timeout": effective_timeout,
                 "input_data": input_data,
                 "context": {
                     "user_id": user_id,
@@ -324,13 +327,19 @@ class ContainerPool:
                 },
             }
 
+            # Per-execution file paths so requests never collide
+            eid = execution_id
+            request_filename = f"exec_request_{eid}.json"
+            trigger_file = f"/tmp/exec_trigger_{eid}"
+            result_file = f"/tmp/exec_result_{eid}.json"
+
             # Write payload to container via tar archive (avoids ARG_MAX limit
             # that occurs when large payloads like base64 images are embedded
             # in command-line arguments).
             payload_bytes = json.dumps(payload).encode("utf-8")
             tar_buf = io.BytesIO()
             with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-                info = tarfile.TarInfo(name="exec_request.json")
+                info = tarfile.TarInfo(name=request_filename)
                 info.size = len(payload_bytes)
                 tar.addfile(info, io.BytesIO(payload_bytes))
             tar_buf.seek(0)
@@ -345,23 +354,21 @@ class ContainerPool:
                     f"""
 import sys, json, time, os
 # Trigger execution (request already written via put_archive)
-with open("/tmp/exec_trigger", "w") as f:
+with open("{trigger_file}", "w") as f:
     f.write("1")
 # Wait for result
-max_wait = {settings.function_timeout}
+max_wait = {effective_timeout}
 start = time.time()
 while time.time() - start < max_wait:
     try:
-        with open("/tmp/exec_result.json", "r") as f:
+        with open("{result_file}", "r") as f:
             result = json.load(f)
-            os.remove("/tmp/exec_result.json")
-            os.remove("/tmp/exec_trigger")
             print(json.dumps(result))
             sys.exit(0)
     except FileNotFoundError:
         time.sleep(0.1)
         continue
-print(json.dumps({{"error": "Execution timeout"}}))
+print(json.dumps({{"error": "Execution timeout after {effective_timeout}s"}}))
 sys.exit(1)
 """,
                 ],

@@ -15,6 +15,7 @@ import jsonschema
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.execution import Execution, ExecutionStatus
 from app.models.function import Function
@@ -149,6 +150,7 @@ class FunctionExecutor:
         trigger_type: str,
         chat_id: Optional[str],
         db: AsyncSession,
+        timeout: Optional[int] = None,
     ) -> dict[str, Any]:
         """
         Execute function in shared worker pool (separate worker containers).
@@ -157,7 +159,6 @@ class FunctionExecutor:
         Workers are separate containers from backend but shared across users.
         No per-user isolation - functions must be trusted.
         """
-        # Execute in shared worker container
         exec_result = await self.worker_manager.execute_function(
             user_id=user_id,
             user_email=user_email,
@@ -170,6 +171,7 @@ class FunctionExecutor:
             trigger_type=trigger_type,
             chat_id=chat_id,
             db=db,
+            timeout=timeout,
         )
 
         return exec_result
@@ -179,12 +181,13 @@ class FunctionExecutor:
     ) -> Function:
         """Load function from database with caching.
 
+        Cache is invalidated when the function's updated_at changes,
+        so code/config edits are picked up without process restart.
+
         Note: No permission checks here - permissions should be validated at entry points
         (agent tool execution, webhook validation, schedule authorization).
         """
         cache_key = f"{function_namespace}:{function_name}"
-        if cache_key in self.functions_cache:
-            return self.functions_cache[cache_key]
 
         result = await db.execute(
             select(Function).where(
@@ -199,6 +202,11 @@ class FunctionExecutor:
             raise FunctionExecutionError(
                 f"Function '{function_namespace}/{function_name}' not found or inactive"
             )
+
+        # Invalidate cache if function was updated since last load
+        cached = self.functions_cache.get(cache_key)
+        if cached and cached.updated_at != function.updated_at:
+            logger.info(f"Function cache invalidated: {cache_key} (updated)")
 
         self.functions_cache[cache_key] = function
         return function
@@ -381,6 +389,9 @@ class FunctionExecutor:
 
                 start_time = time.time()
 
+                # Per-function timeout (falls back to global setting)
+                function_timeout = function.timeout or settings.function_timeout
+
                 # Route execution based on shared_pool setting
                 if function.shared_pool:
                     # Execute in shared worker container pool
@@ -397,6 +408,7 @@ class FunctionExecutor:
                         trigger_type=trigger_type,
                         chat_id=chat_id,
                         db=db,
+                        timeout=function_timeout,
                     )
                     elapsed = time.time() - start_time
                     print(f"⏱️  [TIMING] Shared pool execution completed in {elapsed:.3f}s")
@@ -418,6 +430,7 @@ class FunctionExecutor:
                         trigger_type=trigger_type,
                         chat_id=chat_id,
                         db=db,
+                        timeout=function_timeout,
                     )
                     container_elapsed = time.time() - container_start
                     print(f"⏱️  [TIMING] Pool container execution completed in {container_elapsed:.3f}s")
