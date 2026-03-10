@@ -1,0 +1,315 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: sinas-clickhouse
+    restart: unless-stopped
+    entrypoint: /docker-entrypoint-wrapper.sh
+    environment:
+      CLICKHOUSE_DB: sinas
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_S3_ENDPOINT: ${CLICKHOUSE_S3_ENDPOINT:-}
+      CLICKHOUSE_S3_BUCKET: ${CLICKHOUSE_S3_BUCKET:-}
+      CLICKHOUSE_S3_ACCESS_KEY_ID: ${CLICKHOUSE_S3_ACCESS_KEY_ID:-}
+      CLICKHOUSE_S3_SECRET_ACCESS_KEY: ${CLICKHOUSE_S3_SECRET_ACCESS_KEY:-}
+      CLICKHOUSE_S3_REGION: ${CLICKHOUSE_S3_REGION:-}
+    mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-768m}
+    memswap_limit: ${CLICKHOUSE_MEMORY_LIMIT:-768m}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./backend/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backend/clickhouse/entrypoint-wrapper.sh:/docker-entrypoint-wrapper.sh:ro
+      - ./backend/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
+      - ./backend/clickhouse/resource-limits.xml:/etc/clickhouse-server/config.d/resource-limits.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/amd64
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: sinas-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: sinas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set in .env file}
+      POSTGRES_DB: ${DATABASE_NAME:-sinas}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: sinas-pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-sinas}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 50
+      MIN_POOL_SIZE: 10
+      RESERVE_POOL_SIZE: 10
+      AUTH_TYPE: scram-sha-256
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  executor:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/executor:${IMAGE_TAG:-latest}
+    container_name: sinas-executor
+    command: "true"
+    deploy:
+      replicas: 0
+
+  builder:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/builder:${IMAGE_TAG:-latest}
+    container_name: sinas-builder
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    deploy:
+      replicas: ${BACKEND_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: '${APP_CPU_LIMIT:-2.0}'
+          memory: ${APP_MEMORY_LIMIT:-2G}
+        reservations:
+          cpus: '${APP_CPU_RESERVATION:-0.5}'
+          memory: ${APP_MEMORY_RESERVATION:-512M}
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      DATABASE_DIRECT_HOST: postgres
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      DEBUG: ${DEBUG:-false}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      ALGORITHM: ${ALGORITHM:-HS256}
+      OTP_EXPIRE_MINUTES: ${OTP_EXPIRE_MINUTES:-10}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_DOMAIN: ${SMTP_DOMAIN}
+      FUNCTION_TIMEOUT: ${FUNCTION_TIMEOUT:-300}
+      MAX_FUNCTION_MEMORY: ${MAX_FUNCTION_MEMORY:-512}
+      ALLOW_PACKAGE_INSTALLATION: ${ALLOW_PACKAGE_INSTALLATION:-true}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      BUILDER_URL: http://sinas-builder:3000
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      builder:
+        condition: service_healthy
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4}"
+
+  queue-worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m arq app.queue.worker.WorkerSettings
+    deploy:
+      replicas: ${QUEUE_WORKER_REPLICAS:-2}
+
+  queue-agent:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m arq app.queue.worker.AgentWorkerSettings
+    deploy:
+      replicas: ${QUEUE_AGENT_REPLICAS:-2}
+
+  scheduler:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m app.scheduler.service
+    deploy:
+      replicas: 1
+
+  cdc-worker:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m app.cdc.service
+    deploy:
+      replicas: 1
+
+  console:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/console:${IMAGE_TAG:-latest}
+    container_name: sinas-console
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: sinas-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "51245:51245"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    environment:
+      DOMAIN: ${DOMAIN}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-admin@example.com}
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  redis_data:
+  file_storage:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
