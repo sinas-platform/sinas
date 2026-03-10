@@ -6,6 +6,7 @@ import {
   ChevronRight, ChevronDown, Search, Tag, Users, Eye, EyeOff, Edit,
 } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
+import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
 export function Stores() {
   const queryClient = useQueryClient();
@@ -666,7 +667,7 @@ function StoreModal({
     namespace: store?.namespace || 'default',
     name: store?.name || '',
     description: store?.description || '',
-    schema: store?.schema ? JSON.stringify(store.schema, null, 2) : '{}',
+    schema: store?.schema && Object.keys(store.schema).length > 0 ? store.schema : { type: 'object', properties: {} },
     strict: store?.strict ?? false,
     default_visibility: store?.default_visibility || 'private',
     encrypted: store?.encrypted ?? false,
@@ -676,11 +677,11 @@ function StoreModal({
     mutationFn: async (data: any) => {
       const payload: any = {
         ...data,
-        schema: data.schema ? JSON.parse(data.schema) : {},
+        schema: data.schema || {},
       };
 
-      // Remove empty schema
-      if (!payload.schema || Object.keys(payload.schema).length === 0) {
+      // Remove empty schema (no properties defined)
+      if (!payload.schema?.properties || Object.keys(payload.schema.properties).length === 0) {
         delete payload.schema;
       }
 
@@ -763,29 +764,12 @@ function StoreModal({
               />
             </div>
 
-            <div>
-              <label className="label">Schema (JSON Schema)</label>
-              <CodeEditor
-                value={formData.schema}
-                language="json"
-                placeholder='{"type": "object", "properties": {...}}'
-                onChange={(e) => setFormData({ ...formData, schema: e.target.value })}
-                padding={15}
-                data-color-mode="dark"
-                style={{
-                  backgroundColor: '#111111',
-                  fontFamily: 'ui-monospace, monospace',
-                  fontSize: 13,
-                  color: '#ededed',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '0.375rem',
-                  minHeight: '150px',
-                }}
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                JSON Schema to validate state values. When strict mode is enabled, all values must match this schema.
-              </p>
-            </div>
+            <JSONSchemaEditor
+              value={formData.schema}
+              onChange={(schema) => setFormData({ ...formData, schema })}
+              label="Schema (JSON Schema)"
+              description="JSON Schema to validate state values. When strict mode is enabled, all values must match this schema."
+            />
 
             <div>
               <label className="flex items-center gap-2 cursor-pointer">

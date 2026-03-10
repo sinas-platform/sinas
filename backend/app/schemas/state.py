@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class StateCreate(BaseModel):
     key: str = Field(..., min_length=1, max_length=255)
-    value: dict[str, Any] = Field(...)
+    value: Any = Field(...)
     visibility: str = Field(default="private", pattern=r"^(private|shared)$")
     encrypted: bool = False
     description: Optional[str] = None
@@ -18,7 +18,7 @@ class StateCreate(BaseModel):
 
 
 class StateUpdate(BaseModel):
-    value: Optional[dict[str, Any]] = None
+    value: Optional[Any] = None
     encrypted: Optional[bool] = None
     description: Optional[str] = None
     tags: Optional[list[str]] = None
@@ -34,7 +34,7 @@ class StateResponse(BaseModel):
     store_namespace: Optional[str] = None
     store_name: Optional[str] = None
     key: str
-    value: dict[str, Any]
+    value: Any
     visibility: str
     encrypted: bool = False
     description: Optional[str]

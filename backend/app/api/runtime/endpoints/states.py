@@ -2,7 +2,7 @@
 import json
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, or_, select
@@ -18,13 +18,13 @@ from app.schemas import StateCreate, StateResponse, StateUpdate
 router = APIRouter(prefix="/states")
 
 
-def _encrypt_value(value: dict) -> str:
-    """Encrypt a dict value to a Fernet ciphertext string."""
+def _encrypt_value(value: Any) -> str:
+    """Encrypt a JSON value to a Fernet ciphertext string."""
     return encryption_service.encrypt(json.dumps(value))
 
 
-def _decrypt_value(encrypted_value: str) -> dict:
-    """Decrypt a Fernet ciphertext string back to a dict."""
+def _decrypt_value(encrypted_value: str) -> Any:
+    """Decrypt a Fernet ciphertext string back to a JSON value."""
     return json.loads(encryption_service.decrypt(encrypted_value))
 
 
