@@ -1,7 +1,7 @@
 <clickhouse>
     <!-- Cap ClickHouse memory for small VPS deployments -->
-    <!-- max_server_memory_usage: hard limit on total server memory (512MB) -->
-    <max_server_memory_usage>536870912</max_server_memory_usage>
+    <!-- max_server_memory_usage: hard limit on total server memory (1GB) -->
+    <max_server_memory_usage>1073741824</max_server_memory_usage>
 
     <!-- Reduce background thread pools to save memory -->
     <!-- background_pool_size * concurrency_ratio must be >= 25 (number_of_free_entries_in_pool_to_execute_optimize_entire_partition default) -->
