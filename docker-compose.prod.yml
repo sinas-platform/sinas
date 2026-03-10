@@ -14,8 +14,8 @@ services:
       CLICKHOUSE_S3_ACCESS_KEY_ID: ${CLICKHOUSE_S3_ACCESS_KEY_ID:-}
       CLICKHOUSE_S3_SECRET_ACCESS_KEY: ${CLICKHOUSE_S3_SECRET_ACCESS_KEY:-}
       CLICKHOUSE_S3_REGION: ${CLICKHOUSE_S3_REGION:-}
-    mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-768m}
-    memswap_limit: ${CLICKHOUSE_MEMORY_LIMIT:-768m}
+    mem_limit: ${CLICKHOUSE_MEMORY_LIMIT:-1280m}
+    memswap_limit: ${CLICKHOUSE_MEMORY_LIMIT:-1280m}
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./backend/init-clickhouse.sql:/docker-entrypoint-initdb.d/init.sql:ro
