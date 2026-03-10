@@ -31,6 +31,13 @@ class ClickHouseLogger:
             print(f"Failed to initialize ClickHouse client: {e}")
             self.client = None
 
+    def _ensure_client(self) -> bool:
+        """Ensure client is connected, retry if needed."""
+        if self.client:
+            return True
+        self._initialize_client()
+        return self.client is not None
+
     async def log_request(
         self,
         request_id: str,
@@ -81,7 +88,7 @@ class ClickHouseLogger:
             error_type: Error type/class
             metadata: Additional metadata as dict
         """
-        if not self.client:
+        if not self._ensure_client():
             return  # Skip logging if ClickHouse not available
 
         try:
@@ -177,7 +184,7 @@ class ClickHouseLogger:
         Returns:
             List of log entries
         """
-        if not self.client:
+        if not self._ensure_client():
             return []
 
         try:
@@ -217,7 +224,7 @@ class ClickHouseLogger:
         self, execution_id: str, function_name: str, input_data: dict[str, Any]
     ):
         """Log execution start event."""
-        if not self.client:
+        if not self._ensure_client():
             return
 
         try:
@@ -265,7 +272,7 @@ class ClickHouseLogger:
         duration_ms: Optional[int] = None,
     ):
         """Log execution end event."""
-        if not self.client:
+        if not self._ensure_client():
             return
 
         try:
@@ -308,7 +315,7 @@ class ClickHouseLogger:
         self, execution_id: str, function_name: str, step_id: str, input_data: dict[str, Any]
     ):
         """Log function call within an execution."""
-        if not self.client:
+        if not self._ensure_client():
             return
 
         try:
@@ -357,7 +364,7 @@ class ClickHouseLogger:
         duration_ms: Optional[int] = None,
     ):
         """Log function result within an execution."""
-        if not self.client:
+        if not self._ensure_client():
             return
 
         try:
@@ -398,7 +405,7 @@ class ClickHouseLogger:
 
     async def get_execution_logs(self, execution_id: str, limit: int = 1000) -> list:
         """Get logs for a specific execution."""
-        if not self.client:
+        if not self._ensure_client():
             return []
 
         try:
@@ -422,7 +429,7 @@ class ClickHouseLogger:
         data from hot (local) to cold (S3) after hot_retention_days.
         Otherwise, sets TTL to DELETE data after retention_days.
         """
-        if not self.client:
+        if not self._ensure_client():
             return
 
         tables = ["request_logs", "execution_logs"]
