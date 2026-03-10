@@ -3,22 +3,14 @@
     <!-- max_server_memory_usage: hard limit on total server memory (512MB) -->
     <max_server_memory_usage>536870912</max_server_memory_usage>
 
-    <!-- Limit per-query memory to 256MB -->
-    <profiles>
-        <default>
-            <max_memory_usage>268435456</max_memory_usage>
-            <max_bytes_before_external_group_by>134217728</max_bytes_before_external_group_by>
-            <max_bytes_before_external_sort>134217728</max_bytes_before_external_sort>
-        </default>
-    </profiles>
-
     <!-- Reduce background thread pools to save memory -->
-    <background_pool_size>2</background_pool_size>
-    <background_merges_mutations_concurrency_ratio>1</background_merges_mutations_concurrency_ratio>
-    <background_schedule_pool_size>2</background_schedule_pool_size>
-    <background_common_pool_size>2</background_common_pool_size>
-    <background_move_pool_size>1</background_move_pool_size>
-    <background_fetches_pool_size>1</background_fetches_pool_size>
+    <!-- background_pool_size * concurrency_ratio must be >= 25 (number_of_free_entries_in_pool_to_execute_optimize_entire_partition default) -->
+    <background_pool_size>9</background_pool_size>
+    <background_merges_mutations_concurrency_ratio>3</background_merges_mutations_concurrency_ratio>
+    <background_schedule_pool_size>4</background_schedule_pool_size>
+    <background_common_pool_size>4</background_common_pool_size>
+    <background_move_pool_size>2</background_move_pool_size>
+    <background_fetches_pool_size>2</background_fetches_pool_size>
 
     <!-- Limit concurrent connections -->
     <max_connections>64</max_connections>
