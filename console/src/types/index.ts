@@ -974,9 +974,9 @@ export interface CreateViewRequest {
 export interface AnnotationItem {
   schema_name: string;
   table_name: string;
-  column_name: string | null;
-  display_name: string | null;
-  description: string | null;
+  column_name?: string | null;
+  display_name?: string | null;
+  description?: string | null;
 }
 
 // Queries

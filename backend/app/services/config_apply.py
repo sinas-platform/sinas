@@ -17,6 +17,7 @@ from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.database_connection import DatabaseConnection
+from app.models.table_annotation import TableAnnotation
 from app.models.llm_provider import LLMProvider
 from app.models.query import Query
 from app.models.database_trigger import DatabaseTrigger
@@ -526,6 +527,72 @@ class ConfigApplyService:
                 self.errors.append(
                     f"Error applying database connection '{conn_config.name}': {str(e)}"
                 )
+
+        # Apply annotations for all connections
+        for conn_config in connections:
+            if conn_config.annotations:
+                conn_id = self.database_connection_ids.get(conn_config.name)
+                if conn_id and conn_id != "dry-run-id":
+                    await self._apply_annotations(
+                        conn_config.name, conn_id, conn_config.annotations, dry_run
+                    )
+                elif dry_run:
+                    for ann in conn_config.annotations:
+                        target = f"{conn_config.name}/{ann.schemaName}.{ann.tableName}"
+                        if ann.columnName:
+                            target += f".{ann.columnName}"
+                        self._track_change("create", "annotations", target)
+
+    async def _apply_annotations(self, connection_name: str, connection_id: str, annotations, dry_run: bool):
+        """Apply table/column annotations for a database connection."""
+        import uuid as uuid_lib
+
+        conn_uuid = uuid_lib.UUID(connection_id)
+
+        for ann in annotations:
+            target = f"{connection_name}/{ann.schemaName}.{ann.tableName}"
+            if ann.columnName:
+                target += f".{ann.columnName}"
+            try:
+                q = select(TableAnnotation).where(
+                    TableAnnotation.database_connection_id == conn_uuid,
+                    TableAnnotation.schema_name == ann.schemaName,
+                    TableAnnotation.table_name == ann.tableName,
+                )
+                if ann.columnName is not None:
+                    q = q.where(TableAnnotation.column_name == ann.columnName)
+                else:
+                    q = q.where(TableAnnotation.column_name.is_(None))
+
+                result = await self.db.execute(q)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    changed = False
+                    if ann.displayName is not None and existing.display_name != ann.displayName:
+                        if not dry_run:
+                            existing.display_name = ann.displayName
+                        changed = True
+                    if ann.description is not None and existing.description != ann.description:
+                        if not dry_run:
+                            existing.description = ann.description
+                        changed = True
+
+                    self._track_change("update" if changed else "unchanged", "annotations", target)
+                else:
+                    if not dry_run:
+                        self.db.add(TableAnnotation(
+                            database_connection_id=conn_uuid,
+                            schema_name=ann.schemaName,
+                            table_name=ann.tableName,
+                            column_name=ann.columnName,
+                            display_name=ann.displayName,
+                            description=ann.description,
+                        ))
+                    self._track_change("create", "annotations", target)
+
+            except Exception as e:
+                self.errors.append(f"Error applying annotation '{target}': {str(e)}")
 
     async def _apply_queries(self, queries, dry_run: bool):
         """Apply query configurations"""
