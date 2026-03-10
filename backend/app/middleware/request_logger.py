@@ -88,26 +88,32 @@ class RequestLoggerMiddleware:
             or "/logout" in path
         )
 
+        # Max request body size to log (skip large payloads like file uploads)
+        MAX_LOG_BODY_BYTES = 32_768  # 32KB
+
         if body_parts and method in ["POST", "PUT", "PATCH"] and not is_auth_endpoint:
             full_body = b"".join(body_parts)
             if full_body and "application/json" in content_type:
-                try:
-                    request_body = json.loads(full_body.decode())
-                    # Redact sensitive fields
-                    if isinstance(request_body, dict):
-                        for sensitive_key in [
-                            "password",
-                            "api_key",
-                            "secret",
-                            "token",
-                            "refresh_token",
-                            "access_token",
-                            "otp",
-                        ]:
-                            if sensitive_key in request_body:
-                                request_body[sensitive_key] = "***REDACTED***"
-                except Exception:
-                    pass
+                if len(full_body) > MAX_LOG_BODY_BYTES:
+                    request_body = {"_truncated": True, "_size": len(full_body)}
+                else:
+                    try:
+                        request_body = json.loads(full_body.decode())
+                        # Redact sensitive fields
+                        if isinstance(request_body, dict):
+                            for sensitive_key in [
+                                "password",
+                                "api_key",
+                                "secret",
+                                "token",
+                                "refresh_token",
+                                "access_token",
+                                "otp",
+                            ]:
+                                if sensitive_key in request_body:
+                                    request_body[sensitive_key] = "***REDACTED***"
+                    except Exception:
+                        pass
 
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)
