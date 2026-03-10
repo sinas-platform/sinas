@@ -132,7 +132,7 @@ async def get_request_log_stats(
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
     # Query ClickHouse for stats
-    if not clickhouse_logger.client:
+    if not clickhouse_logger._ensure_client():
         raise HTTPException(status_code=503, detail="ClickHouse not available")
 
     try:
