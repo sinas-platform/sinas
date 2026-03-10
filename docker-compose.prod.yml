@@ -88,18 +88,14 @@ services:
       retries: 5
 
   executor:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.executor
-    image: sinas-executor
-    command: "true"  # Don't run, just build the image
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/executor:${IMAGE_TAG:-latest}
+    container_name: sinas-executor
+    command: "true"
     deploy:
-      replicas: 0  # Don't actually run this service
+      replicas: 0
 
   builder:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.builder
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/builder:${IMAGE_TAG:-latest}
     container_name: sinas-builder
     restart: unless-stopped
     healthcheck:
@@ -109,14 +105,11 @@ services:
       retries: 5
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
     env_file:
@@ -168,15 +161,12 @@ services:
         condition: service_healthy
       builder:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4}"
 
   queue-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
-      - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
     env_file:
@@ -205,12 +195,9 @@ services:
       replicas: ${QUEUE_WORKER_REPLICAS:-2}
 
   queue-agent:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
-      - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
     env_file:
@@ -239,12 +226,9 @@ services:
       replicas: ${QUEUE_AGENT_REPLICAS:-2}
 
   scheduler:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
-      - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
     env_file:
@@ -275,12 +259,8 @@ services:
       replicas: 1
 
   cdc-worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
-    volumes:
-      - ./backend:/app
     env_file:
       - .env
     environment:
@@ -302,10 +282,7 @@ services:
       replicas: 1
 
   console:
-    build:
-      context: ./console
-      args:
-        USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas-agents}/console:${IMAGE_TAG:-latest}
     container_name: sinas-console
     restart: unless-stopped
     ports:
