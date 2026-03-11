@@ -28,7 +28,7 @@ Sinas gives you a self-hosted backend for AI-powered applications: configure age
 ## Quick Start
 
 ```bash
-git clone https://github.com/pulsr-ai/sinas.git
+git clone https://github.com/sinas-platform/sinas.git
 cd sinas
 sudo bash install.sh
 ```
