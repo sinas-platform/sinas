@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 import docker
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -61,22 +61,30 @@ class SharedWorkerManager:
     async def initialize(self):
         """
         Initialize worker manager on startup.
-        Re-discovers existing worker containers and scales to default count.
+        Removes stale workers (wrong image), cleans up stuck executions,
+        and scales to default count.
 
         Only called by the backend process (main.py), not by queue workers.
         """
         if self._initialized:
             return
 
-        # Re-discover existing worker containers
+        from app.core.database import AsyncSessionLocal
+
+        # Remove old workers running a stale executor image
+        await self._remove_stale_workers()
+
+        # Re-discover any remaining valid worker containers
         await self._discover_existing_workers()
 
-        # Scale to default count if needed (get db session)
+        # Clean up executions stuck in "running" state from previous lifecycle
+        async with AsyncSessionLocal() as db:
+            await self._cleanup_stuck_executions(db)
+
+        # Scale to default count if needed
         current_count = len(self.workers)
         if current_count < settings.default_worker_count:
             print(f"📦 Scaling to default worker count: {settings.default_worker_count}")
-            from app.core.database import AsyncSessionLocal
-
             async with AsyncSessionLocal() as db:
                 await self.scale_workers(settings.default_worker_count, db)
 
@@ -133,6 +141,57 @@ class SharedWorkerManager:
 
         except Exception as e:
             print(f"⚠️  Failed to discover existing workers: {e}")
+
+    async def _remove_stale_workers(self):
+        """Remove worker containers running an outdated executor image."""
+        try:
+            current_image = self.client.images.get(settings.function_container_image)
+            current_image_id = current_image.id
+        except Exception as e:
+            print(f"⚠️  Cannot resolve current executor image: {e}")
+            return
+
+        try:
+            containers = self.client.containers.list(
+                all=True, filters={"name": "sinas-worker-"}
+            )
+            removed = 0
+            for container in containers:
+                if not container.name.startswith("sinas-worker-"):
+                    continue
+                if container.image.id != current_image_id:
+                    print(
+                        f"🗑️  Removing stale worker {container.name} (old image)"
+                    )
+                    try:
+                        container.remove(force=True)
+                        removed += 1
+                    except Exception as e:
+                        print(f"⚠️  Failed to remove {container.name}: {e}")
+            if removed:
+                print(f"🗑️  Removed {removed} stale worker(s)")
+        except Exception as e:
+            print(f"⚠️  Failed to clean stale workers: {e}")
+
+    async def _cleanup_stuck_executions(self, db: AsyncSession):
+        """Mark executions stuck in 'running' state as failed after restart."""
+        try:
+            from app.models.execution import Execution, ExecutionStatus
+
+            result = await db.execute(
+                update(Execution)
+                .where(Execution.status == ExecutionStatus.RUNNING)
+                .values(
+                    status=ExecutionStatus.FAILED,
+                    error="Execution interrupted by server restart",
+                    completed_at=datetime.utcnow(),
+                )
+            )
+            if result.rowcount > 0:
+                print(f"🧹 Marked {result.rowcount} stuck execution(s) as failed")
+            await db.commit()
+        except Exception as e:
+            print(f"⚠️  Failed to clean stuck executions: {e}")
 
     def get_worker_count(self) -> int:
         """Get current number of workers."""
