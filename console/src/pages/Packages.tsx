@@ -27,7 +27,7 @@ export function Packages() {
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: () => apiClient.listAgents(), enabled: showCreateModal });
   const { data: functions } = useQuery({ queryKey: ['functions'], queryFn: () => apiClient.listFunctions(), enabled: showCreateModal });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: () => apiClient.listSkills(), enabled: showCreateModal });
-  const { data: apps } = useQuery({ queryKey: ['apps'], queryFn: () => apiClient.listApps(), enabled: showCreateModal });
+  const { data: manifests } = useQuery({ queryKey: ['manifests'], queryFn: () => apiClient.listManifests(), enabled: showCreateModal });
   const { data: components } = useQuery({ queryKey: ['components'], queryFn: () => apiClient.listComponents(), enabled: showCreateModal });
   const { data: queries } = useQuery({ queryKey: ['queries'], queryFn: () => apiClient.listQueries(), enabled: showCreateModal });
   const { data: collections } = useQuery({ queryKey: ['collections'], queryFn: () => apiClient.listCollections(), enabled: showCreateModal });
@@ -164,7 +164,7 @@ export function Packages() {
     { type: 'component', label: 'Components', items: components?.map((c: any) => ({ namespace: c.namespace, name: c.name })) || [] },
     { type: 'query', label: 'Queries', items: queries?.map((q: any) => ({ namespace: q.namespace, name: q.name })) || [] },
     { type: 'collection', label: 'Collections', items: collections?.map((c: any) => ({ namespace: c.namespace, name: c.name })) || [] },
-    { type: 'app', label: 'Apps', items: apps?.map((a: any) => ({ namespace: a.namespace, name: a.name })) || [] },
+    { type: 'manifest', label: 'Manifests', items: manifests?.map((a: any) => ({ namespace: a.namespace, name: a.name })) || [] },
     { type: 'webhook', label: 'Webhooks', items: webhooks?.map((w: any) => ({ namespace: 'default', name: w.path })) || [] },
     { type: 'template', label: 'Templates', items: templates?.map((t: any) => ({ namespace: t.namespace, name: t.name })) || [] },
     { type: 'schedule', label: 'Schedules', items: schedules?.map((s: any) => ({ namespace: 'default', name: s.name })) || [] },

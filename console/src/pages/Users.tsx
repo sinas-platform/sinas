@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
-import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus, Lock } from 'lucide-react';
+import { Users as UsersIcon, UserPlus, Edit2, Trash2, Shield, UserMinus, Plus, Lock, Search, AlertTriangle, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { Permissions as PermissionsTab } from './Permissions';
 
 type Tab = 'users' | 'roles' | 'permissions';
@@ -12,7 +12,7 @@ export function Users() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-100">Users & Roles</h1>
+        <h1 className="text-3xl font-bold text-gray-100">Access Control</h1>
         <p className="text-gray-400 mt-1">Manage users, roles, and permissions</p>
       </div>
 
@@ -66,78 +66,348 @@ export function Users() {
 }
 
 // Users Tab
+const PAGE_SIZE = 50;
+
 function UsersTab() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [deletingUser, setDeletingUser] = useState<any>(null);
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page, setPage] = useState(0);
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const { data: users, isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: () => apiClient.listUsers(),
+    queryKey: ['users', debouncedSearch, page],
+    queryFn: () => apiClient.listUsers({
+      skip: page * PAGE_SIZE,
+      limit: PAGE_SIZE,
+      search: debouncedSearch || undefined,
+    }),
+    retry: false,
+  });
+
+  const { data: roles } = useQuery({
+    queryKey: ['groups'],
+    queryFn: () => apiClient.listRoles(),
     retry: false,
   });
 
   const deleteMutation = useMutation({
     mutationFn: (userId: string) => apiClient.deleteUser(userId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      setDeletingUser(null);
+    },
   });
+
+  const hasNextPage = users && users.length === PAGE_SIZE;
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={() => setShowCreateModal(true)} className="btn btn-primary btn-sm">
+      <div className="flex items-center justify-between gap-4">
+        {/* Search */}
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by email..."
+            className="input w-full !pl-11"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        <button onClick={() => setShowCreateModal(true)} className="btn btn-primary btn-sm flex-shrink-0">
           <UserPlus className="w-4 h-4 mr-2" />
           Create User
         </button>
       </div>
+
       {isLoading ? (
-        <div className="text-center py-8"><div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div></div>
-      ) : users && users.length > 0 ? (
-        <div className="grid gap-4">
-          {users.map((user: any) => (
-            <div key={user.id} className="card flex items-center justify-between">
-              <div className="flex items-center flex-1">
-                <UsersIcon className="w-6 h-6 text-primary-600 mr-3" />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-gray-100">{user.email}</h3>
-                  {user.roles && user.roles.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {user.roles.map((role: any) => (
-                        <span key={role.id} className="px-2 py-0.5 bg-blue-900/30 text-blue-300 text-xs rounded">
-                          {role.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    Created {new Date(user.created_at).toLocaleDateString()}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => confirm('Delete this user?') && deleteMutation.mutate(user.id)}
-                  className="text-red-600 hover:text-red-400"
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="text-center py-8">
+          <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-primary-600"></div>
         </div>
+      ) : users && users.length > 0 ? (
+        <>
+          <div className="card overflow-x-auto p-0">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Roles</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user: any) => (
+                  <tr key={user.id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                    <td className="py-3 px-4">
+                      <div className="text-sm text-gray-100">{user.email}</div>
+                      <div className="text-xs text-gray-600 font-mono select-all">{user.id}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      {user.roles && user.roles.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {user.roles.map((roleName: string) => (
+                            <span
+                              key={roleName}
+                              className={`px-2 py-0.5 text-xs rounded ${
+                                roleName.toLowerCase() === 'admins'
+                                  ? 'bg-red-900/30 text-red-300'
+                                  : 'bg-blue-900/30 text-blue-300'
+                              }`}
+                            >
+                              {roleName}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-gray-600">No roles</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-gray-400">
+                      {new Date(user.created_at).toLocaleDateString('en-GB')}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setEditingUser(user)}
+                          className="text-gray-400 hover:text-gray-200 p-1"
+                          title="Edit roles"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setDeletingUser(user)}
+                          className="text-gray-400 hover:text-red-400 p-1"
+                          title="Delete user"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div className="flex items-center justify-between text-sm text-gray-400">
+            <span>
+              Showing {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + users.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="btn btn-secondary btn-sm disabled:opacity-30"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-gray-500">Page {page + 1}</span>
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={!hasNextPage}
+                className="btn btn-secondary btn-sm disabled:opacity-30"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </>
       ) : (
         <div className="text-center py-12 card">
           <UsersIcon className="w-12 h-12 text-gray-500 mx-auto mb-3" />
-          <p className="text-gray-400">No users found</p>
+          <p className="text-gray-400">{debouncedSearch ? 'No users matching search' : 'No users found'}</p>
         </div>
       )}
 
       {showCreateModal && <CreateUserModal onClose={() => setShowCreateModal(false)} />}
+      {editingUser && <EditUserRolesModal user={editingUser} allRoles={roles || []} onClose={() => setEditingUser(null)} />}
+      {deletingUser && (
+        <ConfirmDeleteModal
+          title="Delete User"
+          targetName={deletingUser.email}
+          description="This will permanently delete this user and all their data. This action cannot be undone."
+          onConfirm={() => deleteMutation.mutate(deletingUser.id)}
+          onCancel={() => setDeletingUser(null)}
+          isPending={deleteMutation.isPending}
+          error={deleteMutation.error}
+        />
+      )}
     </div>
   );
 }
 
-// Groups Tab
+/** Type-to-confirm destructive delete modal */
+function ConfirmDeleteModal({
+  title,
+  targetName,
+  description,
+  onConfirm,
+  onCancel,
+  isPending,
+  error,
+}: {
+  title: string;
+  targetName: string;
+  description: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isPending: boolean;
+  error?: any;
+}) {
+  const [typed, setTyped] = useState('');
+  const matches = typed === 'DELETE';
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onCancel} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle className="w-5 h-5 text-red-400" />
+            <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
+          </div>
+          <p className="text-gray-300 text-sm mb-2">{description}</p>
+          <p className="text-gray-400 text-sm mb-4">
+            Target: <span className="font-mono font-bold text-gray-100">{targetName}</span>
+          </p>
+          <p className="text-gray-400 text-sm mb-2">
+            Type <span className="font-mono font-bold text-red-400">DELETE</span> to confirm:
+          </p>
+          <input
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className="input font-mono"
+            placeholder="DELETE"
+            autoFocus
+          />
+          {error && (
+            <div className="mt-3 p-3 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-300">
+              {(error as any)?.response?.data?.detail || 'Operation failed'}
+            </div>
+          )}
+          <div className="flex justify-end space-x-3 pt-4">
+            <button type="button" onClick={onCancel} className="btn btn-secondary" disabled={isPending}>
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              className="btn bg-red-600 hover:bg-red-700 text-white"
+              disabled={!matches || isPending}
+            >
+              {isPending ? 'Deleting...' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/** Modal for editing a user's role assignments */
+function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: any[]; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const currentRoleNames = new Set((user.roles || []) as string[]);
+
+  const addMutation = useMutation({
+    mutationFn: ({ roleName, userId }: { roleName: string; userId: string }) =>
+      apiClient.addRoleMember(roleName, { user_id: userId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: ({ roleName, userId }: { roleName: string; userId: string }) =>
+      apiClient.removeRoleMember(roleName, userId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
+    },
+  });
+
+  const toggleRole = (roleName: string) => {
+    if (currentRoleNames.has(roleName)) {
+      removeMutation.mutate({ roleName, userId: user.id });
+    } else {
+      addMutation.mutate({ roleName, userId: user.id });
+    }
+  };
+
+  const isPending = addMutation.isPending || removeMutation.isPending;
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+          <h2 className="text-xl font-semibold text-gray-100 mb-1">Edit Roles</h2>
+          <p className="text-sm text-gray-400 mb-4">{user.email}</p>
+
+          <div className="space-y-2">
+            {allRoles.map((role: any) => {
+              const isAssigned = currentRoleNames.has(role.name);
+              return (
+                <label
+                  key={role.id}
+                  className="flex items-center gap-3 p-3 rounded-lg bg-[#0d0d0d] hover:bg-white/[0.03] cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isAssigned}
+                    onChange={() => toggleRole(role.name)}
+                    disabled={isPending}
+                    className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-100">{role.name}</span>
+                      {role.name.toLowerCase() === 'admins' && (
+                        <span className="px-1.5 py-0.5 bg-red-900/30 text-red-300 text-[10px] font-medium rounded">Admin</span>
+                      )}
+                    </div>
+                    {role.description && (
+                      <span className="text-xs text-gray-500">{role.description}</span>
+                    )}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-end mt-6 pt-4 border-t border-white/[0.06]">
+            <button onClick={onClose} className="btn btn-secondary">Done</button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Roles Tab
 function RolesTab() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -250,48 +520,54 @@ function RoleModal({ role, onClose }: { role: any; onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
-        <h2 className="text-xl font-semibold text-gray-100 mb-4">{role ? 'Edit' : 'Create'} Role</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
-            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="input" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
-            <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={2} className="input" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Email Domain</label>
-            <input type="text" value={formData.email_domain} onChange={(e) => setFormData({ ...formData, email_domain: e.target.value })} placeholder="example.com" className="input" />
-            <p className="text-xs text-gray-500 mt-1">Users with this email domain will auto-join this role</p>
-          </div>
-          <div className="flex justify-end space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
-              {mutation.isPending ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-        </form>
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+          <h2 className="text-xl font-semibold text-gray-100 mb-4">{role ? 'Edit' : 'Create'} Role</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Name *</label>
+              <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="input" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Description</label>
+              <textarea value={formData.description} onChange={(e) => setFormData({ ...formData, description: e.target.value })} rows={2} className="input" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Email Domain</label>
+              <input type="text" value={formData.email_domain} onChange={(e) => setFormData({ ...formData, email_domain: e.target.value })} placeholder="example.com" className="input" />
+              <p className="text-xs text-gray-500 mt-1">Users with this email domain will auto-join this role</p>
+            </div>
+            <div className="flex justify-end space-x-3 pt-4">
+              <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
+              <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
+                {mutation.isPending ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
 function RoleManagementModal({ role, onClose }: { role: any; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-xl font-semibold text-gray-100 mb-4">Manage Members: {role.name}</h2>
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto pointer-events-auto">
+          <h2 className="text-xl font-semibold text-gray-100 mb-4">Manage Members: {role.name}</h2>
 
-        <MembersManagement role={role} />
+          <MembersManagement role={role} />
 
-        <div className="flex justify-end mt-6 pt-4 border-t border-white/[0.06]">
-          <button onClick={onClose} className="btn btn-secondary">Close</button>
+          <div className="flex justify-end mt-6 pt-4 border-t border-white/[0.06]">
+            <button onClick={onClose} className="btn btn-secondary">Close</button>
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -371,26 +647,29 @@ function AddMemberModal({ role, onClose }: { role: any; onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
-      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
-        <h3 className="text-lg font-semibold text-gray-100 mb-4">Add Member to {role.name}</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">User *</label>
-            <select value={userId} onChange={(e) => setUserId(e.target.value)} required className="input">
-              <option value="">Select user</option>
-              {users?.map((user: any) => <option key={user.id} value={user.id}>{user.email}</option>)}
-            </select>
-          </div>
-          <div className="flex justify-end space-x-3">
-            <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
-              {mutation.isPending ? 'Adding...' : 'Add'}
-            </button>
-          </div>
-        </form>
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-[60] p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+          <h3 className="text-lg font-semibold text-gray-100 mb-4">Add Member to {role.name}</h3>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">User *</label>
+              <select value={userId} onChange={(e) => setUserId(e.target.value)} required className="input">
+                <option value="">Select user</option>
+                {users?.map((user: any) => <option key={user.id} value={user.id}>{user.email}</option>)}
+              </select>
+            </div>
+            <div className="flex justify-end space-x-3">
+              <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
+              <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
+                {mutation.isPending ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -412,38 +691,41 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
-        <h2 className="text-xl font-semibold text-gray-100 mb-4">Create User</h2>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">Email *</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              placeholder="user@example.com"
-              className="input"
-              autoFocus
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              User will be created and assigned to the default role
-            </p>
-          </div>
-          {mutation.isError && (
-            <div className="p-3 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-300">
-              {(mutation.error as any)?.response?.data?.detail || 'Failed to create user'}
+    <>
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
+      <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
+        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+          <h2 className="text-xl font-semibold text-gray-100 mb-4">Create User</h2>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Email *</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                placeholder="user@example.com"
+                className="input"
+                autoFocus
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                User will be created and assigned to the default role
+              </p>
             </div>
-          )}
-          <div className="flex justify-end space-x-3 pt-4">
-            <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
-            <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
-              {mutation.isPending ? 'Creating...' : 'Create User'}
-            </button>
-          </div>
-        </form>
+            {mutation.isError && (
+              <div className="p-3 bg-red-900/20 border border-red-800/30 rounded text-sm text-red-300">
+                {(mutation.error as any)?.response?.data?.detail || 'Failed to create user'}
+              </div>
+            )}
+            <div className="flex justify-end space-x-3 pt-4">
+              <button type="button" onClick={onClose} className="btn btn-secondary">Cancel</button>
+              <button type="submit" disabled={mutation.isPending} className="btn btn-primary">
+                {mutation.isPending ? 'Creating...' : 'Create User'}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

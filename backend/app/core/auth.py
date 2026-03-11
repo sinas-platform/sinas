@@ -671,7 +671,9 @@ async def initialize_default_roles(db: AsyncSession):
             await db.commit()
             await db.refresh(group)
 
-        # Update permissions
+        # Sync default permissions:
+        # - Only ADD permissions that don't exist yet (preserves admin customizations)
+        # - Always force sinas.*:all = True on Admins (safety net)
         for perm_key, perm_value in permissions.items():
             result = await db.execute(
                 select(RolePermission).where(
@@ -681,7 +683,9 @@ async def initialize_default_roles(db: AsyncSession):
             existing_perm = result.scalar_one_or_none()
 
             if existing_perm:
-                existing_perm.permission_value = perm_value
+                # Only force-overwrite the superadmin wildcard on Admins
+                if group_name == "Admins" and perm_key == "sinas.*:all":
+                    existing_perm.permission_value = True
             else:
                 new_perm = RolePermission(
                     role_id=group.id, permission_key=perm_key, permission_value=perm_value

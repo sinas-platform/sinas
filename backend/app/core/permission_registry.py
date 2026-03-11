@@ -32,7 +32,7 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
     {
         "resource": "functions",
         "description": "Executable functions",
-        "actions": ["create", "read", "update", "delete", "execute"],
+        "actions": ["create", "read", "update", "delete", "execute", "shared_pool"],
         "namespaced": True,
     },
     {
@@ -42,15 +42,8 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "namespaced": True,
     },
     {
-        "resource": "states",
-        "description": "Key-value state storage",
-        "actions": ["create", "read", "update", "delete"],
-        "namespaced": True,
-        "note": "Namespaced by state namespace only (no /name)",
-    },
-    {
-        "resource": "apps",
-        "description": "Registered applications",
+        "resource": "manifests",
+        "description": "Application manifests",
         "actions": ["create", "read", "update", "delete"],
         "namespaced": True,
     },
@@ -81,11 +74,29 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "description": "Execution & message history",
         "actions": ["read", "update"],
     },
+    {
+        "resource": "components",
+        "description": "UI components",
+        "actions": ["create", "read", "update", "delete"],
+        "namespaced": True,
+    },
+    {
+        "resource": "queries",
+        "description": "Saved database queries",
+        "actions": ["create", "read", "update", "delete", "execute"],
+        "namespaced": True,
+    },
+    {
+        "resource": "stores",
+        "description": "Data stores",
+        "actions": ["create", "read", "update", "delete", "write_state", "read_state"],
+        "namespaced": True,
+    },
     # --- User / auth resources ---
     {
         "resource": "users",
         "description": "User accounts",
-        "actions": ["create", "read", "update"],
+        "actions": ["create", "read", "update", "delete"],
     },
     {
         "resource": "api_keys",
@@ -103,6 +114,23 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "description": "Request audit logs",
         "actions": ["read"],
     },
+    {
+        "resource": "database_connections",
+        "description": "External database connections",
+        "actions": ["create", "read", "update", "delete", "schema", "schema_destroy", "data"],
+        "adminOnly": True,
+    },
+    {
+        "resource": "database_triggers",
+        "description": "Database event triggers",
+        "actions": ["create", "read", "update", "delete"],
+    },
+    {
+        "resource": "dependencies",
+        "description": "Python dependency management",
+        "actions": ["install", "read", "delete"],
+        "adminOnly": True,
+    },
     # --- Admin-only infrastructure ---
     {
         "resource": "llm_providers",
@@ -112,8 +140,8 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
     },
     {
         "resource": "packages",
-        "description": "Python package management",
-        "actions": ["install", "read", "delete"],
+        "description": "Installable resource packages",
+        "actions": ["create", "install", "read", "delete"],
         "adminOnly": True,
     },
     {

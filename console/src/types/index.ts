@@ -754,71 +754,71 @@ export interface FileDownloadResponse {
   version: number;
 }
 
-// Apps
-export interface AppResourceRef {
+// Manifests
+export interface ManifestResourceRef {
   type: string;
   namespace: string;
   name: string;
 }
 
-export interface AppStoreDependency {
+export interface ManifestStoreDependency {
   store: string;
   key?: string | null;
 }
 
-export interface AppStoreDependencyStatus {
+export interface ManifestStoreDependencyStatus {
   store: string;
   key?: string | null;
   exists: boolean;
 }
 
-export interface App {
+export interface Manifest {
   id: string;
   user_id: string;
   namespace: string;
   name: string;
   description: string | null;
-  required_resources: AppResourceRef[];
+  required_resources: ManifestResourceRef[];
   required_permissions: string[];
   optional_permissions: string[];
   exposed_namespaces: Record<string, string[]>;
-  store_dependencies: AppStoreDependency[];
+  store_dependencies: ManifestStoreDependency[];
   is_active: boolean;
   created_at: string;
   updated_at: string | null;
 }
 
-export interface AppCreate {
+export interface ManifestCreate {
   namespace: string;
   name: string;
   description?: string;
-  required_resources?: AppResourceRef[];
+  required_resources?: ManifestResourceRef[];
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
-  store_dependencies?: AppStoreDependency[];
+  store_dependencies?: ManifestStoreDependency[];
 }
 
-export interface AppUpdate {
+export interface ManifestUpdate {
   namespace?: string;
   name?: string;
   description?: string;
-  required_resources?: AppResourceRef[];
+  required_resources?: ManifestResourceRef[];
   required_permissions?: string[];
   optional_permissions?: string[];
   exposed_namespaces?: Record<string, string[]>;
-  store_dependencies?: AppStoreDependency[];
+  store_dependencies?: ManifestStoreDependency[];
   is_active?: boolean;
 }
 
-export interface AppStatus {
+export interface ManifestStatus {
   ready: boolean;
-  resources: { satisfied: AppResourceRef[]; missing: AppResourceRef[] };
+  resources: { satisfied: ManifestResourceRef[]; missing: ManifestResourceRef[] };
   permissions: {
     required: { granted: string[]; missing: string[] };
     optional: { granted: string[]; missing: string[] };
   };
-  stores: { satisfied: AppStoreDependencyStatus[]; missing: AppStoreDependencyStatus[] };
+  stores: { satisfied: ManifestStoreDependencyStatus[]; missing: ManifestStoreDependencyStatus[] };
 }
 
 // Database Connections

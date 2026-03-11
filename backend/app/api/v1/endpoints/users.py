@@ -1,9 +1,13 @@
 """User management endpoints."""
 import uuid
+from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
@@ -15,15 +19,27 @@ from app.schemas.auth import CreateUserRequest
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.get("", response_model=list[UserResponse])
+class UserWithRolesResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    last_login_at: Optional[datetime] = None
+    created_at: datetime
+    roles: list[str]
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("", response_model=list[UserWithRolesResponse])
 async def list_users(
     request: Request,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
+    search: Optional[str] = Query(None, description="Search by email"),
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """List users. Only admins can list all users."""
+    """List users with their roles. Only admins can list all users."""
     user_id, permissions = current_user_data
 
     # Only admins can list users
@@ -33,11 +49,37 @@ async def list_users(
 
     set_permission_used(request, "sinas.users.read:all")
 
-    query = select(User).offset(skip).limit(limit)
+    query = select(User)
+    if search:
+        query = query.where(User.email.ilike(f"%{search}%"))
+    query = query.order_by(User.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
     users = result.scalars().all()
 
-    return users
+    # Batch-load role names for all users
+    user_ids = [u.id for u in users]
+    if user_ids:
+        memberships_result = await db.execute(
+            select(UserRole.user_id, Role.name)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(UserRole.user_id.in_(user_ids), UserRole.active == True)
+        )
+        roles_by_user: dict[uuid.UUID, list[str]] = {}
+        for uid, role_name in memberships_result.all():
+            roles_by_user.setdefault(uid, []).append(role_name)
+    else:
+        roles_by_user = {}
+
+    return [
+        UserWithRolesResponse(
+            id=u.id,
+            email=u.email,
+            last_login_at=u.last_login_at,
+            created_at=u.created_at,
+            roles=roles_by_user.get(u.id, []),
+        )
+        for u in users
+    ]
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)

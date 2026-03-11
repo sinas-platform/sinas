@@ -259,7 +259,6 @@ def validate_permission_subset(
 # Default role permissions
 DEFAULT_ROLE_PERMISSIONS = {
     "GuestUsers": {
-        "sinas.*:own": False,  # No access by default
         "sinas.users.read:own": True,
         "sinas.users.update:own": True,
     },
@@ -267,29 +266,29 @@ DEFAULT_ROLE_PERMISSIONS = {
         # Agents (namespaced: namespace/name)
         # Note: Chats are always linked to agents, permissions checked via agents
         "sinas.agents/*/*.create:own": True,  # Create agents in any namespace
-        "sinas.agents.read:all": True,  # Read all agents (discover available agents)
+        "sinas.agents/*/*.read:all": True,  # Read/discover all agents
         "sinas.agents/*/*.update:own": True,  # Update only MY agents
         "sinas.agents/*/*.delete:own": True,  # Delete only MY agents
         "sinas.agents/*/*.chat:all": True,  # Chat with ANY agent in any namespace
         # Functions (namespaced: namespace/name)
         "sinas.functions/*/*.create:own": True,  # Create functions in any namespace
-        "sinas.functions.read:own": True,
+        "sinas.functions/*/*.read:own": True,  # Read own + shared functions
         "sinas.functions/*/*.update:own": True,
         "sinas.functions/*/*.delete:own": True,
         "sinas.functions/*/*.execute:own": True,  # Execute specific functions
         # Skills (namespaced: namespace/name)
         "sinas.skills/*/*.create:own": True,  # Create skills in any namespace
-        "sinas.skills.read:own": True,
+        "sinas.skills/*/*.read:own": True,  # Read own + shared skills
         "sinas.skills/*/*.update:own": True,
         "sinas.skills/*/*.delete:own": True,
-        # Apps (namespaced: namespace/name) - Registered applications
-        "sinas.apps/*/*.create:own": True,
-        "sinas.apps.read:all": True,  # Apps should be discoverable
-        "sinas.apps/*/*.update:own": True,
-        "sinas.apps/*/*.delete:own": True,
+        # Manifests (namespaced: namespace/name) - Application manifests
+        "sinas.manifests/*/*.create:own": True,
+        "sinas.manifests/*/*.read:all": True,  # Manifests should be discoverable
+        "sinas.manifests/*/*.update:own": True,
+        "sinas.manifests/*/*.delete:own": True,
         # Collections (namespaced: namespace/name) - File storage
         "sinas.collections/*/*.create:own": True,  # Create collections in any namespace
-        "sinas.collections.read:own": True,
+        "sinas.collections/*/*.read:own": True,  # Read own + shared collections
         "sinas.collections/*/*.update:own": True,
         "sinas.collections/*/*.delete:own": True,
         # File operations within collections
@@ -297,6 +296,16 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.collections/*/*.download:own": True,  # Download files
         "sinas.collections/*/*.list:own": True,  # List files
         "sinas.collections/*/*.delete_files:own": True,  # Delete files
+        # Components (namespaced: namespace/name) - read-only for users
+        "sinas.components/*/*.read:own": True,
+        # Queries (namespaced: namespace/name) - read-only for users
+        "sinas.queries/*/*.read:own": True,
+        # Stores (namespaced: namespace/name) - read-only for store definitions, but can read/write states
+        "sinas.stores/*/*.read:own": True,
+        "sinas.stores/*/*.read_state:own": True,
+        "sinas.stores/*/*.write_state:own": True,
+        # Database Triggers - read-only for users
+        "sinas.database_triggers.read:own": True,
         # Webhooks (non-namespaced)
         "sinas.webhooks.create:own": True,
         "sinas.webhooks.read:own": True,
@@ -312,20 +321,13 @@ DEFAULT_ROLE_PERMISSIONS = {
         # Users (non-namespaced)
         "sinas.users.read:own": True,
         "sinas.users.update:own": True,
-        # API Keys (non-namespaced - no permission checks in code)
+        # API Keys (non-namespaced)
         "sinas.api_keys.create:own": True,
         "sinas.api_keys.read:own": True,
         "sinas.api_keys.delete:own": True,
-        # States (namespace-based permissions)
-        # Users can access their own states in any namespace
-        "sinas.states/*.read:own": True,
-        "sinas.states/*.create:own": True,
-        "sinas.states/*.update:own": True,
-        "sinas.states/*.delete:own": True,
-        # Common namespaces: preferences, memory, etc.
         # Templates (namespaced: namespace/name)
         "sinas.templates/*/*.create:own": True,  # Create templates in any namespace
-        "sinas.templates.read:own": True,
+        "sinas.templates/*/*.read:own": True,  # Read own + shared templates
         "sinas.templates/*/*.update:own": True,
         "sinas.templates/*/*.delete:own": True,
         "sinas.templates/*/*.render:own": True,  # Render specific templates
@@ -360,15 +362,9 @@ DEFAULT_ROLE_PERMISSIONS = {
         # System (admin-only - queues, workers, containers)
         # "sinas.system.read:all"
         # "sinas.system.update:all"
-        # Advanced States (admin-only, namespace-based)
-        # "sinas.states/*.read:all" - Read all states in any namespace
-        # "sinas.states/*.create:all" - Create states in any namespace
-        # "sinas.states/*.update:all" - Update any states
-        # "sinas.states/*.delete:all" - Delete any states
-        #
-        # Shared namespace examples (for team sharing):
-        # "sinas.states/api_keys.read:all" - Read shared API keys
-        # "sinas.states/api_keys.create:all" - Create shared API keys
-        # "sinas.states/configs.read:all" - Read shared configs
+        # Stores (admin-only, namespace-based)
+        # "sinas.stores/*/*.read:all" - Read all stores
+        # "sinas.stores/*/*.read_state:all" - Read all states in any store
+        # "sinas.stores/*/*.write_state:all" - Write states in any store
     },
 }

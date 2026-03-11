@@ -1,4 +1,4 @@
-"""App registration model."""
+"""Manifest registration model."""
 import uuid
 from typing import Optional
 
@@ -12,10 +12,10 @@ from app.models.base import Base
 from app.models.mixins import PermissionMixin
 
 
-class App(Base, PermissionMixin):
-    """Registered application that declares dependencies on SINAS resources and permissions."""
+class Manifest(Base, PermissionMixin):
+    """Registered manifest that declares dependencies on SINAS resources and permissions."""
 
-    __tablename__ = "apps"
+    __tablename__ = "manifests"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     namespace = Column(String, nullable=False, index=True)
@@ -48,10 +48,10 @@ class App(Base, PermissionMixin):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    __table_args__ = (UniqueConstraint("namespace", "name", name="uq_app_namespace_name"),)
+    __table_args__ = (UniqueConstraint("namespace", "name", name="uq_manifest_namespace_name"),)
 
     @classmethod
-    async def get_by_name(cls, db: AsyncSession, namespace: str, name: str) -> Optional["App"]:
-        """Get app by namespace and name."""
+    async def get_by_name(cls, db: AsyncSession, namespace: str, name: str) -> Optional["Manifest"]:
+        """Get manifest by namespace and name."""
         result = await db.execute(select(cls).where(cls.namespace == namespace, cls.name == name))
         return result.scalar_one_or_none()

@@ -1,6 +1,6 @@
 from .agent import *
 from .api_key import *
-from .app import *
+from .manifest import *
 from .component import *
 from .database_trigger import *
 from .auth import *

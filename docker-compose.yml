@@ -93,9 +93,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile.executor
     image: sinas-executor
-    command: "true"  # Don't run, just build the image
-    deploy:
-      replicas: 0  # Don't actually run this service
+    entrypoint: ["true"]
+    restart: "no"
 
   builder:
     build:

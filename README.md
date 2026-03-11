@@ -1,337 +1,254 @@
-# SINAS - AI Agent & Automation Orchestration Platform
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="console/public/sinas-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="console/public/sinas-logo-light.svg">
+    <img alt="Sinas" src="console/public/sinas-logo-light.svg" height="48">
+  </picture>
+</p>
 
-**Lean, effective platform for AI agent orchestration and serverless automation with RBAC.**
+<p align="center"><strong>Open-source platform for building AI agents and serverless automation with fine-grained access control.</strong></p>
 
-Core capabilities:
-- 🤖 **AI Agents** - Multi-LLM chat with tool calling and MCP integration
-- ⚡ **Function Execution** - Container-isolated Python runtime with automatic tracking and authentication context
-- 🌐 **Webhooks & Scheduling** - HTTP triggers and cron-based automation
-- 💾 **State Store** - Flexible key-value storage for agent/function/workflow state
-- 🔐 **RBAC** - Group-based permissions with hierarchical scopes (:own/:group/:all)
-- 🖥️ **Management Console** - Web UI for managing agents, functions, and system configuration
+Sinas gives you a self-hosted backend for AI-powered applications: configure agents with any LLM provider, write Python functions that run in isolated containers, connect everything with webhooks and schedules, and control access with role-based permissions. Manage it all through a web console or declarative YAML config.
 
-## Function Context
+## Features
 
-All functions receive two parameters:
-1. **`input`** - Validated against the function's input_schema
-2. **`context`** - Execution context containing:
-   - `user_id` - Authenticated user's ID
-   - `user_email` - User's email address
-   - `access_token` - JWT token for making authenticated API calls
-   - `execution_id` - Current execution ID
-   - `trigger_type` - How the function was triggered (WEBHOOK, AGENT, SCHEDULE)
-   - `chat_id` - Optional chat ID if triggered from a chat
+- **AI Agents** — Multi-provider LLM chat with tool calling, agent-to-agent orchestration, and streaming responses (SSE)
+- **Functions** — Write Python that runs in isolated Docker containers with automatic execution tracking
+- **Components** — Embeddable UI widgets (JSX/HTML/JS) compiled by Sinas, with built-in proxy to agents, functions, and queries
+- **Webhooks & Schedules** — Trigger functions via HTTP endpoints or cron expressions
+- **Skills** — Reusable instruction modules that agents retrieve on-demand or preload into their system prompt
+- **State Stores** — Key-value storage with namespace-based access control for agent memory and shared state
+- **Collections** — Document storage with metadata and search
+- **Database Connections** — Connect external databases, run queries, and trigger functions on data changes (CDC)
+- **Access Control** — Role-based permissions with hierarchical scopes (`:own` / `:all`), wildcard patterns, and namespace-level granularity for AI governance
+- **Packages & Manifests** — Install resource packages and declare application dependencies
+- **Declarative Config** — GitOps-friendly YAML configuration with idempotent apply, change detection, and dry run
+- **Web Console** — Full management UI for agents, functions, permissions, logs, and system configuration
 
-**Example:**
-```python
-def my_function(input, context):
-    # Use access token to call other SINAS APIs
-    import requests
-    headers = {"Authorization": f"Bearer {context['access_token']}"}
-    response = requests.get(
-        "http://host.docker.internal:8000/api/v1/...",
-        headers=headers
-    )
-    return response.json()
-```
+## Quick Start
 
----
-
-## Repository Structure
-
-This is a **monorepo** containing both backend and frontend:
-
-```
-SINAS/
-├── backend/           # FastAPI backend (Python)
-│   ├── app/          # Application code
-│   ├── alembic/      # Database migrations
-│   └── Dockerfile    # Backend container
-├── console/          # Management console frontend (React/Vue)
-│   ├── src/          # Frontend source (copy from SINAS_CONSOLE)
-│   └── Dockerfile    # Frontend container (Nginx)
-├── docker-compose.yml # Orchestrates all services
-└── Caddyfile         # Reverse proxy configuration
-```
-
-**Services:**
-- `backend` - FastAPI API server (port 8000)
-- `console` - Nginx serving management UI (port 80)
-- `postgres` - PostgreSQL database
-- `clickhouse` - Analytics database (optional)
-- `caddy` - HTTPS reverse proxy
-
-**Routing (via Caddy):**
-- `https://yourdomain.com/console/*` → Console UI
-- `https://yourdomain.com/api/v1/*` → Management API
-- `https://yourdomain.com/*` → Runtime API (webhooks, agents, auth)
-
----
-
-## Installation
-
-### Prerequisites
-
-- Docker & Docker Compose
-
-### Setup
-
-**1. Clone and configure:**
 ```bash
-git clone <repository-url>
-cd SINAS
+git clone https://github.com/pulsr-ai/sinas.git
+cd sinas
+sudo bash install.sh
+```
+
+The installer will:
+- Install Docker if needed
+- Generate secure keys automatically
+- Prompt for SMTP, domain, and admin email
+- Create your `.env` and start all services
+- Provision SSL certificates (if a domain is configured)
+
+Once running, open the console in your browser and log in with your admin email.
+
+See [INSTALL.md](INSTALL.md) for manual setup and detailed instructions.
+
+### Local Development
+
+For local development without the installer:
+
+```bash
 cp .env.example .env
-```
-
-**2. Generate keys:**
-```bash
-# Generate encryption key
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-# Generate secret key
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-**3. Edit `.env` with required settings (see [Environment Variables](#environment-variables) for full reference):**
-```bash
-# Security (REQUIRED)
-SECRET_KEY=<output-from-secret-key-generation>
-ENCRYPTION_KEY=<output-from-encryption-key-generation>
-
-# Database (use docker-compose postgres)
-DATABASE_PASSWORD=your-secure-postgres-password
-
-# SMTP for OTP authentication (REQUIRED)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-SMTP_DOMAIN=yourdomain.com
-
-# Admin user (created on first startup)
-SUPERADMIN_EMAIL=admin@yourdomain.com
-```
-
-**4. Setup console (optional but recommended):**
-
-The console frontend is not included by default. To add it:
-
-```bash
-# Copy SINAS_CONSOLE into console/ directory
-cd console/
-rsync -av --exclude node_modules --exclude dist ../../SINAS_CONSOLE/ ./
-cd ..
-```
-
-See [console/README.md](console/README.md) for details.
-
-**5. Start the application:**
-```bash
-# Without console (backend only)
-docker-compose up backend postgres clickhouse caddy
-
-# With console (full stack)
+# Edit .env with your keys and SMTP config (see Environment Variables below)
 docker-compose up
 ```
 
-**5. Access the API:**
-- API: http://localhost:51245
-- API Docs: http://localhost:51245/docs
-- Health: http://localhost:51245/health
+- **Console**: http://localhost:5173
+- **API Docs**: http://localhost:8000/docs
 
-**6. Login as admin:**
-```bash
-# Request OTP
-curl -X POST http://localhost:51245/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email": "admin@yourdomain.com"}'
+## Architecture
 
-# Verify OTP (check your email)
-curl -X POST http://localhost:51245/api/v1/auth/verify-otp \
-  -H "Content-Type: application/json" \
-  -d '{"session_id": "<session_id>", "otp_code": "123456"}'
+```
+sinas/
+├── backend/              # FastAPI + Python
+│   ├── app/
+│   │   ├── api/          # REST endpoints (v1 + runtime)
+│   │   ├── models/       # SQLAlchemy models
+│   │   ├── services/     # Business logic
+│   │   ├── providers/    # LLM provider implementations
+│   │   ├── queue/        # arq workers (functions + agents)
+│   │   └── core/         # Auth, permissions, config
+│   └── alembic/          # Database migrations
+├── console/              # React + TypeScript + Vite
+│   └── src/
+│       ├── pages/        # Route pages
+│       ├── components/   # Shared UI components
+│       └── lib/          # API client, auth, utilities
+├── docker-compose.yml    # Development stack
+└── config_examples/      # Declarative config examples
 ```
 
+### Services
 
----
+| Service | Purpose |
+|---------|---------|
+| **backend** | FastAPI API server |
+| **queue-worker** | Function execution workers |
+| **queue-agent** | Agent message processing workers |
+| **scheduler** | Cron-based schedule runner |
+| **cdc-worker** | Database change data capture |
+| **console** | React web UI |
+| **postgres** | Primary database |
+| **pgbouncer** | Connection pooling |
+| **redis** | Queues, streaming, sessions |
+| **clickhouse** | Request logging and analytics (optional) |
+| **caddy** | Reverse proxy with auto-HTTPS |
 
-## APIs
+## How It Works
 
-### Runtime API (Execution)
+### Agents
 
-Execute webhooks and interact with agents:
+Create AI agents that combine an LLM with tools. Agents can call Python functions, query databases, use other agents as tools, and access persistent state.
 
-- **Webhooks:** `{GET|POST|PUT|DELETE|PATCH} /webhooks/{path}` - Trigger functions via HTTP
-- **Agent Chats:** `POST /agents/{namespace}/{name}/chats` - Create chat with agent
-- **Stream Messages:** `POST /chats/{id}/messages/stream` - Send message and stream response (SSE)
+```yaml
+# config.yaml
+agents:
+  - namespace: support
+    name: assistant
+    model: gpt-4o
+    system_prompt: "You are a helpful support agent."
+    enabled_functions:
+      - utils/search_docs
+      - utils/create_ticket
+    enabled_skills:
+      - skill: support/tone_guide
+        preload: true
+    enabled_stores:
+      - store: support/memory
+        access: readwrite
+```
 
-**Documentation:** http://localhost:51245/docs (dynamically generated based on active webhooks/agents)
+### Functions
 
-### Management API (Configuration)
+Write Python functions with a simple `(input, context)` signature. They run in isolated Docker containers with automatic execution tracking.
 
-Full CRUD for all resources at `/api/v1/`:
+```python
+def search_docs(input, context):
+    """Search documentation for a query."""
+    import requests
+    headers = {"Authorization": f"Bearer {context['access_token']}"}
+    results = requests.get(
+        "http://host.docker.internal:8000/api/v1/collections/docs/search",
+        params={"q": input["query"]},
+        headers=headers,
+    )
+    return results.json()
+```
 
-- **Agents:** `/api/v1/agents`
-- **Functions:** `/api/v1/functions`
-- **Webhooks:** `/api/v1/webhooks`
-- **Schedules:** `/api/v1/schedules`
-- **Executions:** `/api/v1/executions`
-- **States:** `/api/v1/states`
-- **Chats:** `/api/v1/chats`
-- **Users & Groups:** `/api/v1/users`, `/api/v1/groups`
-- **LLM Providers:** `/api/v1/llm-providers`
-- **MCP Servers:** `/api/v1/mcp-servers`
-- **Packages:** `/api/v1/packages`
+### Access Control
 
-**Documentation:** http://localhost:51245/api/v1/docs
+Every resource in Sinas is protected by fine-grained, namespace-aware permissions. Roles define what users and agents can do — down to individual actions on specific resources.
 
-### Declarative Configuration
+```
+sinas.agents/support/assistant.read:own      # Read a specific agent
+sinas.functions/*/*.execute:own              # Execute any function (own scope)
+sinas.states/memory.read:all                 # Read all users' state in a namespace
+sinas.*:all                                  # Full admin access
+```
 
-Apply YAML config for GitOps workflows at `/api/v1/config/`:
+Permissions use a hierarchical scope system: `:all` automatically grants `:own`, so you never need to assign both. Wildcards let you write broad grants like `sinas.functions/*/*.execute:own` without listing every function individually.
 
-- `POST /api/v1/config/validate` - Validate config without applying
-- `POST /api/v1/config/apply` - Apply config (idempotent)
-- `GET /api/v1/config/export` - Export current config to YAML
+Roles are managed through the web console or declarative config, making it easy to set up governance policies for who can create agents, execute functions, access data, or manage the system.
 
-See `config/default-data.yaml` for examples.
+### Declarative Config
 
----
+Define your entire setup as YAML — agents, functions, webhooks, schedules, skills, roles, and permissions. Apply with a single API call.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/config/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"config\": \"$(cat config.yaml)\"}"
+```
+
+Or auto-apply on startup:
+```bash
+# .env
+CONFIG_FILE=config/my-config.yaml
+AUTO_APPLY_CONFIG=true
+```
+
+## API
+
+Sinas exposes two API surfaces:
+
+**Runtime API** — for building applications on top of Sinas:
+- **Agents & Chats** — Create chat sessions, stream messages (SSE), manage conversations
+- **Functions & Webhooks** — Execute functions, trigger webhooks, track executions
+- **Queries** — Run database queries
+- **Stores** — Read/write key-value state
+- **Components** — Serve compiled UI widgets with proxy endpoints
+- **Templates** — Render and send templates
+- **Files** — Upload and retrieve files
+- **Manifests** — Validate application dependencies at runtime
+- **Discovery** — Enumerate available agents, functions, and resources
+
+**Management API** — full CRUD at `/api/v1/`:
+- `/api/v1/agents`, `/api/v1/functions`, `/api/v1/webhooks`, `/api/v1/schedules`
+- `/api/v1/skills`, `/api/v1/collections`, `/api/v1/stores`, `/api/v1/templates`
+- `/api/v1/database-connections`, `/api/v1/queries`, `/api/v1/database-triggers`
+- `/api/v1/users`, `/api/v1/roles`, `/api/v1/llm-providers`, `/api/v1/packages`, `/api/v1/manifests`
+- `/api/v1/config/apply`, `/api/v1/config/validate`, `/api/v1/config/export`
+
+Interactive API docs are available at `/docs` (runtime) and `/api/v1/docs` (management).
 
 ## Environment Variables
 
-### Required Variables
+### Required
 
-These variables **must** be set - they have no defaults:
+| Variable | Description |
+|----------|-------------|
+| `SECRET_KEY` | JWT signing key |
+| `ENCRYPTION_KEY` | Fernet key for encrypting sensitive data (LLM API keys, DB credentials) |
+| `DATABASE_PASSWORD` | PostgreSQL password |
+| `SMTP_HOST` | SMTP server for OTP emails |
+| `SMTP_PORT` | SMTP port (typically 587) |
+| `SMTP_USER` | SMTP username |
+| `SMTP_PASSWORD` | SMTP password |
+| `SMTP_DOMAIN` | Email "from" domain |
+| `SUPERADMIN_EMAIL` | Initial admin user email |
 
-#### Security
+### Optional
 
-- **`SECRET_KEY`** - Secret key for JWT token signing
-  - Generate with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
-  - **Security critical** - keep secret, change in production
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOMAIN` | `localhost` | Domain for Caddy auto-HTTPS |
+| `DEBUG` | `false` | Verbose logging |
+| `FUNCTION_TIMEOUT` | `300` | Max function execution time (seconds) |
+| `MAX_FUNCTION_MEMORY` | `512` | Function memory limit (MB) |
+| `ALLOW_PACKAGE_INSTALLATION` | `true` | Allow pip install in functions |
+| `CONFIG_FILE` | — | YAML config file path |
+| `AUTO_APPLY_CONFIG` | `false` | Apply config on startup |
 
-- **`ENCRYPTION_KEY`** - Encryption key for sensitive data (DB credentials, API keys)
-  - Generate with: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-  - **Security critical** - keep secret, never rotate after initial setup (data will be lost)
-
-#### Database
-
-- **`DATABASE_PASSWORD`** - PostgreSQL password
-  - Used with docker-compose postgres service
-  - Alternatively, set `DATABASE_URL` to use external database (overrides all other DB settings)
-
-#### SMTP (Email for OTP)
-
-- **`SMTP_HOST`** - SMTP server hostname (e.g., `smtp.gmail.com`)
-- **`SMTP_PORT`** - SMTP server port (typically `587` for TLS, `465` for SSL)
-- **`SMTP_USER`** - SMTP username/email
-- **`SMTP_PASSWORD`** - SMTP password (use app-specific password for Gmail)
-- **`SMTP_DOMAIN`** - Domain name for "from" email address
-
-#### Admin User
-
-- **`SUPERADMIN_EMAIL`** - Email address for initial admin user
-  - User is auto-created on startup and added to Admins group
-  - Only creates user if Admins group is empty
-
----
-
-### Optional Variables
-
-These have sensible defaults but can be customized:
-
-#### Database Configuration
-
-- `DATABASE_USER` - PostgreSQL username (default: `postgres`)
-- `DATABASE_HOST` - PostgreSQL host (default: `postgres`)
-- `DATABASE_PORT` - PostgreSQL port (default: `5432`)
-- `DATABASE_NAME` - PostgreSQL database name (default: `sinas`)
-- `DATABASE_URL` - Full database connection string (overrides all other DB settings)
-  - Example: `postgresql://user:password@host:5432/database`
-
-#### Application Settings
-
-- `APP_PORT` - Port for the SINAS API server (default: `51245`)
-- `DEBUG` - Enable debug mode with verbose logging (default: `false`)
-- `ALGORITHM` - JWT signing algorithm (default: `HS256`)
-
-#### JWT Token Expiration
-
-- `ACCESS_TOKEN_EXPIRE_MINUTES` - Access token lifetime (default: `15` minutes)
-  - Best practice: Keep short for security
-- `REFRESH_TOKEN_EXPIRE_DAYS` - Refresh token lifetime (default: `30` days)
-  - Users stay logged in by refreshing access tokens
-
-#### OTP Configuration
-
-- `OTP_EXPIRE_MINUTES` - One-time password validity period (default: `10` minutes)
-
-#### HTTPS & Domain
-
-- `DOMAIN` - Domain name for automatic HTTPS with Let's Encrypt (default: `localhost`)
-  - For local development, leave as `localhost` (no HTTPS)
-  - For production, set to your domain (e.g., `api.yourdomain.com`)
-
-#### Application Container Resources
-
-Docker resource limits for the SINAS application container:
-
-- `APP_CPU_LIMIT` - Maximum CPU cores (default: `2.0`)
-- `APP_MEMORY_LIMIT` - Maximum RAM (default: `2G`)
-- `APP_CPU_RESERVATION` - Guaranteed CPU cores (default: `0.5`)
-- `APP_MEMORY_RESERVATION` - Guaranteed RAM (default: `512M`)
-
-#### Function Execution
-
-Control resource limits and behavior for serverless functions:
-
-**Resource Limits:**
-- `FUNCTION_TIMEOUT` - Max execution time in seconds (default: `300` = 5 minutes)
-- `MAX_FUNCTION_MEMORY` - Memory limit in MB (default: `512`)
-- `MAX_FUNCTION_CPU` - CPU cores (default: `1.0` = 1 full core, `0.5` = half core)
-- `MAX_FUNCTION_STORAGE` - Disk storage limit (default: `1g`, format: `500m`, `1g`)
-
-**Container Configuration:**
-- `FUNCTION_CONTAINER_IMAGE` - Base Docker image (default: `python:3.11-slim`)
-- `FUNCTION_CONTAINER_IDLE_TIMEOUT` - Seconds before idle container cleanup (default: `3600` = 1 hour)
-
-**Package Management:**
-- `ALLOW_PACKAGE_INSTALLATION` - Allow `pip install` in functions (default: `true`)
-- `ALLOWED_PACKAGES` - Comma-separated package whitelist (default: empty = all allowed)
-  - Example: `requests,pandas,numpy`
-
-#### Declarative Configuration (GitOps)
-
-- `CONFIG_FILE` - Path to YAML configuration file
-  - Example: `config/default-data.yaml`
-- `AUTO_APPLY_CONFIG` - Automatically apply config file on startup (default: `false`)
-  - Set to `true` for GitOps workflows where config is version-controlled
-
----
+See [INSTALL.md](INSTALL.md) for the full list including resource limits and container configuration.
 
 ## Development
 
-**Docker commands:**
 ```bash
-docker-compose up                               # Start
-docker logs -f sinas-app                        # View logs
-docker exec -it sinas-app sh                    # Access shell
-docker exec -it sinas-app alembic upgrade head  # Run migrations
+# Start the full stack
+docker-compose up
+
+# Run database migrations
+docker exec -it sinas-backend alembic upgrade head
+
+# Create a new migration
+docker exec -it sinas-backend alembic revision --autogenerate -m "description"
+
+# Access backend shell
+docker exec -it sinas-backend sh
 ```
 
-**Local development:**
-```bash
-poetry install                                  # Install deps
-poetry run uvicorn app.main:app --reload       # Start server
-poetry run alembic upgrade head                 # Run migrations
-poetry run black . && poetry run ruff check .   # Format & lint
-```
+## Documentation
 
-**Documentation:**
-- [DOCS.md](DOCS.md) - Complete feature reference
-- [CLAUDE.md](CLAUDE.md) - Development guide for Claude Code
-
----
+- [INSTALL.md](INSTALL.md) — Installation and deployment guide
+- [DOCS.md](DOCS.md) — Complete feature reference and API documentation
+- Interactive API docs at `/docs` and `/api/v1/docs` when running
 
 ## License
 
-Dual licensed: **AGPL v3.0** (open source) or **Commercial License** (proprietary use)
+Dual licensed under **AGPL v3.0** (open source) and a **Commercial License** (proprietary use).
+
+See [LICENSE](LICENSE) for the AGPL terms. For commercial licensing, contact [hello@sinas.co](mailto:sales@sinas.co).
+
+Copyright (c) 2026 Pulsr B.V.

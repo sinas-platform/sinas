@@ -1,4 +1,4 @@
-"""App registration schemas."""
+"""Manifest registration schemas."""
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -15,13 +15,13 @@ class ResourceRef(BaseModel):
 
 
 class StoreDependency(BaseModel):
-    """Expected store (and optional key) that an app depends on."""
+    """Expected store (and optional key) that a manifest depends on."""
 
     store: str = Field(..., description="Store reference in format 'namespace/name'")
     key: Optional[str] = Field(None, description="Optional specific key within store")
 
 
-class AppCreate(BaseModel):
+class ManifestCreate(BaseModel):
     namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
     )
@@ -43,7 +43,7 @@ class AppCreate(BaseModel):
         return v
 
 
-class AppUpdate(BaseModel):
+class ManifestUpdate(BaseModel):
     namespace: Optional[str] = Field(
         None, min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
     )
@@ -70,7 +70,7 @@ class AppUpdate(BaseModel):
         return v
 
 
-class AppResponse(BaseModel):
+class ManifestResponse(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     namespace: str
@@ -99,7 +99,7 @@ class ResourceStatus(BaseModel):
 
 
 class PermissionStatus(BaseModel):
-    """Status of permissions for the app."""
+    """Status of permissions for the manifest."""
 
     granted: list[str] = Field(default_factory=list)
     missing: list[str] = Field(default_factory=list)
@@ -113,8 +113,8 @@ class StoreDependencyStatus(BaseModel):
     exists: bool
 
 
-class AppStatusResponse(BaseModel):
-    """Validation result for an app's dependencies."""
+class ManifestStatusResponse(BaseModel):
+    """Validation result for a manifest's dependencies."""
 
     ready: bool
     resources: dict[str, list[ResourceStatus]] = Field(

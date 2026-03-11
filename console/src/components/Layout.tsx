@@ -73,8 +73,8 @@ const navigationSections = [
     name: 'ADMIN',
     items: [
       { name: 'Packages', href: '/packages', icon: Package },
-      { name: 'Apps', href: '/apps', icon: AppWindow },
-      { name: 'Users & Roles', href: '/users', icon: Users },
+      { name: 'Manifests', href: '/manifests', icon: AppWindow },
+      { name: 'Access Control', href: '/users', icon: Users },
       { name: 'API Keys', href: '/api-keys', icon: Key },
       { name: 'Logs', href: '/logs', icon: Activity },
       { name: 'System', href: '/system', icon: Server },

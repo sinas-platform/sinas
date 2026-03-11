@@ -1,5 +1,5 @@
 from .agent import Agent
-from .app import App
+from .manifest import Manifest
 from .base import Base
 from .chat import Chat, Message
 from .component import Component
@@ -44,7 +44,7 @@ __all__ = [
     "Chat",
     "Message",
     "Agent",
-    "App",
+    "Manifest",
     "Component",
     "ComponentShare",
     "LLMProvider",

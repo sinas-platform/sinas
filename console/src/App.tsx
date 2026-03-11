@@ -31,7 +31,7 @@ import { Messages } from './pages/Messages';
 import { FunctionExecute } from './pages/FunctionExecute';
 import { Collections } from './pages/Collections';
 import { CollectionDetail } from './pages/CollectionDetail';
-import { Apps } from './pages/Apps';
+import { Manifests } from './pages/Manifests';
 import { DatabaseConnections } from './pages/DatabaseConnections';
 import { DatabaseConnectionDetail } from './pages/DatabaseConnectionDetail';
 import { DbTableDetail } from './pages/DbTableDetail';
@@ -137,7 +137,7 @@ function App() {
               <Route path="collections/:namespace/:name" element={<CollectionDetail />} />
               <Route path="templates" element={<Templates />} />
               <Route path="packages" element={<Packages />} />
-              <Route path="apps" element={<Apps />} />
+              <Route path="manifests" element={<Manifests />} />
               <Route path="config" element={<ConfigManager />} />
               <Route path="stores" element={<Stores />} />
               <Route path="logs" element={<RequestLogs />} />

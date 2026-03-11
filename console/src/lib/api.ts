@@ -51,10 +51,10 @@ import type {
   FileDownloadResponse,
   FileSearchRequest,
   FileSearchResult,
-  App,
-  AppCreate,
-  AppUpdate,
-  AppStatus,
+  Manifest,
+  ManifestCreate,
+  ManifestUpdate,
+  ManifestStatus,
   DatabaseConnection,
   DatabaseConnectionCreate,
   DatabaseConnectionUpdate,
@@ -402,9 +402,14 @@ class APIClient {
     return response.data;
   }
 
+  async getPermissionDefaults(): Promise<Record<string, Record<string, boolean>>> {
+    const response = await this.configClient.get('/roles/permissions/defaults');
+    return response.data;
+  }
+
   // Users
-  async listUsers(): Promise<any[]> {
-    const response = await this.configClient.get('/users');
+  async listUsers(params?: { skip?: number; limit?: number; search?: string }): Promise<any[]> {
+    const response = await this.configClient.get('/users', { params });
     return response.data;
   }
 
@@ -1127,34 +1132,34 @@ class APIClient {
     return response.data;
   }
 
-  // Apps
-  async listApps(namespace?: string): Promise<App[]> {
+  // Manifests
+  async listManifests(namespace?: string): Promise<Manifest[]> {
     const params = namespace ? { namespace } : {};
-    const response = await this.configClient.get('/apps', { params });
+    const response = await this.configClient.get('/manifests', { params });
     return response.data;
   }
 
-  async getApp(namespace: string, name: string): Promise<App> {
-    const response = await this.configClient.get(`/apps/${namespace}/${name}`);
+  async getManifest(namespace: string, name: string): Promise<Manifest> {
+    const response = await this.configClient.get(`/manifests/${namespace}/${name}`);
     return response.data;
   }
 
-  async createApp(data: AppCreate): Promise<App> {
-    const response = await this.configClient.post('/apps', data);
+  async createManifest(data: ManifestCreate): Promise<Manifest> {
+    const response = await this.configClient.post('/manifests', data);
     return response.data;
   }
 
-  async updateApp(namespace: string, name: string, data: AppUpdate): Promise<App> {
-    const response = await this.configClient.put(`/apps/${namespace}/${name}`, data);
+  async updateManifest(namespace: string, name: string, data: ManifestUpdate): Promise<Manifest> {
+    const response = await this.configClient.put(`/manifests/${namespace}/${name}`, data);
     return response.data;
   }
 
-  async deleteApp(namespace: string, name: string): Promise<void> {
-    await this.configClient.delete(`/apps/${namespace}/${name}`);
+  async deleteManifest(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/manifests/${namespace}/${name}`);
   }
 
-  async getAppStatus(namespace: string, name: string): Promise<AppStatus> {
-    const response = await this.runtimeClient.get(`/apps/${namespace}/${name}/status`);
+  async getManifestStatus(namespace: string, name: string): Promise<ManifestStatus> {
+    const response = await this.runtimeClient.get(`/manifests/${namespace}/${name}/status`);
     return response.data;
   }
 }
