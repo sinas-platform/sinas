@@ -1,15 +1,15 @@
-"""App validation service — checks resource existence and permission satisfaction."""
+"""Manifest validation service — checks resource existence and permission satisfaction."""
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.permissions import check_permission
 from app.models.agent import Agent
-from app.models.app import App
+from app.models.manifest import Manifest
 from app.models.file import Collection
 from app.models.function import Function
 from app.models.skill import Skill
 from app.models.state import State
-from app.schemas.app import AppStatusResponse, PermissionStatus, ResourceStatus, StoreDependencyStatus
+from app.schemas.manifest import ManifestStatusResponse, PermissionStatus, ResourceStatus, StoreDependencyStatus
 
 # Map resource type strings to SQLAlchemy models (accept both singular and plural)
 RESOURCE_TYPE_MAP = {
@@ -24,14 +24,14 @@ RESOURCE_TYPE_MAP = {
 }
 
 
-async def validate_app_status(
+async def validate_manifest_status(
     db: AsyncSession,
-    app: App,
+    manifest: Manifest,
     user_id: str,
     permissions: dict[str, bool],
-) -> AppStatusResponse:
+) -> ManifestStatusResponse:
     """
-    Validate an app's resource dependencies and permission requirements.
+    Validate a manifest's resource dependencies and permission requirements.
 
     Returns a structured status showing which resources exist and which
     permissions the user has.
@@ -40,7 +40,7 @@ async def validate_app_status(
     missing: list[ResourceStatus] = []
 
     # Check each required resource
-    for res_ref in app.required_resources or []:
+    for res_ref in manifest.required_resources or []:
         res_type = res_ref.get("type", "")
         res_ns = res_ref.get("namespace", "default")
         res_name = res_ref.get("name", "")
@@ -61,7 +61,7 @@ async def validate_app_status(
     # Check required permissions
     req_granted: list[str] = []
     req_missing: list[str] = []
-    for perm in app.required_permissions or []:
+    for perm in manifest.required_permissions or []:
         if check_permission(permissions, perm):
             req_granted.append(perm)
         else:
@@ -70,7 +70,7 @@ async def validate_app_status(
     # Check optional permissions
     opt_granted: list[str] = []
     opt_missing: list[str] = []
-    for perm in app.optional_permissions or []:
+    for perm in manifest.optional_permissions or []:
         if check_permission(permissions, perm):
             opt_granted.append(perm)
         else:
@@ -79,7 +79,7 @@ async def validate_app_status(
     # Check store dependencies
     stores_satisfied: list[StoreDependencyStatus] = []
     stores_missing: list[StoreDependencyStatus] = []
-    for dep in app.store_dependencies or []:
+    for dep in manifest.store_dependencies or []:
         store_ref = dep.get("store", "")
         key = dep.get("key")
         status = StoreDependencyStatus(store=store_ref, key=key, exists=False)
@@ -105,7 +105,7 @@ async def validate_app_status(
 
     ready = len(missing) == 0 and len(req_missing) == 0 and len(stores_missing) == 0
 
-    return AppStatusResponse(
+    return ManifestStatusResponse(
         ready=ready,
         resources={"satisfied": satisfied, "missing": missing},
         permissions={

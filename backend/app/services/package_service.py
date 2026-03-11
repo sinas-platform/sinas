@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
-from app.models.app import App
+from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
 
 # Models that support managed_by
-MANAGED_MODELS = [Agent, App, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
+MANAGED_MODELS = [Agent, Manifest, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -180,7 +180,7 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
-            App: "apps",
+            Manifest: "manifests",
             Component: "components",
             Collection: "collections",
             DatabaseTrigger: "databaseTriggers",
@@ -256,7 +256,7 @@ class PackageService:
             "agent": (Agent, self._export_agent),
             "function": (Function, self._export_function),
             "skill": (Skill, self._export_skill),
-            "app": (App, self._export_app),
+            "manifest": (Manifest, self._export_manifest),
             "component": (Component, self._export_component),
             "query": (Query, self._export_query),
             "collection": (Collection, self._export_collection),
@@ -308,7 +308,7 @@ class PackageService:
             "agent": "agents",
             "function": "functions",
             "skill": "skills",
-            "app": "apps",
+            "manifest": "manifests",
             "component": "components",
             "query": "queries",
             "collection": "collections",
@@ -388,15 +388,15 @@ class PackageService:
             "content": skill.content,
         })
 
-    async def _export_app(self, app: App) -> dict:
+    async def _export_manifest(self, manifest: Manifest) -> dict:
         return _remove_none_values({
-            "namespace": app.namespace,
-            "name": app.name,
-            "description": app.description,
-            "requiredResources": app.required_resources or None,
-            "requiredPermissions": app.required_permissions or None,
-            "optionalPermissions": app.optional_permissions or None,
-            "exposedNamespaces": app.exposed_namespaces or None,
+            "namespace": manifest.namespace,
+            "name": manifest.name,
+            "description": manifest.description,
+            "requiredResources": manifest.required_resources or None,
+            "requiredPermissions": manifest.required_permissions or None,
+            "optionalPermissions": manifest.optional_permissions or None,
+            "exposedNamespaces": manifest.exposed_namespaces or None,
         })
 
     async def _export_component(self, component: Component) -> dict:

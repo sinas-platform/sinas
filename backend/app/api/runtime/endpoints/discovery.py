@@ -1,15 +1,14 @@
-"""Runtime discovery endpoints — list resources visible to the current user, optionally filtered by app context."""
+"""Runtime discovery endpoints — list resources visible to the current user, optionally filtered by manifest context."""
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.runtime.dependencies import get_app_context, get_namespace_filter
+from app.api.runtime.dependencies import get_manifest_context, get_namespace_filter
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.models.agent import Agent
-from app.models.app import App
 from app.models.file import Collection
 from app.models.function import Function
 from app.models.skill import Skill
@@ -34,8 +33,8 @@ async def list_agents(
     """List agents visible to the current user, optionally filtered by app context."""
     user_id, permissions = current_user_data
 
-    app = await get_app_context(db, x_application, app_query)
-    ns_filter = get_namespace_filter(app, "agents")
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest,"agents")
     if ns_filter is not None and len(ns_filter) == 0:
         set_permission_used(request, "sinas.agents.read")
         return []
@@ -67,8 +66,8 @@ async def list_functions(
     """List functions visible to the current user, optionally filtered by app context."""
     user_id, permissions = current_user_data
 
-    app = await get_app_context(db, x_application, app_query)
-    ns_filter = get_namespace_filter(app, "functions")
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest,"functions")
     if ns_filter is not None and len(ns_filter) == 0:
         set_permission_used(request, "sinas.functions.read")
         return []
@@ -100,8 +99,8 @@ async def list_skills(
     """List skills visible to the current user, optionally filtered by app context."""
     user_id, permissions = current_user_data
 
-    app = await get_app_context(db, x_application, app_query)
-    ns_filter = get_namespace_filter(app, "skills")
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest,"skills")
     if ns_filter is not None and len(ns_filter) == 0:
         set_permission_used(request, "sinas.skills.read")
         return []
@@ -133,8 +132,8 @@ async def list_collections(
     """List collections visible to the current user, optionally filtered by app context."""
     user_id, permissions = current_user_data
 
-    app = await get_app_context(db, x_application, app_query)
-    ns_filter = get_namespace_filter(app, "collections")
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest,"collections")
     if ns_filter is not None and len(ns_filter) == 0:
         set_permission_used(request, "sinas.collections.read")
         return []
@@ -166,8 +165,8 @@ async def list_templates(
     """List templates visible to the current user, optionally filtered by app context."""
     user_id, permissions = current_user_data
 
-    app = await get_app_context(db, x_application, app_query)
-    ns_filter = get_namespace_filter(app, "templates")
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest,"templates")
     if ns_filter is not None and len(ns_filter) == 0:
         set_permission_used(request, "sinas.templates.read")
         return []

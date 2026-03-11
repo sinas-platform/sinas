@@ -154,7 +154,7 @@ async def get_current_user_info(
     request: Request, user_id: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     """Get current authenticated user info."""
-    set_permission_used(request, "sinas.users.get:own")
+    set_permission_used(request, "sinas.users.read:own")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()

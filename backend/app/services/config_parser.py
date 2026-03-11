@@ -201,15 +201,15 @@ class ConfigParser:
         all_llm_provider_names = llm_provider_names | db_llm_provider_names
         all_database_connection_names = database_connection_names | db_database_connection_names
         all_query_names = query_names | db_query_names
-        # Validate app resource references
+        # Validate manifest resource references
         valid_resource_types = {"agent", "function", "skill", "collection"}
-        for i, app in enumerate(spec.get("apps", [])):
-            for j, res in enumerate(app.get("requiredResources", [])):
+        for i, manifest in enumerate(spec.get("manifests", [])):
+            for j, res in enumerate(manifest.get("requiredResources", [])):
                 res_type = res.get("type", "")
                 if res_type not in valid_resource_types:
                     errors.append(
                         ConfigValidationError(
-                            path=f"spec.apps[{i}].requiredResources[{j}].type",
+                            path=f"spec.manifests[{i}].requiredResources[{j}].type",
                             message=f"Unsupported resource type '{res_type}'. Must be one of: {', '.join(sorted(valid_resource_types))}",
                         )
                     )
@@ -229,7 +229,7 @@ class ConfigParser:
                 if res_ref not in lookup.get(res_type, set()):
                     errors.append(
                         ConfigValidationError(
-                            path=f"spec.apps[{i}].requiredResources[{j}]",
+                            path=f"spec.manifests[{i}].requiredResources[{j}]",
                             message=f"Referenced {res_type} '{res_ref}' not defined",
                         )
                     )

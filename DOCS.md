@@ -341,7 +341,7 @@ The runtime API is mounted at the root. It handles authentication, chat, executi
 /files/...             # Upload, download, search files
 /templates/...         # Render and send templates
 /components/...        # Render components, proxy endpoints
-/apps/...              # App status validation
+/manifests/...         # Manifest status validation
 /discovery/...         # List resources visible to the current user
 ```
 
@@ -361,7 +361,7 @@ The management API handles CRUD operations on all resources. These are typically
 /api/v1/webhooks/...              # Webhook CRUD
 /api/v1/schedules/...             # Schedule CRUD
 /api/v1/components/...            # Component CRUD + compilation + share links
-/api/v1/apps/...                  # App registration CRUD
+/api/v1/manifests/...             # Manifest CRUD
 /api/v1/roles/...                 # Role & permission management
 /api/v1/users/...                 # User management
 /api/v1/api-keys/...              # API key management
@@ -434,8 +434,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `enabled_queries` | Database queries available as tools |
 | `query_parameters` | Default query parameter values |
 | `enabled_collections` | File collections the agent can search |
-| `state_namespaces_readonly` | State namespaces the agent can read |
-| `state_namespaces_readwrite` | State namespaces the agent can read and write |
+| `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
 | `icon` | Icon reference (see [Icons](#icons)) |
 
 **Management endpoints:**
@@ -512,6 +511,7 @@ Functions are Python code that runs in isolated Docker containers. They can be u
 | `enabled_namespaces` | Namespaces of other functions this function can call |
 | `shared_pool` | Run in shared worker instead of isolated container (admin-only) |
 | `requires_approval` | Require user approval when called by an agent |
+| `timeout` | Per-function timeout in seconds (overrides global `FUNCTION_TIMEOUT`, default: null) |
 
 **Function signature:**
 
@@ -605,7 +605,7 @@ Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINA
 | `enabled_functions` | Functions the component can call |
 | `enabled_queries` | Queries the component can execute |
 | `enabled_components` | Other components it can embed |
-| `state_namespaces_readonly` / `state_namespaces_readwrite` | State access |
+| `enabled_stores` | Stores the component can access (`{"store": "ns/name", "access": "readonly\|readwrite"}`) |
 | `css_overrides` | Custom CSS |
 | `visibility` | `private`, `shared`, or `public` |
 
@@ -1074,14 +1074,17 @@ States are a persistent key-value store organized by namespace. Agents use state
 
 **Encrypted states:** Set `encrypted: true` when creating or updating a state to store the value encrypted. The plaintext value is stored in `encrypted_value` (Fernet-encrypted) while `value` is set to `{}`. On read, the value is transparently decrypted. This is useful for storing API keys, tokens, or other secrets.
 
-**Agent state access** is declared per agent:
+**Agent state access** is declared per agent via `enabled_stores`:
 
 ```yaml
-state_namespaces_readonly: ["shared_knowledge"]
-state_namespaces_readwrite: ["conversation_memory", "user_profile"]
+enabledStores:
+  - store: "shared_knowledge/main"
+    access: readonly
+  - store: "conversation_memory/main"
+    access: readwrite
 ```
 
-Read-only agents get a `retrieve_context` tool. Read-write agents additionally get `save_context`, `update_context`, and `delete_context`.
+Read-only stores give the agent a `retrieve_context` tool. Read-write stores additionally provide `save_context`, `update_context`, and `delete_context`.
 
 **Endpoints:**
 
@@ -1129,7 +1132,7 @@ spec:
   collections: [...]
   webhooks: [...]
   schedules: [...]
-  apps: [...]
+  manifests: [...]
 ```
 
 **Key behaviors:**
@@ -1170,32 +1173,41 @@ curl -X POST http://localhost:8000/api/v1/packages/create \
   }'
 ```
 
-Supported resource types: `agent`, `function`, `skill`, `app`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
+Supported resource types: `agent`, `function`, `skill`, `manifest`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
 
-### Apps
+### Manifests
 
-Apps are registered applications that declare their resource dependencies. They serve as an organizational and discovery mechanism — when an app context is active, discovery endpoints filter results to show only the app's relevant resources.
+Manifests are application declarations that describe what resources, permissions, and stores an application built on SINAS requires. They enable a single API call to validate whether a user has everything needed to run the application.
 
 **Key properties:**
 
 | Property | Description |
 |---|---|
 | `namespace` / `name` | Unique identifier |
-| `description` | App description |
+| `description` | What this manifest declares |
 | `required_resources` | Resource references: `[{"type": "agent", "namespace": "...", "name": "..."}]` |
-| `required_permissions` | Permissions the app needs |
+| `required_permissions` | Permissions the application needs |
 | `optional_permissions` | Optional permissions for extended features |
 | `exposed_namespaces` | Namespace filter per resource type (e.g., `{"agents": ["support"]}`) |
+| `store_dependencies` | Stores the application expects: `[{"store": "ns/name", "key": "optional_key"}]` |
 
 **Endpoints:**
 
 ```
-POST   /api/v1/apps                              # Create app
-GET    /api/v1/apps                              # List apps
-GET    /api/v1/apps/{namespace}/{name}           # Get app
-PUT    /api/v1/apps/{namespace}/{name}           # Update
-DELETE /api/v1/apps/{namespace}/{name}           # Delete
+POST   /api/v1/manifests                              # Create manifest
+GET    /api/v1/manifests                              # List manifests
+GET    /api/v1/manifests/{namespace}/{name}           # Get manifest
+PUT    /api/v1/manifests/{namespace}/{name}           # Update
+DELETE /api/v1/manifests/{namespace}/{name}           # Delete
 ```
+
+**Runtime status validation:**
+
+```
+GET    /api/runtime/manifests/{namespace}/{name}/status   # Validate dependencies
+```
+
+Returns `ready: true/false` with details on satisfied/missing resources, granted/missing permissions, and existing/missing store dependencies.
 
 ### Users & Roles
 
@@ -1490,7 +1502,7 @@ spec:
   queries:             # Saved SQL templates
   collections:         # File storage collections
   templates:           # Jinja2 templates
-  apps:                # App registrations
+  manifests:           # Application manifests
   agents:              # AI agent configurations
   webhooks:            # HTTP triggers for functions
   schedules:           # Cron-based triggers

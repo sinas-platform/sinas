@@ -4,6 +4,7 @@ import { Key, Plus, Trash2, Copy, Check, X } from 'lucide-react';
 import { useState } from 'react';
 import type { APIKeyCreate } from '../types';
 import { useToast } from '../lib/toast-context';
+import { PermissionEditor } from '../components/PermissionEditor';
 
 export function APIKeys() {
   const queryClient = useQueryClient();
@@ -11,7 +12,6 @@ export function APIKeys() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createdKey, setCreatedKey] = useState<{ id: string; key: string } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [customPermission, setCustomPermission] = useState('');
   const [showInactive, setShowInactive] = useState(false);
   const [formData, setFormData] = useState<APIKeyCreate>({
     name: '',
@@ -76,48 +76,6 @@ export function APIKeys() {
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const togglePermission = (permissionKey: string) => {
-    setFormData({
-      ...formData,
-      permissions: {
-        ...formData.permissions,
-        [permissionKey]: !formData.permissions[permissionKey],
-      },
-    });
-  };
-
-  const addCustomPermission = () => {
-    const trimmed = customPermission.trim();
-    if (trimmed) {
-      setFormData({
-        ...formData,
-        permissions: {
-          ...formData.permissions,
-          [trimmed]: true,
-        },
-      });
-      setCustomPermission('');
-    }
-  };
-
-  const removePermission = (permissionKey: string) => {
-    const newPermissions = { ...formData.permissions };
-    delete newPermissions[permissionKey];
-    setFormData({
-      ...formData,
-      permissions: newPermissions,
-    });
-  };
-
-  // Fetch permission reference from backend
-  const { data: permissionRegistry } = useQuery({
-    queryKey: ['permissionRegistry'],
-    queryFn: () => apiClient.getPermissionReference(),
-    retry: false,
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-  });
-
-  const [permScope, setPermScope] = useState<'own' | 'all'>('own');
 
   return (
     <div className="space-y-6">
@@ -332,128 +290,12 @@ export function APIKeys() {
                 </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-3">
-                  Permissions
-                </label>
-                <p className="text-xs text-gray-500 mb-3">
-                  Add custom permissions or select from common examples below. Format: <code className="bg-[#161616] px-1 rounded">resource.action:scope</code>
-                </p>
-
-                {/* Selected Permissions */}
-                {Object.keys(formData.permissions).length > 0 && (
-                  <div className="mb-4 border border-white/[0.06] rounded-lg p-3 bg-[#0d0d0d]">
-                    <div className="text-xs font-medium text-gray-300 mb-2">Selected Permissions:</div>
-                    <div className="flex flex-wrap gap-2">
-                      {Object.keys(formData.permissions).map((permission) => (
-                        <span
-                          key={permission}
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-blue-900/30 text-blue-300 text-xs rounded font-mono"
-                        >
-                          {permission}
-                          <button
-                            type="button"
-                            onClick={() => removePermission(permission)}
-                            className="hover:text-blue-300"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Add Custom Permission */}
-                <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-300 mb-2">Add Custom Permission</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={customPermission}
-                      onChange={(e) => setCustomPermission(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addCustomPermission();
-                        }
-                      }}
-                      placeholder="e.g., sinas.chats.read:all"
-                      className="input flex-1 font-mono text-sm"
-                    />
-                    <button
-                      type="button"
-                      onClick={addCustomPermission}
-                      disabled={!customPermission.trim()}
-                      className="btn btn-secondary"
-                    >
-                      Add
-                    </button>
-                  </div>
-                </div>
-
-                {/* Permission Reference */}
-                {permissionRegistry && permissionRegistry.length > 0 && (
-                  <details className="border border-white/[0.06] rounded-lg">
-                    <summary className="cursor-pointer p-3 text-sm font-medium text-gray-300 hover:bg-white/5">
-                      Permission Reference
-                    </summary>
-                    <div className="p-3 pt-0">
-                      {/* Scope toggle */}
-                      <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/[0.04]">
-                        <span className="text-xs text-gray-500">Scope:</span>
-                        <button
-                          type="button"
-                          onClick={() => setPermScope('own')}
-                          className={`px-2 py-0.5 text-xs rounded ${permScope === 'own' ? 'bg-blue-900/30 text-blue-300 font-medium' : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'}`}
-                        >
-                          :own
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPermScope('all')}
-                          className={`px-2 py-0.5 text-xs rounded ${permScope === 'all' ? 'bg-blue-900/30 text-blue-300 font-medium' : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'}`}
-                        >
-                          :all
-                        </button>
-                        <span className="text-xs text-gray-500 ml-1">(:all grants :own)</span>
-                      </div>
-                      <div className="space-y-2 max-h-72 overflow-y-auto">
-                        {(permissionRegistry as Array<{ resource: string; description: string; actions: string[]; namespaced?: boolean; adminOnly?: boolean }>).map((entry) => (
-                          <div key={entry.resource} className="flex items-start gap-2">
-                            <div className="w-32 flex-shrink-0 pt-0.5">
-                              <span className="text-xs font-medium text-gray-100">{entry.description}</span>
-                              {entry.adminOnly && <span className="ml-1 text-[10px] text-amber-600 font-medium">admin</span>}
-                            </div>
-                            <div className="flex flex-wrap gap-1 flex-1">
-                              {entry.actions.map((action) => {
-                                const scope = entry.adminOnly ? 'all' : permScope;
-                                const permKey = `sinas.${entry.resource}.${action}:${scope}`;
-                                const isSelected = formData.permissions[permKey];
-                                return (
-                                  <button
-                                    key={action}
-                                    type="button"
-                                    onClick={() => togglePermission(permKey)}
-                                    className={`px-1.5 py-0.5 text-[11px] rounded font-mono transition-colors ${
-                                      isSelected
-                                        ? 'bg-blue-900/30 text-blue-300'
-                                        : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
-                                    }`}
-                                    title={permKey}
-                                  >
-                                    {action}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </details>
-                )}
-              </div>
+              <PermissionEditor
+                mode="dict"
+                label="Permissions"
+                value={formData.permissions}
+                onChange={(permissions) => setFormData({ ...formData, permissions })}
+              />
 
               {createMutation.isError && (
                 <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">

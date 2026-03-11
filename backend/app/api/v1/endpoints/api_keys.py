@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import generate_api_key, get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.models import APIKey
 from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse
 
@@ -26,6 +27,10 @@ async def create_api_key(
     The plain API key is returned only once - store it securely!
     """
     user_id, permissions = current_user_data
+
+    if not check_permission(permissions, "sinas.api_keys.create:own"):
+        set_permission_used(http_request, "sinas.api_keys.create:own", has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create API keys")
     set_permission_used(http_request, "sinas.api_keys.create:own")
 
     # Generate API key

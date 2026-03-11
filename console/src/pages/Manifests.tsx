@@ -2,8 +2,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { AppWindow, Plus, Trash2, Edit2, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
-import type { App, AppCreate, AppUpdate, AppStatus, AppResourceRef, AppStoreDependency } from '../types';
+import type { Manifest, ManifestCreate, ManifestUpdate, ManifestStatus, ManifestResourceRef, ManifestStoreDependency } from '../types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PermissionEditor } from '../components/PermissionEditor';
 
 const RESOURCE_TYPES = ['agents', 'functions', 'skills', 'templates', 'collections', 'components', 'stores'];
 
@@ -115,8 +116,8 @@ function ResourceListEditor({
   value,
   onChange,
 }: {
-  value: AppResourceRef[];
-  onChange: (v: AppResourceRef[]) => void;
+  value: ManifestResourceRef[];
+  onChange: (v: ManifestResourceRef[]) => void;
 }) {
   const addResource = () => {
     onChange([...value, { type: 'agents', namespace: 'default', name: '' }]);
@@ -126,7 +127,7 @@ function ResourceListEditor({
     onChange(value.filter((_, i) => i !== idx));
   };
 
-  const updateResource = (idx: number, field: keyof AppResourceRef, val: string) => {
+  const updateResource = (idx: number, field: keyof ManifestResourceRef, val: string) => {
     const next = [...value];
     next[idx] = { ...next[idx], [field]: val };
     onChange(next);
@@ -183,43 +184,17 @@ function ResourceListEditor({
   );
 }
 
-function PermissionListEditor({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string[];
-  onChange: (v: string[]) => void;
-  placeholder?: string;
-}) {
-  return (
-    <textarea
-      className="input font-mono text-sm"
-      rows={3}
-      placeholder={placeholder || 'One permission per line'}
-      value={value.join('\n')}
-      onChange={(e) => {
-        onChange(
-          e.target.value
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean)
-        );
-      }}
-    />
-  );
-}
 
 function StoreDependencyEditor({
   value,
   onChange,
 }: {
-  value: AppStoreDependency[];
-  onChange: (v: AppStoreDependency[]) => void;
+  value: ManifestStoreDependency[];
+  onChange: (v: ManifestStoreDependency[]) => void;
 }) {
   const add = () => onChange([...value, { store: '' }]);
   const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
-  const update = (idx: number, field: keyof AppStoreDependency, val: string) => {
+  const update = (idx: number, field: keyof ManifestStoreDependency, val: string) => {
     const next = [...value];
     next[idx] = { ...next[idx], [field]: val || undefined };
     onChange(next);
@@ -262,7 +237,7 @@ function StoreDependencyEditor({
   );
 }
 
-function StatusBanner({ status }: { status?: AppStatus }) {
+function StatusBanner({ status }: { status?: ManifestStatus }) {
   if (!status) return null;
 
   if (status.ready) {
@@ -303,15 +278,15 @@ function StatusBanner({ status }: { status?: AppStatus }) {
   );
 }
 
-export function Apps() {
+export function Manifests() {
   const queryClient = useQueryClient();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedApp, setSelectedApp] = useState<App | null>(null);
-  const [appStatuses, setAppStatuses] = useState<Record<string, AppStatus>>({});
+  const [selectedManifest, setSelectedManifest] = useState<Manifest | null>(null);
+  const [manifestStatuses, setManifestStatuses] = useState<Record<string, ManifestStatus>>({});
   const [refreshingStatuses, setRefreshingStatuses] = useState(false);
 
-  const [createFormData, setCreateFormData] = useState<AppCreate>({
+  const [createFormData, setCreateFormData] = useState<ManifestCreate>({
     namespace: 'default',
     name: '',
     description: '',
@@ -321,39 +296,39 @@ export function Apps() {
     exposed_namespaces: { ...DEFAULT_EXPOSED_NAMESPACES },
     store_dependencies: [],
   });
-  const [editFormData, setEditFormData] = useState<AppUpdate>({});
+  const [editFormData, setEditFormData] = useState<ManifestUpdate>({});
 
-  const { data: apps, isLoading, error } = useQuery({
-    queryKey: ['apps'],
-    queryFn: () => apiClient.listApps(),
+  const { data: manifests, isLoading, error } = useQuery({
+    queryKey: ['manifests'],
+    queryFn: () => apiClient.listManifests(),
     retry: false,
   });
 
   const createMutation = useMutation({
-    mutationFn: (data: AppCreate) => apiClient.createApp(data),
+    mutationFn: (data: ManifestCreate) => apiClient.createManifest(data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apps'] });
+      queryClient.invalidateQueries({ queryKey: ['manifests'] });
       setShowCreateModal(false);
       resetCreateForm();
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ namespace, name, data }: { namespace: string; name: string; data: AppUpdate }) =>
-      apiClient.updateApp(namespace, name, data),
+    mutationFn: ({ namespace, name, data }: { namespace: string; name: string; data: ManifestUpdate }) =>
+      apiClient.updateManifest(namespace, name, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apps'] });
+      queryClient.invalidateQueries({ queryKey: ['manifests'] });
       setShowEditModal(false);
-      setSelectedApp(null);
+      setSelectedManifest(null);
       setEditFormData({});
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: ({ namespace, name }: { namespace: string; name: string }) =>
-      apiClient.deleteApp(namespace, name),
+      apiClient.deleteManifest(namespace, name),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['apps'] });
+      queryClient.invalidateQueries({ queryKey: ['manifests'] });
     },
   });
 
@@ -379,59 +354,59 @@ export function Apps() {
 
   const handleEdit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedApp) {
+    if (selectedManifest) {
       updateMutation.mutate({
-        namespace: selectedApp.namespace,
-        name: selectedApp.name,
+        namespace: selectedManifest.namespace,
+        name: selectedManifest.name,
         data: editFormData,
       });
     }
   };
 
-  const openEditModal = (app: App) => {
-    setSelectedApp(app);
+  const openEditModal = (manifest: Manifest) => {
+    setSelectedManifest(manifest);
     setEditFormData({
-      namespace: app.namespace,
-      name: app.name,
-      description: app.description || '',
-      required_resources: app.required_resources || [],
-      required_permissions: app.required_permissions || [],
-      optional_permissions: app.optional_permissions || [],
-      exposed_namespaces: app.exposed_namespaces || {},
-      store_dependencies: app.store_dependencies || [],
-      is_active: app.is_active,
+      namespace: manifest.namespace,
+      name: manifest.name,
+      description: manifest.description || '',
+      required_resources: manifest.required_resources || [],
+      required_permissions: manifest.required_permissions || [],
+      optional_permissions: manifest.optional_permissions || [],
+      exposed_namespaces: manifest.exposed_namespaces || {},
+      store_dependencies: manifest.store_dependencies || [],
+      is_active: manifest.is_active,
     });
     setShowEditModal(true);
   };
 
-  const handleDelete = (app: App) => {
-    if (confirm(`Are you sure you want to delete app "${app.namespace}/${app.name}"?`)) {
-      deleteMutation.mutate({ namespace: app.namespace, name: app.name });
+  const handleDelete = (manifest: Manifest) => {
+    if (confirm(`Are you sure you want to delete manifest "${manifest.namespace}/${manifest.name}"?`)) {
+      deleteMutation.mutate({ namespace: manifest.namespace, name: manifest.name });
     }
   };
 
-  const fetchAllStatuses = useCallback(async (appList: App[]) => {
+  const fetchAllStatuses = useCallback(async (manifestList: Manifest[]) => {
     setRefreshingStatuses(true);
-    const results: Record<string, AppStatus> = {};
+    const results: Record<string, ManifestStatus> = {};
     await Promise.all(
-      appList.map(async (app) => {
+      manifestList.map(async (m) => {
         try {
-          const status = await apiClient.getAppStatus(app.namespace, app.name);
-          results[`${app.namespace}/${app.name}`] = status;
+          const status = await apiClient.getManifestStatus(m.namespace, m.name);
+          results[`${m.namespace}/${m.name}`] = status;
         } catch {
           // skip failed ones
         }
       })
     );
-    setAppStatuses(results);
+    setManifestStatuses(results);
     setRefreshingStatuses(false);
   }, []);
 
   useEffect(() => {
-    if (apps && apps.length > 0) {
-      fetchAllStatuses(apps);
+    if (manifests && manifests.length > 0) {
+      fetchAllStatuses(manifests);
     }
-  }, [apps, fetchAllStatuses]);
+  }, [manifests, fetchAllStatuses]);
 
   if (error) {
     return <ErrorDisplay error={error} />;
@@ -441,13 +416,13 @@ export function Apps() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-100">Apps</h1>
-          <p className="text-gray-400 mt-1">Manage application packages that bundle resources and permissions</p>
+          <h1 className="text-3xl font-bold text-gray-100">Manifests</h1>
+          <p className="text-gray-400 mt-1">Declare resource dependencies and required permissions for applications built on SINAS</p>
         </div>
         <div className="flex items-center space-x-2">
-          {apps && apps.length > 0 && (
+          {manifests && manifests.length > 0 && (
             <button
-              onClick={() => fetchAllStatuses(apps)}
+              onClick={() => fetchAllStatuses(manifests)}
               className="btn btn-secondary flex items-center"
               disabled={refreshingStatuses}
               title="Refresh all statuses"
@@ -464,7 +439,7 @@ export function Apps() {
             className="btn btn-primary flex items-center"
           >
             <Plus className="w-5 h-5 mr-2" />
-            Create App
+            Create Manifest
           </button>
         </div>
       </div>
@@ -473,71 +448,71 @@ export function Apps() {
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
         </div>
-      ) : apps && apps.length > 0 ? (
+      ) : manifests && manifests.length > 0 ? (
         <div className="grid gap-4">
-          {apps.map((app) => {
-            const key = `${app.namespace}/${app.name}`;
-            const status = appStatuses[key];
+          {manifests.map((m) => {
+            const key = `${m.namespace}/${m.name}`;
+            const status = manifestStatuses[key];
             return (
-              <div key={app.id} className="card transition-colors">
+              <div key={m.id} className="card transition-colors">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
                       <AppWindow className="w-5 h-5 text-blue-500" />
                       <h3 className="text-lg font-semibold text-gray-100">
-                        {app.namespace}/{app.name}
+                        {m.namespace}/{m.name}
                       </h3>
-                      {!app.is_active && (
+                      {!m.is_active && (
                         <span className="px-2 py-1 text-xs bg-[#1e1e1e] text-gray-400 rounded">
                           Inactive
                         </span>
                       )}
                     </div>
-                    {app.description && (
-                      <p className="text-gray-400 mt-2">{app.description}</p>
+                    {m.description && (
+                      <p className="text-gray-400 mt-2">{m.description}</p>
                     )}
                     <StatusBanner status={status} />
                     <div className="flex flex-wrap gap-2 mt-3">
-                      {(app.required_resources || []).length > 0 && (
+                      {(m.required_resources || []).length > 0 && (
                         <span className="px-2 py-1 text-xs bg-blue-900/30 text-blue-400 rounded">
-                          {app.required_resources.length} resource{app.required_resources.length !== 1 ? 's' : ''}
+                          {m.required_resources.length} resource{m.required_resources.length !== 1 ? 's' : ''}
                         </span>
                       )}
-                      {(app.required_permissions || []).length > 0 && (
+                      {(m.required_permissions || []).length > 0 && (
                         <span className="px-2 py-1 text-xs bg-purple-900/30 text-purple-400 rounded">
-                          {app.required_permissions.length} required perm{app.required_permissions.length !== 1 ? 's' : ''}
+                          {m.required_permissions.length} required perm{m.required_permissions.length !== 1 ? 's' : ''}
                         </span>
                       )}
-                      {(app.optional_permissions || []).length > 0 && (
+                      {(m.optional_permissions || []).length > 0 && (
                         <span className="px-2 py-1 text-xs bg-yellow-900/30 text-yellow-400 rounded">
-                          {app.optional_permissions.length} optional perm{app.optional_permissions.length !== 1 ? 's' : ''}
+                          {m.optional_permissions.length} optional perm{m.optional_permissions.length !== 1 ? 's' : ''}
                         </span>
                       )}
-                      {(app.store_dependencies || []).length > 0 && (
+                      {(m.store_dependencies || []).length > 0 && (
                         <span className="px-2 py-1 text-xs bg-cyan-900/30 text-cyan-400 rounded">
-                          {app.store_dependencies.length} store dep{app.store_dependencies.length !== 1 ? 's' : ''}
+                          {m.store_dependencies.length} store dep{m.store_dependencies.length !== 1 ? 's' : ''}
                         </span>
                       )}
-                      {Object.entries(app.exposed_namespaces || {}).map(([type, namespaces]) => (
+                      {Object.entries(m.exposed_namespaces || {}).map(([type, namespaces]) => (
                         <span key={type} className="px-2 py-1 text-xs bg-green-900/30 text-green-400 rounded">
                           {type}: {namespaces.join(', ')}
                         </span>
                       ))}
                     </div>
                     <div className="text-xs text-gray-500 mt-2">
-                      {new Date(app.created_at).toLocaleString()}
+                      {new Date(m.created_at).toLocaleString()}
                     </div>
                   </div>
                   <div className="flex items-center space-x-2 ml-4">
                     <button
-                      onClick={() => openEditModal(app)}
+                      onClick={() => openEditModal(m)}
                       className="btn btn-sm btn-secondary"
                       title="Edit"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(app)}
+                      onClick={() => handleDelete(m)}
                       className="btn btn-sm btn-danger"
                       title="Delete"
                     >
@@ -552,8 +527,8 @@ export function Apps() {
       ) : (
         <div className="text-center py-12 card">
           <AppWindow className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-100 mb-2">No apps yet</h3>
-          <p className="text-gray-400 mb-4">Create your first app to get started</p>
+          <h3 className="text-lg font-medium text-gray-100 mb-2">No manifests yet</h3>
+          <p className="text-gray-400 mb-4">Create your first manifest to get started</p>
         </div>
       )}
 
@@ -563,7 +538,7 @@ export function Apps() {
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-2xl font-bold mb-6">Create App</h2>
+              <h2 className="text-2xl font-bold mb-6">Create Manifest</h2>
               <form onSubmit={handleCreate} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -597,7 +572,7 @@ export function Apps() {
                   <input
                     type="text"
                     className="input"
-                    placeholder="What this app does"
+                    placeholder="What this manifest declares"
                     value={createFormData.description || ''}
                     onChange={(e) => setCreateFormData({ ...createFormData, description: e.target.value })}
                   />
@@ -606,7 +581,7 @@ export function Apps() {
                 <div>
                   <label className="label">Exposed Namespaces</label>
                   <p className="text-xs text-gray-500 mb-2">
-                    Namespaces this app exposes for each resource type
+                    Namespaces this manifest exposes for each resource type
                   </p>
                   <ExposedNamespacesEditor
                     value={createFormData.exposed_namespaces || {}}
@@ -622,28 +597,24 @@ export function Apps() {
                   />
                 </div>
 
-                <div>
-                  <label className="label">Required Permissions</label>
-                  <PermissionListEditor
-                    value={createFormData.required_permissions || []}
-                    onChange={(v) => setCreateFormData({ ...createFormData, required_permissions: v })}
-                    placeholder="e.g. sinas.agents/default/my-agent.read:own (one per line)"
-                  />
-                </div>
+                <PermissionEditor
+                  mode="list"
+                  label="Required Permissions"
+                  value={createFormData.required_permissions || []}
+                  onChange={(v) => setCreateFormData({ ...createFormData, required_permissions: v })}
+                />
 
-                <div>
-                  <label className="label">Optional Permissions</label>
-                  <PermissionListEditor
-                    value={createFormData.optional_permissions || []}
-                    onChange={(v) => setCreateFormData({ ...createFormData, optional_permissions: v })}
-                    placeholder="e.g. sinas.states/preferences.read:own (one per line)"
-                  />
-                </div>
+                <PermissionEditor
+                  mode="list"
+                  label="Optional Permissions"
+                  value={createFormData.optional_permissions || []}
+                  onChange={(v) => setCreateFormData({ ...createFormData, optional_permissions: v })}
+                />
 
                 <div>
                   <label className="label">Store Dependencies</label>
                   <p className="text-xs text-gray-500 mb-2">
-                    Stores (and optional keys) this app expects to exist
+                    Stores (and optional keys) this manifest expects to exist
                   </p>
                   <StoreDependencyEditor
                     value={createFormData.store_dependencies || []}
@@ -674,12 +645,12 @@ export function Apps() {
       )}
 
       {/* Edit Modal */}
-      {showEditModal && selectedApp && (
+      {showEditModal && selectedManifest && (
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
             <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
-              <h2 className="text-2xl font-bold mb-6">Edit App</h2>
+              <h2 className="text-2xl font-bold mb-6">Edit Manifest</h2>
               <form onSubmit={handleEdit} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -687,7 +658,7 @@ export function Apps() {
                     <input
                       type="text"
                       className="input"
-                      value={editFormData.namespace ?? selectedApp.namespace}
+                      value={editFormData.namespace ?? selectedManifest.namespace}
                       onChange={(e) => setEditFormData({ ...editFormData, namespace: e.target.value })}
                       pattern="[a-z0-9_-]+"
                     />
@@ -697,7 +668,7 @@ export function Apps() {
                     <input
                       type="text"
                       className="input"
-                      value={editFormData.name ?? selectedApp.name}
+                      value={editFormData.name ?? selectedManifest.name}
                       onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
                       pattern="[a-z0-9_-]+"
                     />
@@ -709,7 +680,7 @@ export function Apps() {
                   <input
                     type="text"
                     className="input"
-                    value={editFormData.description ?? selectedApp.description ?? ''}
+                    value={editFormData.description ?? selectedManifest.description ?? ''}
                     onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
                   />
                 </div>
@@ -717,7 +688,7 @@ export function Apps() {
                 <div>
                   <label className="label">Exposed Namespaces</label>
                   <ExposedNamespacesEditor
-                    value={editFormData.exposed_namespaces ?? selectedApp.exposed_namespaces ?? {}}
+                    value={editFormData.exposed_namespaces ?? selectedManifest.exposed_namespaces ?? {}}
                     onChange={(v) => setEditFormData({ ...editFormData, exposed_namespaces: v })}
                   />
                 </div>
@@ -725,36 +696,32 @@ export function Apps() {
                 <div>
                   <label className="label">Required Resources</label>
                   <ResourceListEditor
-                    value={editFormData.required_resources ?? selectedApp.required_resources ?? []}
+                    value={editFormData.required_resources ?? selectedManifest.required_resources ?? []}
                     onChange={(v) => setEditFormData({ ...editFormData, required_resources: v })}
                   />
                 </div>
 
-                <div>
-                  <label className="label">Required Permissions</label>
-                  <PermissionListEditor
-                    value={editFormData.required_permissions ?? selectedApp.required_permissions ?? []}
-                    onChange={(v) => setEditFormData({ ...editFormData, required_permissions: v })}
-                    placeholder="e.g. sinas.agents/default/my-agent.read:own (one per line)"
-                  />
-                </div>
+                <PermissionEditor
+                  mode="list"
+                  label="Required Permissions"
+                  value={editFormData.required_permissions ?? selectedManifest.required_permissions ?? []}
+                  onChange={(v) => setEditFormData({ ...editFormData, required_permissions: v })}
+                />
 
-                <div>
-                  <label className="label">Optional Permissions</label>
-                  <PermissionListEditor
-                    value={editFormData.optional_permissions ?? selectedApp.optional_permissions ?? []}
-                    onChange={(v) => setEditFormData({ ...editFormData, optional_permissions: v })}
-                    placeholder="e.g. sinas.states/preferences.read:own (one per line)"
-                  />
-                </div>
+                <PermissionEditor
+                  mode="list"
+                  label="Optional Permissions"
+                  value={editFormData.optional_permissions ?? selectedManifest.optional_permissions ?? []}
+                  onChange={(v) => setEditFormData({ ...editFormData, optional_permissions: v })}
+                />
 
                 <div>
                   <label className="label">Store Dependencies</label>
                   <p className="text-xs text-gray-500 mb-2">
-                    Stores (and optional keys) this app expects to exist
+                    Stores (and optional keys) this manifest expects to exist
                   </p>
                   <StoreDependencyEditor
-                    value={editFormData.store_dependencies ?? selectedApp.store_dependencies ?? []}
+                    value={editFormData.store_dependencies ?? selectedManifest.store_dependencies ?? []}
                     onChange={(v) => setEditFormData({ ...editFormData, store_dependencies: v })}
                   />
                 </div>
@@ -763,7 +730,7 @@ export function Apps() {
                   <label className="flex items-center space-x-2">
                     <input
                       type="checkbox"
-                      checked={editFormData.is_active ?? selectedApp.is_active}
+                      checked={editFormData.is_active ?? selectedManifest.is_active}
                       onChange={(e) => setEditFormData({ ...editFormData, is_active: e.target.checked })}
                     />
                     <span>Active</span>

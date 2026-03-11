@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, require_permission, set_permission_used
 from app.core.database import get_db
-from app.core.permissions import check_permission
+from app.core.permission_registry import PERMISSION_REGISTRY
+from app.core.permissions import DEFAULT_ROLE_PERMISSIONS, check_permission
 from app.models.user import Role, RolePermission, User, UserRole
 from app.schemas import (
     RoleCreate,
@@ -433,6 +434,10 @@ async def set_role_permission(
     if role.name == "Admins":
         raise HTTPException(status_code=403, detail="Cannot modify Admins role permissions")
 
+    # Prevent disabling the superadmin wildcard permission
+    if permission_data.permission_key == "sinas.*:all" and not permission_data.permission_value:
+        raise HTTPException(status_code=403, detail="Cannot disable sinas.*:all — this would remove all access for the role")
+
     # Check if permission already exists
     result = await db.execute(
         select(RolePermission).where(
@@ -489,6 +494,10 @@ async def delete_role_permission(
     if role.name == "Admins":
         raise HTTPException(status_code=403, detail="Cannot modify Admins role permissions")
 
+    # Prevent deleting the superadmin wildcard permission
+    if permission_key == "sinas.*:all":
+        raise HTTPException(status_code=403, detail="Cannot delete sinas.*:all — this would remove all access for the role")
+
     result = await db.execute(
         select(RolePermission).where(
             and_(
@@ -518,6 +527,26 @@ async def get_permissions_reference(
     No special permission required — any authenticated user can see what
     permissions exist (they still can't grant themselves anything).
     """
-    from app.core.permission_registry import PERMISSION_REGISTRY
-
     return PERMISSION_REGISTRY
+
+
+@router.get("/permissions/defaults")
+async def get_permission_defaults(
+    request: Request,
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Return the default role permissions applied on startup.
+
+    These permissions are auto-created for new defaults but won't overwrite
+    admin customizations (except sinas.*:all on Admins which is always enforced).
+    """
+    user_id, permissions = current_user_data
+
+    if not check_permission(permissions, "sinas.roles.manage_permissions:all"):
+        set_permission_used(request, "sinas.roles.manage_permissions:all", has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to view role permissions")
+
+    set_permission_used(request, "sinas.roles.manage_permissions:all")
+
+    return DEFAULT_ROLE_PERMISSIONS

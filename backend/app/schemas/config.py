@@ -225,21 +225,21 @@ class ScheduleConfig(BaseModel):
         return v
 
 
-class AppResourceRef(BaseModel):
-    """Resource reference in app config"""
+class ManifestResourceRef(BaseModel):
+    """Resource reference in manifest config"""
 
     type: str = Field(..., description="Resource type: agent, function, skill, collection")
     namespace: str = "default"
     name: str
 
 
-class AppConfig(BaseModel):
-    """App registration configuration"""
+class ManifestConfig(BaseModel):
+    """Manifest registration configuration"""
 
     namespace: str = "default"
     name: str
     description: Optional[str] = None
-    requiredResources: list[AppResourceRef] = Field(default_factory=list)
+    requiredResources: list[ManifestResourceRef] = Field(default_factory=list)
     requiredPermissions: list[str] = Field(default_factory=list)
     optionalPermissions: list[str] = Field(default_factory=list)
     exposedNamespaces: dict[str, list[str]] = Field(default_factory=dict)
@@ -323,7 +323,7 @@ class ConfigSpec(BaseModel):
     collections: list[CollectionConfig] = Field(default_factory=list)
     templates: list[TemplateConfig] = Field(default_factory=list)
     stores: list[StoreConfig] = Field(default_factory=list)
-    apps: list[AppConfig] = Field(default_factory=list)
+    manifests: list[ManifestConfig] = Field(default_factory=list)
     agents: list[AgentConfig] = Field(default_factory=list)
     webhooks: list[WebhookConfig] = Field(default_factory=list)
     schedules: list[ScheduleConfig] = Field(default_factory=list)

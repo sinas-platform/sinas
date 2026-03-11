@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from .endpoints import (
     agents,
     api_keys,
-    apps,
+    manifests,
     collections,
     components,
     config,
@@ -35,7 +35,7 @@ router = APIRouter()
 
 # Core configuration routes
 router.include_router(agents.router, prefix="/agents", tags=["agents"])
-router.include_router(apps.router)
+router.include_router(manifests.router)
 router.include_router(skills.router)
 router.include_router(components.router)
 router.include_router(collections.router)
