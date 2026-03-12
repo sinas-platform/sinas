@@ -102,6 +102,9 @@ export function AgentDetail() {
         enabled_components: agent.enabled_components || [],
         status_templates: agent.status_templates || {},
         icon: agent.icon || undefined,
+        default_job_timeout: agent.default_job_timeout ?? undefined,
+        default_keep_alive: agent.default_keep_alive,
+        enable_code_execution: agent.enable_code_execution,
       });
     }
   }, [agent]);
@@ -445,6 +448,44 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Default agent
                 </label>
               </div>
+              <div className="flex items-center">
+                <input
+                  id="default_keep_alive"
+                  type="checkbox"
+                  checked={formData.default_keep_alive ?? agent.default_keep_alive}
+                  onChange={(e) => setFormData({ ...formData, default_keep_alive: e.target.checked })}
+                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                />
+                <label htmlFor="default_keep_alive" className="ml-2 text-sm text-gray-300">
+                  Keep alive (survives disconnect)
+                </label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  id="enable_code_execution"
+                  type="checkbox"
+                  checked={formData.enable_code_execution ?? agent.enable_code_execution}
+                  onChange={(e) => setFormData({ ...formData, enable_code_execution: e.target.checked })}
+                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                />
+                <label htmlFor="enable_code_execution" className="ml-2 text-sm text-gray-300">
+                  Code execution
+                </label>
+              </div>
+            </div>
+            <div>
+              <label htmlFor="default_job_timeout" className="block text-sm font-medium text-gray-300 mb-2">
+                Default Job Timeout (seconds)
+              </label>
+              <input
+                id="default_job_timeout"
+                type="number"
+                min="1"
+                placeholder="600 (default)"
+                value={formData.default_job_timeout ?? agent.default_job_timeout ?? ''}
+                onChange={(e) => setFormData({ ...formData, default_job_timeout: e.target.value ? parseInt(e.target.value) : undefined })}
+                className="input w-48"
+              />
             </div>
           </div>
         </div>

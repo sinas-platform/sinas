@@ -51,6 +51,7 @@ class ContainerPool:
         self._health_task: Optional[asyncio.Task] = None
         self._replenish_event = asyncio.Event()
         self.docker_network = self._detect_network()
+        self.sandbox_network = self._ensure_sandbox_network()
 
     def _detect_network(self) -> str:
         """Auto-detect Docker network."""
@@ -73,6 +74,25 @@ class ContainerPool:
 
         logger.warning("Using fallback network: bridge")
         return "bridge"
+
+    def _ensure_sandbox_network(self) -> str:
+        """Ensure the isolated sandbox network exists for executor containers.
+
+        This network allows internet access but is completely separate from
+        the internal network where Redis, Postgres, etc. live.
+        """
+        network_name = settings.sandbox_network
+        try:
+            self.client.networks.get(network_name)
+            logger.info(f"Sandbox network already exists: {network_name}")
+        except NotFound:
+            logger.info(f"Creating sandbox network: {network_name}")
+            self.client.networks.create(
+                network_name,
+                driver="bridge",
+                labels={"sinas.type": "sandbox"},
+            )
+        return network_name
 
     # ------------------------------------------------------------------
     # Initialization
@@ -161,20 +181,20 @@ class ContainerPool:
                             pass
                         return None
 
-                    # Reconnect to correct Docker network if needed
+                    # Reconnect to sandbox network if needed
                     try:
                         current_networks = set(
                             container.attrs.get("NetworkSettings", {})
                             .get("Networks", {})
                             .keys()
                         )
-                        if self.docker_network not in current_networks:
+                        if self.sandbox_network not in current_networks:
                             print(
-                                f"🔗 Reconnecting {name} to network "
-                                f"{self.docker_network}"
+                                f"🔗 Reconnecting {name} to sandbox network "
+                                f"{self.sandbox_network}"
                             )
                             network = await asyncio.to_thread(
-                                self.client.networks.get, self.docker_network
+                                self.client.networks.get, self.sandbox_network
                             )
                             await asyncio.to_thread(network.connect, container)
                     except Exception as net_err:
@@ -475,12 +495,14 @@ sys.exit(1)
             "image": settings.function_container_image,
             "name": name,
             "detach": True,
-            "network": self.docker_network,
+            "network": self.sandbox_network,
             "mem_limit": f"{settings.max_function_memory}m",
             "nano_cpus": int(settings.max_function_cpu * 1_000_000_000),
             "cap_drop": ["ALL"],
             "cap_add": ["CHOWN", "SETUID", "SETGID"],
             "security_opt": ["no-new-privileges:true"],
+            "pids_limit": 256,
+            "extra_hosts": {"host.docker.internal": "host-gateway"},
             "tmpfs": {"/tmp": "size=100m,mode=1777"},
             "environment": {
                 "PYTHONUNBUFFERED": "1",

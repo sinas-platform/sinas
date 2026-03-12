@@ -62,6 +62,11 @@ class AgentCreate(BaseModel):
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_default: Optional[bool] = False
 
+    # Long-running workflow settings
+    default_job_timeout: Optional[int] = Field(None, gt=0, description="Default job timeout in seconds for chats with this agent")
+    default_keep_alive: Optional[bool] = Field(False, description="Default keep_alive for chats with this agent")
+    enable_code_execution: Optional[bool] = Field(False, description="Enable code execution tool for this agent")
+
 
 class AgentUpdate(BaseModel):
     namespace: Optional[str] = Field(
@@ -104,6 +109,11 @@ class AgentUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
 
+    # Long-running workflow settings
+    default_job_timeout: Optional[int] = Field(None, gt=0)
+    default_keep_alive: Optional[bool] = None
+    enable_code_execution: Optional[bool] = None
+
 
 class AgentResponse(BaseModel):
     id: uuid.UUID
@@ -133,6 +143,9 @@ class AgentResponse(BaseModel):
     icon_url: Optional[str] = None
     is_active: bool
     is_default: bool
+    default_job_timeout: Optional[int] = None
+    default_keep_alive: bool = False
+    enable_code_execution: bool = False
     created_at: datetime
     updated_at: datetime
 

@@ -1343,6 +1343,9 @@ class ConfigApplyService:
                         else [],
                         "icon": agent_config.icon,
                         "is_default": agent_config.isDefault,
+                        "default_job_timeout": agent_config.defaultJobTimeout,
+                        "default_keep_alive": agent_config.defaultKeepAlive,
+                        "enable_code_execution": agent_config.enableCodeExecution,
                     }
                 )
 
@@ -1385,6 +1388,9 @@ class ConfigApplyService:
                         existing.enabled_collections = agent_config.enabledCollections
                         existing.enabled_components = agent_config.enabledComponents
                         existing.icon = agent_config.icon
+                        existing.default_job_timeout = agent_config.defaultJobTimeout
+                        existing.default_keep_alive = agent_config.defaultKeepAlive
+                        existing.enable_code_execution = agent_config.enableCodeExecution
                         if agent_config.isDefault:
                             await self.db.execute(
                                 Agent.__table__.update()
@@ -1433,6 +1439,9 @@ class ConfigApplyService:
                             enabled_components=agent_config.enabledComponents,
                             icon=agent_config.icon,
                             is_default=agent_config.isDefault,
+                            default_job_timeout=agent_config.defaultJobTimeout,
+                            default_keep_alive=agent_config.defaultKeepAlive,
+                            enable_code_execution=agent_config.enableCodeExecution,
                             user_id=self.owner_user_id,
                             is_active=True,
                             managed_by=self.managed_by,

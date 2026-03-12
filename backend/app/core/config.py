@@ -85,7 +85,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 30  # Max overflow connections beyond pool_size
 
     # Docker configuration
+    backend_port: int = 8000  # Port the backend listens on (for file URLs on localhost)
     docker_network: str = "auto"  # Docker network for containers (auto-detect or specify)
+    sandbox_network: str = "sinas-sandbox"  # Isolated network for executor containers (internet only, no access to internal services)
     default_worker_count: int = 4  # Number of workers to start on backend startup
 
     # Message history
@@ -98,6 +100,10 @@ class Settings(BaseSettings):
     queue_default_timeout: int = 300
     queue_max_retries: int = 3
     queue_retry_delay: int = 10
+
+    # Agent job settings
+    agent_job_timeout: int = 600  # Default timeout for agent jobs (10 minutes)
+    code_execution_timeout: int = 120  # Default timeout for code execution (2 minutes)
 
     # Encryption
     encryption_key: Optional[str] = None  # Fernet key for encrypting sensitive data

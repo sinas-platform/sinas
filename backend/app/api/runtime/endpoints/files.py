@@ -36,7 +36,7 @@ from app.schemas.file import (
     FileWithVersions,
 )
 
-from app.services.file_storage import FileStorage, get_storage, generate_file_data_url, generate_file_url
+from app.services.file_storage import FileStorage, get_storage, generate_file_url
 from app.services.queue_service import queue_service
 
 
@@ -701,12 +701,6 @@ async def generate_temp_url(
         raise HTTPException(status_code=404, detail=f"Version {version_number} not found")
 
     url = generate_file_url(str(file_record.id), version_number, expires_in=expires_in)
-    if not url:
-        # Fallback to data URL for localhost
-        try:
-            url = await generate_file_data_url(file_version.storage_path, file_record.content_type)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="File content not found in storage")
 
     return {
         "url": url,

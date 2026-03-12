@@ -100,6 +100,11 @@ class Agent(Base, PermissionMixin):
     # Icon reference ("collection:ns/coll/file" or "url:https://...")
     icon: Mapped[Optional[str]] = mapped_column(String(512))
 
+    # Long-running workflow settings
+    default_job_timeout: Mapped[Optional[int]] = mapped_column(Integer)
+    default_keep_alive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    enable_code_execution: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[created_at]

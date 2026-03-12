@@ -32,6 +32,7 @@ class SharedWorkerManager:
         self._lock = asyncio.Lock()
         self._initialized = False
         self.docker_network = self._detect_network()
+        self.sandbox_network = self._ensure_sandbox_network()
 
     def _detect_network(self) -> str:
         """Auto-detect Docker network if set to 'auto', otherwise use configured value."""
@@ -57,6 +58,26 @@ class SharedWorkerManager:
         # Fallback to common default
         print("⚠️  Using fallback network: bridge")
         return "bridge"
+
+    def _ensure_sandbox_network(self) -> str:
+        """Ensure the isolated sandbox network exists for executor containers.
+
+        This network allows internet access but is completely separate from
+        the internal network where Redis, Postgres, etc. live.
+        """
+        from docker.errors import NotFound
+
+        network_name = settings.sandbox_network
+        try:
+            self.client.networks.get(network_name)
+        except NotFound:
+            print(f"🔒 Creating sandbox network: {network_name}")
+            self.client.networks.create(
+                network_name,
+                driver="bridge",
+                labels={"sinas.type": "sandbox"},
+            )
+        return network_name
 
     async def initialize(self):
         """
@@ -134,20 +155,20 @@ class SharedWorkerManager:
                             pass
                         return None
 
-                    # Ensure container is on the correct Docker network
+                    # Ensure container is on the sandbox network
                     try:
                         current_networks = set(
                             container.attrs.get("NetworkSettings", {})
                             .get("Networks", {})
                             .keys()
                         )
-                        if self.docker_network not in current_networks:
+                        if self.sandbox_network not in current_networks:
                             print(
                                 f"🔗 Reconnecting {container_name} to "
-                                f"network {self.docker_network}"
+                                f"sandbox network {self.sandbox_network}"
                             )
                             network = await asyncio.to_thread(
-                                self.client.networks.get, self.docker_network
+                                self.client.networks.get, self.sandbox_network
                             )
                             await asyncio.to_thread(network.connect, container)
                     except Exception as net_err:
@@ -396,12 +417,14 @@ class SharedWorkerManager:
                 image=settings.function_container_image,  # sinas-executor
                 name=container_name,
                 detach=True,
-                network=self.docker_network,
+                network=self.sandbox_network,
                 mem_limit="1g",
                 nano_cpus=1_000_000_000,  # 1 CPU core
                 cap_drop=["ALL"],  # Drop all capabilities for security
                 cap_add=["CHOWN", "SETUID", "SETGID"],  # Only essential capabilities
                 security_opt=["no-new-privileges:true"],  # Prevent privilege escalation
+                pids_limit=256,  # Prevent fork bombs
+                extra_hosts={"host.docker.internal": "host-gateway"},
                 tmpfs={"/tmp": "size=100m,mode=1777"},  # Temp storage only
                 environment={
                     "PYTHONUNBUFFERED": "1",

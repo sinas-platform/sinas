@@ -92,6 +92,9 @@ async def create_agent(
         icon=agent_data.icon,
         is_active=True,
         is_default=agent_data.is_default or False,
+        default_job_timeout=agent_data.default_job_timeout,
+        default_keep_alive=agent_data.default_keep_alive or False,
+        enable_code_execution=agent_data.enable_code_execution or False,
     )
 
     db.add(agent)
@@ -238,6 +241,12 @@ async def update_agent(
                 update(Agent).where(Agent.id != agent.id).values(is_default=False)
             )
         agent.is_default = agent_data.is_default
+    if agent_data.default_job_timeout is not None:
+        agent.default_job_timeout = agent_data.default_job_timeout
+    if agent_data.default_keep_alive is not None:
+        agent.default_keep_alive = agent_data.default_keep_alive
+    if agent_data.enable_code_execution is not None:
+        agent.enable_code_execution = agent_data.enable_code_execution
     await db.commit()
     await db.refresh(agent)
 

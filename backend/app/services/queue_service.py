@@ -193,6 +193,7 @@ class QueueService:
         channel_id: str,
         agent: Optional[str] = None,
         trigger_type: Optional[str] = None,
+        job_timeout: Optional[int] = None,
     ) -> str:
         """Enqueue an agent message processing job."""
         pool = await get_arq_pool()
@@ -219,6 +220,13 @@ class QueueService:
             ex=JOB_TTL,
         )
 
+        enqueue_kwargs: dict[str, Any] = {
+            "_job_id": job_id,
+            "_queue_name": "sinas:queue:agents",
+        }
+        if job_timeout is not None:
+            enqueue_kwargs["_job_timeout"] = job_timeout
+
         await pool.enqueue_job(
             "execute_agent_message_job",
             job_id=job_id,
@@ -227,8 +235,7 @@ class QueueService:
             user_token=user_token,
             content=content,
             channel_id=channel_id,
-            _job_id=job_id,
-            _queue_name="sinas:queue:agents",
+            **enqueue_kwargs,
         )
 
         logger.info(f"Enqueued agent message job {job_id} for chat {chat_id}")
@@ -243,6 +250,7 @@ class QueueService:
         approved: bool,
         channel_id: str,
         agent: Optional[str] = None,
+        job_timeout: Optional[int] = None,
     ) -> str:
         """Enqueue an agent resume job (after tool approval)."""
         pool = await get_arq_pool()
@@ -267,6 +275,13 @@ class QueueService:
             ex=JOB_TTL,
         )
 
+        enqueue_kwargs: dict[str, Any] = {
+            "_job_id": job_id,
+            "_queue_name": "sinas:queue:agents",
+        }
+        if job_timeout is not None:
+            enqueue_kwargs["_job_timeout"] = job_timeout
+
         await pool.enqueue_job(
             "execute_agent_resume_job",
             job_id=job_id,
@@ -276,8 +291,7 @@ class QueueService:
             pending_approval_id=pending_approval_id,
             approved=approved,
             channel_id=channel_id,
-            _job_id=job_id,
-            _queue_name="sinas:queue:agents",
+            **enqueue_kwargs,
         )
 
         logger.info(f"Enqueued agent resume job {job_id} for chat {chat_id}")

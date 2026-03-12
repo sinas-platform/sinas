@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
@@ -23,6 +23,11 @@ class Chat(Base):
 
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False, index=True)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Long-running workflow settings
+    job_timeout: Mapped[Optional[int]] = mapped_column(Integer)
+    keep_alive: Mapped[Optional[bool]] = mapped_column(Boolean)
+    active_channel_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Chat metadata for creation context (agent input, resolved function params, etc.)
     chat_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)

@@ -225,6 +225,9 @@ class ConfigExportService:
                 if agent.enabled_stores
                 else None,
                 "icon": agent.icon,
+                "defaultJobTimeout": agent.default_job_timeout,
+                "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
+                "enableCodeExecution": agent.enable_code_execution if agent.enable_code_execution else None,
             }
 
             exported.append(_remove_none_values(agent_dict))

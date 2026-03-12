@@ -186,6 +186,9 @@ class AgentConfig(BaseModel):
     enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
     icon: Optional[str] = None
     isDefault: bool = False
+    defaultJobTimeout: Optional[int] = None
+    defaultKeepAlive: bool = False
+    enableCodeExecution: bool = False
 
 
 class WebhookConfig(BaseModel):
