@@ -74,8 +74,10 @@ class SharedWorkerManager:
         # Remove old workers running a stale executor image
         await self._remove_stale_workers()
 
-        # Re-discover any remaining valid worker containers
-        await self._discover_existing_workers()
+        # Re-discover any remaining valid worker containers.
+        # restart=True ensures a fresh executor and correct network after
+        # compose down/up.  Safe here because the scheduler is a single replica.
+        await self._discover_existing_workers(restart=True)
 
         # Clean up executions stuck in "running" state from previous lifecycle
         async with AsyncSessionLocal() as db:
@@ -91,53 +93,110 @@ class SharedWorkerManager:
         self._initialized = True
         print(f"✅ Worker manager initialized with {len(self.workers)} workers")
 
-    async def _discover_existing_workers(self):
-        """Discover and re-register existing worker containers (including stopped ones)."""
+    async def _discover_existing_workers(self, restart: bool = False):
+        """Discover and re-register existing worker containers (including stopped ones).
+
+        Args:
+            restart: When True (scheduler only), restart all containers to
+                ensure a fresh executor process, clean tmpfs, and correct
+                network connectivity.  Queue workers pass False (default)
+                to avoid racing with the scheduler or each other.
+        """
         try:
             # List all containers (including stopped) with sinas-worker-* naming pattern
             containers = self.client.containers.list(all=True, filters={"name": "sinas-worker-"})
 
+            # Filter to valid worker containers
+            valid: list[tuple[str, str, Any]] = []  # (worker_id, name, container)
             for container in containers:
                 container_name = container.name
-                # Extract worker number from name (sinas-worker-1 -> 1)
                 if container_name.startswith("sinas-worker-"):
+                    worker_num = container_name.replace("sinas-worker-", "")
+                    worker_id = f"worker-{worker_num}"
+                    valid.append((worker_id, container_name, container))
+
+            async def _process_worker(
+                worker_id: str, container_name: str, container
+            ) -> Optional[dict]:
+                """Process a single worker; returns worker info dict or None."""
+                if restart:
                     try:
-                        worker_num = container_name.replace("sinas-worker-", "")
-                        worker_id = f"worker-{worker_num}"
-
-                        # Start container if it's stopped
-                        if container.status != "running":
-                            print(f"🔄 Starting stopped worker: {container_name}")
-                            try:
-                                container.start()
-                                container.reload()  # Refresh status
-                            except docker.errors.APIError as start_err:
-                                # Container is marked for removal or otherwise unrecoverable
-                                print(
-                                    f"⚠️  Cannot start {container_name}, removing: {start_err}"
-                                )
-                                try:
-                                    container.remove(force=True)
-                                except Exception:
-                                    pass
-                                continue
-
-                        # Get container creation time
-                        container_info = container.attrs
-                        created_at = container_info.get("Created", datetime.utcnow().isoformat())
-
-                        self.workers[worker_id] = {
-                            "container_name": container_name,
-                            "container_id": container.id,
-                            "created_at": created_at,
-                            "executions": 0,  # Reset execution count on rediscovery
-                        }
-
+                        print(f"🔄 Restarting worker: {container_name}")
+                        await asyncio.to_thread(container.restart, timeout=10)
+                        await asyncio.to_thread(container.reload)
+                    except docker.errors.APIError as restart_err:
                         print(
-                            f"🔍 Rediscovered worker: {container_name} (status: {container.status})"
+                            f"⚠️  Cannot restart {container_name}, removing: {restart_err}"
                         )
-                    except Exception as e:
-                        print(f"⚠️  Failed to process worker {container_name}: {e}")
+                        try:
+                            await asyncio.to_thread(container.remove, force=True)
+                        except Exception:
+                            pass
+                        return None
+
+                    # Ensure container is on the correct Docker network
+                    try:
+                        current_networks = set(
+                            container.attrs.get("NetworkSettings", {})
+                            .get("Networks", {})
+                            .keys()
+                        )
+                        if self.docker_network not in current_networks:
+                            print(
+                                f"🔗 Reconnecting {container_name} to "
+                                f"network {self.docker_network}"
+                            )
+                            network = await asyncio.to_thread(
+                                self.client.networks.get, self.docker_network
+                            )
+                            await asyncio.to_thread(network.connect, container)
+                    except Exception as net_err:
+                        print(
+                            f"⚠️  Failed to reconnect {container_name} "
+                            f"to network: {net_err}"
+                        )
+                else:
+                    # Queue-worker path: only start stopped containers
+                    if container.status != "running":
+                        print(f"🔄 Starting stopped worker: {container_name}")
+                        try:
+                            await asyncio.to_thread(container.start)
+                            await asyncio.to_thread(container.reload)
+                        except docker.errors.APIError as start_err:
+                            print(
+                                f"⚠️  Cannot start {container_name}, removing: {start_err}"
+                            )
+                            try:
+                                await asyncio.to_thread(container.remove, force=True)
+                            except Exception:
+                                pass
+                            return None
+
+                created_at = container.attrs.get("Created", datetime.utcnow().isoformat())
+                print(
+                    f"🔍 Rediscovered worker: {container_name} (status: {container.status})"
+                )
+                return {
+                    "worker_id": worker_id,
+                    "container_name": container_name,
+                    "container_id": container.id,
+                    "created_at": created_at,
+                    "executions": 0,
+                }
+
+            # Process all workers in parallel
+            results = await asyncio.gather(
+                *[_process_worker(wid, name, c) for wid, name, c in valid],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, dict):
+                    self.workers[r["worker_id"]] = {
+                        "container_name": r["container_name"],
+                        "container_id": r["container_id"],
+                        "created_at": r["created_at"],
+                        "executions": r["executions"],
+                    }
 
         except Exception as e:
             print(f"⚠️  Failed to discover existing workers: {e}")
@@ -159,7 +218,12 @@ class SharedWorkerManager:
             for container in containers:
                 if not container.name.startswith("sinas-worker-"):
                     continue
-                if container.image.id != current_image_id:
+                try:
+                    container_image_id = container.image.id
+                except Exception:
+                    # Old image was pruned — treat as stale
+                    container_image_id = None
+                if container_image_id != current_image_id:
                     print(
                         f"🗑️  Removing stale worker {container.name} (old image)"
                     )
@@ -247,12 +311,25 @@ class SharedWorkerManager:
             current_count = len(self.workers)
 
             if target_count > current_count:
-                # Scale up
-                added = 0
+                # Scale up — pre-assign worker numbers then create in parallel
+                nums = []
                 for _ in range(target_count - current_count):
-                    worker_id = await self._create_worker(db)
-                    if worker_id:
-                        added += 1
+                    num = self._next_worker_number()
+                    wid = f"worker-{num}"
+                    # Reserve the slot so _next_worker_number skips it
+                    self.workers[wid] = {"container_name": f"sinas-worker-{num}", "container_id": "", "created_at": "", "executions": 0}
+                    nums.append(num)
+
+                results = await asyncio.gather(
+                    *[self._create_worker_num(num, db) for num in nums],
+                    return_exceptions=True,
+                )
+                # Remove reservations that failed
+                for num, r in zip(nums, results):
+                    wid = f"worker-{num}"
+                    if not isinstance(r, str):
+                        self.workers.pop(wid, None)
+                added = sum(1 for r in results if isinstance(r, str))
 
                 return {
                     "action": "scale_up",
@@ -295,22 +372,27 @@ class SharedWorkerManager:
         return n
 
     async def _create_worker(self, db: AsyncSession) -> Optional[str]:
-        """Create a new worker container."""
+        """Create a new worker container (auto-assigns number)."""
         num = self._next_worker_number()
+        return await self._create_worker_num(num, db)
+
+    async def _create_worker_num(self, num: int, db: AsyncSession) -> Optional[str]:
+        """Create a new worker container with an explicit worker number."""
         worker_id = f"worker-{num}"
         container_name = f"sinas-worker-{num}"
 
         try:
             # Remove stale container with same name if it exists (e.g. after crash)
             try:
-                stale = self.client.containers.get(container_name)
+                stale = await asyncio.to_thread(self.client.containers.get, container_name)
                 print(f"🗑️  Removing stale container: {container_name}")
-                stale.remove(force=True)
+                await asyncio.to_thread(stale.remove, force=True)
             except docker.errors.NotFound:
                 pass
 
             # Create worker container (same security model as user containers)
-            container = self.client.containers.run(
+            container = await asyncio.to_thread(
+                self.client.containers.run,
                 image=settings.function_container_image,  # sinas-executor
                 name=container_name,
                 detach=True,
