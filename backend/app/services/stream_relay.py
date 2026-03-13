@@ -16,15 +16,21 @@ logger = logging.getLogger(__name__)
 
 STREAM_PREFIX = "sinas:stream:"
 STREAM_TTL = 3600  # 1 hour TTL for stream keys
+STREAM_TTL_KEEP_ALIVE = 86400  # 24 hour TTL for keep_alive streams
 SUBSCRIBE_WAIT_TIMEOUT = 120  # Max seconds to wait for stream to appear
 
 
 class StreamRelay:
     """Publish and subscribe to Redis Streams for SSE event relay."""
 
-    async def publish(self, channel_id: str, event: dict[str, Any]) -> str:
+    async def publish(self, channel_id: str, event: dict[str, Any], ttl: Optional[int] = None) -> str:
         """
         Publish an event to a Redis Stream.
+
+        Args:
+            channel_id: The stream channel to publish to
+            event: The event data to publish
+            ttl: Optional TTL override in seconds (default: STREAM_TTL)
 
         Returns:
             The stream entry ID (e.g., "1234567890-0")
@@ -38,7 +44,7 @@ class StreamRelay:
         )
 
         # Set TTL on stream key (refresh on each write)
-        await redis.expire(stream_key, STREAM_TTL)
+        await redis.expire(stream_key, ttl or STREAM_TTL)
 
         return entry_id
 

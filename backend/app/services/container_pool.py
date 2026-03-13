@@ -4,11 +4,9 @@ Replaces per-user containers with a pool of pre-warmed generic containers
 that any user's function can run in (acquire/release model).
 """
 import asyncio
-import io
 import json
 import logging
 import re
-import tarfile
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -53,6 +51,7 @@ class ContainerPool:
         self._health_task: Optional[asyncio.Task] = None
         self._replenish_event = asyncio.Event()
         self.docker_network = self._detect_network()
+        self.sandbox_network = self._ensure_sandbox_network()
 
     def _detect_network(self) -> str:
         """Auto-detect Docker network."""
@@ -76,6 +75,25 @@ class ContainerPool:
         logger.warning("Using fallback network: bridge")
         return "bridge"
 
+    def _ensure_sandbox_network(self) -> str:
+        """Ensure the isolated sandbox network exists for executor containers.
+
+        This network allows internet access but is completely separate from
+        the internal network where Redis, Postgres, etc. live.
+        """
+        network_name = settings.sandbox_network
+        try:
+            self.client.networks.get(network_name)
+            logger.info(f"Sandbox network already exists: {network_name}")
+        except NotFound:
+            logger.info(f"Creating sandbox network: {network_name}")
+            self.client.networks.create(
+                network_name,
+                driver="bridge",
+                labels={"sinas.type": "sandbox"},
+            )
+        return network_name
+
     # ------------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------------
@@ -90,19 +108,22 @@ class ContainerPool:
         if self._initialized:
             return
 
-        await self._discover_existing_containers()
+        await self._discover_existing_containers(restart=True)
 
-        # Scale up to min size
+        # Scale up to min size — create containers in parallel
         current = len(self.idle) + len(self.in_use)
         if current < settings.pool_min_size:
             needed = settings.pool_min_size - current
             print(f"📦 Scaling pool to min size: creating {needed} containers")
-            for _ in range(needed):
-                try:
-                    pc = await self._create_container(db)
-                    self.idle.append(pc)
-                except Exception as e:
-                    print(f"❌ Failed to create pool container: {e}")
+            results = await asyncio.gather(
+                *[self._create_container(db) for _ in range(needed)],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, PooledContainer):
+                    self.idle.append(r)
+                elif isinstance(r, Exception):
+                    print(f"❌ Failed to create pool container: {r}")
 
         # Start background tasks
         self._replenish_task = asyncio.create_task(self._replenish_loop(db))
@@ -114,11 +135,16 @@ class ContainerPool:
             f"{len(self.in_use)} in-use"
         )
 
-    async def _discover_existing_containers(self):
+    async def _discover_existing_containers(self, restart: bool = False):
         """
         Find running/stopped sinas-pool-* Docker containers.
 
-        Restarts stopped ones and adds all to idle queue.
+        Args:
+            restart: When True (scheduler only), restart all containers to
+                ensure a fresh executor process, clean tmpfs, and correct
+                network connectivity.  Queue workers pass False (default)
+                to avoid racing with the scheduler or each other.
+
         Sets _next_id past the highest existing ID.
         """
         try:
@@ -128,36 +154,81 @@ class ContainerPool:
                 filters={"name": "sinas-pool-"},
             )
 
+            # Filter to valid pool containers and track max id
             max_id = 0
+            valid: list[tuple[int, Any]] = []  # (num, container)
             for container in containers:
                 name = container.name
                 match = re.match(r"^sinas-pool-(\d+)$", name)
                 if not match:
                     continue
-
                 num = int(match.group(1))
                 max_id = max(max_id, num)
+                valid.append((num, container))
 
-                if container.status != "running":
-                    print(f"🔄 Starting stopped pool container: {name}")
+            async def _process_container(container) -> Optional[PooledContainer]:
+                name = container.name
+                if restart:
                     try:
-                        await asyncio.to_thread(container.start)
+                        print(f"🔄 Restarting pool container: {name}")
+                        await asyncio.to_thread(container.restart, timeout=10)
                         await asyncio.to_thread(container.reload)
                     except docker.errors.APIError as e:
-                        print(f"⚠️  Cannot start {name}, removing: {e}")
+                        print(f"⚠️  Cannot restart {name}, removing: {e}")
                         try:
                             await asyncio.to_thread(container.remove, force=True)
                         except Exception:
                             pass
-                        continue
+                        return None
 
-                pc = PooledContainer(
+                    # Reconnect to sandbox network if needed
+                    try:
+                        current_networks = set(
+                            container.attrs.get("NetworkSettings", {})
+                            .get("Networks", {})
+                            .keys()
+                        )
+                        if self.sandbox_network not in current_networks:
+                            print(
+                                f"🔗 Reconnecting {name} to sandbox network "
+                                f"{self.sandbox_network}"
+                            )
+                            network = await asyncio.to_thread(
+                                self.client.networks.get, self.sandbox_network
+                            )
+                            await asyncio.to_thread(network.connect, container)
+                    except Exception as net_err:
+                        print(f"⚠️  Failed to reconnect {name} to network: {net_err}")
+                else:
+                    # Queue-worker path: only start stopped containers
+                    if container.status != "running":
+                        print(f"🔄 Starting stopped pool container: {name}")
+                        try:
+                            await asyncio.to_thread(container.start)
+                            await asyncio.to_thread(container.reload)
+                        except docker.errors.APIError as e:
+                            print(f"⚠️  Cannot start {name}, removing: {e}")
+                            try:
+                                await asyncio.to_thread(container.remove, force=True)
+                            except Exception:
+                                pass
+                            return None
+
+                print(f"🔍 Discovered pool container: {name} (status: {container.status})")
+                return PooledContainer(
                     name=name,
                     container_id=container.id,
                     created_at=time.time(),
                 )
-                self.idle.append(pc)
-                print(f"🔍 Discovered pool container: {name} (status: {container.status})")
+
+            # Process all containers in parallel
+            results = await asyncio.gather(
+                *[_process_container(c) for _, c in valid],
+                return_exceptions=True,
+            )
+            for r in results:
+                if isinstance(r, PooledContainer):
+                    self.idle.append(r)
 
             self._next_id = max_id + 1
 
@@ -333,17 +404,28 @@ class ContainerPool:
             trigger_file = f"/tmp/exec_trigger_{eid}"
             result_file = f"/tmp/exec_result_{eid}.json"
 
-            # Write payload to container via tar archive (avoids ARG_MAX limit
-            # that occurs when large payloads like base64 images are embedded
-            # in command-line arguments).
+            # Write payload into the container via stdin pipe.
+            # We cannot use put_archive: it writes to the overlay layer which
+            # is invisible through tmpfs mounts on Linux.
             payload_bytes = json.dumps(payload).encode("utf-8")
-            tar_buf = io.BytesIO()
-            with tarfile.open(fileobj=tar_buf, mode="w") as tar:
-                info = tarfile.TarInfo(name=request_filename)
-                info.size = len(payload_bytes)
-                tar.addfile(info, io.BytesIO(payload_bytes))
-            tar_buf.seek(0)
-            await asyncio.to_thread(container.put_archive, "/tmp", tar_buf)
+            request_path = f"/tmp/{request_filename}"
+            api = container.client.api
+            exec_id = api.exec_create(
+                container.id,
+                [
+                    "python3", "-c",
+                    f'import sys; open("{request_path}","wb").write(sys.stdin.buffer.read())',
+                ],
+                stdin=True,
+                stdout=True,
+                stderr=True,
+            )["Id"]
+            sock = api.exec_start(exec_id, socket=True)
+            sock._sock.sendall(payload_bytes)
+            import socket as _sock_mod
+            sock._sock.shutdown(_sock_mod.SHUT_WR)
+            sock.read()  # Wait for command to finish
+            sock.close()
 
             exec_start = time.time()
             exec_result = await asyncio.to_thread(
@@ -353,7 +435,7 @@ class ContainerPool:
                     "-c",
                     f"""
 import sys, json, time, os
-# Trigger execution (request already written via put_archive)
+# Trigger execution (request already written via stdin pipe)
 with open("{trigger_file}", "w") as f:
     f.write("1")
 # Wait for result
@@ -413,12 +495,14 @@ sys.exit(1)
             "image": settings.function_container_image,
             "name": name,
             "detach": True,
-            "network": self.docker_network,
+            "network": self.sandbox_network,
             "mem_limit": f"{settings.max_function_memory}m",
             "nano_cpus": int(settings.max_function_cpu * 1_000_000_000),
             "cap_drop": ["ALL"],
             "cap_add": ["CHOWN", "SETUID", "SETGID"],
             "security_opt": ["no-new-privileges:true"],
+            "pids_limit": 256,
+            "extra_hosts": {"host.docker.internal": "host-gateway"},
             "tmpfs": {"/tmp": "size=100m,mode=1777"},
             "environment": {
                 "PYTHONUNBUFFERED": "1",

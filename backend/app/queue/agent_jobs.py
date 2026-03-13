@@ -1,4 +1,5 @@
 """arq job handlers for agent message processing."""
+import asyncio
 import json
 import logging
 import traceback
@@ -8,6 +9,20 @@ from app.core.config import settings
 from app.services.queue_service import JOB_STATUS_PREFIX, JOB_TTL
 
 logger = logging.getLogger(__name__)
+
+PING_INTERVAL = 15  # seconds between keep-alive pings
+
+
+async def _ping_loop(channel_id: str, ttl: int | None = None) -> None:
+    """Background task that publishes ping events to keep SSE connections alive."""
+    from app.services.stream_relay import stream_relay
+
+    while True:
+        await asyncio.sleep(PING_INTERVAL)
+        try:
+            await stream_relay.publish(channel_id, {"type": "ping"}, ttl=ttl)
+        except Exception:
+            pass  # Best-effort; don't let ping failures kill the loop
 
 
 async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
@@ -60,6 +75,12 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
         ex=JOB_TTL,
     )
 
+    # Determine stream TTL (keep_alive chats get 24h TTL)
+    stream_ttl = kwargs.get("stream_ttl")
+
+    # Start ping task to keep SSE connections alive during long tool executions
+    ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
+
     completed = False
     try:
         async with AsyncSessionLocal() as db:
@@ -75,7 +96,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
                 if not isinstance(chunk, dict):
                     chunk = {"content": str(chunk)}
 
-                await stream_relay.publish(channel_id, chunk)
+                await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
 
         # Signal completion
         await stream_relay.publish_done(channel_id)
@@ -108,6 +129,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
         raise
 
     finally:
+        ping_task.cancel()
         if not completed:
             logger.warning(f"Agent message job {job_id} cancelled/timed out")
             try:
@@ -175,6 +197,12 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         ex=JOB_TTL,
     )
 
+    # Determine stream TTL (keep_alive chats get 24h TTL)
+    stream_ttl = kwargs.get("stream_ttl")
+
+    # Start ping task to keep SSE connections alive during long tool executions
+    ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
+
     completed = False
     try:
         async with AsyncSessionLocal() as db:
@@ -222,7 +250,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     status_templates=status_templates,
                 ):
                     if isinstance(chunk, dict):
-                        await stream_relay.publish(channel_id, chunk)
+                        await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
             else:
                 # Handle rejection - publish rejection info
                 await stream_relay.publish(channel_id, {
@@ -230,7 +258,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     "tool_call_id": pending_approval.tool_call_id,
                     "function_namespace": pending_approval.function_namespace,
                     "function_name": pending_approval.function_name,
-                })
+                }, ttl=stream_ttl)
 
         await stream_relay.publish_done(channel_id)
 
@@ -259,6 +287,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         raise
 
     finally:
+        ping_task.cancel()
         if not completed:
             logger.warning(f"Agent resume job {job_id} cancelled/timed out")
             try:

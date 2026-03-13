@@ -881,6 +881,7 @@ class MessageService:
             "update_state",
             "delete_state",
             "continue_execution",
+            "execute_code",
         ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
             return None, None
 
@@ -1404,6 +1405,11 @@ class MessageService:
             )
             tools.extend(component_tools)
 
+        # Add code execution tool if enabled on the agent
+        if agent.enable_code_execution:
+            from app.services.code_execution import get_tool_definition
+            tools.append(await get_tool_definition(self.db))
+
         # Check for paused executions belonging to this chat
         result = await self.db.execute(
             select(Execution)
@@ -1543,7 +1549,7 @@ class MessageService:
 
     def _is_sequential_tool(self, tool_name: str) -> bool:
         """Check if a tool must be executed sequentially (not parallelizable)."""
-        return tool_name.startswith("call_agent_") or tool_name == "continue_execution"
+        return tool_name.startswith("call_agent_") or tool_name == "continue_execution" or tool_name == "execute_code"
 
     async def _execute_single_tool(
         self,
@@ -1655,6 +1661,17 @@ class MessageService:
                         arguments=arguments,
                         enabled_agent_ids=enabled_agent_ids,
                     )
+                elif tool_name == "execute_code":
+                    from app.services.code_execution import execute as execute_code
+
+                    start_time = time.time()
+                    result = await execute_code(
+                        code=arguments.get("code", ""),
+                        user_id=user_id,
+                        chat_id=str(chat_id),
+                    )
+                    elapsed = time.time() - start_time
+                    logger.debug(f"Code execution completed in {elapsed:.3f}s")
                 elif tool_name.startswith("show_component_"):
                     start_time = time.time()
                     result = await self.component_converter.handle_component_tool_call(

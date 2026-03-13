@@ -3,11 +3,54 @@ Convert universal content format to provider-specific formats.
 
 This allows users to send the same message format regardless of which
 LLM provider (OpenAI, Mistral, Ollama) is being used.
+
+File handling: file uploads are processed by the content filter before
+reaching the converter — files are stored in Collections/Files and a
+public URL is generated. The converter receives file_url and passes it
+to the LLM in the most appropriate format for each provider.
+
+Fallback: if file_data arrives without file_url (content filter not
+configured for this file type), text-based files are decoded inline.
 """
+import base64
 import logging
-from typing import Any, Union
+from typing import Any, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+def _upload_ref_text(chunk: dict[str, Any], kind: str = "file") -> dict[str, Any]:
+    """Create a text part referencing an uploaded file/image by its public URL.
+
+    Always emitted alongside any native visual/document part so the LLM
+    knows the URL and can pass it to tools (e.g. send_email, execute_code).
+    """
+    filename = chunk.get("filename", "")
+    url = chunk.get("file_url") or chunk.get("image", "")
+    label = f"'{filename}' " if filename else ""
+    # Never send data: URIs as text — they bloat the context massively
+    if url.startswith("data:"):
+        return {"type": "text", "text": f"[User uploaded {kind} {label}— file available but no public URL]"}
+    return {"type": "text", "text": f"[User uploaded {kind} {label}— public URL: {url}]"}
+
+
+def _try_inline_text_file(chunk: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Fallback: decode base64 file_data as text when no file_url is available.
+
+    Returns a text part with the file content, or None if decoding fails.
+    Used when the content filter hasn't processed the file upload.
+    """
+    file_data = chunk.get("file_data")
+    if not file_data:
+        return None
+
+    try:
+        decoded = base64.b64decode(file_data).decode("utf-8")
+    except (base64.binascii.Error, UnicodeDecodeError):
+        return None
+
+    filename = chunk.get("filename", "uploaded file")
+    return {"type": "text", "text": f"[Contents of '{filename}']\n{decoded}"}
 
 
 class ContentConverter:
@@ -20,9 +63,9 @@ class ContentConverter:
 
         Conversions:
         - text: passthrough
-        - image: {type: "image_url", image_url: {url: ..., detail: ...}}
+        - image: native image_url + text reference with URL for tool use
         - audio: {type: "input_audio", input_audio: {data: ..., format: ...}}
-        - file: {type: "file", file: {file_id: ...}} or {file_data: ..., filename: ...}
+        - file: file_id → native file part; file_url → text reference
         """
         if isinstance(content, str):
             return content
@@ -40,6 +83,9 @@ class ContentConverter:
                 result.append(
                     {"type": "image_url", "image_url": {"url": image_url, "detail": detail}}
                 )
+                # Also emit text reference so LLM can pass URL to tools
+                if not image_url.startswith("data:"):
+                    result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
                 result.append(
@@ -50,27 +96,15 @@ class ContentConverter:
                 )
 
             elif chunk_type == "file":
-                file_obj = {}
-
-                # Prefer file_id, then file_data
-                if "file_id" in chunk:
-                    file_obj["file_id"] = chunk["file_id"]
-                elif "file_data" in chunk:
-                    file_obj["file_data"] = chunk["file_data"]
-                    if "filename" in chunk:
-                        file_obj["filename"] = chunk["filename"]
-                elif "file_url" in chunk:
-                    # OpenAI doesn't support URLs for files, log warning
-                    logger.warning(
-                        "OpenAI doesn't support file URLs. "
-                        "Use file_data (base64) or upload file and use file_id instead."
-                    )
+                if "file_url" in chunk:
+                    result.append(_upload_ref_text(chunk))
+                elif "file_id" in chunk:
+                    result.append({"type": "file", "file": {"file_id": chunk["file_id"]}})
+                else:
+                    logger.warning("File part has no file_id or file_url. Skipping.")
                     continue
 
-                result.append({"type": "file", "file": file_obj})
-
             else:
-                # Unknown type, pass through as-is
                 result.append(chunk)
 
         return result
@@ -82,9 +116,9 @@ class ContentConverter:
 
         Conversions:
         - text: passthrough
-        - image: {type: "image_url", image_url: "..."} (string, not object)
+        - image: native image_url + text reference with URL for tool use
         - audio: {type: "input_audio", input_audio: "..."} (just base64, no format)
-        - file: {type: "document_url", document_url: "...", document_name: "..."}
+        - file: file_url → native document_url + text reference
         """
         if isinstance(content, str):
             return content
@@ -97,38 +131,33 @@ class ContentConverter:
                 result.append({"type": "text", "text": chunk["text"]})
 
             elif chunk_type == "image":
-                # Mistral wants just the URL string, not an object
-                result.append({"type": "image_url", "image_url": chunk["image"]})
+                image_url = chunk["image"]
+                result.append({"type": "image_url", "image_url": image_url})
+                if not image_url.startswith("data:"):
+                    result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
-                # Mistral wants just the base64 string, no format field
                 result.append({"type": "input_audio", "input_audio": chunk["data"]})
 
             elif chunk_type == "file":
-                # Mistral prefers URLs for documents
                 if "file_url" in chunk:
-                    result.append(
-                        {
-                            "type": "document_url",
-                            "document_url": chunk["file_url"],
-                            "document_name": chunk.get("filename"),
-                        }
-                    )
-                elif "file_data" in chunk:
-                    # Mistral doesn't support inline file data well
-                    logger.warning(
-                        "Mistral prefers file URLs. "
-                        "Consider uploading file and providing URL via file_url."
-                    )
-                    # We could try to use image_url with data URL for some file types
-                    # but for now, skip it
-                    continue
-                elif "file_id" in chunk:
-                    logger.warning("Mistral doesn't support OpenAI file IDs.")
+                    file_url = chunk["file_url"]
+                    # Mistral fetches document_url server-side — only works
+                    # with publicly reachable URLs (not host.docker.internal)
+                    if not file_url.startswith("http://host.docker.internal"):
+                        result.append(
+                            {
+                                "type": "document_url",
+                                "document_url": file_url,
+                                "document_name": chunk.get("filename"),
+                            }
+                        )
+                    result.append(_upload_ref_text(chunk))
+                else:
+                    logger.warning("Mistral requires file_url for documents. Skipping file part.")
                     continue
 
             else:
-                # Unknown type, pass through as-is
                 result.append(chunk)
 
         return result
@@ -140,9 +169,9 @@ class ContentConverter:
 
         Ollama uses OpenAI-compatible format but with limited support:
         - text: supported
-        - image: supported (for vision models like llava)
+        - image: native image_url + text reference with URL for tool use
         - audio: NOT supported
-        - file: NOT supported
+        - file: file_url → text reference
         """
         if isinstance(content, str):
             return content
@@ -155,22 +184,25 @@ class ContentConverter:
                 result.append({"type": "text", "text": chunk["text"]})
 
             elif chunk_type == "image":
-                # Ollama uses OpenAI format for images
                 image_url = chunk["image"]
                 result.append(
-                    {"type": "image_url", "image_url": image_url}  # Can be URL or data URL
+                    {"type": "image_url", "image_url": image_url}
                 )
+                if not image_url.startswith("data:"):
+                    result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
                 logger.warning("Ollama doesn't support audio input. Skipping audio chunk.")
                 continue
 
             elif chunk_type == "file":
-                logger.warning("Ollama doesn't support file input. Skipping file chunk.")
-                continue
+                if "file_url" in chunk:
+                    result.append(_upload_ref_text(chunk))
+                else:
+                    logger.warning("Ollama doesn't support file input without URL. Skipping.")
+                    continue
 
             else:
-                # Unknown type, pass through as-is
                 result.append(chunk)
 
         return result
@@ -182,9 +214,10 @@ class ContentConverter:
 
         Conversions:
         - text: passthrough
-        - image: {type: "image", source: {type: "url", url: ...}} or base64 variant
+        - image: native image + text reference with URL for tool use
         - audio: NOT supported (skipped with warning)
-        - file: {type: "document", source: {type: "base64", ...}} for PDF, skipped otherwise
+        - file: PDF with file_data → native document + text reference;
+               otherwise file_url → text reference
         """
         if isinstance(content, str):
             return content
@@ -199,9 +232,7 @@ class ContentConverter:
             elif chunk_type == "image":
                 image_value = chunk["image"]
                 if image_value.startswith("data:"):
-                    # Parse data URL: data:image/jpeg;base64,/9j/4AAQ...
                     header, data = image_value.split(",", 1)
-                    # Extract media type from "data:image/jpeg;base64"
                     media_type = header.split(":")[1].split(";")[0]
                     result.append({
                         "type": "image",
@@ -212,7 +243,6 @@ class ContentConverter:
                         },
                     })
                 else:
-                    # URL-based image
                     result.append({
                         "type": "image",
                         "source": {
@@ -220,13 +250,13 @@ class ContentConverter:
                             "url": image_value,
                         },
                     })
+                    result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
                 logger.warning("Anthropic doesn't support audio input. Skipping audio chunk.")
                 continue
 
             elif chunk_type == "file":
-                # Anthropic supports PDF documents via base64
                 if "file_data" in chunk:
                     mime = chunk.get("mime_type", "application/pdf")
                     if mime == "application/pdf":
@@ -238,13 +268,18 @@ class ContentConverter:
                                 "data": chunk["file_data"],
                             },
                         })
-                    else:
+                    # Also emit text reference if URL available
+                    if "file_url" in chunk:
+                        result.append(_upload_ref_text(chunk))
+                    elif mime != "application/pdf":
                         logger.warning(
-                            f"Anthropic only supports PDF documents, got {mime}. Skipping."
+                            f"Anthropic only supports PDF natively, got {mime}, and no file_url. Skipping."
                         )
                         continue
+                elif "file_url" in chunk:
+                    result.append(_upload_ref_text(chunk))
                 else:
-                    logger.warning("Anthropic requires base64 file data. Skipping file chunk.")
+                    logger.warning("Anthropic requires file_data or file_url. Skipping file chunk.")
                     continue
 
             else:
@@ -261,7 +296,7 @@ class ContentConverter:
 
         Args:
             content: Universal content format
-            provider_type: "openai", "mistral", or "ollama"
+            provider_type: "openai", "mistral", "ollama", or "anthropic"
 
         Returns:
             Provider-specific content format
@@ -277,7 +312,6 @@ class ContentConverter:
         elif provider_type == "ollama":
             return ContentConverter.to_ollama(content)
         else:
-            # Unknown provider, pass through as-is
             logger.warning(
                 f"Unknown provider type: {provider_type}. Passing content through as-is."
             )

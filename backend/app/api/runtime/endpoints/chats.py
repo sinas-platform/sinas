@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.permissions import check_permission
 from app.models import Message
@@ -41,6 +42,25 @@ from app.utils.schema import validate_with_coercion
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+HEARTBEAT_INTERVAL = 15  # seconds between SSE heartbeat pings
+
+
+async def with_heartbeat(aiter, interval: int = HEARTBEAT_INTERVAL):
+    """Wrap an async iterator to yield heartbeat pings during idle periods.
+
+    Prevents browser/proxy timeouts when no data is being sent (e.g., during
+    long tool executions in inline streaming mode).
+    """
+    ait = aiter.__aiter__()
+    while True:
+        try:
+            chunk = await asyncio.wait_for(ait.__anext__(), timeout=interval)
+            yield chunk
+        except asyncio.TimeoutError:
+            yield {"event": "ping", "data": ""}
+        except StopAsyncIteration:
+            return
 
 
 @router.get("/agents/default", response_model=AgentResponse)
@@ -118,6 +138,10 @@ async def create_chat_with_agent(
     if request.expires_in:
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=request.expires_in)
 
+    # Resolve keep_alive and job_timeout: chat request → agent default → global
+    chat_keep_alive = request.keep_alive if request.keep_alive is not None else (agent.default_keep_alive or None)
+    chat_job_timeout = request.job_timeout if request.job_timeout is not None else agent.default_job_timeout
+
     chat = Chat(
         user_id=user_id,
         agent_id=agent.id,
@@ -126,6 +150,8 @@ async def create_chat_with_agent(
         title=request.title or f"Chat with {namespace}/{agent_name}",
         chat_metadata={"agent_input": validated_input} if validated_input else None,
         expires_at=expires_at,
+        keep_alive=chat_keep_alive,
+        job_timeout=chat_job_timeout,
     )
     db.add(chat)
     await db.commit()
@@ -160,6 +186,8 @@ async def create_chat_with_agent(
         title=chat.title,
         archived=chat.archived,
         expires_at=chat.expires_at,
+        keep_alive=chat.keep_alive,
+        active_channel_id=chat.active_channel_id,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=None,  # New chat has no messages yet
@@ -272,15 +300,64 @@ async def stream_message(
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
 
-    # Use message service directly (no queue — interactive chat needs low latency)
-    message_service = MessageService(db)
-
     # Handle Union[str, list[ContentPart]] content - convert to string if needed
     content_str = (
         request.content
         if isinstance(request.content, str)
         else json.dumps([part.model_dump(exclude_none=True) for part in request.content])
     )
+
+    # Resolve effective keep_alive: chat → agent → False
+    effective_keep_alive = chat.keep_alive or False
+
+    # Resolve effective job_timeout: chat → agent → global config
+    effective_job_timeout = chat.job_timeout or settings.agent_job_timeout
+
+    if effective_keep_alive:
+        # --- Keep-alive mode: route through queue, subscribe to stream ---
+        from app.services.stream_relay import STREAM_TTL_KEEP_ALIVE
+
+        channel_id = str(uuid.uuid4())
+
+        # Persist active_channel_id for reconnection
+        chat.active_channel_id = channel_id
+        await db.commit()
+
+        await queue_service.enqueue_agent_message(
+            chat_id=str(chat.id),
+            user_id=user_id,
+            user_token=user_token,
+            content=content_str,
+            channel_id=channel_id,
+            agent=f"{chat.agent_namespace}/{chat.agent_name}",
+            job_timeout=effective_job_timeout,
+        )
+
+        async def keep_alive_generator():
+            try:
+                async for event in stream_relay.subscribe(channel_id, last_id="0"):
+                    event_type = event.get("type", "message")
+                    if event_type == "ping":
+                        yield {"event": "ping", "data": ""}
+                    elif event_type == "done":
+                        yield {"event": "done", "data": json.dumps({"status": "completed"})}
+                        return
+                    elif event_type == "error":
+                        yield {"event": "error", "data": json.dumps({"error": event.get("error", "An error occurred")})}
+                        return
+                    elif event_type in ("approval_required", "tool_start", "tool_end"):
+                        yield {"event": event_type, "data": json.dumps(event)}
+                    else:
+                        yield {"event": "message", "data": json.dumps(event)}
+            except asyncio.CancelledError:
+                return  # Client disconnected — worker keeps running
+
+        response = EventSourceResponse(with_heartbeat(keep_alive_generator()))
+        response.headers["X-Stream-Channel"] = channel_id
+        return response
+
+    # --- Default inline mode (no queue) ---
+    message_service = MessageService(db)
 
     # Track accumulated content for partial save
     accumulated_content = {"content": ""}
@@ -364,7 +441,7 @@ async def stream_message(
                 })
             }
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(with_heartbeat(event_generator()))
 
 
 @router.get("/chats/{chat_id}/stream/{channel_id}")
@@ -402,7 +479,9 @@ async def reconnect_stream(
             async for event in stream_relay.subscribe(channel_id, last_id=last_id):
                 event_type = event.get("type", "message")
 
-                if event_type == "done":
+                if event_type == "ping":
+                    yield {"event": "ping", "data": ""}
+                elif event_type == "done":
                     yield {"event": "done", "data": json.dumps({"status": "completed"})}
                     return
                 elif event_type == "error":
@@ -418,7 +497,7 @@ async def reconnect_stream(
         except asyncio.CancelledError:
             return
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(with_heartbeat(event_generator()))
 
 
 @router.post("/chats/{chat_id}/approve-tool/{tool_call_id}")
@@ -553,6 +632,8 @@ async def list_chats(
                 title=chat.title,
                 archived=chat.archived,
                 expires_at=chat.expires_at,
+                keep_alive=chat.keep_alive,
+                active_channel_id=chat.active_channel_id,
                 created_at=chat.created_at,
                 updated_at=chat.updated_at,
                 last_message_at=last_message_at,
@@ -641,6 +722,8 @@ async def get_chat(
         title=chat.title,
         archived=chat.archived,
         expires_at=chat.expires_at,
+        keep_alive=chat.keep_alive,
+        active_channel_id=chat.active_channel_id,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
@@ -707,6 +790,8 @@ async def update_chat(
         title=chat.title,
         archived=chat.archived,
         expires_at=chat.expires_at,
+        keep_alive=chat.keep_alive,
+        active_channel_id=chat.active_channel_id,
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,

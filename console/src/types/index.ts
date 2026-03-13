@@ -69,6 +69,8 @@ export interface Chat {
   title: string;
   archived: boolean;
   expires_at: string | null;
+  keep_alive: boolean | null;
+  active_channel_id: string | null;
   created_at: string;
   updated_at: string;
   last_message_at: string | null;
@@ -77,6 +79,8 @@ export interface Chat {
 export interface ChatCreate {
   title?: string;
   input?: Record<string, any>;
+  job_timeout?: number;
+  keep_alive?: boolean;
 }
 
 export interface ChatUpdate {
@@ -215,6 +219,9 @@ export interface Agent {
   icon_url: string | null;
   is_active: boolean;
   is_default: boolean;
+  default_job_timeout: number | null;
+  default_keep_alive: boolean;
+  enable_code_execution: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -241,6 +248,9 @@ export interface AgentCreate {
   enabled_collections?: string[];
   icon?: string;
   is_default?: boolean;
+  default_job_timeout?: number;
+  default_keep_alive?: boolean;
+  enable_code_execution?: boolean;
 }
 
 export interface AgentUpdate {
@@ -268,6 +278,9 @@ export interface AgentUpdate {
   icon?: string;
   is_active?: boolean;
   is_default?: boolean;
+  default_job_timeout?: number;
+  default_keep_alive?: boolean;
+  enable_code_execution?: boolean;
 }
 
 // Roles & Users

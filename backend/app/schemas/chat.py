@@ -26,6 +26,8 @@ class ChatResponse(BaseModel):
     title: str
     archived: bool = False
     expires_at: Optional[datetime] = None
+    keep_alive: Optional[bool] = None
+    active_channel_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime] = None  # Timestamp of last message
@@ -109,6 +111,10 @@ class AgentChatCreateRequest(BaseModel):
 
     # Optional TTL in seconds — chat will be hard-deleted after this duration
     expires_in: Optional[int] = Field(None, gt=0)
+
+    # Long-running workflow overrides (defaults from agent if not provided)
+    job_timeout: Optional[int] = Field(None, gt=0, description="Job timeout override in seconds")
+    keep_alive: Optional[bool] = Field(None, description="Keep agent job alive after HTTP disconnect")
 
 
 class MessageSendRequest(BaseModel):

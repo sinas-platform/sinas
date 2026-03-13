@@ -257,6 +257,13 @@ async def agent_worker_startup(ctx: dict) -> None:
     from app.services.message_service import MessageService  # noqa: F401
     from app.core.database import AsyncSessionLocal  # noqa: F401
 
+    # Discover pool containers (needed for code execution tool)
+    from app.services.container_pool import container_pool
+
+    await container_pool._discover_existing_containers()
+    container_pool._initialized = True
+    print(f"✅ Agent worker discovered {len(container_pool.idle)} pool containers")
+
     # Start heartbeat
     worker_id = str(uuid.uuid4())
     ctx["worker_id"] = worker_id
@@ -324,5 +331,5 @@ class AgentWorkerSettings:
     redis_settings = get_redis_settings()
     queue_name = "sinas:queue:agents"
     max_jobs = settings.queue_agent_concurrency
-    job_timeout = 600  # 10 minutes for long conversations
+    job_timeout = settings.agent_job_timeout  # Default timeout, can be overridden per-job
     max_tries = 1  # No retry for agent conversations (side effects)

@@ -199,17 +199,15 @@ def get_storage() -> FileStorage:
     return _storage
 
 
-def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> Optional[str]:
+def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> str:
     """
     Generate a temporary signed URL for serving a file.
 
-    Returns None if DOMAIN is localhost or not set (caller should fall back to data URL).
+    In production (DOMAIN set): https://{domain}/files/serve/{token}
+    On localhost: http://host.docker.internal:{port}/files/serve/{token}
+    so sandbox containers can fetch files without shared network access.
     """
     from app.core.config import settings
-
-    domain = settings.domain
-    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
-        return None
 
     expire = datetime.now(UTC) + timedelta(seconds=expires_in)
     payload = {
@@ -219,6 +217,12 @@ def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> Opt
         "exp": int(expire.timestamp()),
     }
     token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+
+    domain = settings.domain
+    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
+        port = settings.backend_port
+        return f"http://host.docker.internal:{port}/files/serve/{token}"
+
     return f"https://{domain}/files/serve/{token}"
 
 
