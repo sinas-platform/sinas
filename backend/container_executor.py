@@ -1,16 +1,32 @@
 """
 Executor script that runs inside user containers.
 This script loads functions and executes them on demand.
+
+Supports two container modes (set via SINAS_CONTAINER_MODE env var):
+  - shared: Threaded execution with input() support for pause/resume
+  - sandbox: Single-threaded SIGALRM timeout, input() raises RuntimeError
 """
+import ctypes
 import glob
 import json
 import os
 import signal
 import socket
 import sys
+import tempfile
+import threading
 import time
 import traceback
 from typing import Any
+
+
+# Detect container mode from environment
+CONTAINER_MODE = os.environ.get("SINAS_CONTAINER_MODE", "sandbox")
+IS_SHARED = CONTAINER_MODE == "shared"
+
+# How long input() waits for a resume file before timing out (seconds).
+# This is a safety net — the function-level timeout should fire first.
+INPUT_POLL_TIMEOUT = 600
 
 
 class FunctionTimeoutError(Exception):
@@ -20,6 +36,91 @@ class FunctionTimeoutError(Exception):
 
 def _timeout_handler(signum, frame):
     raise FunctionTimeoutError("Function execution timed out")
+
+
+def _raise_in_thread(thread_id: int, exc_type: type) -> None:
+    """Asynchronously raise an exception in a thread (CPython only)."""
+    res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_ulong(thread_id), ctypes.py_object(exc_type)
+    )
+    if res == 0:
+        pass  # Thread already dead
+    elif res > 1:
+        # Revert — something went wrong
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread_id), None)
+
+
+def _atomic_write_json(path: str, data: Any) -> None:
+    """Write JSON atomically via rename to prevent partial reads."""
+    dir_name = os.path.dirname(path) or "/tmp"
+    fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+        os.rename(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _make_custom_input(execution_id: str, result_path: str):
+    """
+    Create a custom input() replacement for shared containers.
+
+    When called:
+    1. Deletes the result file (clears any previous state)
+    2. Writes {"status": "awaiting_input", "prompt": prompt} to result file
+    3. Polls for /tmp/exec_resume_{eid}.json
+    4. Returns the resume value as a string
+    """
+    def custom_input(prompt=""):
+        resume_file = f"/tmp/exec_resume_{execution_id}.json"
+
+        # Clear any previous result so the backend polls for a fresh one
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+
+        # Signal that we're waiting for input
+        _atomic_write_json(result_path, {
+            "status": "awaiting_input",
+            "prompt": str(prompt),
+            "execution_id": execution_id,
+        })
+
+        print(f"[exec] Awaiting input: {prompt}", file=sys.stderr)
+
+        # Poll for resume file
+        deadline = time.time() + INPUT_POLL_TIMEOUT
+        while time.time() < deadline:
+            if os.path.exists(resume_file):
+                try:
+                    with open(resume_file, "r") as f:
+                        resume_data = json.load(f)
+                    os.remove(resume_file)
+                    value = resume_data.get("value", "")
+                    print(f"[exec] Resumed with input value", file=sys.stderr)
+                    return str(value)
+                except (json.JSONDecodeError, OSError):
+                    # File might be partially written, retry
+                    time.sleep(0.1)
+                    continue
+            time.sleep(0.2)
+
+        raise TimeoutError(f"input() timed out after {INPUT_POLL_TIMEOUT}s waiting for resume")
+
+    return custom_input
+
+
+def _make_sandbox_input():
+    """Create an input() replacement that always raises for sandbox containers."""
+    def sandbox_input(prompt=""):
+        raise RuntimeError("input() is not available in sandbox mode")
+    return sandbox_input
 
 
 class ContainerExecutor:
@@ -53,7 +154,6 @@ class ContainerExecutor:
                     exec(compiled_code, self.namespace)
 
                     # Store mapping from "namespace/name" to actual function name
-                    # The actual function name is extracted from the code (usually just 'name')
                     self.function_map[full_name] = name
 
                     print(f"Loaded function: {full_name} -> {name}", file=sys.stderr)
@@ -101,9 +201,194 @@ class ContainerExecutor:
                 "status": "failed",
             }
 
+    def _execute_inline_shared(self, request: dict, result_path: str):
+        """Execute inline function in a thread (shared container mode)."""
+        function_timeout = request.get("timeout", 290)
+        function_code = request["function_code"]
+        function_namespace = request.get("function_namespace", "default")
+        function_name = request["function_name"]
+        input_data = request["input_data"]
+        context = request.get("context", {})
+        execution_id = request["execution_id"]
+
+        print(f"[exec] Starting {function_namespace}/{function_name} (shared, timeout={function_timeout}s)", file=sys.stderr)
+
+        socket.setdefaulttimeout(min(function_timeout, 30))
+
+        # Build namespace with custom input()
+        temp_namespace = {
+            "__builtins__": __builtins__,
+            "json": json,
+            "input": _make_custom_input(execution_id, result_path),
+        }
+        try:
+            import datetime
+            import uuid
+            temp_namespace["datetime"] = datetime
+            temp_namespace["uuid"] = uuid
+        except ImportError:
+            pass
+
+        # Compile and execute
+        compiled_code = compile(
+            function_code,
+            f"<function:{function_namespace}/{function_name}>",
+            "exec",
+        )
+        exec(compiled_code, temp_namespace)
+
+        # Find entry point
+        if "handler" in temp_namespace and callable(temp_namespace["handler"]):
+            func = temp_namespace["handler"]
+        elif function_name in temp_namespace and callable(temp_namespace[function_name]):
+            func = temp_namespace[function_name]
+            print(f"[exec] DEPRECATION: function uses '{function_name}' instead of 'handler'", file=sys.stderr)
+        else:
+            _atomic_write_json(result_path, {
+                "error": f"No 'handler' function found in code for {function_namespace}/{function_name}",
+                "execution_id": execution_id,
+                "status": "failed",
+            })
+            return
+
+        # Run in thread with timeout via threading.Timer
+        thread_result = {}
+        thread_error = {}
+
+        def _run():
+            try:
+                r = func(input_data, context)
+                thread_result["value"] = r
+            except FunctionTimeoutError:
+                thread_error["timeout"] = True
+            except Exception as e:
+                thread_error["error"] = str(e)
+                thread_error["traceback"] = traceback.format_exc()
+
+        t = threading.Thread(target=_run, daemon=True)
+        start_time = time.time()
+        t.start()
+
+        # Timeout enforcement via async exception
+        timer = threading.Timer(function_timeout, lambda: _raise_in_thread(t.ident, FunctionTimeoutError))
+        timer.daemon = True
+        timer.start()
+
+        t.join(timeout=function_timeout + 5)
+        timer.cancel()
+
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        # Check if thread wrote an awaiting_input result (input() was called)
+        # In that case, the result file already has the awaiting_input status
+        # and we should NOT overwrite it.
+        try:
+            with open(result_path, "r") as f:
+                existing = json.load(f)
+            if existing.get("status") == "awaiting_input":
+                # Function is paused — don't write final result yet
+                print(f"[exec] Paused {function_namespace}/{function_name} (awaiting input) at {duration_ms}ms", file=sys.stderr)
+                return
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        if thread_error.get("timeout") or (t.is_alive()):
+            print(f"[exec] TIMEOUT {function_namespace}/{function_name} after {duration_ms}ms", file=sys.stderr)
+            _atomic_write_json(result_path, {
+                "error": f"Function timed out after {function_timeout}s",
+                "execution_id": execution_id,
+                "duration_ms": duration_ms,
+                "status": "failed",
+            })
+        elif "error" in thread_error:
+            print(f"[exec] FAILED {function_namespace}/{function_name}: {thread_error['error']}", file=sys.stderr)
+            _atomic_write_json(result_path, {
+                "error": thread_error["error"],
+                "traceback": thread_error.get("traceback", ""),
+                "execution_id": execution_id,
+                "duration_ms": duration_ms,
+                "status": "failed",
+            })
+        else:
+            print(f"[exec] Completed {function_namespace}/{function_name} in {duration_ms}ms", file=sys.stderr)
+            _atomic_write_json(result_path, {
+                "result": thread_result.get("value"),
+                "execution_id": execution_id,
+                "duration_ms": duration_ms,
+                "status": "completed",
+            })
+
+    def _execute_inline_sandbox(self, request: dict, result_path: str):
+        """Execute inline function with SIGALRM timeout (sandbox container mode)."""
+        function_timeout = request.get("timeout", 290)
+        function_code = request["function_code"]
+        function_namespace = request.get("function_namespace", "default")
+        function_name = request["function_name"]
+        input_data = request["input_data"]
+        context = request.get("context", {})
+        execution_id = request["execution_id"]
+
+        print(f"[exec] Starting {function_namespace}/{function_name} (sandbox, timeout={function_timeout}s)", file=sys.stderr)
+
+        socket.setdefaulttimeout(min(function_timeout, 30))
+
+        # Build namespace with blocking input()
+        temp_namespace = {
+            "__builtins__": __builtins__,
+            "json": json,
+            "input": _make_sandbox_input(),
+        }
+        try:
+            import datetime
+            import uuid
+            temp_namespace["datetime"] = datetime
+            temp_namespace["uuid"] = uuid
+        except ImportError:
+            pass
+
+        compiled_code = compile(
+            function_code,
+            f"<function:{function_namespace}/{function_name}>",
+            "exec",
+        )
+        exec(compiled_code, temp_namespace)
+
+        # Find entry point
+        if "handler" in temp_namespace and callable(temp_namespace["handler"]):
+            func = temp_namespace["handler"]
+        elif function_name in temp_namespace and callable(temp_namespace[function_name]):
+            func = temp_namespace[function_name]
+            print(f"[exec] DEPRECATION: function uses '{function_name}' instead of 'handler'", file=sys.stderr)
+        else:
+            _atomic_write_json(result_path, {
+                "error": f"No 'handler' function found in code for {function_namespace}/{function_name}",
+                "execution_id": execution_id,
+                "status": "failed",
+            })
+            return
+
+        # Execute with SIGALRM timeout
+        start_time = time.time()
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(function_timeout)
+        try:
+            func_result = func(input_data, context)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+        duration_ms = int((time.time() - start_time) * 1000)
+
+        print(f"[exec] Completed {function_namespace}/{function_name} in {duration_ms}ms", file=sys.stderr)
+        _atomic_write_json(result_path, {
+            "result": func_result,
+            "execution_id": execution_id,
+            "duration_ms": duration_ms,
+            "status": "completed",
+        })
+
     def run(self):
         """Main loop - wait for execution requests."""
-        print("Container executor started", file=sys.stderr)
+        print(f"Container executor started (mode={CONTAINER_MODE})", file=sys.stderr)
 
         # Load initial functions if available
         try:
@@ -174,116 +459,32 @@ class ContainerExecutor:
                         json.dump({"status": "loaded"}, f)
 
                 elif action == "execute_inline":
-                    function_timeout = request.get("timeout", 290)
                     try:
-                        function_code = request["function_code"]
-                        function_namespace = request.get("function_namespace", "default")
-                        function_name = request["function_name"]
-                        input_data = request["input_data"]
-                        context = request.get("context", {})
-                        execution_id = request["execution_id"]
-
-                        print(f"[exec] Starting {function_namespace}/{function_name} (timeout={function_timeout}s)", file=sys.stderr)
-
-                        # Set a global socket timeout so DNS resolution and other
-                        # low-level socket ops can't hang indefinitely. This covers
-                        # cases that requests/urllib3 timeout= can't reach.
-                        socket.setdefaulttimeout(min(function_timeout, 30))
-
-                        # Create temporary namespace for this execution
-                        temp_namespace = {
-                            "__builtins__": __builtins__,
-                            "json": json,
-                        }
-
-                        # Add common modules
-                        try:
-                            import datetime
-                            import uuid
-
-                            temp_namespace["datetime"] = datetime
-                            temp_namespace["uuid"] = uuid
-                        except ImportError:
-                            pass
-
-                        # Compile and execute function code
-                        compiled_code = compile(
-                            function_code,
-                            f"<function:{function_namespace}/{function_name}>",
-                            "exec",
-                        )
-                        exec(compiled_code, temp_namespace)
-
-                        # Find the function (usually same name as function_name)
-                        if function_name in temp_namespace:
-                            func = temp_namespace[function_name]
+                        if IS_SHARED:
+                            self._execute_inline_shared(request, result_path)
                         else:
-                            func = None
-                            for name, obj in temp_namespace.items():
-                                if callable(obj) and not name.startswith("_"):
-                                    func = obj
-                                    break
-
-                            if not func:
-                                result = {
-                                    "error": f"No callable function found in code for {function_namespace}/{function_name}",
-                                    "execution_id": execution_id,
-                                    "status": "failed",
-                                }
-                                with open(result_path, "w") as f:
-                                    json.dump(result, f)
-                                # Clean up request/trigger
-                                try:
-                                    os.remove(request_path)
-                                except OSError:
-                                    pass
-                                try:
-                                    os.remove(trigger_path)
-                                except OSError:
-                                    pass
-                                continue
-
-                        # Execute function with timeout (SIGALRM)
-                        start_time = time.time()
-                        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-                        signal.alarm(function_timeout)
-                        try:
-                            func_result = func(input_data, context)
-                        finally:
-                            signal.alarm(0)  # Cancel alarm
-                            signal.signal(signal.SIGALRM, old_handler)
-                        duration_ms = int((time.time() - start_time) * 1000)
-
-                        print(f"[exec] Completed {function_namespace}/{function_name} in {duration_ms}ms", file=sys.stderr)
-
-                        result = {
-                            "result": func_result,
-                            "execution_id": execution_id,
-                            "duration_ms": duration_ms,
-                            "status": "completed",
-                        }
+                            self._execute_inline_sandbox(request, result_path)
 
                     except FunctionTimeoutError:
-                        duration_ms = int((time.time() - start_time) * 1000)
-                        print(f"[exec] TIMEOUT {function_namespace}/{function_name} after {duration_ms}ms", file=sys.stderr)
-                        result = {
+                        execution_id = request.get("execution_id", "")
+                        function_timeout = request.get("timeout", 290)
+                        start_time_fallback = time.time()
+                        print(f"[exec] TIMEOUT (outer) after {function_timeout}s", file=sys.stderr)
+                        _atomic_write_json(result_path, {
                             "error": f"Function timed out after {function_timeout}s",
                             "execution_id": execution_id,
-                            "duration_ms": duration_ms,
                             "status": "failed",
-                        }
+                        })
 
                     except Exception as e:
-                        print(f"[exec] FAILED {function_namespace}/{function_name}: {e}", file=sys.stderr)
-                        result = {
+                        execution_id = request.get("execution_id", "")
+                        print(f"[exec] FAILED (outer): {e}", file=sys.stderr)
+                        _atomic_write_json(result_path, {
                             "error": str(e),
                             "traceback": traceback.format_exc(),
                             "execution_id": execution_id,
                             "status": "failed",
-                        }
-
-                    with open(result_path, "w") as f:
-                        json.dump(result, f)
+                        })
 
                 # Clean up request and trigger files
                 try:

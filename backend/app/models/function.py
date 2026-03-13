@@ -23,10 +23,6 @@ class Function(Base, PermissionMixin):
     code: Mapped[str] = mapped_column(Text, nullable=False)
     input_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     output_schema: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    requirements: Mapped[list[str]] = mapped_column(JSON, default=list)
-    enabled_namespaces: Mapped[list[str]] = mapped_column(
-        JSON, default=list
-    )  # Namespaces this function can call (empty = own namespace only)
     # Icon reference ("collection:ns/coll/file" or "url:https://...")
     icon: Mapped[Optional[str]] = mapped_column(String(512))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

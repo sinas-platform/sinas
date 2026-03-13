@@ -148,7 +148,8 @@ Agents interact with the outside world through **tools** — capabilities you en
 
 Functions and agents can be triggered in multiple ways:
 
-- **Manual** — Via the API or console
+- **API** — Direct execution via the runtime API
+- **Manual** — Via the console UI
 - **Agent** — Called as a tool during a chat conversation
 - **Webhook** — Via an HTTP request to a configured endpoint
 - **Schedule** — Via a cron expression on a timer
@@ -507,30 +508,65 @@ Functions are Python code that runs in isolated Docker containers. They can be u
 | `description` | Shown to the LLM when used as an agent tool |
 | `input_schema` | JSON Schema for input validation |
 | `output_schema` | JSON Schema for output validation |
-| `requirements` | Python packages needed (must be admin-approved) |
-| `enabled_namespaces` | Namespaces of other functions this function can call |
-| `shared_pool` | Run in shared worker instead of isolated container (admin-only) |
+| `shared_pool` | Run in shared container instead of sandbox container (admin-only) |
 | `requires_approval` | Require user approval when called by an agent |
 | `timeout` | Per-function timeout in seconds (overrides global `FUNCTION_TIMEOUT`, default: null) |
 
-**Function signature:**
+#### Function signature
 
-Every function receives two arguments — `input` (the validated input data) and `context` (execution metadata):
+The entry point must be named `handler`. It receives two arguments — `input_data` (validated against input_schema) and `context` (execution metadata):
 
 ```python
-def my_function(input, context):
-    # input: dict validated against input_schema
-    # context keys:
-    #   user_id         - ID of the user who triggered the execution
-    #   user_email      - User's email
-    #   access_token    - JWT token for making API calls back to SINAS
-    #   execution_id    - Unique execution ID
-    #   trigger_type    - WEBHOOK, AGENT, SCHEDULE, MANUAL, or API
-    #   chat_id         - Chat ID if triggered from a conversation
-    return {"result": "value"}
+def handler(input_data, context):
+    # input_data: dict validated against input_schema
+    #
+    # context dict — always present:
+    # {
+    #     "user_id":        str,   # ID of the user who triggered execution
+    #     "user_email":     str,   # Email of the triggering user
+    #     "access_token":   str,   # Short-lived JWT for calling the SINAS API
+    #     "execution_id":   str,   # Unique execution ID
+    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "MANUAL"
+    #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
+    # }
+
+    return {"result": "value"}  # Must match output_schema
 ```
 
+> **Legacy:** Functions named after the resource name (e.g. `def send_email(input_data, context)`) still work but log a deprecation warning. Migrate to `def handler(...)`.
+
 The `access_token` lets functions call back into the SINAS API with the triggering user's identity — useful for reading state, triggering other functions, or accessing any other endpoint.
+
+#### Trigger-specific input_data
+
+Depending on how the function is invoked, `input_data` is populated differently:
+
+| Trigger | input_data contents |
+|---|---|
+| **AGENT / API / MANUAL / SCHEDULE** | Values matching your input schema, provided by the caller |
+| **WEBHOOK** | Webhook `default_values` merged with request body/query params |
+| **CDC** | `{"table": "schema.table", "operation": "CHANGE", "rows": [...], "poll_column": str, "count": int, "timestamp": str}` |
+| **Collection content filter** | `{"content_base64": str, "namespace": str, "collection": str, "filename": str, "content_type": str, "size_bytes": int, "user_metadata": dict, "user_id": str}` |
+| **Collection post-upload** | `{"file_id": str, "namespace": str, "collection": str, "filename": str, "version": int, "file_path": str, "user_id": str, "metadata": dict}` |
+
+#### Interactive input (shared containers only)
+
+Functions running in shared containers (`shared_pool=true`) can call `input()` to pause and wait for user input:
+
+```python
+def handler(input_data, context):
+    name = input("What is your name?")    # Pauses execution
+    confirm = input(f"Confirm {name}?")   # Can call multiple times
+    return {"name": name, "confirmed": confirm}
+```
+
+When `input()` is called:
+1. The execution status changes to `AWAITING_INPUT` with the prompt string
+2. The function thread blocks until a resume value is provided
+3. The calling agent or API client resumes execution with the user's response
+4. Multiple `input()` calls are supported (each triggers a new pause/resume cycle)
+
+In sandbox containers (`shared_pool=false`), calling `input()` raises a `RuntimeError`.
 
 **Execution:** Functions run in pre-warmed Docker containers from a managed pool. Input is validated before execution, output is validated after. All executions are logged with status, duration, input/output, and any errors.
 
@@ -575,9 +611,10 @@ curl -X POST http://localhost:8000/api/v1/functions/import/openapi \
 **Execution history:**
 
 ```
-GET    /executions                          # List executions
-GET    /executions/{execution_id}           # Get execution details
-GET    /executions/{execution_id}/steps     # Get execution steps (nested calls)
+GET    /executions                               # List executions
+GET    /executions/{execution_id}                # Get execution details
+GET    /executions/{execution_id}/steps          # Get execution steps (nested calls)
+POST   /executions/{execution_id}/continue       # Resume a paused execution with user input
 ```
 
 **Input schema presets:** The function editor includes built-in presets for common input/output schemas. Use the "Load preset" dropdown when editing schemas:
@@ -1251,17 +1288,17 @@ See [Role-Based Access Control (RBAC)](#role-based-access-control-rbac) for the 
 
 SINAS has a dual-execution model for functions, plus dedicated queue workers for async job processing.
 
-#### Sandbox Container Pool
+#### Sandbox Containers
 
-The sandbox pool is a set of **pre-warmed, generic Docker containers** for executing untrusted user code. This is the default execution mode for all functions (`shared_pool=false`).
+The sandbox container pool is a set of **pre-warmed, generic Docker containers** for executing untrusted user code. This is the default execution mode for all functions (`shared_pool=false`).
 
 **How it works:**
 
-- On startup, the pool creates `pool_min_size` containers (default: 4) ready to accept work.
+- On startup, the pool creates `sandbox_min_size` containers (default: 4) ready to accept work.
 - When a function executes, a container is acquired from the idle pool, used, and returned.
-- Containers are recycled (destroyed and replaced) after `pool_max_executions` uses (default: 100) to prevent state leakage between executions.
+- Containers are recycled (destroyed and replaced) after `sandbox_max_executions` uses (default: 100) to prevent state leakage between executions.
 - If a container errors during execution, it's marked as tainted and destroyed immediately.
-- A background replenishment loop monitors the idle count and creates new containers whenever it drops below `pool_min_idle` (default: 2), up to `pool_max_size` (default: 20).
+- A background replenishment loop monitors the idle count and creates new containers whenever it drops below `sandbox_min_idle` (default: 2), up to `sandbox_max_size` (default: 20).
 - Health checks run every 60 seconds to detect and replace dead containers.
 
 **Isolation guarantees:**
@@ -1309,13 +1346,13 @@ POST /api/v1/containers/reload
 
 Containers that are currently executing are unaffected. New containers created by the replenishment loop automatically include all approved packages.
 
-#### Shared Worker Pool
+#### Shared Containers
 
-Functions marked `shared_pool=true` run in **persistent worker containers** instead of the sandbox pool. This is an admin-only option for trusted code that benefits from longer-lived containers.
+Functions marked `shared_pool=true` run in **persistent shared containers** instead of sandbox containers. This is an admin-only option for trusted code that benefits from longer-lived containers.
 
 **Differences from sandbox:**
 
-| | Sandbox Pool | Shared Workers |
+| | Sandbox Containers | Shared Containers |
 |---|---|---|
 | **Trust level** | Untrusted user code | Trusted admin code only |
 | **Isolation** | Per-request (recycled after N uses) | Shared (persistent containers) |
@@ -1324,7 +1361,7 @@ Functions marked `shared_pool=true` run in **persistent worker containers** inst
 | **Load balancing** | First available idle container | Round-robin across workers |
 | **Best for** | User-submitted functions | Admin functions, long-startup libraries |
 
-**When to use `shared_pool=true`:**
+**When to use `shared_pool=true` (shared containers):**
 
 - Functions created and maintained by admins (not user-submitted code)
 - Functions that import heavy libraries (pandas, scikit-learn) where container startup cost matters
@@ -1359,7 +1396,7 @@ All function and agent executions are processed asynchronously through Redis-bas
 | **Function workers** | `queue-worker` | `sinas:queue:functions` | 10 jobs/worker | Up to 3 |
 | **Agent workers** | `queue-agent` | `sinas:queue:agents` | 5 jobs/worker | None (not idempotent) |
 
-**Function workers** dequeue function execution jobs, route them to either the sandbox pool or shared workers, track results in Redis, and handle retries. Failed jobs that exhaust retries are moved to a **dead letter queue** (DLQ) for inspection and manual retry.
+**Function workers** dequeue function execution jobs, route them to either sandbox or shared containers, track results in Redis, and handle retries. Failed jobs that exhaust retries are moved to a **dead letter queue** (DLQ) for inspection and manual retry.
 
 **Agent workers** handle chat message processing — they call the LLM, execute tool calls, and stream responses back via Redis Streams. Agent jobs don't retry because LLM calls with tool execution have side effects.
 
@@ -1403,6 +1440,42 @@ POST /api/v1/queue/jobs/{job_id}/cancel
 Cancellation updates the Redis status to `cancelled` and marks the DB execution record as `CANCELLED`. It also publishes to the done channel so any waiters unblock. This is a soft cancel — it does not kill running containers.
 
 Results are stored in Redis with a 24-hour TTL.
+
+#### System Endpoints
+
+Admin endpoints for monitoring and managing the SINAS deployment. All require `sinas.system.read:all` or `sinas.system.update:all` permissions.
+
+**Health check:**
+
+```bash
+GET /api/v1/system/health
+```
+
+Returns a comprehensive health report:
+
+- **`services`** — All Docker Compose containers with status, health, uptime, CPU %, and memory usage. Infrastructure containers (redis, postgres, pgbouncer) are listed first, followed by application containers sorted alphabetically. Sandbox and shared worker containers are included.
+- **`host`** — Host-level CPU, memory, and disk usage (read from `/proc` on Linux).
+- **`warnings`** — Auto-generated alerts at three levels:
+  - `critical` — No queue workers running, or infrastructure services (redis, postgres, pgbouncer) down
+  - `warning` — Non-infrastructure services down, unhealthy containers, DLQ items, queue backlog >50, disk/memory >90%
+  - `info` — Disk/memory >75%
+
+**Container restart:**
+
+```bash
+POST /api/v1/system/containers/{container_name}/restart
+# → {"status": "restarted", "container": "sinas-backend"}
+```
+
+Restarts any Docker container by name (15-second timeout). Returns 404 if the container doesn't exist.
+
+**Flush stuck jobs:**
+
+```bash
+POST /api/v1/system/flush-stuck-jobs
+```
+
+Cancels all jobs that have been stuck in `running` state for over 2 hours. Useful for recovering from worker crashes or orphaned jobs.
 
 #### Dependencies (Python Packages)
 

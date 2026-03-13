@@ -3,7 +3,7 @@ import uuid as uuid_lib
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, uuid_pk
@@ -51,9 +51,9 @@ class Execution(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
 
     # Stateful execution fields
-    generator_state: Mapped[Optional[bytes]] = mapped_column(LargeBinary)
     input_prompt: Mapped[Optional[str]] = mapped_column(Text)
     input_schema: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
+    container_id: Mapped[Optional[str]] = mapped_column(String(255))
 
     # Relationships
     user: Mapped["User"] = relationship("User")

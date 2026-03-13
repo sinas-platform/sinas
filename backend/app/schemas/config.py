@@ -105,8 +105,6 @@ class FunctionConfig(BaseModel):
     code: str
     inputSchema: Optional[dict[str, Any]] = None
     outputSchema: Optional[dict[str, Any]] = None
-    requirements: list[str] = Field(default_factory=list)
-    enabledNamespaces: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     icon: Optional[str] = None
     timeout: Optional[int] = None

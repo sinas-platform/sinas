@@ -956,6 +956,27 @@ class APIClient {
   }
 
   // Container Pool
+  // System Health
+  async getSystemHealth(): Promise<any> {
+    const response = await this.configClient.get('/system/health');
+    return response.data;
+  }
+
+  async restartContainer(containerName: string): Promise<any> {
+    const response = await this.configClient.post(`/system/containers/${containerName}/restart`);
+    return response.data;
+  }
+
+  async flushDLQ(): Promise<any> {
+    const response = await this.configClient.post('/queue/dlq/flush');
+    return response.data;
+  }
+
+  async flushStuckJobs(): Promise<any> {
+    const response = await this.configClient.post('/system/flush-stuck-jobs');
+    return response.data;
+  }
+
   async getContainerStats(): Promise<any> {
     const response = await this.configClient.get('/containers/stats');
     return response.data;

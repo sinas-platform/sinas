@@ -328,8 +328,6 @@ export interface Function {
   code: string;
   input_schema: Record<string, any>;
   output_schema: Record<string, any>;
-  requirements: string[];
-  enabled_namespaces: string[];
   icon: string | null;
   icon_url: string | null;
   shared_pool: boolean;
@@ -347,8 +345,6 @@ export interface FunctionCreate {
   code: string;
   input_schema?: Record<string, any>;
   output_schema?: Record<string, any>;
-  requirements?: string[];
-  enabled_namespaces?: string[];
   icon?: string;
   shared_pool?: boolean;
   requires_approval?: boolean;
@@ -361,8 +357,6 @@ export interface FunctionUpdate {
   code?: string;
   input_schema?: Record<string, any>;
   output_schema?: Record<string, any>;
-  requirements?: string[];
-  enabled_namespaces?: string[];
   icon?: string;
   shared_pool?: boolean;
   requires_approval?: boolean;
@@ -393,7 +387,6 @@ export interface OpenAPIFunctionPreview {
   output_schema: Record<string, any>;
   code: string;
   status: string;
-  requirements: string[];
 }
 
 export interface OpenAPIImportResponse {

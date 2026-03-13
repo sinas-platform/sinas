@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
         await container_pool._discover_existing_containers()
         container_pool._initialized = True
         print(
-            f"✅ Discovered {len(container_pool.idle)} pool containers"
+            f"✅ Discovered {len(container_pool.idle)} sandbox containers"
         )
     except Exception as e:
         print(f"⚠️  Container pool discovery skipped: {e}")
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
         await shared_worker_manager._discover_existing_workers()
         shared_worker_manager._initialized = True
         print(
-            f"✅ Discovered {len(shared_worker_manager.workers)} shared workers"
+            f"✅ Discovered {len(shared_worker_manager.workers)} shared containers"
         )
     except Exception as e:
         print(f"⚠️  Shared worker discovery skipped: {e}")

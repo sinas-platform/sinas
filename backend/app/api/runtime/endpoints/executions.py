@@ -162,31 +162,13 @@ async def continue_execution(
     if execution.status != ExecutionStatus.AWAITING_INPUT:
         raise HTTPException(status_code=400, detail="Execution is not awaiting input")
 
-    # Look up function namespace (execution record only stores bare name)
-    from app.models.function import Function
-    from app.services.queue_service import queue_service
+    # Resume directly in the container (bypasses queue)
+    from app.services.execution_engine import executor
 
-    fn_result = await db.execute(
-        select(Function).where(
-            Function.name == execution.function_name,
-            Function.is_active == True,
-        )
-    )
-    function = fn_result.scalar_one_or_none()
-    if not function:
-        raise HTTPException(status_code=404, detail=f"Function '{execution.function_name}' not found")
-
-    # Continue execution via queue
     try:
-        result = await queue_service.enqueue_and_wait(
-            function_namespace=function.namespace,
-            function_name=function.name,
-            input_data=request.input,
+        result = await executor.resume_execution(
             execution_id=execution_id,
-            trigger_type=execution.trigger_type,
-            trigger_id=str(execution.trigger_id),
-            user_id=str(execution.user_id),
-            resume_data=request.input,
+            resume_value=request.input,
         )
 
         # Refresh execution from DB to get updated status
@@ -195,14 +177,12 @@ async def continue_execution(
         return ContinueExecutionResponse(
             execution_id=execution_id,
             status=execution.status,
-            output_data=result.get("output_data")
-            if execution.status == ExecutionStatus.COMPLETED
-            else None,
+            output_data=result if execution.status == ExecutionStatus.COMPLETED else None,
             prompt=result.get("prompt")
-            if execution.status == ExecutionStatus.AWAITING_INPUT
+            if isinstance(result, dict) and execution.status == ExecutionStatus.AWAITING_INPUT
             else None,
             schema=result.get("schema")
-            if execution.status == ExecutionStatus.AWAITING_INPUT
+            if isinstance(result, dict) and execution.status == ExecutionStatus.AWAITING_INPUT
             else None,
         )
 

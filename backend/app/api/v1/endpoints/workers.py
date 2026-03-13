@@ -1,4 +1,4 @@
-"""Workers API endpoints for managing shared worker pool."""
+"""Workers API endpoints for managing shared containers."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -141,7 +141,7 @@ async def reload_worker_packages(
 
     set_permission_used(request, permission)
 
-    # Reload packages in both shared workers and pool containers
+    # Reload packages in both shared workers and sandbox containers
     worker_result = await shared_worker_manager.reload_packages(db)
     pool_result = await container_pool.reload_packages(db)
 

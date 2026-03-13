@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { useState } from 'react';
-import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, X } from 'lucide-react';
+import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, X, AlertCircle, Info, RotateCw, Trash2, Loader2 } from 'lucide-react';
 
 function formatAge(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -17,9 +17,40 @@ function formatUptime(startedAt: number): string {
   return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
 }
 
+function formatUptimeSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  return `${Math.floor(seconds / 86400)}d ${Math.floor((seconds % 86400) / 3600)}h`;
+}
+
+function ResourceBar({ value, label, unit }: { value: number | null; label: string; unit: string }) {
+  if (value === null || value === undefined) return null;
+  const color = value > 90 ? 'bg-red-500' : value > 75 ? 'bg-yellow-500' : 'bg-green-500';
+  const textColor = value > 90 ? 'text-red-400' : value > 75 ? 'text-yellow-400' : 'text-green-400';
+  return (
+    <div>
+      <div className="flex justify-between items-center mb-1">
+        <span className="text-sm text-gray-400">{label}</span>
+        <span className={`text-sm font-semibold ${textColor}`}>{value}{unit}</span>
+      </div>
+      <div className="h-2 bg-[#161616] rounded-full overflow-hidden">
+        <div className={`h-full ${color} transition-all`} style={{ width: `${Math.min(value, 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export function System() {
   const queryClient = useQueryClient();
   const [jobStatusFilter, setJobStatusFilter] = useState<string>('');
+  const [restartingContainer, setRestartingContainer] = useState<string | null>(null);
+
+  const { data: systemHealth } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: () => apiClient.getSystemHealth(),
+    refetchInterval: 10000,
+  });
 
   const { data: stats } = useQuery({
     queryKey: ['queue-stats'],
@@ -97,6 +128,35 @@ export function System() {
     },
   });
 
+  const restartContainerMutation = useMutation({
+    mutationFn: (containerName: string) => apiClient.restartContainer(containerName),
+    onSuccess: () => {
+      setRestartingContainer(null);
+      queryClient.invalidateQueries({ queryKey: ['system-health'] });
+    },
+    onError: () => {
+      setRestartingContainer(null);
+    },
+  });
+
+  const flushDLQMutation = useMutation({
+    mutationFn: () => apiClient.flushDLQ(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-dlq'] });
+      queryClient.invalidateQueries({ queryKey: ['queue-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['system-health'] });
+    },
+  });
+
+  const flushStuckJobsMutation = useMutation({
+    mutationFn: () => apiClient.flushStuckJobs(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['queue-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ['queue-stats'] });
+      queryClient.invalidateQueries({ queryKey: ['system-health'] });
+    },
+  });
+
   const handlePoolScale = (delta: number) => {
     const current = poolStats?.total ?? 0;
     const target = Math.max(0, current + delta);
@@ -128,6 +188,24 @@ export function System() {
     }
   };
 
+  const getServiceStatusColor = (status: string) => {
+    switch (status) {
+      case 'running': return 'text-green-400';
+      case 'exited': case 'dead': return 'text-red-400';
+      case 'restarting': return 'text-yellow-400';
+      default: return 'text-gray-400';
+    }
+  };
+
+  const getHealthColor = (health: string) => {
+    switch (health) {
+      case 'healthy': return 'text-green-400';
+      case 'unhealthy': return 'text-red-400';
+      case 'starting': return 'text-yellow-400';
+      default: return 'text-gray-500';
+    }
+  };
+
   const dlqSize = stats?.dlq?.size || 0;
   const sharedCount = sharedPoolCount?.count || 0;
   const poolIdle = poolStats?.idle ?? stats?.pool?.idle ?? 0;
@@ -147,6 +225,14 @@ export function System() {
   const agentWorkers = (queueWorkers || []).filter((w: any) => w.queue === 'agents');
   const totalWorkerSlots = (queueWorkers || []).reduce((sum: number, w: any) => sum + (w.max_jobs || 0), 0);
 
+  const warnings = systemHealth?.warnings || [];
+  const criticalWarnings = warnings.filter((w: any) => w.level === 'critical');
+  const warningWarnings = warnings.filter((w: any) => w.level === 'warning');
+  const infoWarnings = warnings.filter((w: any) => w.level === 'info');
+
+  const host = systemHealth?.host || {};
+  const services = systemHealth?.services || [];
+
   return (
     <div className="space-y-6">
       <div>
@@ -154,8 +240,42 @@ export function System() {
         <p className="text-gray-400 mt-1">Workers, queues, and execution infrastructure</p>
       </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Health Warnings */}
+      {criticalWarnings.length > 0 && (
+        <div className="p-4 bg-red-900/20 border border-red-800/40 rounded-lg space-y-1">
+          {criticalWarnings.map((w: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-red-300">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm font-medium">{w.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {warningWarnings.length > 0 && (
+        <div className="p-4 bg-yellow-900/15 border border-yellow-800/30 rounded-lg space-y-1">
+          {warningWarnings.map((w: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-yellow-300">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm">{w.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {infoWarnings.length > 0 && (
+        <div className="p-3 bg-blue-900/10 border border-blue-800/20 rounded-lg space-y-1">
+          {infoWarnings.map((w: any, i: number) => (
+            <div key={i} className="flex items-center gap-2 text-blue-300">
+              <Info className="w-4 h-4 flex-shrink-0" />
+              <span className="text-sm">{w.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Stats Overview + Host Resources */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Workers */}
         <div className="card">
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Workers</h3>
@@ -217,9 +337,19 @@ export function System() {
               </span>
             </div>
             <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-400">Shared pool</span>
+              <span className="text-sm text-gray-400">Shared containers</span>
               <span className="text-sm font-semibold">{sharedCount} running</span>
             </div>
+          </div>
+        </div>
+
+        {/* Host Resources */}
+        <div className="card">
+          <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider">Host</h3>
+          <div className="mt-3 space-y-2">
+            <ResourceBar value={host.cpu_percent} label="CPU" unit="%" />
+            <ResourceBar value={host.memory_percent} label="Mem" unit="%" />
+            <ResourceBar value={host.disk_percent} label="Disk" unit="%" />
           </div>
         </div>
       </div>
@@ -247,14 +377,105 @@ export function System() {
         </div>
       )}
 
-      {/* Sandbox Pool & Shared Pool — side by side */}
+      {/* Services */}
+      {services.length > 0 && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-100">Services</h2>
+            <button
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['system-health'] })}
+              className="btn btn-secondary flex items-center"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Service</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Status</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Health</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Uptime</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">CPU</th>
+                  <th className="text-left py-2 pr-4 font-medium text-gray-500">Memory</th>
+                  <th className="text-right py-2 font-medium text-gray-500">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.04]">
+                {services.map((svc: any) => (
+                  <tr key={svc.name} className="hover:bg-white/5">
+                    <td className="py-2 pr-4">
+                      <div className="font-mono text-xs text-gray-300">{svc.name}</div>
+                      {svc.service !== svc.name && (
+                        <div className="text-xs text-gray-500">{svc.service}</div>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className={`font-medium ${getServiceStatusColor(svc.status)}`}>
+                        {svc.status}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className={`${getHealthColor(svc.health)}`}>
+                        {svc.health === 'none' ? '-' : svc.health}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 text-gray-400">
+                      {svc.uptime_seconds > 0 ? formatUptimeSeconds(svc.uptime_seconds) : '-'}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-400">
+                      {svc.status === 'running' ? `${svc.cpu_percent}%` : '-'}
+                    </td>
+                    <td className="py-2 pr-4 text-gray-400">
+                      {svc.status === 'running' && svc.memory ? (
+                        <span>
+                          {svc.memory.used_mb}MB
+                          <span className="text-gray-500 text-xs ml-1">
+                            ({svc.memory.percent}%)
+                          </span>
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td className="py-2 text-right">
+                      <button
+                        onClick={() => {
+                          if (restartingContainer === svc.name) {
+                            restartContainerMutation.mutate(svc.name);
+                          } else {
+                            setRestartingContainer(svc.name);
+                            setTimeout(() => setRestartingContainer(null), 3000);
+                          }
+                        }}
+                        disabled={restartContainerMutation.isPending}
+                        className={`btn text-xs py-1 px-2 inline-flex items-center gap-1 ${
+                          restartingContainer === svc.name
+                            ? 'btn-secondary border-yellow-800/50 text-yellow-400'
+                            : 'btn-secondary'
+                        }`}
+                        title={restartingContainer === svc.name ? 'Click again to confirm' : 'Restart container'}
+                      >
+                        <RotateCw className="w-3 h-3" />
+                        {restartingContainer === svc.name ? 'Confirm' : 'Restart'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Sandbox Containers & Shared Containers — side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Sandbox Pool */}
+        {/* Sandbox Containers */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-100">Sandbox Pool</h2>
-              <p className="text-sm text-gray-400 mt-1">Isolated containers for user functions</p>
+              <h2 className="text-lg font-semibold text-gray-100">Sandbox Containers</h2>
+              <p className="text-sm text-gray-400 mt-1">Isolated containers for function and code execution</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -263,7 +484,7 @@ export function System() {
                 className="btn btn-secondary flex items-center"
                 title="Scale down"
               >
-                <Minus className="w-4 h-4" />
+                {poolScaleMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Minus className="w-4 h-4" />}
               </button>
               <span className="text-sm font-semibold text-gray-300 w-8 text-center">{poolTotal}</span>
               <button
@@ -272,7 +493,7 @@ export function System() {
                 className="btn btn-secondary flex items-center"
                 title="Scale up"
               >
-                <Plus className="w-4 h-4" />
+                {poolScaleMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               </button>
               <button
                 onClick={() => queryClient.invalidateQueries({ queryKey: ['container-stats'] })}
@@ -298,7 +519,7 @@ export function System() {
 
           {poolScaleMutation.isError && (
             <div className="mb-4 p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-              Failed to scale sandbox pool.
+              Failed to scale sandbox containers.
             </div>
           )}
 
@@ -342,12 +563,12 @@ export function System() {
           )}
         </div>
 
-        {/* Shared Pool */}
+        {/* Shared Containers */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h2 className="text-lg font-semibold text-gray-100">Shared Pool</h2>
-              <p className="text-sm text-gray-400 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-[#161616] rounded text-xs">shared_pool</code> functions</p>
+              <h2 className="text-lg font-semibold text-gray-100">Shared Containers</h2>
+              <p className="text-sm text-gray-400 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-[#161616] rounded text-xs">shared</code> execution mode functions</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -356,7 +577,7 @@ export function System() {
                 className="btn btn-secondary flex items-center"
                 title="Scale down"
               >
-                <Minus className="w-4 h-4" />
+                {sharedPoolScaleMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Minus className="w-4 h-4" />}
               </button>
               <span className="text-sm font-semibold text-gray-300 w-8 text-center">{sharedCount}</span>
               <button
@@ -365,7 +586,7 @@ export function System() {
                 className="btn btn-secondary flex items-center"
                 title="Scale up"
               >
-                <Plus className="w-4 h-4" />
+                {sharedPoolScaleMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
               </button>
               <button
                 onClick={() => queryClient.invalidateQueries({ queryKey: ['shared-pool'] })}
@@ -379,7 +600,7 @@ export function System() {
 
           {sharedPoolScaleMutation.isError && (
             <div className="mb-4 p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-              Failed to scale shared pool.
+              Failed to scale shared containers.
             </div>
           )}
 
@@ -423,19 +644,36 @@ export function System() {
       <div className="card">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-100">Jobs</h2>
-          <select
-            value={jobStatusFilter}
-            onChange={(e) => setJobStatusFilter(e.target.value)}
-            className="input !w-40"
-          >
-            <option value="">All statuses</option>
-            <option value="queued">Queued</option>
-            <option value="running">Running</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => flushStuckJobsMutation.mutate()}
+              disabled={flushStuckJobsMutation.isPending}
+              className="btn btn-secondary text-xs py-1.5 px-3 inline-flex items-center gap-1"
+              title="Cancel jobs stuck running for over 2 hours"
+            >
+              <Trash2 className="w-3 h-3" />
+              Flush stuck
+            </button>
+            <select
+              value={jobStatusFilter}
+              onChange={(e) => setJobStatusFilter(e.target.value)}
+              className="input !w-40"
+            >
+              <option value="">All statuses</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
         </div>
+
+        {flushStuckJobsMutation.isSuccess && (
+          <div className="mb-4 p-2 bg-green-900/20 border border-green-800/30 rounded text-sm text-green-400">
+            Flushed {(flushStuckJobsMutation.data as any)?.cancelled ?? 0} stuck job(s).
+          </div>
+        )}
 
         {!jobs || jobs.length === 0 ? (
           <div className="text-center py-8">
@@ -510,10 +748,21 @@ export function System() {
       {/* Dead Letter Queue */}
       {dlqEntries && dlqEntries.length > 0 && (
         <div className="card border-red-800/30">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="w-5 h-5 text-red-500" />
-            <h2 className="text-lg font-semibold text-gray-100">Dead Letter Queue</h2>
-            <span className="text-sm text-red-600 font-medium">({dlqEntries.length})</span>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              <h2 className="text-lg font-semibold text-gray-100">Dead Letter Queue</h2>
+              <span className="text-sm text-red-600 font-medium">({dlqEntries.length})</span>
+            </div>
+            <button
+              onClick={() => flushDLQMutation.mutate()}
+              disabled={flushDLQMutation.isPending}
+              className="btn btn-secondary text-xs py-1.5 px-3 inline-flex items-center gap-1 border-red-800/30 text-red-400 hover:bg-red-900/20"
+              title="Remove all DLQ entries"
+            >
+              <Trash2 className="w-3 h-3" />
+              Flush all
+            </button>
           </div>
 
           <div className="overflow-x-auto">

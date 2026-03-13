@@ -3,8 +3,8 @@
 Runs as a separate process (python -m app.scheduler.service) so the backend
 can be a pure stateless API server.  Handles:
   - Declarative config apply (on startup)
-  - Container pool initialization
-  - Shared worker management
+  - Sandbox container initialization
+  - Shared container management
   - APScheduler cron jobs
 """
 
@@ -171,11 +171,11 @@ async def main() -> None:
                 logger.error(f"❌ Failed to apply config: {e}", exc_info=True)
                 raise
 
-    # --- Container pool ---
+    # --- Sandbox containers ---
     async with AsyncSessionLocal() as db:
         await container_pool.initialize(db)
 
-    # --- Shared workers ---
+    # --- Shared containers ---
     await shared_worker_manager.initialize()
 
     # --- APScheduler ---

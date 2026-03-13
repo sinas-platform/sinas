@@ -1,4 +1,4 @@
-"""Container pool management endpoints."""
+"""Sandbox container management endpoints."""
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,7 +19,7 @@ class ScaleRequest(BaseModel):
 async def get_container_stats(
     user_id: str = Depends(require_permission("sinas.system.read:all")),
 ) -> dict[str, Any]:
-    """Get pool container stats. Admin only."""
+    """Get sandbox container stats. Admin only."""
     from app.services.container_pool import container_pool
 
     return container_pool.get_stats()
@@ -31,7 +31,7 @@ async def reload_pool_packages(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Reinstall all approved packages in idle pool containers.
+    Reinstall all approved packages in idle sandbox containers.
     Admin only.
     """
     from app.services.container_pool import container_pool
@@ -46,7 +46,7 @@ async def scale_pool(
     current_user_id: str = Depends(require_permission("sinas.system.update:all")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Scale the container pool to a target size. Admin only."""
+    """Scale the sandbox containers to a target size. Admin only."""
     from app.services.container_pool import container_pool
 
     if body.target < 0:

@@ -106,7 +106,7 @@ async def execute(
 
     # Acquire a container from the pool
     pc = await container_pool.acquire()
-    logger.info(f"Acquired pool container {pc.name} for code execution (chat={chat_id})")
+    logger.info(f"Acquired sandbox container {pc.name} for code execution (chat={chat_id})")
 
     tainted = False
     try:
@@ -117,8 +117,7 @@ async def execute(
             "function_code": wrapper_code,
             "execution_id": execution_id,
             "function_namespace": "_code_execution",
-            "function_name": "execute_code",
-            "enabled_namespaces": [],
+            "function_name": "handler",
             "timeout": effective_timeout,
             "input_data": {},
             "context": {
@@ -252,7 +251,7 @@ def _build_wrapper(user_code: str) -> str:
     return f'''
 import sys, io, json, traceback
 
-def execute_code(input_data, context):
+def handler(input_data, context):
     """Wrapper that executes user code and captures output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr

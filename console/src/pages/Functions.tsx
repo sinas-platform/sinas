@@ -395,7 +395,7 @@ export function Functions() {
                       </h3>
                       {func.shared_pool && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-900/30 text-blue-300 flex-shrink-0">
-                          Shared Pool
+                          Shared
                         </span>
                       )}
                       {func.requires_approval && (
@@ -421,16 +421,6 @@ export function Functions() {
                       <span className="text-xs text-gray-500">
                         Created {new Date(func.created_at).toLocaleDateString()}
                       </span>
-                      {func.requirements && func.requirements.length > 0 && (
-                        <span className="text-xs text-gray-500">
-                          {func.requirements.length} requirement{func.requirements.length > 1 ? 's' : ''}
-                        </span>
-                      )}
-                      {func.enabled_namespaces && func.enabled_namespaces.length > 0 && (
-                        <span className="text-xs text-gray-500">
-                          Calls {func.enabled_namespaces.length} namespace{func.enabled_namespaces.length > 1 ? 's' : ''}
-                        </span>
-                      )}
                     </div>
                   </div>
 

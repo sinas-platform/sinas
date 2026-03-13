@@ -17,11 +17,6 @@ class FunctionCreate(BaseModel):
     code: str = Field(..., min_length=1)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
-    requirements: list[str] = Field(default_factory=list)
-    enabled_namespaces: list[str] = Field(
-        default_factory=list,
-        description="Namespaces this function can call (empty = own namespace only)",
-    )
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     shared_pool: bool = Field(
         default=False, description="Use shared worker pool instead of isolated container"
@@ -67,8 +62,6 @@ class FunctionUpdate(BaseModel):
     code: Optional[str] = None
     input_schema: Optional[dict[str, Any]] = None
     output_schema: Optional[dict[str, Any]] = None
-    requirements: Optional[list[str]] = None
-    enabled_namespaces: Optional[list[str]] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     shared_pool: Optional[bool] = None
     requires_approval: Optional[bool] = None
@@ -106,8 +99,6 @@ class FunctionResponse(BaseModel):
     code: str
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
-    requirements: list[str]
-    enabled_namespaces: list[str]
     icon: Optional[str] = None
     icon_url: Optional[str] = None
     shared_pool: bool
@@ -158,7 +149,6 @@ class OpenAPIFunctionPreview(BaseModel):
     output_schema: dict[str, Any]
     code: str
     status: str
-    requirements: list[str]
 
 
 class OpenAPIImportResponse(BaseModel):

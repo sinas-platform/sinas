@@ -705,9 +705,6 @@ class ConfigApplyService:
                         "code": func_config.code,
                         "input_schema": func_config.inputSchema,
                         "output_schema": func_config.outputSchema,
-                        "requirements": sorted(func_config.requirements)
-                        if func_config.requirements
-                        else [],
                         "tags": sorted(func_config.tags) if func_config.tags else [],
                         "icon": func_config.icon,
                         "timeout": func_config.timeout,
@@ -734,7 +731,6 @@ class ConfigApplyService:
                         existing.code = func_config.code
                         existing.input_schema = func_config.inputSchema
                         existing.output_schema = func_config.outputSchema
-                        existing.requirements = func_config.requirements
                         existing.tags = func_config.tags
                         existing.icon = func_config.icon
                         existing.timeout = func_config.timeout
@@ -764,8 +760,6 @@ class ConfigApplyService:
                             code=func_config.code,
                             input_schema=func_config.inputSchema,
                             output_schema=func_config.outputSchema,
-                            requirements=func_config.requirements,
-                            enabled_namespaces=func_config.enabledNamespaces,
                             tags=func_config.tags,
                             icon=func_config.icon,
                             timeout=func_config.timeout,

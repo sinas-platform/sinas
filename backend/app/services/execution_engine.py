@@ -1,16 +1,12 @@
 """Function execution engine with tracking and validation."""
-import ast
 import asyncio
 import json
 import logging
 import time
 import traceback
-import uuid
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Optional
 
-import dill
 import jsonschema
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,9 +16,6 @@ from app.core.database import AsyncSessionLocal
 from app.models.execution import Execution, ExecutionStatus
 from app.models.function import Function
 from app.services.clickhouse_logger import clickhouse_logger
-from app.services.tracking import ExecutionTracker
-
-from types import SimpleNamespace
 
 
 logger = logging.getLogger(__name__)
@@ -36,75 +29,9 @@ class SchemaValidationError(Exception):
     pass
 
 
-class TrackingDecorator:
-    def __init__(self, tracker: ExecutionTracker):
-        self.tracker = tracker
-
-    def __call__(self, func: Callable) -> Callable:
-        if asyncio.iscoroutinefunction(func):
-
-            async def async_wrapper(*args, **kwargs):
-                return await self.tracker.track_function_call(func, args, kwargs)
-
-            return async_wrapper
-        else:
-            # For sync functions, make wrapper async so tracking works in event loop
-            async def async_sync_wrapper(*args, **kwargs):
-                return await self.tracker.track_function_call(func, args, kwargs)
-
-            return async_sync_wrapper
-
-
-class ASTInjector:
-    @staticmethod
-    def inject_tracking_decorator(code: str, tracker_name: str = "track") -> str:
-        """Inject @track decorator on all function definitions using AST manipulation."""
-        tree = ast.parse(code)
-
-        class FunctionDecorator(ast.NodeTransformer):
-            def visit_FunctionDef(self, node):
-                # Add @track decorator if not already present
-                track_decorator = ast.Name(id=tracker_name, ctx=ast.Load())
-
-                # Check if decorator already exists
-                has_track_decorator = any(
-                    isinstance(d, ast.Name) and d.id == tracker_name for d in node.decorator_list
-                )
-
-                if not has_track_decorator:
-                    node.decorator_list.insert(0, track_decorator)
-
-                return self.generic_visit(node)
-
-            def visit_AsyncFunctionDef(self, node):
-                # Same logic for async functions
-                track_decorator = ast.Name(id=tracker_name, ctx=ast.Load())
-
-                has_track_decorator = any(
-                    isinstance(d, ast.Name) and d.id == tracker_name for d in node.decorator_list
-                )
-
-                if not has_track_decorator:
-                    node.decorator_list.insert(0, track_decorator)
-
-                return self.generic_visit(node)
-
-        transformer = FunctionDecorator()
-        modified_tree = transformer.visit(tree)
-
-        # Fix missing locations for new nodes
-        ast.fix_missing_locations(modified_tree)
-
-        # Convert back to code
-        import astor
-
-        return astor.to_source(modified_tree)
-
-
 class FunctionExecutor:
     def __init__(self):
         self.functions_cache: dict[str, Function] = {}
-        self.namespace_cache: dict[str, dict[str, Any]] = {}
         self._container_pool = None
 
     @property
@@ -165,7 +92,6 @@ class FunctionExecutor:
             access_token=access_token,
             function_namespace=function.namespace,
             function_name=function.name,
-            enabled_namespaces=function.enabled_namespaces or [],
             input_data=input_data,
             execution_id=execution_id,
             trigger_type=trigger_type,
@@ -211,116 +137,6 @@ class FunctionExecutor:
         self.functions_cache[cache_key] = function
         return function
 
-    async def build_execution_namespace(
-        self,
-        db: AsyncSession,
-        execution_id: str,
-        user_id: str,
-        user_email: str,
-        access_token: str,
-        trigger_type: str,
-        chat_id: Optional[str],
-        function_namespace: str,
-        enabled_namespaces: list[str],
-    ) -> dict[str, Any]:
-        """
-        Build namespace with functions from enabled namespaces + own namespace.
-        Functions are organized as nested namespace objects (e.g., payments.charge()).
-        """
-        cache_key = f"{user_id}:{execution_id}"
-        if cache_key in self.namespace_cache:
-            return self.namespace_cache[cache_key]
-
-        # Determine which namespaces to load
-        # Always include own namespace, plus enabled_namespaces
-        allowed_namespaces = [function_namespace] + (enabled_namespaces or [])
-
-        # Load functions from allowed namespaces that user owns
-        # NOTE: Functions can only call their own functions + functions in enabled_namespaces
-        result = await db.execute(
-            select(Function).where(
-                Function.is_active == True,
-                Function.namespace.in_(allowed_namespaces),
-                Function.user_id == user_id,
-            )
-        )
-        functions = result.scalars().all()
-
-        # Create tracker for this execution
-        tracker = ExecutionTracker(execution_id, db, user_id)
-        track_decorator = TrackingDecorator(tracker)
-
-        # Build context object
-        context = {
-            "user_id": user_id,
-            "user_email": user_email,
-            "access_token": access_token,
-            "execution_id": execution_id,
-            "trigger_type": trigger_type,
-            "chat_id": chat_id,
-        }
-
-        # Build namespace with full Python access
-        # Isolation is provided by Docker containers per user
-        namespace = {
-            "track": track_decorator,
-            "context": context,
-            "__builtins__": __builtins__,
-            "json": json,
-            "datetime": datetime,
-            "uuid": uuid,
-        }
-
-        # Group functions by namespace
-        namespace_objects = {}
-        for func in functions:
-            try:
-                # Inject tracking decorator
-                modified_code = ASTInjector.inject_tracking_decorator(func.code)
-
-                # Compile in temporary namespace
-                temp_ns = {
-                    "__builtins__": __builtins__,
-                    "track": track_decorator,
-                    "context": context,
-                    "json": json,
-                    "datetime": datetime,
-                    "uuid": uuid,
-                }
-                compiled_code = compile(
-                    modified_code, f"<function:{func.namespace}/{func.name}>", "exec"
-                )
-                exec(compiled_code, temp_ns)
-
-                # Create namespace object if not exists
-                if func.namespace not in namespace_objects:
-                    namespace_objects[func.namespace] = SimpleNamespace()
-
-                # Attach function to namespace object
-                # The function is whatever was defined in the code (usually matches func.name)
-                # Find the actual function object (skip builtins and our injected vars)
-                for key, value in temp_ns.items():
-                    if key not in [
-                        "__builtins__",
-                        "track",
-                        "context",
-                        "json",
-                        "datetime",
-                        "uuid",
-                    ] and callable(value):
-                        setattr(namespace_objects[func.namespace], func.name, value)
-                        break
-
-            except Exception as e:
-                print(f"Error loading function {func.namespace}/{func.name}: {e}")
-                continue
-
-        # Add namespace objects to main namespace
-        namespace.update(namespace_objects)
-
-        self.namespace_cache[cache_key] = namespace
-        return namespace
-
     async def execute_function(
         self,
         function_namespace: str,
@@ -330,7 +146,6 @@ class FunctionExecutor:
         trigger_type: str,
         trigger_id: str,
         user_id: str,
-        resume_data: Optional[dict[str, Any]] = None,
         chat_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute a function with input validation and tracking."""
@@ -346,7 +161,7 @@ class FunctionExecutor:
             # Generate access token for function to make authenticated API calls
             access_token = create_access_token(user_id, user_email)
 
-            # Check if resuming existing execution
+            # Check if execution already exists (e.g. created by enqueue_function)
             result = await db.execute(
                 select(Execution).where(Execution.execution_id == execution_id)
             )
@@ -370,20 +185,13 @@ class FunctionExecutor:
 
                 # Log execution start to Redis
                 await clickhouse_logger.log_execution_start(execution_id, function_name, input_data)
-            elif resume_data is not None:
-                # Resuming paused execution
-                if execution.status != ExecutionStatus.AWAITING_INPUT:
-                    raise FunctionExecutionError(f"Execution {execution_id} is not awaiting input")
-
-                execution.status = ExecutionStatus.RUNNING
-                await db.commit()
 
             try:
                 # Load function definition
                 function = await self.load_function(db, function_namespace, function_name, user_id)
 
-                # Validate input (only for new executions)
-                if not resume_data and function.input_schema:
+                # Validate input
+                if function.input_schema:
                     # Validate and coerce types (handles string -> number, etc.)
                     input_data = await self.validate_schema(input_data, function.input_schema)
 
@@ -415,7 +223,7 @@ class FunctionExecutor:
                 else:
                     # Execute in pooled Docker container (untrusted code)
                     print(
-                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in pool container"
+                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in sandbox container"
                     )
                     container_start = time.time()
                     exec_result = await self.container_pool.execute_function(
@@ -424,7 +232,6 @@ class FunctionExecutor:
                         access_token=access_token,
                         function_namespace=function_namespace,
                         function_name=function_name,
-                        enabled_namespaces=function.enabled_namespaces or [],
                         input_data=input_data,
                         execution_id=execution_id,
                         trigger_type=trigger_type,
@@ -433,7 +240,19 @@ class FunctionExecutor:
                         timeout=function_timeout,
                     )
                     container_elapsed = time.time() - container_start
-                    print(f"⏱️  [TIMING] Pool container execution completed in {container_elapsed:.3f}s")
+                    print(f"⏱️  [TIMING] Sandbox container execution completed in {container_elapsed:.3f}s")
+
+                # Handle awaiting_input from shared containers
+                if exec_result.get("status") == "awaiting_input":
+                    execution.status = ExecutionStatus.AWAITING_INPUT
+                    execution.input_prompt = exec_result.get("prompt")
+                    execution.container_id = exec_result.get("container_name")
+                    await db.commit()
+                    return {
+                        "status": "awaiting_input",
+                        "execution_id": execution_id,
+                        "prompt": execution.input_prompt,
+                    }
 
                 if exec_result.get("status") == "failed":
                     raise FunctionExecutionError(exec_result.get("error", "Unknown error"))
@@ -476,77 +295,155 @@ class FunctionExecutor:
 
                 raise FunctionExecutionError(f"Function execution failed: {e}")
 
-    async def _execute_generator(
+    async def resume_execution(
         self,
-        execution: Execution,
-        func: Callable,
-        input_data: dict[str, Any],
-        resume_data: Optional[dict[str, Any]],
-        db: AsyncSession,
+        execution_id: str,
+        resume_value: Any,
     ) -> dict[str, Any]:
-        """Execute a generator function with pause/resume support."""
+        """
+        Resume a paused execution by writing the resume value directly
+        to the container where the function is waiting on input().
 
-        # Resume existing generator or create new one
-        if execution.generator_state and resume_data is not None:
-            # Unpickle the generator
-            gen = dill.loads(execution.generator_state)
-            # Send user input to resume
-            try:
-                yielded_value = gen.send(resume_data)
-            except StopIteration as e:
-                # Generator completed (returned)
-                result = e.value if e.value is not None else {}
+        Bypasses the queue — the function thread is already running.
+        """
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Execution).where(Execution.execution_id == execution_id)
+            )
+            execution = result.scalar_one_or_none()
 
-                execution.status = ExecutionStatus.COMPLETED
-                execution.output_data = result
-                execution.completed_at = datetime.utcnow()
-                execution.generator_state = None
-                execution.input_prompt = None
-                execution.input_schema = None
+            if not execution:
+                raise FunctionExecutionError(f"Execution {execution_id} not found")
 
-                await db.commit()
-
-                await clickhouse_logger.log_execution_end(
-                    execution.execution_id, "completed", result, None, None
+            if execution.status != ExecutionStatus.AWAITING_INPUT:
+                raise FunctionExecutionError(
+                    f"Execution {execution_id} is not awaiting input (status={execution.status})"
                 )
 
-                return result
-        else:
-            # Start new generator
-            gen = func(input_data)
-            try:
-                yielded_value = next(gen)
-            except StopIteration as e:
-                # Generator completed without yielding
-                result = e.value if e.value is not None else {}
-
-                execution.status = ExecutionStatus.COMPLETED
-                execution.output_data = result
-                execution.completed_at = datetime.utcnow()
-
-                await db.commit()
-
-                await clickhouse_logger.log_execution_end(
-                    execution.execution_id, "completed", result, None, None
+            container_id = execution.container_id
+            if not container_id:
+                raise FunctionExecutionError(
+                    f"Execution {execution_id} has no container_id — cannot resume"
                 )
 
-                return result
+            # Write resume file into the container
+            import docker
 
-        # Generator yielded (paused for user input)
-        execution.status = ExecutionStatus.AWAITING_INPUT
-        execution.input_prompt = yielded_value.get("prompt")
-        execution.input_schema = yielded_value.get("schema")
-        execution.generator_state = dill.dumps(gen)
+            client = docker.from_env()
+            try:
+                container = client.containers.get(container_id)
+            except docker.errors.NotFound:
+                # Container gone — mark execution as failed
+                execution.status = ExecutionStatus.FAILED
+                execution.error = "Container no longer available (restarted?)"
+                execution.completed_at = datetime.utcnow()
+                await db.commit()
+                raise FunctionExecutionError(
+                    f"Container {container_id} not found — execution cannot be resumed"
+                )
 
-        await db.commit()
+            # Write resume data into the container via stdin pipe
+            resume_payload = json.dumps({"value": resume_value}).encode("utf-8")
+            resume_file = f"/tmp/exec_resume_{execution_id}.json"
 
-        # Return awaiting input status
-        return {
-            "status": "awaiting_input",
-            "execution_id": execution.execution_id,
-            "prompt": execution.input_prompt,
-            "schema": execution.input_schema,
-        }
+            api = container.client.api
+            exec_id = api.exec_create(
+                container.id,
+                [
+                    "python3", "-c",
+                    f'import sys; open("{resume_file}","wb").write(sys.stdin.buffer.read())',
+                ],
+                stdin=True,
+                stdout=True,
+                stderr=True,
+            )["Id"]
+            sock = api.exec_start(exec_id, socket=True)
+            sock._sock.sendall(resume_payload)
+            import socket as _sock_mod
+            sock._sock.shutdown(_sock_mod.SHUT_WR)
+            sock.read()
+            sock.close()
+
+            execution.status = ExecutionStatus.RUNNING
+            await db.commit()
+
+            # Poll for result from the container
+            result_file = f"/tmp/exec_result_{execution_id}.json"
+            function_timeout = settings.function_timeout
+
+            exec_result = await asyncio.to_thread(
+                container.exec_run,
+                cmd=[
+                    "python3",
+                    "-c",
+                    f"""
+import sys, json, time, os
+max_wait = {function_timeout}
+start = time.time()
+while time.time() - start < max_wait:
+    try:
+        with open("{result_file}", "r") as f:
+            result = json.load(f)
+            print(json.dumps(result))
+            sys.exit(0)
+    except FileNotFoundError:
+        time.sleep(0.1)
+        continue
+print(json.dumps({{"error": "Resume timeout after {function_timeout}s"}}))
+sys.exit(1)
+""",
+                ],
+                demux=True,
+            )
+
+            stdout, stderr = exec_result.output
+            stdout_str = stdout.decode() if stdout else ""
+
+            if exec_result.exit_code != 0:
+                error_msg = stderr.decode() if stderr else "Unknown error"
+                execution.status = ExecutionStatus.FAILED
+                execution.error = error_msg
+                execution.completed_at = datetime.utcnow()
+                await db.commit()
+                raise FunctionExecutionError(f"Resume failed: {error_msg}")
+
+            result_data = json.loads(stdout_str)
+
+            # Handle another awaiting_input (multiple input() calls)
+            if result_data.get("status") == "awaiting_input":
+                execution.status = ExecutionStatus.AWAITING_INPUT
+                execution.input_prompt = result_data.get("prompt")
+                await db.commit()
+                return {
+                    "status": "awaiting_input",
+                    "execution_id": execution_id,
+                    "prompt": execution.input_prompt,
+                }
+
+            if result_data.get("status") == "failed":
+                execution.status = ExecutionStatus.FAILED
+                execution.error = result_data.get("error", "Unknown error")
+                execution.completed_at = datetime.utcnow()
+                await db.commit()
+                raise FunctionExecutionError(result_data.get("error", "Unknown error"))
+
+            # Completed
+            output = result_data.get("result")
+            duration_ms = result_data.get("duration_ms", 0)
+
+            execution.status = ExecutionStatus.COMPLETED
+            execution.output_data = output
+            execution.completed_at = datetime.utcnow()
+            execution.duration_ms = duration_ms
+            execution.container_id = None
+
+            await db.commit()
+
+            await clickhouse_logger.log_execution_end(
+                execution_id, "completed", output, None, duration_ms
+            )
+
+            return output
 
     async def enqueue_function(
         self,
@@ -601,9 +498,8 @@ class FunctionExecutor:
         }
 
     def clear_cache(self):
-        """Clear function and namespace caches."""
+        """Clear function cache."""
         self.functions_cache.clear()
-        self.namespace_cache.clear()
 
 
 # Global executor instance

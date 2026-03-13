@@ -79,6 +79,14 @@ async def cancel_job(
         raise HTTPException(status_code=404, detail=str(e))
 
 
+@router.post("/dlq/flush")
+async def flush_dlq(
+    user_id: str = Depends(require_permission("sinas.system.update:all")),
+) -> dict[str, Any]:
+    """Remove all entries from the dead letter queue."""
+    return await queue_service.flush_dlq()
+
+
 @router.post("/dlq/{job_id}/retry")
 async def retry_dlq_job(
     job_id: str,
