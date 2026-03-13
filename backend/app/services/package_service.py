@@ -375,8 +375,6 @@ class PackageService:
             "code": func.code,
             "inputSchema": func.input_schema,
             "outputSchema": func.output_schema,
-            "requirements": func.requirements or None,
-            "enabledNamespaces": func.enabled_namespaces or None,
             "icon": func.icon,
         })
 

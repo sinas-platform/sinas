@@ -33,7 +33,6 @@ class QueueService:
         user_id: str,
         chat_id: Optional[str] = None,
         delay: Optional[int] = None,
-        resume_data: Optional[dict[str, Any]] = None,
     ) -> str:
         """
         Enqueue a function execution job.
@@ -78,8 +77,6 @@ class QueueService:
             "user_id": user_id,
             "chat_id": chat_id,
         }
-        if resume_data is not None:
-            job_kwargs["resume_data"] = resume_data
 
         # Enqueue with optional delay
         enqueue_kwargs = {"_job_id": job_id, "_queue_name": "sinas:queue:functions"}
@@ -124,7 +121,6 @@ class QueueService:
         trigger_id: str,
         user_id: str,
         chat_id: Optional[str] = None,
-        resume_data: Optional[dict[str, Any]] = None,
         timeout: Optional[int] = None,
     ) -> Any:
         """
@@ -152,7 +148,6 @@ class QueueService:
                 trigger_id=trigger_id,
                 user_id=user_id,
                 chat_id=chat_id,
-                resume_data=resume_data,
             )
 
             # Wait for result with timeout

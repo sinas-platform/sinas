@@ -568,7 +568,6 @@ async def import_openapi(
             "output_schema": output_schema,
             "code": code,
             "status": status,
-            "requirements": ["requests"],
         }
         previews.append(preview)
 
@@ -582,7 +581,6 @@ async def import_openapi(
                 code=code,
                 input_schema=input_schema,
                 output_schema=output_schema,
-                requirements=["requests"],
             )
             db.add(function)
             await db.flush()

@@ -332,7 +332,6 @@ class ContainerPool:
         access_token: str,
         function_namespace: str,
         function_name: str,
-        enabled_namespaces: list[str],
         input_data: dict[str, Any],
         execution_id: str,
         trigger_type: str,
@@ -385,7 +384,6 @@ class ContainerPool:
                 "execution_id": execution_id,
                 "function_namespace": function_namespace,
                 "function_name": function_name,
-                "enabled_namespaces": enabled_namespaces,
                 "timeout": effective_timeout,
                 "input_data": input_data,
                 "context": {
@@ -507,6 +505,7 @@ sys.exit(1)
             "environment": {
                 "PYTHONUNBUFFERED": "1",
                 "SANDBOX_CONTAINER": "true",
+                "SINAS_CONTAINER_MODE": "sandbox",
             },
             "labels": {
                 "sinas.type": "sandbox-executor",

@@ -177,8 +177,6 @@ class ConfigExportService:
                 "code": func.code,
                 "inputSchema": func.input_schema,
                 "outputSchema": func.output_schema,
-                "requirements": func.requirements if func.requirements else None,
-                "enabledNamespaces": func.enabled_namespaces if func.enabled_namespaces else None,
                 "icon": func.icon,
             }
 

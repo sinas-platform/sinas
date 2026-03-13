@@ -8,7 +8,6 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.function import Function, FunctionVersion
-from app.models.dependency import Dependency
 from app.schemas import FunctionCreate, FunctionResponse, FunctionUpdate, FunctionVersionResponse
 from app.schemas.function import OpenAPIImportRequest, OpenAPIImportResponse
 from app.services.execution_engine import executor
@@ -24,37 +23,6 @@ async def _function_response(func: "Function", db: AsyncSession) -> FunctionResp
     resp = FunctionResponse.model_validate(func)
     resp.icon_url = await resolve_icon_url(func.icon, db)
     return resp
-
-
-async def validate_requirements(requirements: list[str], db: AsyncSession) -> None:
-    """
-    Validate that all function requirements are admin-approved packages.
-
-    Raises HTTPException if any requirement is not approved.
-    """
-    if not requirements:
-        return
-
-    # Get all approved packages
-    result = await db.execute(select(Dependency.package_name))
-    approved_packages = {row[0] for row in result.all()}
-
-    # Check each requirement
-    unapproved = []
-    for req in requirements:
-        # Extract package name from requirement (e.g., "pandas==2.0.0" -> "pandas")
-        package_name = (
-            req.split("==")[0].split(">=")[0].split("<=")[0].split(">")[0].split("<")[0].strip()
-        )
-
-        if package_name not in approved_packages:
-            unapproved.append(package_name)
-
-    if unapproved:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unapproved packages in requirements: {', '.join(unapproved)}. Contact admin to approve these packages first.",
-        )
 
 
 @router.post("/import/openapi", response_model=OpenAPIImportResponse)
@@ -140,9 +108,6 @@ async def create_function(
             )
         set_permission_used(request, shared_pool_permission)
 
-    # Validate requirements against approved packages
-    await validate_requirements(function_data.requirements, db)
-
     # Check if function name already exists in this namespace
     result = await db.execute(
         select(Function).where(
@@ -164,7 +129,6 @@ async def create_function(
         code=function_data.code,
         input_schema=function_data.input_schema,
         output_schema=function_data.output_schema,
-        requirements=function_data.requirements,
         icon=function_data.icon,
         shared_pool=function_data.shared_pool,
         requires_approval=function_data.requires_approval,
@@ -278,10 +242,6 @@ async def update_function(
             )
         set_permission_used(request, shared_pool_permission)
 
-    # Validate requirements if being updated
-    if function_data.requirements is not None:
-        await validate_requirements(function_data.requirements, db)
-
     # Check for namespace/name conflict if renaming
     new_namespace = function_data.namespace or function.namespace
     new_name = function_data.name or function.name
@@ -337,8 +297,6 @@ async def update_function(
         function.input_schema = function_data.input_schema
     if function_data.output_schema is not None:
         function.output_schema = function_data.output_schema
-    if function_data.requirements is not None:
-        function.requirements = function_data.requirements
     if function_data.icon is not None:
         function.icon = function_data.icon
     if function_data.shared_pool is not None:
@@ -349,9 +307,6 @@ async def update_function(
         function.timeout = function_data.timeout
     if function_data.is_active is not None:
         function.is_active = function_data.is_active
-    if function_data.enabled_namespaces is not None:
-        function.enabled_namespaces = function_data.enabled_namespaces
-
     await db.commit()
     await db.refresh(function)
 

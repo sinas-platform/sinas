@@ -421,16 +421,6 @@ export function Functions() {
                       <span className="text-xs text-gray-500">
                         Created {new Date(func.created_at).toLocaleDateString()}
                       </span>
-                      {func.requirements && func.requirements.length > 0 && (
-                        <span className="text-xs text-gray-500">
-                          {func.requirements.length} requirement{func.requirements.length > 1 ? 's' : ''}
-                        </span>
-                      )}
-                      {func.enabled_namespaces && func.enabled_namespaces.length > 0 && (
-                        <span className="text-xs text-gray-500">
-                          Calls {func.enabled_namespaces.length} namespace{func.enabled_namespaces.length > 1 ? 's' : ''}
-                        </span>
-                      )}
                     </div>
                   </div>
 

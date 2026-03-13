@@ -1606,35 +1606,12 @@ class MessageService:
                         agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
                     )
                 elif tool_name == "continue_execution":
-                    # Look up function namespace from execution record
-                    from app.models.execution import Execution as ExecModel
-                    from app.models.function import Function as FuncModel
+                    # Resume directly in the container (bypasses queue)
+                    from app.services.execution_engine import executor as fn_executor
 
-                    exec_res = await db.execute(
-                        select(ExecModel).where(ExecModel.execution_id == arguments["execution_id"])
-                    )
-                    exec_record = exec_res.scalar_one_or_none()
-                    fn_ns, fn_name = "", ""
-                    if exec_record:
-                        fn_res = await db.execute(
-                            select(FuncModel).where(
-                                FuncModel.name == exec_record.function_name,
-                                FuncModel.is_active == True,
-                            )
-                        )
-                        fn = fn_res.scalar_one_or_none()
-                        if fn:
-                            fn_ns, fn_name = fn.namespace, fn.name
-
-                    result = await queue_service.enqueue_and_wait(
-                        function_namespace=fn_ns,
-                        function_name=fn_name,
-                        input_data=arguments["input"],
+                    result = await fn_executor.resume_execution(
                         execution_id=arguments["execution_id"],
-                        trigger_type=exec_record.trigger_type if exec_record else "",
-                        trigger_id=str(exec_record.trigger_id) if exec_record else "",
-                        user_id=user_id,
-                        resume_data=arguments["input"],
+                        resume_value=arguments["input"],
                     )
                 elif tool_name.startswith("call_agent_"):
                     # Resolve enabled agent patterns to actual agent IDs

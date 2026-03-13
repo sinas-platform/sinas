@@ -53,7 +53,6 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
     trigger_id = kwargs["trigger_id"]
     user_id = kwargs["user_id"]
     chat_id = kwargs.get("chat_id")
-    resume_data = kwargs.get("resume_data")
 
     redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -104,7 +103,6 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             trigger_id=trigger_id,
             user_id=user_id,
             chat_id=chat_id,
-            resume_data=resume_data,
         )
 
         # Store result

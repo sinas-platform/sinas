@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../lib/api';
-import { ArrowLeft, Save, Trash2, Package, ChevronDown, ChevronRight, Filter, Upload, Info } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, ChevronDown, ChevronRight, Filter, Upload, Info } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 import { ApiUsage } from '../components/ApiUsage';
@@ -129,16 +129,12 @@ export function FunctionEditor() {
       },
       required: ["result"]
     } as any,
-    requirements: [] as string[],
-    enabled_namespaces: [] as string[],
     icon: '' as string,
     shared_pool: false,
     requires_approval: false,
     timeout: null as number | null,
   });
 
-  const [requirementInput, setRequirementInput] = useState('');
-  const [namespaceInput, setNamespaceInput] = useState('');
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
   const [iconCollectionName, setIconCollectionName] = useState('');
@@ -182,8 +178,6 @@ export function FunctionEditor() {
         code: func.code || '',
         input_schema: func.input_schema || {},
         output_schema: func.output_schema || {},
-        requirements: func.requirements || [],
-        enabled_namespaces: func.enabled_namespaces || [],
         icon: func.icon || '',
         shared_pool: func.shared_pool || false,
         requires_approval: func.requires_approval || false,
@@ -221,52 +215,22 @@ export function FunctionEditor() {
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Validate that function definition exists (with optional context parameter)
-    const functionDefRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
-    if (!functionDefRegex.test(formData.code)) {
-      alert(`Code must contain a function definition matching the name: def ${formData.name}(input, context):`);
+    // Validate that function definition exists (handler or legacy name-based)
+    const handlerRegex = /def\s+handler\s*\(/;
+    const legacyRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
+    if (!handlerRegex.test(formData.code) && !legacyRegex.test(formData.code)) {
+      alert(`Code must contain a function definition: def handler(input_data, context) or def ${formData.name}(input_data, context)`);
       return;
     }
 
     saveMutation.mutate(formData);
   };
 
-  const addRequirement = () => {
-    if (requirementInput.trim() && !formData.requirements.includes(requirementInput.trim())) {
-      setFormData({
-        ...formData,
-        requirements: [...formData.requirements, requirementInput.trim()],
-      });
-      setRequirementInput('');
-    }
-  };
-
-  const removeRequirement = (req: string) => {
-    setFormData({
-      ...formData,
-      requirements: formData.requirements.filter((r) => r !== req),
-    });
-  };
-
-  const addNamespace = () => {
-    if (namespaceInput.trim() && !formData.enabled_namespaces.includes(namespaceInput.trim())) {
-      setFormData({
-        ...formData,
-        enabled_namespaces: [...formData.enabled_namespaces, namespaceInput.trim()],
-      });
-      setNamespaceInput('');
-    }
-  };
-
-  const removeNamespace = (namespace: string) => {
-    setFormData({
-      ...formData,
-      enabled_namespaces: formData.enabled_namespaces.filter((n) => n !== namespace),
-    });
-  };
-
-  // Check if the entry point function exists in the code
+  // Check if the entry point function exists in the code (handler or legacy name-based)
   const hasEntryPoint = () => {
+    if (!formData.name && !formData.code) return false;
+    const handlerRegex = /def\s+handler\s*\(/;
+    if (handlerRegex.test(formData.code)) return true;
     if (!formData.name) return false;
     const escapedName = formData.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const functionRegex = new RegExp(`def\\s+${escapedName}\\s*\\(`);
@@ -599,7 +563,7 @@ print(details["status"], details["output_data"])`,
           </div>
           <div className="flex items-center justify-between mt-2">
             <p className="text-xs text-gray-500">
-              Entry point must be <code className="font-mono bg-[#161616] px-1 rounded">def {formData.name || 'function_name'}(input, context):</code> matching the Function Name above. The <code className="font-mono bg-[#161616] px-1 rounded">context</code> parameter provides user info and access token. Return value can be any type matching output_schema.
+              Entry point must be <code className="font-mono bg-[#161616] px-1 rounded">def handler(input_data, context)</code>. Legacy: <code className="font-mono bg-[#161616] px-1 rounded">def {formData.name || 'function_name'}(input_data, context)</code> still works but is deprecated. Return value should match output_schema.
             </p>
             {formData.name && (
               <div className="flex items-center ml-4">
@@ -623,7 +587,7 @@ print(details["status"], details["output_data"])`,
           </div>
         </div>
 
-        {/* Collection Trigger Reference */}
+        {/* Function Reference */}
         <div className="card border-blue-800/30 bg-blue-900/20/50">
           <button
             type="button"
@@ -632,7 +596,7 @@ print(details["status"], details["output_data"])`,
           >
             <Info className="w-5 h-5 text-blue-500 mr-2 flex-shrink-0" />
             <div className="flex-1">
-              <span className="text-sm font-medium text-gray-100">Collection trigger reference</span>
+              <span className="text-sm font-medium text-gray-100">Function reference</span>
               {isCollectionTrigger && (
                 <span className="text-xs text-gray-500 ml-2">
                   {triggerRoles.contentFilter.length > 0 && (
@@ -654,61 +618,102 @@ print(details["status"], details["output_data"])`,
           </button>
           {showTriggerDocs && (
             <div className="mt-4 space-y-4">
-              <p className="text-xs text-gray-400">
-                Functions can be used as collection triggers. Set this in the collection's configuration under Content Filter or Post-Upload function.
-              </p>
+              {/* input_data & context */}
               <div>
-                <div className="flex items-center mb-2">
-                  <Filter className="w-4 h-4 text-orange-500 mr-2" />
-                  <h4 className="text-sm font-semibold text-gray-100">Content Filter Function</h4>
-                </div>
+                <h4 className="text-sm font-semibold text-gray-100 mb-2">input_data &amp; context</h4>
                 <p className="text-xs text-gray-400 mb-2">
-                  Runs before a file is stored. Return <code className="font-mono bg-[#161616] px-1 rounded">approved: false</code> to reject the upload.
+                  Every function receives <code className="font-mono bg-[#161616] px-1 rounded">input_data</code> (dict matching the input schema) and <code className="font-mono bg-[#161616] px-1 rounded">context</code> (dict with execution metadata).
                 </p>
                 <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
-                  <pre className="text-xs text-gray-100 font-mono">{`# input dict received by this function:
-{
-    "content_base64": str,    # Base64-encoded file content
-    "namespace": str,         # Collection namespace
-    "collection": str,        # Collection name
-    "filename": str,          # Uploaded file name
-    "content_type": str,      # MIME type (e.g. "text/plain")
-    "size_bytes": int,        # File size in bytes
-    "user_metadata": dict,    # Metadata provided by uploader
-    "user_id": str,           # Uploader's user ID
-}
+                  <pre className="text-xs text-gray-100 font-mono">{`def handler(input_data, context):
+    # input_data: dict matching your Input Schema (below)
 
-# Expected return format:
-{
-    "approved": True,              # Required: allow or reject
-    "reason": "...",               # Optional: rejection reason
-    "modified_content": "base64",  # Optional: replace file content
-    "metadata": {"key": "value"},  # Optional: merge into metadata
-}`}</pre>
+    # context dict — always present:
+    # {
+    #     "user_id":        str,   # ID of the user who triggered execution
+    #     "user_email":     str,   # Email of the triggering user
+    #     "access_token":   str,   # Short-lived JWT for calling the SINAS API
+    #     "execution_id":   str,   # Unique execution ID
+    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "MANUAL"
+    #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
+    # }
+
+    return {"result": "..."}  # Must match Output Schema`}</pre>
                 </div>
               </div>
-              <div>
-                <div className="flex items-center mb-2">
-                  <Upload className="w-4 h-4 text-green-500 mr-2" />
-                  <h4 className="text-sm font-semibold text-gray-100">Post-Upload Function</h4>
-                </div>
-                <p className="text-xs text-gray-400 mb-2">
-                  Runs asynchronously after the file is stored. Does not block the upload response.
-                </p>
-                <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
-                  <pre className="text-xs text-gray-100 font-mono">{`# input dict received by this function:
-{
-    "file_id": str,       # UUID of the stored file
-    "namespace": str,     # Collection namespace
-    "collection": str,    # Collection name
-    "filename": str,      # File name
-    "version": int,       # Version number (1 for new files)
-    "file_path": str,     # Storage path
-    "user_id": str,       # Uploader's user ID
-    "metadata": dict,     # Final file metadata (after filter)
-}
 
+              {/* Trigger-specific input_data */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-100 mb-2">Trigger-specific input_data</h4>
+                <p className="text-xs text-gray-400 mb-2">
+                  Depending on how the function is invoked, <code className="font-mono bg-[#161616] px-1 rounded">input_data</code> is populated differently:
+                </p>
+                <div className="space-y-3">
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <p className="text-xs text-blue-400 font-medium mb-1">AGENT / API / MANUAL / SCHEDULE</p>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = values matching your Input Schema, provided by
+# the caller (agent tool call, API request, schedule config, or UI).`}</pre>
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <p className="text-xs text-blue-400 font-medium mb-1">WEBHOOK</p>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = webhook default_values merged with request body/query params.
+# The webhook config determines which HTTP method and path trigger this.`}</pre>
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <p className="text-xs text-blue-400 font-medium mb-1">CDC (Change Data Capture)</p>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = {
+#     "table":       str,    # "schema.table" that changed
+#     "operation":   str,    # "CHANGE"
+#     "rows":        list,   # List of changed row dicts
+#     "poll_column": str,    # Column used for change detection
+#     "count":       int,    # Number of rows in this batch
+#     "timestamp":   str,    # ISO 8601 timestamp
+# }`}</pre>
+                  </div>
+                </div>
+              </div>
+
+              {/* Collection triggers */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-100 mb-2">Collection triggers</h4>
+                <p className="text-xs text-gray-400 mb-2">
+                  Functions can be used as collection triggers. Set this in the collection's configuration under Content Filter or Post-Upload function.
+                </p>
+                <div className="space-y-3">
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <div className="flex items-center mb-1">
+                      <Filter className="w-3 h-3 text-orange-500 mr-1" />
+                      <p className="text-xs text-orange-400 font-medium">Content Filter — runs before file is stored</p>
+                    </div>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = {
+#     "content_base64": str,    # Base64-encoded file content
+#     "namespace": str,         # Collection namespace
+#     "collection": str,        # Collection name
+#     "filename": str,          # Uploaded file name
+#     "content_type": str,      # MIME type (e.g. "text/plain")
+#     "size_bytes": int,        # File size in bytes
+#     "user_metadata": dict,    # Metadata provided by uploader
+#     "user_id": str,           # Uploader's user ID
+# }
+# Return: {"approved": True/False, "reason": "...", "modified_content": "...", "metadata": {}}`}</pre>
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <div className="flex items-center mb-1">
+                      <Upload className="w-3 h-3 text-green-500 mr-1" />
+                      <p className="text-xs text-green-400 font-medium">Post-Upload — runs asynchronously after file is stored</p>
+                    </div>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = {
+#     "file_id": str,       # UUID of the stored file
+#     "namespace": str,     # Collection namespace
+#     "collection": str,    # Collection name
+#     "filename": str,      # File name
+#     "version": int,       # Version number (1 for new files)
+#     "file_path": str,     # Storage path
+#     "user_id": str,       # Uploader's user ID
+#     "metadata": dict,     # Final file metadata (after filter)
+# }
 # Return value is ignored (fire-and-forget).`}</pre>
+                  </div>
                 </div>
               </div>
             </div>
@@ -767,93 +772,6 @@ print(details["status"], details["output_data"])`,
           </div>
         </div>
 
-        {/* Requirements */}
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-100 mb-4">
-            <Package className="w-5 h-5 inline mr-2" />
-            Python Requirements
-          </h2>
-          <div className="flex space-x-2 mb-2">
-            <input
-              type="text"
-              value={requirementInput}
-              onChange={(e) => setRequirementInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addRequirement())}
-              placeholder="requests, numpy==1.24.0, etc. (press Enter)"
-              className="input flex-1"
-            />
-            <button
-              type="button"
-              onClick={addRequirement}
-              className="btn btn-secondary"
-            >
-              Add
-            </button>
-          </div>
-          {formData.requirements.length > 0 && (
-            <div className="space-y-2">
-              {formData.requirements.map((req) => (
-                <div
-                  key={req}
-                  className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded"
-                >
-                  <span className="font-mono text-sm">{req}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeRequirement(req)}
-                    className="text-red-600 hover:text-red-400 text-sm"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Enabled Namespaces */}
-        <div className="card">
-          <h2 className="text-lg font-semibold text-gray-100 mb-2">Enabled Namespaces</h2>
-          <p className="text-sm text-gray-400 mb-4">
-            Namespaces this function can call (empty = own namespace only)
-          </p>
-          <div className="flex space-x-2 mb-2">
-            <input
-              type="text"
-              value={namespaceInput}
-              onChange={(e) => setNamespaceInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addNamespace())}
-              placeholder="payments, email, etc. (press Enter)"
-              className="input flex-1"
-            />
-            <button
-              type="button"
-              onClick={addNamespace}
-              className="btn btn-secondary"
-            >
-              Add
-            </button>
-          </div>
-          {formData.enabled_namespaces.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {formData.enabled_namespaces.map((namespace) => (
-                <div
-                  key={namespace}
-                  className="inline-flex items-center gap-2 px-3 py-1 bg-primary-100 text-primary-800 rounded-full text-sm"
-                >
-                  <span className="font-mono">{namespace}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeNamespace(namespace)}
-                    className="text-primary-600 hover:text-primary-900"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
       </form>
 
     </div>
