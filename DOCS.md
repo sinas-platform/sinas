@@ -509,7 +509,7 @@ Functions are Python code that runs in isolated Docker containers. They can be u
 | `output_schema` | JSON Schema for output validation |
 | `requirements` | Python packages needed (must be admin-approved) |
 | `enabled_namespaces` | Namespaces of other functions this function can call |
-| `shared_pool` | Run in shared worker instead of isolated container (admin-only) |
+| `shared_pool` | Run in shared container instead of sandbox container (admin-only) |
 | `requires_approval` | Require user approval when called by an agent |
 | `timeout` | Per-function timeout in seconds (overrides global `FUNCTION_TIMEOUT`, default: null) |
 
@@ -1251,17 +1251,17 @@ See [Role-Based Access Control (RBAC)](#role-based-access-control-rbac) for the 
 
 SINAS has a dual-execution model for functions, plus dedicated queue workers for async job processing.
 
-#### Sandbox Container Pool
+#### Sandbox Containers
 
-The sandbox pool is a set of **pre-warmed, generic Docker containers** for executing untrusted user code. This is the default execution mode for all functions (`shared_pool=false`).
+The sandbox container pool is a set of **pre-warmed, generic Docker containers** for executing untrusted user code. This is the default execution mode for all functions (`shared_pool=false`).
 
 **How it works:**
 
-- On startup, the pool creates `pool_min_size` containers (default: 4) ready to accept work.
+- On startup, the pool creates `sandbox_min_size` containers (default: 4) ready to accept work.
 - When a function executes, a container is acquired from the idle pool, used, and returned.
-- Containers are recycled (destroyed and replaced) after `pool_max_executions` uses (default: 100) to prevent state leakage between executions.
+- Containers are recycled (destroyed and replaced) after `sandbox_max_executions` uses (default: 100) to prevent state leakage between executions.
 - If a container errors during execution, it's marked as tainted and destroyed immediately.
-- A background replenishment loop monitors the idle count and creates new containers whenever it drops below `pool_min_idle` (default: 2), up to `pool_max_size` (default: 20).
+- A background replenishment loop monitors the idle count and creates new containers whenever it drops below `sandbox_min_idle` (default: 2), up to `sandbox_max_size` (default: 20).
 - Health checks run every 60 seconds to detect and replace dead containers.
 
 **Isolation guarantees:**
@@ -1309,13 +1309,13 @@ POST /api/v1/containers/reload
 
 Containers that are currently executing are unaffected. New containers created by the replenishment loop automatically include all approved packages.
 
-#### Shared Worker Pool
+#### Shared Containers
 
-Functions marked `shared_pool=true` run in **persistent worker containers** instead of the sandbox pool. This is an admin-only option for trusted code that benefits from longer-lived containers.
+Functions marked `shared_pool=true` run in **persistent shared containers** instead of sandbox containers. This is an admin-only option for trusted code that benefits from longer-lived containers.
 
 **Differences from sandbox:**
 
-| | Sandbox Pool | Shared Workers |
+| | Sandbox Containers | Shared Containers |
 |---|---|---|
 | **Trust level** | Untrusted user code | Trusted admin code only |
 | **Isolation** | Per-request (recycled after N uses) | Shared (persistent containers) |
@@ -1324,7 +1324,7 @@ Functions marked `shared_pool=true` run in **persistent worker containers** inst
 | **Load balancing** | First available idle container | Round-robin across workers |
 | **Best for** | User-submitted functions | Admin functions, long-startup libraries |
 
-**When to use `shared_pool=true`:**
+**When to use `shared_pool=true` (shared containers):**
 
 - Functions created and maintained by admins (not user-submitted code)
 - Functions that import heavy libraries (pandas, scikit-learn) where container startup cost matters
@@ -1359,7 +1359,7 @@ All function and agent executions are processed asynchronously through Redis-bas
 | **Function workers** | `queue-worker` | `sinas:queue:functions` | 10 jobs/worker | Up to 3 |
 | **Agent workers** | `queue-agent` | `sinas:queue:agents` | 5 jobs/worker | None (not idempotent) |
 
-**Function workers** dequeue function execution jobs, route them to either the sandbox pool or shared workers, track results in Redis, and handle retries. Failed jobs that exhaust retries are moved to a **dead letter queue** (DLQ) for inspection and manual retry.
+**Function workers** dequeue function execution jobs, route them to either sandbox or shared containers, track results in Redis, and handle retries. Failed jobs that exhaust retries are moved to a **dead letter queue** (DLQ) for inspection and manual retry.
 
 **Agent workers** handle chat message processing — they call the LLM, execute tool calls, and stream responses back via Redis Streams. Agent jobs don't retry because LLM calls with tool execution have side effects.
 

@@ -102,7 +102,7 @@ class ContainerPool:
         """
         Initialize pool on startup (leader-only).
 
-        Discovers existing pool containers, scales to pool_min_size,
+        Discovers existing sandbox containers, scales to sandbox_min_size,
         and starts background replenish + health check tasks.
         """
         if self._initialized:
@@ -112,8 +112,8 @@ class ContainerPool:
 
         # Scale up to min size — create containers in parallel
         current = len(self.idle) + len(self.in_use)
-        if current < settings.pool_min_size:
-            needed = settings.pool_min_size - current
+        if current < settings.sandbox_min_size:
+            needed = settings.sandbox_min_size - current
             print(f"📦 Scaling pool to min size: creating {needed} containers")
             results = await asyncio.gather(
                 *[self._create_container(db) for _ in range(needed)],
@@ -123,7 +123,7 @@ class ContainerPool:
                 if isinstance(r, PooledContainer):
                     self.idle.append(r)
                 elif isinstance(r, Exception):
-                    print(f"❌ Failed to create pool container: {r}")
+                    print(f"❌ Failed to create sandbox container: {r}")
 
         # Start background tasks
         self._replenish_task = asyncio.create_task(self._replenish_loop(db))
@@ -137,7 +137,7 @@ class ContainerPool:
 
     async def _discover_existing_containers(self, restart: bool = False):
         """
-        Find running/stopped sinas-pool-* Docker containers.
+        Find running/stopped sinas-sandbox-* Docker containers.
 
         Args:
             restart: When True (scheduler only), restart all containers to
@@ -151,15 +151,15 @@ class ContainerPool:
             containers = await asyncio.to_thread(
                 self.client.containers.list,
                 all=True,
-                filters={"name": "sinas-pool-"},
+                filters={"name": "sinas-sandbox-"},
             )
 
-            # Filter to valid pool containers and track max id
+            # Filter to valid sandbox containers and track max id
             max_id = 0
             valid: list[tuple[int, Any]] = []  # (num, container)
             for container in containers:
                 name = container.name
-                match = re.match(r"^sinas-pool-(\d+)$", name)
+                match = re.match(r"^sinas-sandbox-(\d+)$", name)
                 if not match:
                     continue
                 num = int(match.group(1))
@@ -170,7 +170,7 @@ class ContainerPool:
                 name = container.name
                 if restart:
                     try:
-                        print(f"🔄 Restarting pool container: {name}")
+                        print(f"🔄 Restarting sandbox container: {name}")
                         await asyncio.to_thread(container.restart, timeout=10)
                         await asyncio.to_thread(container.reload)
                     except docker.errors.APIError as e:
@@ -202,7 +202,7 @@ class ContainerPool:
                 else:
                     # Queue-worker path: only start stopped containers
                     if container.status != "running":
-                        print(f"🔄 Starting stopped pool container: {name}")
+                        print(f"🔄 Starting stopped sandbox container: {name}")
                         try:
                             await asyncio.to_thread(container.start)
                             await asyncio.to_thread(container.reload)
@@ -214,7 +214,7 @@ class ContainerPool:
                                 pass
                             return None
 
-                print(f"🔍 Discovered pool container: {name} (status: {container.status})")
+                print(f"🔍 Discovered sandbox container: {name} (status: {container.status})")
                 return PooledContainer(
                     name=name,
                     container_id=container.id,
@@ -233,7 +233,7 @@ class ContainerPool:
             self._next_id = max_id + 1
 
         except Exception as e:
-            print(f"❌ Failed to discover existing pool containers: {e}")
+            print(f"❌ Failed to discover existing sandbox containers: {e}")
 
     # ------------------------------------------------------------------
     # Acquire / Release
@@ -247,7 +247,7 @@ class ContainerPool:
         replenishment when the pool is low.
         """
         if timeout is None:
-            timeout = settings.pool_acquire_timeout
+            timeout = settings.sandbox_acquire_timeout
 
         async with self._condition:
             deadline = time.monotonic() + timeout
@@ -258,14 +258,14 @@ class ContainerPool:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(
-                        f"No pool container available within {timeout}s "
+                        f"No sandbox container available within {timeout}s "
                         f"(idle=0, in_use={len(self.in_use)})"
                     )
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
                 except asyncio.TimeoutError:
                     raise TimeoutError(
-                        f"No pool container available within {timeout}s "
+                        f"No sandbox container available within {timeout}s "
                         f"(idle=0, in_use={len(self.in_use)})"
                     )
 
@@ -273,7 +273,7 @@ class ContainerPool:
             self.in_use[pc.name] = pc
 
             # Trigger replenish if idle is getting low
-            if len(self.idle) < settings.pool_min_idle:
+            if len(self.idle) < settings.sandbox_min_idle:
                 self._replenish_event.set()
 
             return pc
@@ -293,11 +293,11 @@ class ContainerPool:
                 return
 
             pc.executions += 1
-            should_destroy = tainted or pc.executions >= settings.pool_max_executions
+            should_destroy = tainted or pc.executions >= settings.sandbox_max_executions
 
             if should_destroy:
                 reason = "tainted" if tainted else "max executions reached"
-                logger.info(f"Destroying pool container {name}: {reason}")
+                logger.info(f"Destroying sandbox container {name}: {reason}")
                 await self._destroy_container(pc)
                 self._replenish_event.set()
             else:
@@ -369,7 +369,7 @@ class ContainerPool:
         pc = await self.acquire()
         acquire_elapsed = time.time() - acquire_start
         logger.info(
-            f"Acquired pool container {pc.name} in {acquire_elapsed:.3f}s "
+            f"Acquired sandbox container {pc.name} in {acquire_elapsed:.3f}s "
             f"for {function_namespace}/{function_name}"
         )
 
@@ -457,7 +457,7 @@ sys.exit(1)
                 demux=True,
             )
             exec_elapsed = time.time() - exec_start
-            logger.info(f"Pool container {pc.name} exec completed in {exec_elapsed:.3f}s")
+            logger.info(f"Sandbox container {pc.name} exec completed in {exec_elapsed:.3f}s")
 
             stdout, stderr = exec_result.output
 
@@ -475,7 +475,7 @@ sys.exit(1)
 
         except Exception as e:
             tainted = True
-            logger.error(f"Error executing function in pool container {pc.name}: {e}")
+            logger.error(f"Error executing function in sandbox container {pc.name}: {e}")
             raise
         finally:
             await self.release(pc.name, tainted=tainted)
@@ -485,11 +485,11 @@ sys.exit(1)
     # ------------------------------------------------------------------
 
     async def _create_container(self, db: AsyncSession) -> PooledContainer:
-        """Create a new pool container with all approved packages installed."""
-        name = f"sinas-pool-{self._next_id}"
+        """Create a new sandbox container with all approved packages installed."""
+        name = f"sinas-sandbox-{self._next_id}"
         self._next_id += 1
 
-        logger.info(f"Creating pool container: {name}")
+        logger.info(f"Creating sandbox container: {name}")
 
         container_config = {
             "image": settings.function_container_image,
@@ -506,10 +506,10 @@ sys.exit(1)
             "tmpfs": {"/tmp": "size=100m,mode=1777"},
             "environment": {
                 "PYTHONUNBUFFERED": "1",
-                "POOL_CONTAINER": "true",
+                "SANDBOX_CONTAINER": "true",
             },
             "labels": {
-                "sinas.type": "pool-executor",
+                "sinas.type": "sandbox-executor",
                 "sinas.pool": "true",
             },
             "restart_policy": {"Name": "unless-stopped"},
@@ -543,11 +543,11 @@ sys.exit(1)
             name=name,
             container_id=container.id,
         )
-        logger.info(f"Created pool container: {name} ({container.id[:12]})")
+        logger.info(f"Created sandbox container: {name} ({container.id[:12]})")
         return pc
 
     async def _install_packages(self, container, db: AsyncSession):
-        """Install all approved packages in a pool container."""
+        """Install all approved packages in a sandbox container."""
         from app.models.dependency import Dependency
 
         try:
@@ -555,7 +555,7 @@ sys.exit(1)
             approved_packages = result.scalars().all()
 
             if not approved_packages:
-                logger.info("No approved packages to install in pool container")
+                logger.info("No approved packages to install in sandbox container")
                 return
 
             packages_to_install = []
@@ -566,7 +566,7 @@ sys.exit(1)
                     packages_to_install.append(pkg.package_name)
 
             logger.info(
-                f"Installing {len(packages_to_install)} packages in pool container: "
+                f"Installing {len(packages_to_install)} packages in sandbox container: "
                 f"{', '.join(packages_to_install)}"
             )
 
@@ -580,25 +580,25 @@ sys.exit(1)
 
             stdout, stderr = exec_result.output
             if exec_result.exit_code == 0:
-                logger.info("Successfully installed packages in pool container")
+                logger.info("Successfully installed packages in sandbox container")
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
                 logger.warning(f"Package installation had issues: {error_msg}")
 
         except Exception as e:
-            logger.error(f"Error installing packages in pool container: {e}")
+            logger.error(f"Error installing packages in sandbox container: {e}")
 
     async def _destroy_container(self, pc: PooledContainer):
-        """Stop and remove a pool container."""
+        """Stop and remove a sandbox container."""
         try:
             container = await asyncio.to_thread(self.client.containers.get, pc.name)
             await asyncio.to_thread(container.stop, timeout=10)
             await asyncio.to_thread(container.remove)
-            logger.info(f"Destroyed pool container: {pc.name}")
+            logger.info(f"Destroyed sandbox container: {pc.name}")
         except NotFound:
-            logger.info(f"Pool container already gone: {pc.name}")
+            logger.info(f"Sandbox container already gone: {pc.name}")
         except Exception as e:
-            logger.error(f"Error destroying pool container {pc.name}: {e}")
+            logger.error(f"Error destroying sandbox container {pc.name}: {e}")
 
     # ------------------------------------------------------------------
     # Background tasks
@@ -621,8 +621,8 @@ sys.exit(1)
 
                 # Create containers if idle is low and we haven't hit max
                 while (
-                    len(self.idle) < settings.pool_min_idle
-                    and total < settings.pool_max_size
+                    len(self.idle) < settings.sandbox_min_idle
+                    and total < settings.sandbox_max_size
                 ):
                     try:
                         async with AsyncSessionLocal() as db:
@@ -688,8 +688,8 @@ sys.exit(1)
         """Scale the pool to a target number of total containers."""
         current = len(self.idle) + len(self.in_use)
 
-        if target > settings.pool_max_size:
-            target = settings.pool_max_size
+        if target > settings.sandbox_max_size:
+            target = settings.sandbox_max_size
 
         if target > current:
             added = 0
@@ -784,9 +784,9 @@ sys.exit(1)
             "idle": len(self.idle),
             "in_use": len(self.in_use),
             "total": len(self.idle) + len(self.in_use),
-            "max_size": settings.pool_max_size,
-            "min_idle": settings.pool_min_idle,
-            "max_executions": settings.pool_max_executions,
+            "max_size": settings.sandbox_max_size,
+            "min_idle": settings.sandbox_min_idle,
+            "max_executions": settings.sandbox_max_executions,
             "idle_containers": idle_list,
             "in_use_containers": in_use_list,
         }

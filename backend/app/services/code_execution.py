@@ -106,7 +106,7 @@ async def execute(
 
     # Acquire a container from the pool
     pc = await container_pool.acquire()
-    logger.info(f"Acquired pool container {pc.name} for code execution (chat={chat_id})")
+    logger.info(f"Acquired sandbox container {pc.name} for code execution (chat={chat_id})")
 
     tainted = False
     try:

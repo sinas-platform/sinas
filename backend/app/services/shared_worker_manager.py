@@ -124,15 +124,15 @@ class SharedWorkerManager:
                 to avoid racing with the scheduler or each other.
         """
         try:
-            # List all containers (including stopped) with sinas-worker-* naming pattern
-            containers = self.client.containers.list(all=True, filters={"name": "sinas-worker-"})
+            # List all containers (including stopped) with sinas-shared-* naming pattern
+            containers = self.client.containers.list(all=True, filters={"name": "sinas-shared-"})
 
             # Filter to valid worker containers
             valid: list[tuple[str, str, Any]] = []  # (worker_id, name, container)
             for container in containers:
                 container_name = container.name
-                if container_name.startswith("sinas-worker-"):
-                    worker_num = container_name.replace("sinas-worker-", "")
+                if container_name.startswith("sinas-shared-"):
+                    worker_num = container_name.replace("sinas-shared-", "")
                     worker_id = f"worker-{worker_num}"
                     valid.append((worker_id, container_name, container))
 
@@ -233,11 +233,11 @@ class SharedWorkerManager:
 
         try:
             containers = self.client.containers.list(
-                all=True, filters={"name": "sinas-worker-"}
+                all=True, filters={"name": "sinas-shared-"}
             )
             removed = 0
             for container in containers:
-                if not container.name.startswith("sinas-worker-"):
+                if not container.name.startswith("sinas-shared-"):
                     continue
                 try:
                     container_image_id = container.image.id
@@ -279,11 +279,19 @@ class SharedWorkerManager:
             print(f"⚠️  Failed to clean stuck executions: {e}")
 
     def get_worker_count(self) -> int:
-        """Get current number of workers."""
-        return len(self.workers)
+        """Get current number of workers by querying Docker directly."""
+        try:
+            containers = self.client.containers.list(
+                all=True, filters={"name": "sinas-shared-"}
+            )
+            return sum(
+                1 for c in containers if c.name.startswith("sinas-shared-")
+            )
+        except Exception:
+            return len(self.workers)
 
     async def list_workers(self) -> list[dict[str, Any]]:
-        """List all workers with status and execution counts from Redis."""
+        """List all workers by querying Docker directly, with execution counts from Redis."""
         # Read execution counts from Redis (shared across processes)
         exec_counts: dict[str, int] = {}
         try:
@@ -297,28 +305,30 @@ class SharedWorkerManager:
             pass
 
         workers = []
-        for worker_id, info in self.workers.items():
-            try:
-                container = self.client.containers.get(info["container_name"])
+        try:
+            containers = await asyncio.to_thread(
+                self.client.containers.list,
+                all=True,
+                filters={"name": "sinas-shared-"},
+            )
+            for container in containers:
+                if not container.name.startswith("sinas-shared-"):
+                    continue
+                worker_num = container.name.replace("sinas-shared-", "")
+                worker_id = f"worker-{worker_num}"
+                created_at = container.attrs.get("Created", "")
                 workers.append(
                     {
                         "id": worker_id,
-                        "container_name": info["container_name"],
+                        "container_name": container.name,
                         "status": container.status,
-                        "created_at": info["created_at"],
+                        "created_at": created_at,
                         "executions": exec_counts.get(worker_id, 0),
                     }
                 )
-            except docker.errors.NotFound:
-                workers.append(
-                    {
-                        "id": worker_id,
-                        "container_name": info["container_name"],
-                        "status": "missing",
-                        "created_at": info["created_at"],
-                        "executions": exec_counts.get(worker_id, 0),
-                    }
-                )
+        except Exception as e:
+            logger.warning(f"Failed to list worker containers from Docker: {e}")
+
         return workers
 
     async def scale_workers(self, target_count: int, db: AsyncSession) -> dict[str, Any]:
@@ -338,7 +348,7 @@ class SharedWorkerManager:
                     num = self._next_worker_number()
                     wid = f"worker-{num}"
                     # Reserve the slot so _next_worker_number skips it
-                    self.workers[wid] = {"container_name": f"sinas-worker-{num}", "container_id": "", "created_at": "", "executions": 0}
+                    self.workers[wid] = {"container_name": f"sinas-shared-{num}", "container_id": "", "created_at": "", "executions": 0}
                     nums.append(num)
 
                 results = await asyncio.gather(
@@ -400,7 +410,7 @@ class SharedWorkerManager:
     async def _create_worker_num(self, num: int, db: AsyncSession) -> Optional[str]:
         """Create a new worker container with an explicit worker number."""
         worker_id = f"worker-{num}"
-        container_name = f"sinas-worker-{num}"
+        container_name = f"sinas-shared-{num}"
 
         try:
             # Remove stale container with same name if it exists (e.g. after crash)

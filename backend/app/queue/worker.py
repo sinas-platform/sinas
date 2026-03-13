@@ -213,18 +213,18 @@ async def function_worker_startup(ctx: dict) -> None:
         if shared_worker_manager.workers:
             break
         if attempt < 9:
-            print(f"⏳ No shared workers found, waiting for scheduler... ({attempt + 1}/10)")
+            print(f"⏳ No shared containers found, waiting for scheduler... ({attempt + 1}/10)")
             await asyncio.sleep(3)
 
     shared_worker_manager._initialized = True
-    print(f"✅ Discovered {len(shared_worker_manager.workers)} shared workers")
+    print(f"✅ Discovered {len(shared_worker_manager.workers)} shared containers")
 
-    # Discover existing pool containers (created by backend leader)
+    # Discover existing sandbox containers (created by backend leader)
     from app.services.container_pool import container_pool
 
     await container_pool._discover_existing_containers()
     container_pool._initialized = True
-    print(f"✅ Discovered {len(container_pool.idle)} pool containers")
+    print(f"✅ Discovered {len(container_pool.idle)} sandbox containers")
 
     # Start heartbeat
     worker_id = str(uuid.uuid4())
@@ -257,12 +257,12 @@ async def agent_worker_startup(ctx: dict) -> None:
     from app.services.message_service import MessageService  # noqa: F401
     from app.core.database import AsyncSessionLocal  # noqa: F401
 
-    # Discover pool containers (needed for code execution tool)
+    # Discover sandbox containers (needed for code execution tool)
     from app.services.container_pool import container_pool
 
     await container_pool._discover_existing_containers()
     container_pool._initialized = True
-    print(f"✅ Agent worker discovered {len(container_pool.idle)} pool containers")
+    print(f"✅ Agent worker discovered {len(container_pool.idle)} sandbox containers")
 
     # Start heartbeat
     worker_id = str(uuid.uuid4())

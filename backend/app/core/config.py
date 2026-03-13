@@ -69,12 +69,12 @@ class Settings(BaseSettings):
     function_container_image: str = "sinas-executor"  # Base image for execution
     function_container_idle_timeout: int = 3600  # Seconds before idle container cleanup (1 hour)
 
-    # Container pool (replaces per-user containers for untrusted execution)
-    pool_min_size: int = 4  # Containers to create on startup
-    pool_max_size: int = 20  # Maximum pool containers
-    pool_min_idle: int = 2  # Trigger replenish when idle drops below this
-    pool_max_executions: int = 100  # Recycle container after this many executions
-    pool_acquire_timeout: int = 30  # Seconds to wait for a container
+    # Sandbox containers (isolated execution pool)
+    sandbox_min_size: int = 4  # Containers to create on startup
+    sandbox_max_size: int = 20  # Maximum sandbox containers
+    sandbox_min_idle: int = 2  # Trigger replenish when idle drops below this
+    sandbox_max_executions: int = 100  # Recycle container after this many executions
+    sandbox_acquire_timeout: int = 30  # Seconds to wait for a container
 
     # Package management
     allow_package_installation: bool = True

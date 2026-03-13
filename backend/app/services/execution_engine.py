@@ -415,7 +415,7 @@ class FunctionExecutor:
                 else:
                     # Execute in pooled Docker container (untrusted code)
                     print(
-                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in pool container"
+                        f"⏱️  [TIMING] Executing {function_namespace}/{function_name} in sandbox container"
                     )
                     container_start = time.time()
                     exec_result = await self.container_pool.execute_function(
@@ -433,7 +433,7 @@ class FunctionExecutor:
                         timeout=function_timeout,
                     )
                     container_elapsed = time.time() - container_start
-                    print(f"⏱️  [TIMING] Pool container execution completed in {container_elapsed:.3f}s")
+                    print(f"⏱️  [TIMING] Sandbox container execution completed in {container_elapsed:.3f}s")
 
                 if exec_result.get("status") == "failed":
                     raise FunctionExecutionError(exec_result.get("error", "Unknown error"))

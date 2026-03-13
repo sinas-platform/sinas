@@ -515,6 +515,50 @@ class QueueService:
         logger.info(f"Cancelled job {job_id}")
         return {"status": "cancelled", "job_id": job_id}
 
+    async def flush_dlq(self) -> dict[str, Any]:
+        """Remove all entries from the dead letter queue."""
+        redis = await get_redis()
+        size = await redis.llen(DLQ_KEY)
+        await redis.delete(DLQ_KEY)
+        logger.info(f"Flushed {size} DLQ entries")
+        return {"flushed": size}
+
+    async def flush_stuck_jobs(self, max_age_hours: int = 2) -> dict[str, Any]:
+        """Cancel jobs stuck in 'running' state for over max_age_hours."""
+        redis = await get_redis()
+        cutoff = time.time() - (max_age_hours * 3600)
+        cancelled = 0
+
+        cursor = 0
+        while True:
+            cursor, keys = await redis.scan(
+                cursor, match=f"{JOB_STATUS_PREFIX}*", count=100
+            )
+            if keys:
+                values = await redis.mget(*keys)
+                for key, val in zip(keys, values):
+                    if not val:
+                        continue
+                    try:
+                        data = json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if data.get("status") != "running":
+                        continue
+                    enqueued = data.get("enqueued_at", 0)
+                    if enqueued and enqueued < cutoff:
+                        job_id = data.get("job_id") or key.decode().replace(JOB_STATUS_PREFIX, "")
+                        try:
+                            await self.cancel_job(job_id)
+                            cancelled += 1
+                        except Exception:
+                            pass
+            if cursor == 0:
+                break
+
+        logger.info(f"Flushed {cancelled} stuck jobs (>{max_age_hours}h)")
+        return {"cancelled": cancelled, "max_age_hours": max_age_hours}
+
     async def get_active_workers(self) -> list[dict[str, Any]]:
         """List active arq worker processes from heartbeat keys."""
         from app.queue.worker import WORKER_HEARTBEAT_PREFIX
