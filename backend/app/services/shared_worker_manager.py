@@ -626,6 +626,10 @@ class SharedWorkerManager:
         """
         async with self._lock:
             if not self.workers:
+                # Workers may have been created after this process started —
+                # attempt re-discovery before giving up.
+                await self._discover_existing_workers()
+            if not self.workers:
                 return {
                     "status": "failed",
                     "error": "No workers available. Please scale workers up first.",
