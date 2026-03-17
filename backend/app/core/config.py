@@ -49,6 +49,16 @@ class Settings(BaseSettings):
 
     # OTP Configuration
     otp_expire_minutes: int = 10
+    otp_max_attempts: int = 2  # Max verification attempts before OTP is invalidated
+
+    # Rate limiting
+    rate_limit_login_ip_max: int = 10  # Max login requests per IP per window
+    rate_limit_login_email_max: int = 5  # Max login requests per email per window
+    rate_limit_otp_ip_max: int = 10  # Max OTP verify requests per IP per window
+    rate_limit_window_seconds: int = 900  # Rate limit window (15 minutes)
+
+    # CORS
+    cors_origins: str = "http://localhost:5173"  # Comma-separated allowed origins
 
     # SMTP Configuration (for sending emails)
     smtp_host: Optional[str] = None
@@ -92,6 +102,7 @@ class Settings(BaseSettings):
 
     # Message history
     max_history_messages: int = 100  # Max messages to load for conversation history
+    max_tool_iterations: int = 25  # Max consecutive tool-call rounds before stopping
 
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"

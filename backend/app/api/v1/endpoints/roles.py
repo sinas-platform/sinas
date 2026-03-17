@@ -45,8 +45,7 @@ async def create_role(
     )
 
     db.add(role)
-    await db.commit()
-    await db.refresh(role)
+    await db.flush()
 
     # Add creator as first member
     member = UserRole(
@@ -56,7 +55,8 @@ async def create_role(
         added_by=uuid.UUID(user_id),
     )
     db.add(member)
-    await db.commit()
+    await db.flush()
+    await db.refresh(role)
 
     return role
 
@@ -297,7 +297,7 @@ async def add_role_member(
         # Reactivate membership
         existing.active = True
         existing.added_by = uuid.UUID(user_id)
-        await db.commit()
+        await db.flush()
         await db.refresh(existing)
 
         return UserRoleResponse(
@@ -318,7 +318,7 @@ async def add_role_member(
     )
 
     db.add(membership)
-    await db.commit()
+    await db.flush()
     await db.refresh(membership)
 
     return UserRoleResponse(
@@ -451,7 +451,7 @@ async def set_role_permission(
 
     if existing:
         existing.permission_value = permission_data.permission_value
-        await db.commit()
+        await db.flush()
         await db.refresh(existing)
         return existing
 
@@ -463,7 +463,7 @@ async def set_role_permission(
     )
 
     db.add(new_permission)
-    await db.commit()
+    await db.flush()
     await db.refresh(new_permission)
 
     return new_permission

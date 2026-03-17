@@ -1870,6 +1870,7 @@ class MessageService:
         tools: list[dict[str, Any]],
         permissions: Optional[dict[str, bool]] = None,
         status_templates: dict[str, str] = {},
+        depth: int = 0,
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute tool calls, stream LLM follow-up response, and save final message."""
         # Get permissions if not provided
@@ -2117,6 +2118,18 @@ class MessageService:
 
         # Check if the response has more tool calls (for multi-step tool usage)
         if final_tool_calls:
+            if depth >= settings.max_tool_iterations:
+                logger.warning(
+                    "Tool iteration limit (%d) reached for chat %s — stopping",
+                    settings.max_tool_iterations,
+                    chat_id,
+                )
+                yield {
+                    "type": "error",
+                    "error": f"Tool iteration limit ({settings.max_tool_iterations}) reached. Stopping to prevent runaway loops.",
+                }
+                return
+
             # Recursively handle the next round of tool calls
             async for result_chunk in self._handle_tool_calls(
                 chat_id=chat_id,
@@ -2130,6 +2143,7 @@ class MessageService:
                 max_tokens=max_tokens,
                 tools=tools,
                 status_templates=status_templates,
+                depth=depth + 1,
             ):
                 yield result_chunk
             return

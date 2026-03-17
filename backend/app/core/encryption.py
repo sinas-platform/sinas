@@ -1,19 +1,24 @@
 """Encryption utilities for sensitive data."""
+import logging
+
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EncryptionService:
     """Service for encrypting and decrypting sensitive data."""
 
     def __init__(self):
-        # In production, load this from environment variable or secret manager
-        # For now, generate or use from settings
-        if hasattr(settings, "encryption_key") and settings.encryption_key:
+        if settings.encryption_key:
             self.key = settings.encryption_key.encode()
         else:
-            # Generate a key (this should be stored securely)
+            logger.warning(
+                "ENCRYPTION_KEY is not set — generating ephemeral key. "
+                "Encrypted data will be LOST on restart. Set ENCRYPTION_KEY in production."
+            )
             self.key = Fernet.generate_key()
 
         self.cipher = Fernet(self.key)

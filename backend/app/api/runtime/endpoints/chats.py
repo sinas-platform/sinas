@@ -154,7 +154,7 @@ async def create_chat_with_agent(
         job_timeout=chat_job_timeout,
     )
     db.add(chat)
-    await db.commit()
+    await db.flush()
     await db.refresh(chat)
 
     # 5. Pre-populate with initial_messages if present (rendered with input data)
@@ -170,7 +170,6 @@ async def create_chat_with_agent(
 
             message = Message(chat_id=chat.id, role=msg_data["role"], content=content)
             db.add(message)
-        await db.commit()
 
     # Get user email
     user_result = await db.execute(select(User).where(User.id == user_id))

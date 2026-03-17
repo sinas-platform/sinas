@@ -100,8 +100,16 @@ async def verify_otp_code(db: AsyncSession, session_id: str, otp_code: str) -> O
     if otp_session.verified:
         return None
 
+    # Check if max attempts exceeded
+    if otp_session.attempts >= settings.otp_max_attempts:
+        return None
+
+    # Increment attempt counter
+    otp_session.attempts += 1
+
     # Check if code matches
     if otp_session.otp_code != otp_code:
+        await db.commit()
         return None
 
     # Mark as verified

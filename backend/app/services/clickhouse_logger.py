@@ -1,5 +1,6 @@
 """ClickHouse logger service for comprehensive request logging."""
 import json
+import logging
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -8,6 +9,8 @@ import clickhouse_connect
 from clickhouse_connect.driver.client import Client
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class ClickHouseLogger:
@@ -28,7 +31,7 @@ class ClickHouseLogger:
                 database=settings.clickhouse_database,
             )
         except Exception as e:
-            print(f"Failed to initialize ClickHouse client: {e}")
+            logger.error(f"Failed to initialize ClickHouse client: {e}")
             self.client = None
 
     def _ensure_client(self) -> bool:
@@ -153,9 +156,7 @@ class ClickHouseLogger:
             )
         except Exception as e:
             # Silently fail - logging should never crash the app
-            # Only print if in debug mode
-            if settings.debug:
-                print(f"Failed to log request to ClickHouse: {e}")
+            logger.warning(f"Failed to log request to ClickHouse: {e}")
 
     async def query_logs(
         self,
@@ -188,20 +189,28 @@ class ClickHouseLogger:
             return []
 
         try:
-            # Build WHERE conditions
+            # Build WHERE conditions with parameterized queries
             conditions = []
+            parameters = {}
+
             if user_id:
-                conditions.append(f"user_id = '{user_id}'")
+                conditions.append("user_id = {user_id:String}")
+                parameters["user_id"] = user_id
             if start_time:
-                conditions.append(f"timestamp >= '{start_time.isoformat()}'")
+                conditions.append("timestamp >= {start_time:DateTime}")
+                parameters["start_time"] = start_time
             if end_time:
-                conditions.append(f"timestamp <= '{end_time.isoformat()}'")
+                conditions.append("timestamp <= {end_time:DateTime}")
+                parameters["end_time"] = end_time
             if permission:
-                conditions.append(f"permission_used = '{permission}'")
+                conditions.append("permission_used = {permission:String}")
+                parameters["permission"] = permission
             if path_pattern:
-                conditions.append(f"path LIKE '{path_pattern}'")
+                conditions.append("path LIKE {path_pattern:String}")
+                parameters["path_pattern"] = path_pattern
             if status_code:
-                conditions.append(f"status_code = {status_code}")
+                conditions.append("status_code = {status_code:Int32}")
+                parameters["status_code"] = status_code
 
             where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -214,10 +223,10 @@ class ClickHouseLogger:
                 OFFSET {offset}
             """
 
-            result = self.client.query(query)
+            result = self.client.query(query, parameters=parameters)
             return result.result_rows
         except Exception as e:
-            print(f"Failed to query logs from ClickHouse: {e}")
+            logger.error(f"Failed to query logs from ClickHouse: {e}")
             return []
 
     async def log_execution_start(
@@ -260,8 +269,7 @@ class ClickHouseLogger:
                 ],
             )
         except Exception as e:
-            if settings.debug:
-                print(f"Failed to log execution start: {e}")
+            logger.warning(f"Failed to log execution start: {e}")
 
     async def log_execution_end(
         self,
@@ -308,8 +316,7 @@ class ClickHouseLogger:
                 ],
             )
         except Exception as e:
-            if settings.debug:
-                print(f"Failed to log execution end: {e}")
+            logger.warning(f"Failed to log execution end: {e}")
 
     async def log_function_call(
         self, execution_id: str, function_name: str, step_id: str, input_data: dict[str, Any]
@@ -351,8 +358,7 @@ class ClickHouseLogger:
                 ],
             )
         except Exception as e:
-            if settings.debug:
-                print(f"Failed to log function call: {e}")
+            logger.warning(f"Failed to log function call: {e}")
 
     async def log_function_result(
         self,
@@ -400,8 +406,7 @@ class ClickHouseLogger:
                 ],
             )
         except Exception as e:
-            if settings.debug:
-                print(f"Failed to log function result: {e}")
+            logger.warning(f"Failed to log function result: {e}")
 
     async def get_execution_logs(self, execution_id: str, limit: int = 1000) -> list:
         """Get logs for a specific execution."""
@@ -412,14 +417,14 @@ class ClickHouseLogger:
             query = f"""
                 SELECT *
                 FROM execution_logs
-                WHERE execution_id = '{execution_id}'
+                WHERE execution_id = {{execution_id:String}}
                 ORDER BY timestamp ASC
                 LIMIT {limit}
             """
-            result = self.client.query(query)
+            result = self.client.query(query, parameters={"execution_id": execution_id})
             return result.result_rows
         except Exception as e:
-            print(f"Failed to get execution logs: {e}")
+            logger.error(f"Failed to get execution logs: {e}")
             return []
 
     def apply_storage_migration(self):
@@ -442,12 +447,12 @@ class ClickHouseLogger:
             )
             has_tiered = len(result.result_rows) > 0
         except Exception as e:
-            print(f"ClickHouse storage migration: failed to check storage policies: {e}")
+            logger.error(f"ClickHouse storage migration: failed to check storage policies: {e}")
             return
 
         try:
             if has_tiered:
-                print(
+                logger.info(
                     f"ClickHouse storage migration: tiered policy found. "
                     f"Hot retention: {hot_days}d, then move to S3."
                 )
@@ -459,9 +464,9 @@ class ClickHouseLogger:
                         f"ALTER TABLE {table} MODIFY TTL CAST(timestamp AS DateTime) + INTERVAL {hot_days} DAY TO VOLUME 'cold'"
                     )
                     self.client.command(f"ALTER TABLE {table} MATERIALIZE TTL")
-                    print(f"  {table}: tiered TTL applied")
+                    logger.info(f"  {table}: tiered TTL applied")
             else:
-                print(
+                logger.info(
                     f"ClickHouse storage migration: no S3 configured. "
                     f"TTL DELETE after {retention_days}d."
                 )
@@ -470,9 +475,9 @@ class ClickHouseLogger:
                         f"ALTER TABLE {table} MODIFY TTL CAST(timestamp AS DateTime) + INTERVAL {retention_days} DAY DELETE"
                     )
                     self.client.command(f"ALTER TABLE {table} MATERIALIZE TTL")
-                    print(f"  {table}: delete TTL applied")
+                    logger.info(f"  {table}: delete TTL applied")
         except Exception as e:
-            print(f"ClickHouse storage migration: failed to apply: {e}")
+            logger.error(f"ClickHouse storage migration: failed to apply: {e}")
 
     def close(self):
         """Close ClickHouse connection."""

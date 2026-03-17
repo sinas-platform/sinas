@@ -1,4 +1,7 @@
 """Functions API endpoints."""
+import ipaddress
+from urllib.parse import urlparse
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import and_, select
@@ -45,6 +48,20 @@ async def import_openapi_spec(
     # Get spec from either direct input or URL
     spec_str = import_data.spec
     if not spec_str and import_data.spec_url:
+        # Validate URL to prevent SSRF
+        parsed = urlparse(import_data.spec_url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(status_code=400, detail="Only http/https URLs are allowed")
+        # Block private/reserved IPs
+        try:
+            import socket
+
+            resolved_ip = socket.getaddrinfo(parsed.hostname, None, socket.AF_UNSPEC)[0][4][0]
+            if ipaddress.ip_address(resolved_ip).is_private:
+                raise HTTPException(status_code=400, detail="URLs pointing to private networks are not allowed")
+        except socket.gaierror:
+            raise HTTPException(status_code=400, detail="Could not resolve hostname")
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.get(import_data.spec_url)
@@ -136,8 +153,7 @@ async def create_function(
     )
 
     db.add(function)
-    await db.commit()
-    await db.refresh(function)
+    await db.flush()
 
     # Create initial version
     version = FunctionVersion(
@@ -149,7 +165,8 @@ async def create_function(
         created_by=str(user_id),
     )
     db.add(version)
-    await db.commit()
+    await db.flush()
+    await db.refresh(function)
 
     return await _function_response(function, db)
 
