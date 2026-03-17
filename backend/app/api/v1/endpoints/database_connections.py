@@ -11,6 +11,7 @@ from app.core.auth import require_permission
 from app.core.database import get_db
 from app.core.encryption import EncryptionService
 from app.models.database_connection import DatabaseConnection
+from app.services.database_pool import DatabasePoolManager
 from app.schemas.database_connection import (
     DatabaseConnectionCreate,
     DatabaseConnectionResponse,
@@ -152,8 +153,6 @@ async def update_database_connection(
     await db.refresh(connection)
 
     # Invalidate pool on config change
-    from app.services.database_pool import DatabasePoolManager
-
     await DatabasePoolManager.get_instance().invalidate(str(connection_id))
 
     return DatabaseConnectionResponse.model_validate(connection)
@@ -180,8 +179,6 @@ async def delete_database_connection(
     await db.commit()
 
     # Invalidate pool
-    from app.services.database_pool import DatabasePoolManager
-
     await DatabasePoolManager.get_instance().invalidate(str(connection_id))
 
 

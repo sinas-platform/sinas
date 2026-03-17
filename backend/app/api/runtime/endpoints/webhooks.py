@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
 from app.models.webhook import Webhook
+from app.services.queue_service import queue_service
 
 
 router = APIRouter()
@@ -101,8 +102,6 @@ async def execute_webhook(
 
         execution_id = str(uuid.uuid4())
         chat_id = request.headers.get("x-chat-id")
-
-        from app.services.queue_service import queue_service
 
         result = await queue_service.enqueue_and_wait(
             function_namespace=webhook.function_namespace,

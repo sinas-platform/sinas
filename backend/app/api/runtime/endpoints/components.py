@@ -22,28 +22,13 @@ from app.models.component_share import ComponentShare
 from app.models.function import Function
 from app.models.query import Query
 from app.models.user import User
+from app.models.execution import TriggerType
+from app.models.state import State
+from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
+from app.services.queue_service import queue_service
 
 router = APIRouter()
-
-
-def generate_component_render_token(
-    namespace: str, name: str, user_id: str, expires_in: int = 3600
-) -> str:
-    """
-    Generate a signed render token for a component (like file serve tokens).
-
-    The token is purpose-scoped and short-lived. It allows the render endpoint
-    to authenticate iframe requests without Authorization headers.
-    """
-    payload = {
-        "namespace": namespace,
-        "name": name,
-        "sub": user_id,
-        "purpose": "component_render",
-        "exp": int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp()),
-    }
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
 def _build_html_shell(component: Component, input_vars: dict) -> str:
@@ -469,9 +454,6 @@ async def proxy_function_execute(
 
     set_permission_used(request, permission)
 
-    from app.models.execution import TriggerType
-    from app.services.queue_service import queue_service
-
     execution_id = str(uuid.uuid4())
 
     try:
@@ -517,8 +499,6 @@ async def proxy_state(
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Access state through the component proxy (scoped to enabled state namespaces)."""
-    from app.models.state import State
-
     user_id, permissions = current_user_data
     component = await _get_component_or_404(db, ns, name)
 

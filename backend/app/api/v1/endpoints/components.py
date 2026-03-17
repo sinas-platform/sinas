@@ -9,7 +9,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.permissions import check_permission
 from app.models.component import Component
 from app.models.component_share import ComponentShare
@@ -19,7 +19,8 @@ from app.schemas.component import (
     ComponentResponse,
     ComponentUpdate,
 )
-from app.api.runtime.endpoints.components import generate_component_render_token
+from app.services.content_tokens import generate_component_render_token
+from app.services.component_builder import ComponentBuilderService
 from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/components", tags=["components"])
@@ -45,9 +46,6 @@ def _component_list_response(component: Component, user_id: str) -> ComponentLis
 
 async def _do_compile(component_id, namespace: str, name: str):
     """Background task to compile a component via the builder service."""
-    from app.core.database import AsyncSessionLocal
-    from app.services.component_builder import ComponentBuilderService
-
     async with AsyncSessionLocal() as db:
         component = await db.execute(
             select(Component).where(Component.id == component_id)

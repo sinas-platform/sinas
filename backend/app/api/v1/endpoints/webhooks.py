@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
+from app.models.function import Function
 from app.models.webhook import Webhook
 from app.schemas import WebhookCreate, WebhookResponse, WebhookUpdate
 from app.services.package_service import detach_if_package_managed
@@ -41,8 +42,6 @@ async def create_webhook(
         )
 
     # Verify function exists
-    from app.models.function import Function
-
     function = await Function.get_by_name(
         db, webhook_data.function_namespace, webhook_data.function_name, user_id
     )
@@ -177,8 +176,6 @@ async def update_webhook(
             pass
 
         # Verify new function exists
-        from app.models.function import Function
-
         function = await Function.get_by_name(db, new_namespace, new_function_name, user_id)
         if not function:
             raise HTTPException(

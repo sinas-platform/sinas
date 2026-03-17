@@ -10,6 +10,8 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.core.redis import get_redis
+from app.models.agent import Agent
+from app.models.function import Function
 from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
 from app.services.package_service import detach_if_package_managed
@@ -55,8 +57,6 @@ async def create_schedule(
 
     # Verify target exists based on schedule_type
     if schedule_data.schedule_type == "function":
-        from app.models.function import Function
-
         target = await Function.get_by_name(
             db, schedule_data.target_namespace, schedule_data.target_name, user_id
         )
@@ -66,8 +66,6 @@ async def create_schedule(
                 detail=f"Function '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
             )
     else:
-        from app.models.agent import Agent
-
         result = await db.execute(
             select(Agent).where(
                 and_(
@@ -203,8 +201,6 @@ async def update_schedule(
         effective_ns = schedule_data.target_namespace or schedule.target_namespace
 
         if effective_type == "function":
-            from app.models.function import Function
-
             target = await Function.get_by_name(
                 db, effective_ns, schedule_data.target_name, user_id
             )
@@ -214,8 +210,6 @@ async def update_schedule(
                     detail=f"Function '{effective_ns}/{schedule_data.target_name}' not found",
                 )
         else:
-            from app.models.agent import Agent
-
             result = await db.execute(
                 select(Agent).where(
                     and_(

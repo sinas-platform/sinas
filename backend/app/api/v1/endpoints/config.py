@@ -15,6 +15,7 @@ from app.schemas.config import (
     ConfigApplyResponse,
     ConfigValidateRequest,
     ConfigValidateResponse,
+    ValidationError as SchemaValidationError,
 )
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
@@ -59,8 +60,6 @@ async def validate_config(
     )
 
     # Convert ConfigValidation to ConfigValidateResponse
-    from app.schemas.config import ValidationError as SchemaValidationError
-
     return ConfigValidateResponse(
         valid=validation.is_valid,
         errors=[SchemaValidationError(path=e.path, message=e.message) for e in validation.errors],

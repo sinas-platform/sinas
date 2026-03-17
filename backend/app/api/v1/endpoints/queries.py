@@ -10,6 +10,7 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.query import Query
+from app.models.user import User
 from app.schemas.query import (
     QueryCreate,
     QueryExecuteRequest,
@@ -255,10 +256,7 @@ async def execute_query(
     params = {**execute_request.input}
     params["user_id"] = str(user_id)
     # Get user email
-    from app.models.user import User
-    from sqlalchemy import select as sa_select
-
-    user_result = await db.execute(sa_select(User).where(User.id == user_id))
+    user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
     if user:
         params["user_email"] = user.email

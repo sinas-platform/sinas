@@ -11,6 +11,7 @@ from app.core.auth import (
     get_current_user,
     get_current_user_with_permissions,
     get_user_by_email,
+    normalize_email,
     revoke_refresh_token,
     set_permission_used,
     validate_refresh_token,
@@ -18,6 +19,7 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.core.rate_limit import rate_limit_by_ip, rate_limit_by_value
 from app.models import User
 from app.schemas.auth import (
@@ -48,8 +50,6 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
     await rate_limit_by_value(request.email, "login:email", settings.rate_limit_login_email_max, settings.rate_limit_window_seconds)
 
     # Check if user exists - no auto-provisioning
-    from app.core.auth import normalize_email
-
     result = await db.execute(select(User).where(User.email == normalize_email(request.email)))
     user = result.scalar_one_or_none()
     if not user:
@@ -192,8 +192,6 @@ async def check_permissions(
     }
     ```
     """
-    from app.core.permissions import check_permission
-
     user_id, permissions = current_user_data
 
     # Check each permission and log the check

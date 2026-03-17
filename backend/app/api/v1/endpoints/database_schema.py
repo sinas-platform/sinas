@@ -23,8 +23,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission
+from app.core.auth import get_user_permissions, require_permission
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.models.database_connection import DatabaseConnection
 from app.models.table_annotation import TableAnnotation
 from app.schemas.database_schema import (
@@ -297,11 +298,7 @@ async def alter_table(
 
     # Drop columns is destructive — require destroy permission
     if request.drop_columns:
-        from app.core.permissions import check_permission
-
         # Need to load permissions for this user
-        from app.core.auth import get_user_permissions
-
         permissions = await get_user_permissions(db, user_id)
         if not check_permission(permissions, "sinas.database_connections.schema_destroy:all"):
             raise HTTPException(

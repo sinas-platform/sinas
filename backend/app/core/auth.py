@@ -3,6 +3,7 @@ import hashlib
 import random
 import secrets
 import string
+import uuid as uuid_lib
 from datetime import UTC, datetime, timedelta
 from typing import Optional
 
@@ -13,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.email import send_otp_email_async
 from app.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
@@ -23,6 +24,7 @@ from app.core.permissions import (
 from app.models import (
     APIKey,
     OTPSession,
+    RefreshToken,
     Role,
     RolePermission,
     User,
@@ -221,9 +223,7 @@ async def create_refresh_token(db: AsyncSession, user_id: str) -> tuple[str, "Re
     Returns:
         Tuple of (plain_token, refresh_token_model)
     """
-    import uuid as uuid_lib
 
-    from app.models import RefreshToken
 
     # Generate random token
     plain_token = secrets.token_urlsafe(32)
@@ -260,7 +260,6 @@ async def validate_refresh_token(db: AsyncSession, plain_token: str) -> Optional
     Returns:
         Tuple of (user_id, email) if valid, None otherwise
     """
-    from app.models import RefreshToken
 
     token_hash = hashlib.sha256(plain_token.encode()).hexdigest()
 
@@ -307,7 +306,6 @@ async def revoke_refresh_token(db: AsyncSession, plain_token: str) -> bool:
     Returns:
         True if revoked, False if not found
     """
-    from app.models import RefreshToken
 
     token_hash = hashlib.sha256(plain_token.encode()).hexdigest()
 
@@ -600,8 +598,6 @@ async def get_current_user_optional(
         return None
 
     try:
-        from app.core.database import AsyncSessionLocal
-
         async with AsyncSessionLocal() as db:
             user_id, email, _ = await verify_jwt_or_api_key(credentials, db)
             # Store user info in request state for logging
@@ -711,8 +707,6 @@ async def initialize_superadmin(db: AsyncSession):
     - Adds user to Admins group with full system access
     - Only creates if Admins group is empty (prevents auto-creation after manual setup)
     """
-    from app.core.config import settings
-
     if not settings.superadmin_email:
         return  # No superadmin email configured
 

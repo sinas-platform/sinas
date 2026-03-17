@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_permission
 from app.core.database import get_db
+from app.services.container_pool import container_pool
 
 router = APIRouter(prefix="/containers", tags=["containers"])
 
@@ -20,7 +21,6 @@ async def get_container_stats(
     user_id: str = Depends(require_permission("sinas.system.read:all")),
 ) -> dict[str, Any]:
     """Get sandbox container stats. Admin only."""
-    from app.services.container_pool import container_pool
 
     return container_pool.get_stats()
 
@@ -34,7 +34,6 @@ async def reload_pool_packages(
     Reinstall all approved packages in idle sandbox containers.
     Admin only.
     """
-    from app.services.container_pool import container_pool
 
     result = await container_pool.reload_packages(db)
     return result
@@ -47,7 +46,6 @@ async def scale_pool(
     db: AsyncSession = Depends(get_db),
 ):
     """Scale the sandbox containers to a target size. Admin only."""
-    from app.services.container_pool import container_pool
 
     if body.target < 0:
         raise HTTPException(status_code=400, detail="Target must be non-negative")

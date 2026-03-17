@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import require_permission
 from app.core.config import settings
+from app.services.queue_service import queue_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/system", tags=["system"])
@@ -312,7 +313,6 @@ async def get_system_health(
     dlq_size = 0
     queue_stats = {}
     try:
-        from app.services.queue_service import queue_service
         queue_workers = await queue_service.get_active_workers()
         queue_stats = await queue_service.get_queue_stats()
         dlq_size = queue_stats.get("dlq", {}).get("size", 0)
@@ -349,6 +349,5 @@ async def flush_stuck_jobs(
     user_id: str = Depends(require_permission("sinas.system.update:all")),
 ) -> dict[str, Any]:
     """Cancel jobs stuck in 'running' state for over 2 hours."""
-    from app.services.queue_service import queue_service
     result = await queue_service.flush_stuck_jobs()
     return result

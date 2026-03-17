@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.auth import get_current_user_with_permissions, normalize_email, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.user import Role, User, UserRole
@@ -107,8 +107,6 @@ async def create_user(
     set_permission_used(request, "sinas.users.create:all")
 
     # Check if user already exists
-    from app.core.auth import normalize_email
-
     normalized_email = normalize_email(user_request.email)
 
     result = await db.execute(select(User).where(User.email == normalized_email))
@@ -171,8 +169,6 @@ async def get_user(
     memberships = memberships_result.scalars().all()
 
     # Get group names
-    from app.models.user import Role
-
     group_names = []
     for membership in memberships:
         group_result = await db.execute(select(Role).where(Role.id == membership.role_id))

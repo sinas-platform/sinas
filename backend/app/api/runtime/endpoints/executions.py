@@ -16,6 +16,7 @@ from app.schemas import (
     StepExecutionResponse,
 )
 
+from app.services.execution_engine import executor
 from app.services.queue_service import queue_service
 
 router = APIRouter(prefix="/executions")
@@ -163,8 +164,6 @@ async def continue_execution(
         raise HTTPException(status_code=400, detail="Execution is not awaiting input")
 
     # Resume directly in the container (bypasses queue)
-    from app.services.execution_engine import executor
-
     try:
         result = await executor.resume_execution(
             execution_id=execution_id,
