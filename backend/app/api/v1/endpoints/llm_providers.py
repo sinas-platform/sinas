@@ -56,7 +56,7 @@ async def create_llm_provider(
     )
 
     db.add(provider)
-    await db.commit()
+    await db.flush()
     await db.refresh(provider)
 
     return LLMProviderResponse.model_validate(provider)
@@ -150,7 +150,7 @@ async def update_llm_provider(
     if request.is_active is not None:
         provider.is_active = request.is_active
 
-    await db.commit()
+    await db.flush()
     await db.refresh(provider)
 
     return LLMProviderResponse.model_validate(provider)
@@ -171,4 +171,4 @@ async def delete_llm_provider(
         )
 
     provider.is_active = False
-    await db.commit()
+    await db.flush()

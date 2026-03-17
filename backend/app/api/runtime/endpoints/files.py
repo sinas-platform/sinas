@@ -248,7 +248,7 @@ async def upload_file(
             user_id=user_id,
         )
         db.add(coll)
-        await db.commit()
+        await db.flush()
         await db.refresh(coll)
 
     # Validate visibility setting
@@ -970,7 +970,7 @@ async def update_file_metadata(
             )
 
     file_record.file_metadata = update_data.file_metadata
-    await db.commit()
+    await db.flush()
     await db.refresh(file_record)
 
     return FileResponse(
@@ -1053,6 +1053,6 @@ async def delete_file(
 
     # Delete database record (cascade will delete versions and evaluations)
     await db.delete(file_record)
-    await db.commit()
+    await db.flush()
 
     return None

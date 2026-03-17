@@ -58,7 +58,7 @@ async def install_dependency(
     )
 
     db.add(dependency)
-    await db.commit()
+    await db.flush()
     await db.refresh(dependency)
 
     return dependency
@@ -99,7 +99,7 @@ async def remove_dependency(
 
     package_name = dependency.package_name
     await db.delete(dependency)
-    await db.commit()
+    await db.flush()
 
     return {
         "message": f"Package '{package_name}' approval removed. Existing containers will keep it until recreated."

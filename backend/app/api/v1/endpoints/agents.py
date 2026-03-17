@@ -98,7 +98,7 @@ async def create_agent(
     )
 
     db.add(agent)
-    await db.commit()
+    await db.flush()
     await db.refresh(agent)
 
     return await _agent_response(agent, db)
@@ -247,7 +247,7 @@ async def update_agent(
         agent.default_keep_alive = agent_data.default_keep_alive
     if agent_data.enable_code_execution is not None:
         agent.enable_code_execution = agent_data.enable_code_execution
-    await db.commit()
+    await db.flush()
     await db.refresh(agent)
 
     return await _agent_response(agent, db)
@@ -286,6 +286,6 @@ async def delete_agent(
         raise HTTPException(status_code=403, detail="Not authorized to delete this agent")
 
     agent.is_active = False
-    await db.commit()
+    await db.flush()
 
     return None

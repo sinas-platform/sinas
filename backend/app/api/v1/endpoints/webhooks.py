@@ -64,7 +64,7 @@ async def create_webhook(
     )
 
     db.add(webhook)
-    await db.commit()
+    await db.flush()
     await db.refresh(webhook)
 
     response = WebhookResponse.model_validate(webhook)
@@ -198,7 +198,7 @@ async def update_webhook(
         webhook.is_active = webhook_data.is_active
     if webhook_data.requires_auth is not None:
         webhook.requires_auth = webhook_data.requires_auth
-    await db.commit()
+    await db.flush()
     await db.refresh(webhook)
 
     response = WebhookResponse.model_validate(webhook)
@@ -231,6 +231,6 @@ async def delete_webhook(
         set_permission_used(request, "sinas.webhooks.delete:own")
 
     await db.delete(webhook)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"Webhook '{webhook.path}' deleted successfully"}

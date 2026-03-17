@@ -66,7 +66,7 @@ async def create_query(
     )
 
     db.add(query)
-    await db.commit()
+    await db.flush()
     await db.refresh(query)
 
     return QueryResponse.model_validate(query)
@@ -187,7 +187,7 @@ async def update_query(
     if query_data.is_active is not None:
         query.is_active = query_data.is_active
 
-    await db.commit()
+    await db.flush()
     await db.refresh(query)
 
     return QueryResponse.model_validate(query)
@@ -216,7 +216,7 @@ async def delete_query(
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.delete")
 
     await db.delete(query)
-    await db.commit()
+    await db.flush()
 
     return None
 

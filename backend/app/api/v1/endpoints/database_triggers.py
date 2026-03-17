@@ -234,6 +234,6 @@ async def delete_database_trigger(
     await _notify_cdc("remove", str(trigger.id))
 
     await db.delete(trigger)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"Database trigger '{name}' deleted successfully"}

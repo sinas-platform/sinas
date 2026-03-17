@@ -137,7 +137,7 @@ async def create_user(
         if guest_group:
             membership = UserRole(role_id=guest_group.id, user_id=user.id, active=True)
             db.add(membership)
-            await db.commit()
+            await db.flush()
             await db.refresh(user)
 
     return UserResponse.model_validate(user)
@@ -214,7 +214,7 @@ async def update_user(
     # Update fields (currently no updatable fields)
     # Future: Add updatable fields like display_name, etc.
 
-    await db.commit()
+    await db.flush()
     await db.refresh(user)
 
     return user
@@ -246,6 +246,6 @@ async def delete_user(
     set_permission_used(request, "sinas.users.delete")
 
     await db.delete(user)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"User '{user.email}' deleted successfully"}

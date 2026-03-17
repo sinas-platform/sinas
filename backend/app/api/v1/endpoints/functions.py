@@ -324,7 +324,7 @@ async def update_function(
         function.timeout = function_data.timeout
     if function_data.is_active is not None:
         function.is_active = function_data.is_active
-    await db.commit()
+    await db.flush()
     await db.refresh(function)
 
     # Clear execution engine cache to ensure updated code is used
@@ -357,7 +357,7 @@ async def delete_function(
     set_permission_used(request, f"sinas.functions/{namespace}/{name}.delete")
 
     await db.delete(function)
-    await db.commit()
+    await db.flush()
 
     # Clear execution engine cache
     executor.clear_cache()

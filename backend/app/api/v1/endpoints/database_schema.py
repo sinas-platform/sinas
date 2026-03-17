@@ -572,5 +572,5 @@ async def upsert_annotations(
             )
         upserted += 1
 
-    await db.commit()
+    await db.flush()
     return {"upserted": upserted}

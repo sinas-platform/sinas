@@ -67,7 +67,7 @@ async def create_template(
     )
 
     db.add(template)
-    await db.commit()
+    await db.flush()
     await db.refresh(template)
 
     return TemplateResponse.model_validate(template)
@@ -198,7 +198,7 @@ async def update_template(
 
     template.updated_by = user_uuid
 
-    await db.commit()
+    await db.flush()
     await db.refresh(template)
 
     return TemplateResponse.model_validate(template)
@@ -229,7 +229,7 @@ async def delete_template(
     set_permission_used(req, f"sinas.templates/{template.namespace}/{template.name}.delete")
 
     await db.delete(template)
-    await db.commit()
+    await db.flush()
 
 
 @router.post("/{template_id}/render", response_model=TemplateRenderResponse)

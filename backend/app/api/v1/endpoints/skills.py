@@ -53,7 +53,7 @@ async def create_skill(
     )
 
     db.add(skill)
-    await db.commit()
+    await db.flush()
     await db.refresh(skill)
 
     return SkillResponse.model_validate(skill)
@@ -166,7 +166,7 @@ async def update_skill(
     if skill_data.is_active is not None:
         skill.is_active = skill_data.is_active
 
-    await db.commit()
+    await db.flush()
     await db.refresh(skill)
 
     return SkillResponse.model_validate(skill)
@@ -196,6 +196,6 @@ async def delete_skill(
     set_permission_used(request, f"sinas.skills/{namespace}/{name}.delete")
 
     await db.delete(skill)
-    await db.commit()
+    await db.flush()
 
     return None

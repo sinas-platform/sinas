@@ -766,7 +766,7 @@ async def update_chat(
     if request.archived is not None:
         chat.archived = request.archived
 
-    await db.commit()
+    await db.flush()
     await db.refresh(chat)
 
     # Get user email and last message timestamp
@@ -827,6 +827,6 @@ async def delete_chat(
     set_permission_used(http_request, agent_chat_perm)
 
     chat.archived = True
-    await db.commit()
+    await db.flush()
 
     return None

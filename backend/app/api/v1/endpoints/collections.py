@@ -64,7 +64,7 @@ async def create_collection(
     )
 
     db.add(collection)
-    await db.commit()
+    await db.flush()
     await db.refresh(collection)
 
     return CollectionResponse.model_validate(collection)
@@ -168,7 +168,7 @@ async def update_collection(
     if collection_data.allow_private_files is not None:
         collection.allow_private_files = collection_data.allow_private_files
 
-    await db.commit()
+    await db.flush()
     await db.refresh(collection)
 
     return CollectionResponse.model_validate(collection)
@@ -198,6 +198,6 @@ async def delete_collection(
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.delete")
 
     await db.delete(collection)
-    await db.commit()
+    await db.flush()
 
     return None

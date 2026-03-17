@@ -57,7 +57,7 @@ async def _do_compile(component_id, namespace: str, name: str):
             return
 
         component.compile_status = "compiling"
-        await db.commit()
+        await db.flush()
 
         builder = ComponentBuilderService()
         result = await builder.compile(component.source_code)
@@ -73,7 +73,7 @@ async def _do_compile(component_id, namespace: str, name: str):
             component.compiled_bundle = None
             component.source_map = None
 
-        await db.commit()
+        await db.flush()
 
 
 @router.post("", response_model=ComponentResponse)
@@ -127,7 +127,7 @@ async def create_component(
     )
 
     db.add(component)
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     # Trigger background compilation
@@ -275,7 +275,7 @@ async def update_component(
     if component_data.is_published is not None:
         component.is_published = component_data.is_published
 
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     # Trigger recompilation if source changed
@@ -308,7 +308,7 @@ async def delete_component(
     set_permission_used(request, f"sinas.components/{namespace}/{name}.delete")
 
     component.is_active = False
-    await db.commit()
+    await db.flush()
 
     return None
 
@@ -338,7 +338,7 @@ async def compile_component(
 
     component.compile_status = "pending"
     component.compile_errors = None
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     background_tasks.add_task(_do_compile, component.id, component.namespace, component.name)
@@ -407,7 +407,7 @@ async def create_share_link(
     )
 
     db.add(share)
-    await db.commit()
+    await db.flush()
     await db.refresh(share)
 
     return ShareResponse(
@@ -502,5 +502,5 @@ async def revoke_share_link(
         raise HTTPException(status_code=404, detail="Share link not found")
 
     await db.delete(share)
-    await db.commit()
+    await db.flush()
     return None

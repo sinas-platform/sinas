@@ -171,7 +171,7 @@ async def update_role(
     if role_data.external_role_id is not None:
         role.external_role_id = role_data.external_role_id
 
-    await db.commit()
+    await db.flush()
     await db.refresh(role)
 
     return role
@@ -200,7 +200,7 @@ async def delete_role(
     set_permission_used(request, "sinas.roles.delete:all")
 
     await db.delete(role)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"Role '{role.name}' deleted successfully"}
 
@@ -373,7 +373,7 @@ async def remove_role_member(
     membership.removed_at = dt.utcnow()
     membership.removed_by = uuid.UUID(current_user_id)
 
-    await db.commit()
+    await db.flush()
 
     return {"message": "Member removed from role successfully"}
 
@@ -511,7 +511,7 @@ async def delete_role_permission(
         raise HTTPException(status_code=404, detail="Permission not found")
 
     await db.delete(permission)
-    await db.commit()
+    await db.flush()
 
     return {"message": "Permission deleted successfully"}
 

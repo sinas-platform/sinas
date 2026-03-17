@@ -59,7 +59,7 @@ async def create_store(
     )
 
     db.add(store)
-    await db.commit()
+    await db.flush()
     await db.refresh(store)
 
     return StoreResponse.model_validate(store)
@@ -153,7 +153,7 @@ async def update_store(
     if store_data.encrypted is not None:
         store.encrypted = store_data.encrypted
 
-    await db.commit()
+    await db.flush()
     await db.refresh(store)
 
     return StoreResponse.model_validate(store)
@@ -182,6 +182,6 @@ async def delete_store(
     set_permission_used(request, f"sinas.stores/{namespace}/{name}.delete")
 
     await db.delete(store)
-    await db.commit()
+    await db.flush()
 
     return None

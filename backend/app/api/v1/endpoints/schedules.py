@@ -280,6 +280,6 @@ async def delete_schedule(
     await _notify_scheduler("remove", str(schedule.id))
 
     await db.delete(schedule)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"Schedule '{schedule.name}' deleted successfully"}

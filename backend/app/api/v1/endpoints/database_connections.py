@@ -59,7 +59,7 @@ async def create_database_connection(
     )
 
     db.add(connection)
-    await db.commit()
+    await db.flush()
     await db.refresh(connection)
 
     return DatabaseConnectionResponse.model_validate(connection)

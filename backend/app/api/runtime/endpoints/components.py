@@ -323,7 +323,7 @@ async def render_shared_component(
 
     # Increment view count
     share.view_count += 1
-    await db.commit()
+    await db.flush()
 
     input_vars = share.input_data or {}
     html = _build_html_shell(component, input_vars)
@@ -587,7 +587,7 @@ async def proxy_state(
                 visibility=body.visibility,
             )
             db.add(state)
-        await db.commit()
+        await db.flush()
         return {"success": True, "key": body.key}
 
     elif body.action == "delete":
@@ -603,7 +603,7 @@ async def proxy_state(
         state = result.scalar_one_or_none()
         if state:
             await db.delete(state)
-            await db.commit()
+            await db.flush()
         return {"success": True, "key": body.key}
 
     else:

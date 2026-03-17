@@ -151,7 +151,7 @@ async def create_state(
     )
 
     db.add(state)
-    await db.commit()
+    await db.flush()
     await db.refresh(state)
 
     return _state_to_response(state, store)
@@ -352,7 +352,7 @@ async def update_state(
     if state_data.visibility is not None:
         state.visibility = state_data.visibility
 
-    await db.commit()
+    await db.flush()
     await db.refresh(state)
 
     return _state_to_response(state, store)
@@ -394,6 +394,6 @@ async def delete_state(
         raise HTTPException(status_code=404, detail=f"State '{key}' not found")
 
     await db.delete(state)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"State '{key}' deleted from store '{namespace}/{name}'"}
