@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class HealthResponse(BaseModel):
     """Response for system health endpoint."""
 
-    warnings: list[str]
+    warnings: list[dict[str, Any]]
     services: list[dict[str, Any]]
     host: dict[str, Any]
 

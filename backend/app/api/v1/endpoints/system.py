@@ -264,17 +264,17 @@ def _generate_warnings(
 @router.get("/health")
 async def get_system_health(
     user_id: str = Depends(require_permission("sinas.system.read:all")),
-) -> dict[str, Any]:
+) -> HealthResponse:
     """Comprehensive system health check — queries Docker directly."""
     services = []
     try:
         client = docker.from_env()
 
-        # Get all sinas compose containers from Docker (filter by project label)
+        # Get all sinas compose containers from Docker (filter by name prefix)
         all_containers = await asyncio.to_thread(
             client.containers.list,
             all=True,
-            filters={"label": "com.docker.compose.project=sinas"},
+            filters={"name": "sinas"},
         )
 
         compose_containers = []
