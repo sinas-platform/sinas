@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     max_function_memory: int = 512  # MB (Docker memory limit)
     max_function_cpu: float = 1.0  # CPU cores (1.0 = 1 full core, 0.5 = half core)
     max_function_storage: str = "1g"  # Disk storage limit (e.g., "500m", "1g")
-    function_container_image: str = "sinas-executor"  # Base image for execution
+    function_container_image: str = "sinas-executor"  # Base image for execution (overridden by FUNCTION_CONTAINER_IMAGE env var)
     function_container_idle_timeout: int = 3600  # Seconds before idle container cleanup (1 hour)
 
     # Sandbox containers (isolated execution pool)
