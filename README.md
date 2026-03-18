@@ -177,6 +177,10 @@ CONFIG_FILE=config/my-config.yaml
 AUTO_APPLY_CONFIG=true
 ```
 
+## Contributing
+
+Contributions are welcome. By submitting a pull request, you agree to the [Contributor License Agreement](CLA.md).
+
 ## Documentation
 
 - [DOCS.md](DOCS.md) — Deployment, configuration, and production reference

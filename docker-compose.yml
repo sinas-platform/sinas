@@ -291,8 +291,6 @@ services:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/console:${IMAGE_TAG:-latest}
     container_name: sinas-console
     restart: unless-stopped
-    ports:
-      - "51245:80"
 
   caddy:
     image: caddy:2-alpine
