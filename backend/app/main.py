@@ -18,7 +18,12 @@ from app.middleware.request_logger import RequestLoggerMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.openapi_generator import generate_runtime_openapi
 
+# Build CORS origins: explicit config, or auto-derive from DOMAIN
 _cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+if not _cors_origins and settings.domain and settings.domain not in ("localhost", "127.0.0.1"):
+    _cors_origins = [f"https://{settings.domain}", f"https://{settings.domain}:51245"]
+elif not _cors_origins:
+    _cors_origins = ["http://localhost:51245", "http://localhost:8000"]
 
 logger = logging.getLogger(__name__)
 
