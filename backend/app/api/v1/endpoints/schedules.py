@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ async def _notify_scheduler(action: str, job_id: str) -> None:
     await redis.publish(SCHEDULER_CHANNEL, json.dumps({"action": action, "job_id": job_id}))
 
 
-@router.post("", response_model=ScheduledJobResponse)
+@router.post("", response_model=ScheduledJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_schedule(
     request: Request,
     schedule_data: ScheduledJobCreate,
@@ -247,7 +247,7 @@ async def update_schedule(
     return response
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_schedule(
     request: Request,
     name: str,
@@ -276,4 +276,4 @@ async def delete_schedule(
     await db.delete(schedule)
     await db.flush()
 
-    return {"message": f"Schedule '{schedule.name}' deleted successfully"}
+    return None

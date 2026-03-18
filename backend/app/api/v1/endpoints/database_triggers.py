@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ async def _notify_cdc(action: str, trigger_id: str) -> None:
     await redis.publish(CDC_CHANNEL, json.dumps({"action": action, "trigger_id": trigger_id}))
 
 
-@router.post("", response_model=DatabaseTriggerResponse)
+@router.post("", response_model=DatabaseTriggerResponse, status_code=status.HTTP_201_CREATED)
 async def create_database_trigger(
     request: Request,
     trigger_data: DatabaseTriggerCreate,
@@ -207,7 +207,7 @@ async def update_database_trigger(
     return DatabaseTriggerResponse.model_validate(trigger)
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_database_trigger(
     request: Request,
     name: str,
@@ -236,4 +236,4 @@ async def delete_database_trigger(
     await db.delete(trigger)
     await db.flush()
 
-    return {"message": f"Database trigger '{name}' deleted successfully"}
+    return None

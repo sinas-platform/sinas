@@ -5,7 +5,6 @@ import uuid
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, EmailStr
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,41 +13,17 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.email import _send_email_sync
 from app.models.template import Template
+from app.schemas.template import (
+    TemplateEmailRequest,
+    TemplateEmailResponse,
+    TemplateRenderRequest,
+    TemplateRenderResponse,
+)
 from app.services.template_renderer import render_template
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/templates")
-
-
-class TemplateRenderRequest(BaseModel):
-    """Request to render a template."""
-
-    variables: dict[str, Any]
-
-
-class TemplateEmailRequest(BaseModel):
-    """Request to send email with template."""
-
-    to: EmailStr
-    from_alias: Optional[str] = None  # e.g., "support" -> support@domain.com
-    from_name: Optional[str] = None  # e.g., "SINAS Support"
-    variables: dict[str, Any]
-
-
-class TemplateRenderResponse(BaseModel):
-    """Response from template rendering."""
-
-    title: Optional[str] = None
-    html_content: str
-    text_content: Optional[str] = None
-
-
-class TemplateEmailResponse(BaseModel):
-    """Response from email sending."""
-
-    message: str
-    to: str
 
 
 async def get_template_with_permission_check(

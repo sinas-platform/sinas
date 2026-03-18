@@ -2,18 +2,14 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_permission
 from app.core.database import get_db
+from app.schemas.container import ScaleRequest
 from app.services.container_pool import container_pool
 
 router = APIRouter(prefix="/containers", tags=["containers"])
-
-
-class ScaleRequest(BaseModel):
-    target: int
 
 
 @router.get("/stats")

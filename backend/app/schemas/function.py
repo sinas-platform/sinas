@@ -120,10 +120,33 @@ class FunctionVersionResponse(BaseModel):
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
     created_at: datetime
-    created_by: str
+    created_by: uuid.UUID
 
     class Config:
         from_attributes = True
+
+
+class FunctionExecuteRequest(BaseModel):
+    """Request to execute a function."""
+
+    input: dict[str, Any] = {}
+    timeout: Optional[int] = None  # Timeout in seconds (sync only)
+
+
+class FunctionExecuteResponse(BaseModel):
+    """Response from function execution."""
+
+    status: str
+    execution_id: str
+    result: Any = None
+    error: Optional[str] = None
+
+
+class FunctionExecuteAsyncResponse(BaseModel):
+    """Response from async function execution."""
+
+    execution_id: str
+    status: str = "queued"
 
 
 class OpenAPIImportRequest(BaseModel):

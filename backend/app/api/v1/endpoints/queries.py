@@ -2,7 +2,7 @@
 import time
 
 import jsonschema
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,7 +24,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/queries", tags=["queries"])
 
 
-@router.post("", response_model=QueryResponse)
+@router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
 async def create_query(
     request: Request,
     query_data: QueryCreate,

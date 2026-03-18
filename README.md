@@ -27,35 +27,42 @@ Sinas gives you a self-hosted backend for AI-powered applications: configure age
 
 ## Quick Start
 
+Deploy Sinas on any VPS with a single command:
+
 ```bash
-git clone https://github.com/sinas-platform/sinas.git
-cd sinas
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh | sudo bash
 ```
 
 The installer will:
 - Install Docker if needed
 - Generate secure keys automatically
 - Prompt for SMTP, domain, and admin email
-- Create your `.env` and start all services
-- Provision SSL certificates (if a domain is configured)
+- Pull pre-built images and start all services
+- Provision SSL certificates via Let's Encrypt
 
-Once running, open the console in your browser and log in with your admin email.
+Once running, open the console at `https://yourdomain.com:51245` and log in with your admin email.
 
-See [INSTALL.md](INSTALL.md) for manual setup and detailed instructions.
-
-### Local Development
-
-For local development without the installer:
-
+**Update to latest version:**
 ```bash
-cp .env.example .env
-# Edit .env with your keys and SMTP config (see Environment Variables below)
-docker-compose up
+cd /opt/sinas && docker compose pull && docker compose up -d
 ```
 
-- **Console**: http://localhost:5173
+See [DOCS.md](DOCS.md) for the full deployment and configuration reference.
+
+## Development
+
+For local development, clone the repo and use the dev compose file:
+
+```bash
+git clone https://github.com/sinas-platform/sinas.git && cd sinas
+cp .env.example .env   # Edit with your keys and SMTP config
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+- **Console**: http://localhost:51245
 - **API Docs**: http://localhost:8000/docs
+
+See [INSTALL.md](INSTALL.md) for the full development setup guide.
 
 ## Architecture
 
@@ -75,7 +82,8 @@ sinas/
 │       ├── pages/        # Route pages
 │       ├── components/   # Shared UI components
 │       └── lib/          # API client, auth, utilities
-├── docker-compose.yml    # Development stack
+├── docker-compose.yml    # Production stack (pre-built images)
+├── docker-compose.dev.yml # Development stack (local builds + hot reload)
 └── config_examples/      # Declarative config examples
 ```
 
@@ -169,81 +177,11 @@ CONFIG_FILE=config/my-config.yaml
 AUTO_APPLY_CONFIG=true
 ```
 
-## API
-
-Sinas exposes two API surfaces:
-
-**Runtime API** — for building applications on top of Sinas:
-- **Agents & Chats** — Create chat sessions, stream messages (SSE), manage conversations
-- **Functions & Webhooks** — Execute functions, trigger webhooks, track executions
-- **Queries** — Run database queries
-- **Stores** — Read/write key-value state
-- **Components** — Serve compiled UI widgets with proxy endpoints
-- **Templates** — Render and send templates
-- **Files** — Upload and retrieve files
-- **Manifests** — Validate application dependencies at runtime
-- **Discovery** — Enumerate available agents, functions, and resources
-
-**Management API** — full CRUD at `/api/v1/`:
-- `/api/v1/agents`, `/api/v1/functions`, `/api/v1/webhooks`, `/api/v1/schedules`
-- `/api/v1/skills`, `/api/v1/collections`, `/api/v1/stores`, `/api/v1/templates`
-- `/api/v1/database-connections`, `/api/v1/queries`, `/api/v1/database-triggers`
-- `/api/v1/users`, `/api/v1/roles`, `/api/v1/llm-providers`, `/api/v1/packages`, `/api/v1/manifests`
-- `/api/v1/config/apply`, `/api/v1/config/validate`, `/api/v1/config/export`
-
-Interactive API docs are available at `/docs` (runtime) and `/api/v1/docs` (management).
-
-## Environment Variables
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `SECRET_KEY` | JWT signing key |
-| `ENCRYPTION_KEY` | Fernet key for encrypting sensitive data (LLM API keys, DB credentials) |
-| `DATABASE_PASSWORD` | PostgreSQL password |
-| `SMTP_HOST` | SMTP server for OTP emails |
-| `SMTP_PORT` | SMTP port (typically 587) |
-| `SMTP_USER` | SMTP username |
-| `SMTP_PASSWORD` | SMTP password |
-| `SMTP_DOMAIN` | Email "from" domain |
-| `SUPERADMIN_EMAIL` | Initial admin user email |
-
-### Optional
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DOMAIN` | `localhost` | Domain for Caddy auto-HTTPS |
-| `DEBUG` | `false` | Verbose logging |
-| `FUNCTION_TIMEOUT` | `300` | Max function execution time (seconds) |
-| `MAX_FUNCTION_MEMORY` | `512` | Function memory limit (MB) |
-| `ALLOW_PACKAGE_INSTALLATION` | `true` | Allow pip install in functions |
-| `CONFIG_FILE` | — | YAML config file path |
-| `AUTO_APPLY_CONFIG` | `false` | Apply config on startup |
-
-See [INSTALL.md](INSTALL.md) for the full list including resource limits and container configuration.
-
-## Development
-
-```bash
-# Start the full stack
-docker-compose up
-
-# Run database migrations
-docker exec -it sinas-backend alembic upgrade head
-
-# Create a new migration
-docker exec -it sinas-backend alembic revision --autogenerate -m "description"
-
-# Access backend shell
-docker exec -it sinas-backend sh
-```
-
 ## Documentation
 
-- [INSTALL.md](INSTALL.md) — Installation and deployment guide
-- [DOCS.md](DOCS.md) — Complete feature reference and API documentation
-- Interactive API docs at `/docs` and `/api/v1/docs` when running
+- [DOCS.md](DOCS.md) — Deployment, configuration, and production reference
+- [INSTALL.md](INSTALL.md) — Development environment setup
+- Interactive API docs at `/docs` (runtime) and `/api/v1/docs` (management)
 
 ## License
 

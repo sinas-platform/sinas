@@ -3,8 +3,7 @@ import secrets
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +17,8 @@ from app.schemas.component import (
     ComponentListResponse,
     ComponentResponse,
     ComponentUpdate,
+    ShareCreateRequest,
+    ShareResponse,
 )
 from app.services.content_tokens import generate_component_render_token
 from app.services.component_builder import ComponentBuilderService
@@ -74,7 +75,7 @@ async def _do_compile(component_id, namespace: str, name: str):
         await db.flush()
 
 
-@router.post("", response_model=ComponentResponse)
+@router.post("", response_model=ComponentResponse, status_code=status.HTTP_201_CREATED)
 async def create_component(
     request: Request,
     component_data: ComponentCreate,
@@ -345,29 +346,6 @@ async def compile_component(
 
 
 # --- Share Link Endpoints ---
-
-
-class ShareCreateRequest(BaseModel):
-    input_data: Optional[dict[str, Any]] = None
-    expires_at: Optional[datetime] = None
-    max_views: Optional[int] = None
-    label: Optional[str] = None
-
-
-class ShareResponse(BaseModel):
-    id: str
-    token: str
-    component_id: str
-    input_data: Optional[dict[str, Any]]
-    expires_at: Optional[datetime]
-    max_views: Optional[int]
-    view_count: int
-    label: Optional[str]
-    created_at: datetime
-    share_url: str
-
-    class Config:
-        from_attributes = True
 
 
 @router.post("/{namespace}/{name}/shares", response_model=ShareResponse)

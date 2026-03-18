@@ -507,7 +507,7 @@ async def verify_jwt_or_api_key(
 
         # Update last login timestamp
         user.last_login_at = datetime.now(UTC)
-        await db.commit()
+        await db.flush()
 
         return str(user_id), email, permissions
 

@@ -1,5 +1,5 @@
 """Collection management endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/collections", tags=["collections"])
 
 
-@router.post("", response_model=CollectionResponse)
+@router.post("", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_collection(
     request: Request,
     collection_data: CollectionCreate,

@@ -3,7 +3,7 @@ import ipaddress
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -97,7 +97,7 @@ async def import_openapi_spec(
     return result
 
 
-@router.post("", response_model=FunctionResponse)
+@router.post("", response_model=FunctionResponse, status_code=status.HTTP_201_CREATED)
 async def create_function(
     request: Request,
     function_data: FunctionCreate,
@@ -333,7 +333,7 @@ async def update_function(
     return await _function_response(function, db)
 
 
-@router.delete("/{namespace}/{name}")
+@router.delete("/{namespace}/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_function(
     request: Request,
     namespace: str,
@@ -362,7 +362,7 @@ async def delete_function(
     # Clear execution engine cache
     executor.clear_cache()
 
-    return {"message": f"Function '{namespace}/{name}' deleted successfully"}
+    return None
 
 
 @router.get("/{namespace}/{name}/versions", response_model=list[FunctionVersionResponse])

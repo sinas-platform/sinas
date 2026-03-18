@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -15,19 +14,9 @@ from app.core.permissions import check_permission
 from app.models.user import Role, User, UserRole
 from app.schemas import UserResponse, UserUpdate, UserWithGroupsResponse
 from app.schemas.auth import CreateUserRequest
+from app.schemas.user import UserWithRolesResponse
 
 router = APIRouter(prefix="/users", tags=["users"])
-
-
-class UserWithRolesResponse(BaseModel):
-    id: uuid.UUID
-    email: str
-    last_login_at: Optional[datetime] = None
-    created_at: datetime
-    roles: list[str]
-
-    class Config:
-        from_attributes = True
 
 
 @router.get("", response_model=list[UserWithRolesResponse])
@@ -216,7 +205,7 @@ async def update_user(
     return user
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     request: Request,
     user_id: uuid.UUID,
@@ -244,4 +233,4 @@ async def delete_user(
     await db.delete(user)
     await db.flush()
 
-    return {"message": f"User '{user.email}' deleted successfully"}
+    return None

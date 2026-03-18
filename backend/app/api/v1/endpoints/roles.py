@@ -1,7 +1,7 @@
 """Roles API endpoints."""
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +23,7 @@ from app.schemas import (
 router = APIRouter(prefix="/roles", tags=["roles"])
 
 
-@router.post("", response_model=RoleResponse)
+@router.post("", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
 async def create_role(
     role_data: RoleCreate,
     db: AsyncSession = Depends(get_db),
@@ -41,7 +41,6 @@ async def create_role(
         name=role_data.name,
         description=role_data.description,
         email_domain=role_data.email_domain,
-        external_role_id=role_data.external_role_id,
     )
 
     db.add(role)
@@ -168,16 +167,13 @@ async def update_role(
         role.description = role_data.description
     if role_data.email_domain is not None:
         role.email_domain = role_data.email_domain
-    if role_data.external_role_id is not None:
-        role.external_role_id = role_data.external_role_id
-
     await db.flush()
     await db.refresh(role)
 
     return role
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(
     request: Request,
     name: str,
@@ -202,7 +198,7 @@ async def delete_role(
     await db.delete(role)
     await db.flush()
 
-    return {"message": f"Role '{role.name}' deleted successfully"}
+    return None
 
 
 # Role Membership Management
@@ -331,7 +327,7 @@ async def add_role_member(
     )
 
 
-@router.delete("/{name}/members/{user_id}")
+@router.delete("/{name}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_role_member(
     request: Request,
     name: str,
@@ -375,7 +371,7 @@ async def remove_role_member(
 
     await db.flush()
 
-    return {"message": "Member removed from role successfully"}
+    return None
 
 
 # Role Permission Management
@@ -469,7 +465,7 @@ async def set_role_permission(
     return new_permission
 
 
-@router.delete("/{name}/permissions")
+@router.delete("/{name}/permissions", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role_permission(
     request: Request,
     name: str,
@@ -513,7 +509,7 @@ async def delete_role_permission(
     await db.delete(permission)
     await db.flush()
 
-    return {"message": "Permission deleted successfully"}
+    return None
 
 
 @router.get("/permissions/reference")

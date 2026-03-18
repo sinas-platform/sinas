@@ -2,7 +2,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -78,7 +78,7 @@ async def list_dependencies(
     return dependencies
 
 
-@router.delete("/{dependency_id}")
+@router.delete("/{dependency_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_dependency(
     request: Request,
     dependency_id: uuid.UUID,
@@ -101,6 +101,4 @@ async def remove_dependency(
     await db.delete(dependency)
     await db.flush()
 
-    return {
-        "message": f"Package '{package_name}' approval removed. Existing containers will keep it until recreated."
-    }
+    return None

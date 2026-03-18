@@ -1,6 +1,6 @@
 """Webhooks API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,7 +15,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-@router.post("", response_model=WebhookResponse)
+@router.post("", response_model=WebhookResponse, status_code=status.HTTP_201_CREATED)
 async def create_webhook(
     request: Request,
     webhook_data: WebhookCreate,
@@ -203,7 +203,7 @@ async def update_webhook(
     return response
 
 
-@router.delete("/{path:path}")
+@router.delete("/{path:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_webhook(
     request: Request,
     path: str,
@@ -230,4 +230,4 @@ async def delete_webhook(
     await db.delete(webhook)
     await db.flush()
 
-    return {"message": f"Webhook '{webhook.path}' deleted successfully"}
+    return None

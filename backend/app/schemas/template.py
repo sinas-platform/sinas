@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class TemplateCreate(BaseModel):
@@ -60,9 +60,25 @@ class TemplateRenderRequest(BaseModel):
     variables: dict[str, Any] = Field(default_factory=dict)
 
 
+class TemplateEmailRequest(BaseModel):
+    """Request to send email with template."""
+
+    to: EmailStr
+    from_alias: Optional[str] = None
+    from_name: Optional[str] = None
+    variables: dict[str, Any]
+
+
 class TemplateRenderResponse(BaseModel):
     """Rendered template output."""
 
-    title: Optional[str]
+    title: Optional[str] = None
     html_content: str
-    text_content: Optional[str]
+    text_content: Optional[str] = None
+
+
+class TemplateEmailResponse(BaseModel):
+    """Response from email sending."""
+
+    message: str
+    to: str

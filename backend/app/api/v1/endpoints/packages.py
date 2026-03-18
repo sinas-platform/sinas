@@ -1,5 +1,5 @@
 """Packages API endpoints — installable integration packages."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,7 @@ from app.core.permissions import check_permission
 from app.schemas.package import (
     PackageCreateRequest,
     PackageInstallRequest,
+    PackageInstallResponse,
     PackageListResponse,
     PackagePreviewRequest,
     PackageResponse,
@@ -39,10 +40,10 @@ async def install_package(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return {
-        "package": PackageResponse.model_validate(package).model_dump(mode="json"),
-        "apply": apply_result.model_dump(mode="json"),
-    }
+    return PackageInstallResponse(
+        package=PackageResponse.model_validate(package).model_dump(mode="json"),
+        apply=apply_result.model_dump(mode="json"),
+    )
 
 
 @router.post("/preview")
@@ -139,7 +140,7 @@ async def get_package(
     return package
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def uninstall_package(
     request: Request,
     name: str,
@@ -160,10 +161,7 @@ async def uninstall_package(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
-    return {
-        "message": f"Package '{name}' uninstalled",
-        "deleted": deleted_counts,
-    }
+    return None
 
 
 @router.get("/{name}/export")

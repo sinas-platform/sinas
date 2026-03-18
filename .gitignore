@@ -212,6 +212,10 @@ __marimo__/
 # Claude Code
 .claude/
 
+# Integration test secrets
+tests/integration/.test-api-key
+tests/integration/.test-state.json
+
 # Frontend (console/)
 console/node_modules/
 console/dist/

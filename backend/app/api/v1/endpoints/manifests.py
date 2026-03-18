@@ -1,6 +1,6 @@
 """Manifests API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/manifests", tags=["manifests"])
 
 
-@router.post("", response_model=ManifestResponse)
+@router.post("", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
 async def create_manifest(
     request: Request,
     manifest_data: ManifestCreate,

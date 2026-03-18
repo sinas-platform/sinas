@@ -147,18 +147,21 @@ async def apply_functions(
     """Apply function configurations"""
     for func_config in functions:
         try:
-            stmt = select(Function).where(Function.name == func_config.name)
+            ns = getattr(func_config, "namespace", "default") or "default"
+            stmt = select(Function).where(
+                Function.namespace == ns, Function.name == func_config.name
+            )
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()
 
             config_hash = calculate_hash(
                 {
+                    "namespace": ns,
                     "name": func_config.name,
                     "description": func_config.description,
                     "code": func_config.code,
-                    "input_schema": func_config.inputSchema,
-                    "output_schema": func_config.outputSchema,
-                    "tags": sorted(func_config.tags) if func_config.tags else [],
+                    "input_schema": func_config.inputSchema or {},
+                    "output_schema": func_config.outputSchema or {},
                     "icon": func_config.icon,
                     "timeout": func_config.timeout,
                 }
@@ -182,25 +185,29 @@ async def apply_functions(
                     # Update function
                     existing.description = func_config.description
                     existing.code = func_config.code
-                    existing.input_schema = func_config.inputSchema
-                    existing.output_schema = func_config.outputSchema
-                    existing.tags = func_config.tags
+                    existing.input_schema = func_config.inputSchema or {}
+                    existing.output_schema = func_config.outputSchema or {}
                     existing.icon = func_config.icon
                     existing.timeout = func_config.timeout
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
                     # Create new version if code changed
+                    from sqlalchemy import func
+                    max_ver_result = await db.execute(
+                        select(func.coalesce(func.max(FunctionVersion.version), 0))
+                        .where(FunctionVersion.function_id == existing.id)
+                    )
+                    max_ver = max_ver_result.scalar() or 0
                     version = FunctionVersion(
                         function_id=existing.id,
-                        version_number=existing.current_version + 1,
+                        version=max_ver + 1,
                         code=func_config.code,
-                        input_schema=func_config.inputSchema,
-                        output_schema=func_config.outputSchema,
+                        input_schema=func_config.inputSchema or {},
+                        output_schema=func_config.outputSchema or {},
                         created_by=existing.user_id,
                     )
                     db.add(version)
-                    existing.current_version += 1
 
                 track_change("update", "functions", func_config.name)
                 function_ids[func_config.name] = str(existing.id)
@@ -208,16 +215,15 @@ async def apply_functions(
             else:
                 if not dry_run:
                     new_function = Function(
+                        namespace=ns,
                         name=func_config.name,
                         description=func_config.description,
                         code=func_config.code,
-                        input_schema=func_config.inputSchema,
-                        output_schema=func_config.outputSchema,
-                        tags=func_config.tags,
+                        input_schema=func_config.inputSchema or {},
+                        output_schema=func_config.outputSchema or {},
                         icon=func_config.icon,
                         timeout=func_config.timeout,
                         user_id=owner_user_id,
-                        current_version=1,
                         is_active=True,
                         managed_by=managed_by,
                         config_name=config_name,
@@ -229,10 +235,10 @@ async def apply_functions(
                     # Create initial version
                     version = FunctionVersion(
                         function_id=new_function.id,
-                        version_number=1,
+                        version=1,
                         code=func_config.code,
-                        input_schema=func_config.inputSchema,
-                        output_schema=func_config.outputSchema,
+                        input_schema=func_config.inputSchema or {},
+                        output_schema=func_config.outputSchema or {},
                         created_by=owner_user_id,
                     )
                     db.add(version)

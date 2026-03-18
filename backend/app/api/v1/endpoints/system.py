@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import require_permission
 from app.core.config import settings
+from app.schemas.system import ContainerRestartResponse, HealthResponse
 from app.services.queue_service import queue_service
 
 logger = logging.getLogger(__name__)
@@ -265,48 +266,64 @@ async def get_system_health(
     user_id: str = Depends(require_permission("sinas.system.read:all")),
 ) -> dict[str, Any]:
     """Comprehensive system health check — queries Docker directly."""
-    client = docker.from_env()
+    services = []
+    try:
+        client = docker.from_env()
 
-    # Get all sinas compose containers from Docker (filter by project label)
-    all_containers = await asyncio.to_thread(
-        client.containers.list,
-        all=True,
-        filters={"label": "com.docker.compose.project=sinas"},
-    )
+        # Get all sinas compose containers from Docker (filter by project label)
+        all_containers = await asyncio.to_thread(
+            client.containers.list,
+            all=True,
+            filters={"label": "com.docker.compose.project=sinas"},
+        )
 
-    compose_containers = []
-    for c in all_containers:
-        # Skip the executor image-builder container (exits immediately by design)
-        if c.name.startswith("sinas-executor"):
-            continue
-        labels = c.labels or {}
-        service = labels.get("com.docker.compose.service", c.name)
-        # Sandbox/shared containers inherit service=executor from the image,
-        # use a more descriptive service name instead
-        if c.name.startswith("sinas-sandbox-"):
-            service = "sandbox"
-        elif c.name.startswith("sinas-shared-"):
-            service = "shared"
-        compose_containers.append((c, service))
+        compose_containers = []
+        for c in all_containers:
+            # Skip the executor image-builder container (exits immediately by design)
+            if c.name.startswith("sinas-executor"):
+                continue
+            labels = c.labels or {}
+            service = labels.get("com.docker.compose.service", c.name)
+            # Sandbox/shared containers inherit service=executor from the image,
+            # use a more descriptive service name instead
+            if c.name.startswith("sinas-sandbox-"):
+                service = "sandbox"
+            elif c.name.startswith("sinas-shared-"):
+                service = "shared"
+            compose_containers.append((c, service))
 
-    # Get container info in parallel
-    async def get_info(container, service_name):
-        info = await asyncio.to_thread(_get_container_info, container)
-        info["service"] = service_name
-        return info
+        # Get container info in parallel
+        async def get_info(container, service_name):
+            info = await asyncio.to_thread(_get_container_info, container)
+            info["service"] = service_name
+            return info
 
-    services = await asyncio.gather(
-        *[get_info(c, svc) for c, svc in compose_containers],
-        return_exceptions=True,
-    )
-    services = [s for s in services if isinstance(s, dict)]
+        services = await asyncio.gather(
+            *[get_info(c, svc) for c, svc in compose_containers],
+            return_exceptions=True,
+        )
+        services = [s for s in services if isinstance(s, dict)]
 
-    # Sort: critical infra first, then alphabetical
-    priority = {"redis": 0, "postgres": 1, "pgbouncer": 2, "clickhouse": 3, "backend": 4}
-    services.sort(key=lambda s: (priority.get(s["service"], 99), s["name"]))
+        # Sort: critical infra first, then alphabetical
+        priority = {"redis": 0, "postgres": 1, "pgbouncer": 2, "clickhouse": 3, "backend": 4}
+        services.sort(key=lambda s: (priority.get(s["service"], 99), s["name"]))
+    except Exception as e:
+        logger.warning(f"Failed to query Docker for health check: {e}")
 
     # Get host resources (blocking /proc reads, run in thread)
-    host = await asyncio.to_thread(_get_host_resources)
+    try:
+        host = await asyncio.to_thread(_get_host_resources)
+    except Exception as e:
+        logger.warning(f"Failed to get host resources for health check: {e}")
+        host = {
+            "cpu_percent": None,
+            "memory_total_mb": None,
+            "memory_used_mb": None,
+            "memory_percent": None,
+            "disk_total_gb": None,
+            "disk_used_gb": None,
+            "disk_percent": None,
+        }
 
     # Get queue worker info and DLQ size for warnings
     queue_workers = []
@@ -321,11 +338,7 @@ async def get_system_health(
 
     warnings = _generate_warnings(services, queue_workers, dlq_size, queue_stats, host)
 
-    return {
-        "warnings": warnings,
-        "services": services,
-        "host": host,
-    }
+    return HealthResponse(warnings=warnings, services=services, host=host)
 
 
 @router.post("/containers/{container_name}/restart")
@@ -341,7 +354,7 @@ async def restart_container(
         raise HTTPException(status_code=404, detail=f"Container '{container_name}' not found")
 
     await asyncio.to_thread(container.restart, timeout=15)
-    return {"status": "restarted", "container": container_name}
+    return ContainerRestartResponse(status="restarted", container=container_name)
 
 
 @router.post("/flush-stuck-jobs")

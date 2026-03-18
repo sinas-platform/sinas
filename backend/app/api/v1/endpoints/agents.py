@@ -49,10 +49,14 @@ async def create_agent(
         raise HTTPException(status_code=403, detail="Not authorized to create agents")
     set_permission_used(req, create_perm)
 
-    # Check if agent name already exists in this namespace
+    # Check if agent name already exists in this namespace (only among active agents)
     result = await db.execute(
         select(Agent).where(
-            and_(Agent.namespace == agent_data.namespace, Agent.name == agent_data.name)
+            and_(
+                Agent.namespace == agent_data.namespace,
+                Agent.name == agent_data.name,
+                Agent.is_active == True,
+            )
         )
     )
     if result.scalar_one_or_none():
@@ -147,6 +151,13 @@ async def get_agent(
         namespace=namespace,
         name=name,
     )
+
+    # Soft-deleted agents should appear as not found
+    if not agent.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{namespace}/{name}' not found",
+        )
 
     set_permission_used(req, f"sinas.agents/{namespace}/{name}.read")
 

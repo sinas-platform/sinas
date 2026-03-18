@@ -32,6 +32,7 @@ from app.schemas.file import (
     FileSearchRequest,
     FileSearchResult,
     FileUpload,
+    FileUrlResponse,
     FileVersionResponse,
     FileWithVersions,
 )
@@ -532,6 +533,8 @@ async def upload_file(
                 # Don't fail upload if post-upload trigger fails
                 pass
 
+    url = generate_file_url(str(file_record.id), file_record.current_version)
+
     return FileResponse(
         id=file_record.id,
         namespace=namespace,
@@ -541,6 +544,7 @@ async def upload_file(
         current_version=file_record.current_version,
         file_metadata=file_record.file_metadata,
         visibility=file_record.visibility,
+        url=url,
         created_at=file_record.created_at,
         updated_at=file_record.updated_at,
     )
@@ -702,13 +706,13 @@ async def generate_temp_url(
 
     url = generate_file_url(str(file_record.id), version_number, expires_in=expires_in)
 
-    return {
-        "url": url,
-        "filename": file_record.name,
-        "content_type": file_record.content_type,
-        "version": version_number,
-        "expires_in": expires_in,
-    }
+    return FileUrlResponse(
+        url=url,
+        filename=file_record.name,
+        content_type=file_record.content_type,
+        version=version_number,
+        expires_in=expires_in,
+    )
 
 
 @router.get("/{namespace}/{collection}", response_model=list[FileWithVersions])
@@ -973,6 +977,8 @@ async def update_file_metadata(
     await db.flush()
     await db.refresh(file_record)
 
+    url = generate_file_url(str(file_record.id), file_record.current_version)
+
     return FileResponse(
         id=file_record.id,
         namespace=namespace,
@@ -982,6 +988,7 @@ async def update_file_metadata(
         current_version=file_record.current_version,
         file_metadata=file_record.file_metadata,
         visibility=file_record.visibility,
+        url=url,
         created_at=file_record.created_at,
         updated_at=file_record.updated_at,
     )

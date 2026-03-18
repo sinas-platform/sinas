@@ -9,7 +9,6 @@ import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +22,7 @@ from app.models.function import Function
 from app.models.query import Query
 from app.models.user import User
 from app.models.execution import TriggerType
+from app.schemas.component import ProxyExecuteRequest, StateProxyRequest
 from app.models.state import State
 from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
@@ -319,11 +319,6 @@ async def render_shared_component(
 # These provide scoped access to SINAS resources for components
 
 
-class ProxyExecuteRequest(BaseModel):
-    input: dict[str, Any] = {}
-    timeout: Optional[int] = None
-
-
 async def _get_component_or_404(
     db: AsyncSession, namespace: str, name: str
 ) -> Component:
@@ -476,13 +471,6 @@ async def proxy_function_execute(
         }
     except Exception as e:
         return {"status": "error", "execution_id": execution_id, "error": str(e)}
-
-
-class StateProxyRequest(BaseModel):
-    action: str  # get, set, delete, list
-    key: Optional[str] = None
-    value: Optional[dict[str, Any]] = None
-    visibility: str = "private"
 
 
 @router.post(
