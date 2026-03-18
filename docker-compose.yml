@@ -89,14 +89,14 @@ services:
       retries: 5
 
   executor:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/executor:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
     container_name: sinas-executor
     command: "true"
     deploy:
       replicas: 0
 
   builder:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/builder:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/builder:${IMAGE_TAG:-latest}
     container_name: sinas-builder
     restart: unless-stopped
     healthcheck:
@@ -106,7 +106,7 @@ services:
       retries: 5
 
   backend:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -151,6 +151,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       BUILDER_URL: http://sinas-builder:3000
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:51245}
@@ -166,7 +167,7 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4}"
 
   queue-worker:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -187,6 +188,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
     depends_on:
       redis:
         condition: service_healthy
@@ -197,7 +199,7 @@ services:
       replicas: ${QUEUE_WORKER_REPLICAS:-2}
 
   queue-agent:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -218,6 +220,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
     depends_on:
       redis:
         condition: service_healthy
@@ -228,7 +231,7 @@ services:
       replicas: ${QUEUE_AGENT_REPLICAS:-2}
 
   scheduler:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -250,6 +253,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
     depends_on:
       redis:
@@ -261,7 +265,7 @@ services:
       replicas: 1
 
   cdc-worker:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/backend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - .env
@@ -284,7 +288,7 @@ services:
       replicas: 1
 
   console:
-    image: ${IMAGE_REGISTRY:-ghcr.io/pulsr-one/sinas}/console:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/console:${IMAGE_TAG:-latest}
     container_name: sinas-console
     restart: unless-stopped
     ports:

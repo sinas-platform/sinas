@@ -32,6 +32,8 @@ services:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
+    environment:
+      FUNCTION_CONTAINER_IMAGE: sinas-executor
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   queue-worker:
@@ -42,6 +44,8 @@ services:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
+    environment:
+      FUNCTION_CONTAINER_IMAGE: sinas-executor
 
   queue-agent:
     build:
@@ -51,6 +55,8 @@ services:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
+    environment:
+      FUNCTION_CONTAINER_IMAGE: sinas-executor
 
   scheduler:
     build:
@@ -60,6 +66,8 @@ services:
       - ./backend:/app
       - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
+    environment:
+      FUNCTION_CONTAINER_IMAGE: sinas-executor
 
   cdc-worker:
     build:
