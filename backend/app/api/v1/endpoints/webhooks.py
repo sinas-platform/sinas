@@ -1,12 +1,13 @@
 """Webhooks API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
+from app.models.function import Function
 from app.models.webhook import Webhook
 from app.schemas import WebhookCreate, WebhookResponse, WebhookUpdate
 from app.services.package_service import detach_if_package_managed
@@ -14,7 +15,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-@router.post("", response_model=WebhookResponse)
+@router.post("", response_model=WebhookResponse, status_code=status.HTTP_201_CREATED)
 async def create_webhook(
     request: Request,
     webhook_data: WebhookCreate,
@@ -41,8 +42,6 @@ async def create_webhook(
         )
 
     # Verify function exists
-    from app.models.function import Function
-
     function = await Function.get_by_name(
         db, webhook_data.function_namespace, webhook_data.function_name, user_id
     )
@@ -64,7 +63,7 @@ async def create_webhook(
     )
 
     db.add(webhook)
-    await db.commit()
+    await db.flush()
     await db.refresh(webhook)
 
     response = WebhookResponse.model_validate(webhook)
@@ -177,8 +176,6 @@ async def update_webhook(
             pass
 
         # Verify new function exists
-        from app.models.function import Function
-
         function = await Function.get_by_name(db, new_namespace, new_function_name, user_id)
         if not function:
             raise HTTPException(
@@ -198,7 +195,7 @@ async def update_webhook(
         webhook.is_active = webhook_data.is_active
     if webhook_data.requires_auth is not None:
         webhook.requires_auth = webhook_data.requires_auth
-    await db.commit()
+    await db.flush()
     await db.refresh(webhook)
 
     response = WebhookResponse.model_validate(webhook)
@@ -206,7 +203,7 @@ async def update_webhook(
     return response
 
 
-@router.delete("/{path:path}")
+@router.delete("/{path:path}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_webhook(
     request: Request,
     path: str,
@@ -231,6 +228,6 @@ async def delete_webhook(
         set_permission_used(request, "sinas.webhooks.delete:own")
 
     await db.delete(webhook)
-    await db.commit()
+    await db.flush()
 
-    return {"message": f"Webhook '{webhook.path}' deleted successfully"}
+    return None

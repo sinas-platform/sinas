@@ -118,7 +118,7 @@ async def create_state(
     )
 
     db.add(state)
-    await db.commit()
+    await db.flush()
     await db.refresh(state)
 
     return _state_to_response(state)
@@ -316,7 +316,7 @@ async def update_state(
     if state_data.visibility is not None:
         state.visibility = state_data.visibility
 
-    await db.commit()
+    await db.flush()
     await db.refresh(state)
 
     return _state_to_response(state)
@@ -354,6 +354,6 @@ async def delete_state(
         set_permission_used(request, namespace_perm)
 
     await db.delete(state)
-    await db.commit()
+    await db.flush()
 
     return {"message": f"State '{state.namespace}/{state.key}' deleted successfully"}

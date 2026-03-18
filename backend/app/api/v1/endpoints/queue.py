@@ -4,7 +4,9 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import require_permission
+from app.services.container_pool import container_pool
 from app.services.queue_service import queue_service
+from app.services.shared_worker_manager import shared_worker_manager
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -18,8 +20,6 @@ async def get_queue_stats(
 
     # Add container pool stats
     try:
-        from app.services.container_pool import container_pool
-
         pool_stats = container_pool.get_stats()
         stats["pool"] = {
             "idle": pool_stats.get("idle", 0),
@@ -31,7 +31,6 @@ async def get_queue_stats(
 
     # Add shared worker stats
     try:
-        from app.services.shared_worker_manager import shared_worker_manager
         workers = await shared_worker_manager.list_workers()
         running = sum(1 for w in workers if w.get("status") == "running")
         stats["workers"] = {"count": len(workers), "running": running}

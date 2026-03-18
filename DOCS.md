@@ -1,10 +1,10 @@
-# SINAS Documentation
+# Sinas Documentation
 
-## Introduction — What is SINAS?
+## Introduction — What is Sinas?
 
-SINAS is a platform for building AI-powered applications. It brings together multi-provider LLM agents, serverless Python functions, persistent state, database querying, file storage, and template rendering — all behind a single API with role-based access control.
+Sinas is a platform for building AI-powered applications. It brings together multi-provider LLM agents, serverless Python functions, persistent state, database querying, file storage, and template rendering — all behind a single API with role-based access control.
 
-**What you can do with SINAS:**
+**What you can do with Sinas:**
 
 - **Build AI agents** with configurable LLM providers (OpenAI, Anthropic, Mistral, Ollama), tool calling, streaming responses, and agent-to-agent orchestration.
 - **Run Python functions** in isolated Docker containers, triggered by agents, webhooks, cron schedules, or the API.
@@ -14,52 +14,49 @@ SINAS is a platform for building AI-powered applications. It brings together mul
 - **Render templates** using Jinja2 for emails, notifications, and dynamic content.
 - **Define everything in YAML** for GitOps workflows with idempotent apply, change detection, and dry-run.
 
-SINAS runs as a set of Docker services: the API server, queue workers (for functions and agents), a scheduler, PostgreSQL, PgBouncer, Redis, ClickHouse (optional for request logging), and a web console.
+Sinas runs as a set of Docker services: the API server, queue workers (for functions and agents), a scheduler, PostgreSQL, PgBouncer, Redis, ClickHouse (optional for request logging), and a web console.
 
 ---
 
-## Getting Started: Quick Install
+## Deployment
 
 ### Prerequisites
 
-- Docker and Docker Compose
-- An SMTP server for OTP email authentication (or a service like Mailgun, SendGrid)
+- A VPS or server with 2+ CPU cores, 4GB+ RAM, 50GB+ storage
+- A domain name pointed at the server (A record)
+- An SMTP service for login emails (SendGrid, Mailgun, AWS SES, etc.)
 
-### 1. Clone and configure
-
-```bash
-git clone <repository-url> && cd SINAS
-cp .env.example .env
-```
-
-Edit `.env` and set the required values:
+### Install
 
 ```bash
-# Required
-DATABASE_PASSWORD=your-secure-password
-SECRET_KEY=your-secret-key
-ENCRYPTION_KEY=<fernet-key>           # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-SUPERADMIN_EMAIL=you@example.com      # First admin user
-
-# SMTP (required for OTP login)
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=your-smtp-user
-SMTP_PASSWORD=your-smtp-password
-SMTP_DOMAIN=example.com
+curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh | sudo bash
 ```
 
-### 2. Start the application
+The installer will:
+- Install Docker if needed
+- Generate secure keys (`SECRET_KEY`, `ENCRYPTION_KEY`, `DATABASE_PASSWORD`)
+- Prompt for your domain, admin email, and SMTP credentials
+- Create `.env` in `/opt/sinas/`
+- Pull pre-built images from the container registry and start all services
+- Caddy automatically provisions SSL via Let's Encrypt
+
+All services start automatically: PostgreSQL, PgBouncer, Redis, ClickHouse, the backend API (port 8000), queue workers, the scheduler, and the web console (port 51245). Migrations run automatically on startup.
+
+### Update
 
 ```bash
-docker-compose up
+cd /opt/sinas
+docker compose pull
+docker compose up -d
 ```
 
-This starts all services: PostgreSQL, PgBouncer, Redis, ClickHouse, the backend API (port 8000), queue workers, the scheduler, and the web console (port 5173). Migrations run automatically on startup.
+### Manual development installation
+
+For local development, see [INSTALL.md](https://github.com/sinas-platform/sinas/blob/main/INSTALL.md).
 
 ### 3. Log in
 
-1. Open the console at `http://localhost:5173`
+1. Open the console at `https://yourdomain.com:51245`
 2. Enter your `SUPERADMIN_EMAIL` address
 3. Check your inbox for the 6-digit OTP code
 4. Enter the code to receive your access token
@@ -69,7 +66,7 @@ This starts all services: PostgreSQL, PgBouncer, Redis, ClickHouse, the backend 
 Before agents can work, you need at least one LLM provider:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/llm-providers \
+curl -X POST https://yourdomain.com/api/v1/llm-providers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -87,13 +84,13 @@ A default agent is created on startup. Create a chat and send a message:
 
 ```bash
 # Create a chat with the default agent
-curl -X POST http://localhost:8000/agents/default/default/chats \
+curl -X POST https://yourdomain.com/agents/default/default/chats \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # Send a message (use the chat_id from the response)
-curl -X POST http://localhost:8000/chats/{chat_id}/messages/stream \
+curl -X POST https://yourdomain.com/chats/{chat_id}/messages/stream \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"content": "Hello!"}'
@@ -101,27 +98,129 @@ curl -X POST http://localhost:8000/chats/{chat_id}/messages/stream \
 
 ---
 
-## Minimum Configuration
+## Environment Variables
 
-The simplest useful setup requires only a configured LLM provider. Everything else (functions, skills, state, etc.) is optional and can be added incrementally.
+### Required
 
-**Required environment variables:**
-
-| Variable | Purpose |
+| Variable | Description |
 |---|---|
+| `SECRET_KEY` | JWT signing key (auto-generated by install script) |
+| `ENCRYPTION_KEY` | Fernet key for encrypting stored credentials (LLM API keys, DB passwords) |
 | `DATABASE_PASSWORD` | PostgreSQL password |
-| `SECRET_KEY` | JWT signing key |
-| `ENCRYPTION_KEY` | Fernet key for encrypting stored credentials |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_DOMAIN` | OTP email delivery |
+| `SMTP_HOST` | SMTP server hostname (e.g., `smtp.sendgrid.net`) |
+| `SMTP_PORT` | SMTP port (typically `587`) |
+| `SMTP_USER` | SMTP username |
+| `SMTP_PASSWORD` | SMTP password or API key |
+| `SMTP_DOMAIN` | Email "from" domain (e.g., `example.com`) |
+| `SUPERADMIN_EMAIL` | Admin user created on first startup |
+| `DOMAIN` | Your domain for Caddy auto-HTTPS (e.g., `sinas.example.com`) |
 
-**Recommended:**
+### Application
 
-| Variable | Purpose | Default |
+| Variable | Default | Description |
 |---|---|---|
-| `SUPERADMIN_EMAIL` | Auto-created admin user on first startup | _(none)_ |
-| `DOMAIN` | Domain for Caddy reverse proxy (automatic HTTPS) | `localhost` |
+| `DEBUG` | `false` | Enable verbose logging |
+| `CORS_ORIGINS` | _(none)_ | Comma-separated allowed origins |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT access token lifetime |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token lifetime |
+| `OTP_EXPIRE_MINUTES` | `10` | OTP code validity |
+| `OTP_MAX_ATTEMPTS` | `2` | Wrong OTP guesses before invalidation |
 
-All other settings have sensible defaults. See `.env.example` for the full list.
+### Rate Limiting
+
+| Variable | Default | Description |
+|---|---|---|
+| `RATE_LIMIT_LOGIN_IP_MAX` | `10` | Max login requests per IP per window |
+| `RATE_LIMIT_LOGIN_EMAIL_MAX` | `5` | Max login requests per email per window |
+| `RATE_LIMIT_OTP_IP_MAX` | `10` | Max OTP verify requests per IP per window |
+| `RATE_LIMIT_WINDOW_SECONDS` | `900` | Rate limit window (15 minutes) |
+
+### Function Execution
+
+| Variable | Default | Description |
+|---|---|---|
+| `FUNCTION_TIMEOUT` | `300` | Max execution time in seconds |
+| `MAX_FUNCTION_MEMORY` | `512` | Memory limit in MB |
+| `MAX_FUNCTION_CPU` | `1.0` | CPU cores per function |
+| `MAX_FUNCTION_STORAGE` | `1g` | Disk storage limit |
+| `FUNCTION_CONTAINER_IDLE_TIMEOUT` | `3600` | Idle container cleanup (seconds) |
+| `ALLOW_PACKAGE_INSTALLATION` | `true` | Allow `pip install` in functions |
+| `ALLOWED_PACKAGES` | _(all)_ | Comma-separated package whitelist |
+
+### Sandbox Containers
+
+| Variable | Default | Description |
+|---|---|---|
+| `SANDBOX_MIN_SIZE` | `4` | Containers to pre-create |
+| `SANDBOX_MAX_SIZE` | `20` | Maximum sandbox containers |
+| `SANDBOX_MIN_IDLE` | `2` | Replenish when idle drops below this |
+| `SANDBOX_MAX_EXECUTIONS` | `100` | Recycle after N executions |
+
+### Agent Processing
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_TOOL_ITERATIONS` | `25` | Max consecutive tool-call rounds per message |
+| `MAX_HISTORY_MESSAGES` | `100` | Messages loaded for conversation context |
+| `AGENT_JOB_TIMEOUT` | `600` | Agent job timeout (seconds) |
+| `CODE_EXECUTION_TIMEOUT` | `120` | Code execution timeout (seconds) |
+
+### Scaling
+
+| Variable | Default | Description |
+|---|---|---|
+| `BACKEND_REPLICAS` | `1` | Backend API replicas |
+| `UVICORN_WORKERS` | `4` | Workers per backend replica |
+| `QUEUE_WORKER_REPLICAS` | `2` | Function queue worker replicas |
+| `QUEUE_AGENT_REPLICAS` | `2` | Agent queue worker replicas |
+| `QUEUE_FUNCTION_CONCURRENCY` | `10` | Concurrent functions per worker |
+| `QUEUE_AGENT_CONCURRENCY` | `5` | Concurrent agent jobs per worker |
+
+### Resource Limits (Docker)
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_CPU_LIMIT` | `2.0` | Max CPU cores for backend container |
+| `APP_MEMORY_LIMIT` | `2G` | Max RAM for backend container |
+| `APP_CPU_RESERVATION` | `0.5` | Guaranteed CPU cores |
+| `APP_MEMORY_RESERVATION` | `512M` | Guaranteed RAM |
+
+### Database
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_USER` | `postgres` | PostgreSQL user |
+| `DATABASE_HOST` | `postgres` | PostgreSQL host |
+| `DATABASE_PORT` | `5432` | PostgreSQL port |
+| `DATABASE_NAME` | `sinas` | Database name |
+| `DATABASE_URL` | _(built from above)_ | Full connection string (overrides individual vars) |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection string |
+
+### ClickHouse (Optional)
+
+| Variable | Default | Description |
+|---|---|---|
+| `CLICKHOUSE_HOST` | `clickhouse` | ClickHouse host |
+| `CLICKHOUSE_PORT` | `8123` | ClickHouse HTTP port |
+| `CLICKHOUSE_USER` | `default` | ClickHouse user |
+| `CLICKHOUSE_PASSWORD` | _(empty)_ | ClickHouse password |
+| `CLICKHOUSE_DATABASE` | `sinas` | ClickHouse database |
+| `CLICKHOUSE_RETENTION_DAYS` | `90` | Data retention (no S3) |
+| `CLICKHOUSE_HOT_RETENTION_DAYS` | `30` | Hot retention (with S3) |
+| `CLICKHOUSE_S3_ENDPOINT` | _(none)_ | S3 endpoint for tiered storage |
+| `CLICKHOUSE_S3_BUCKET` | _(none)_ | S3 bucket name |
+| `CLICKHOUSE_S3_ACCESS_KEY_ID` | _(none)_ | S3 access key |
+| `CLICKHOUSE_S3_SECRET_ACCESS_KEY` | _(none)_ | S3 secret key |
+| `CLICKHOUSE_S3_REGION` | `us-east-1` | S3 region |
+
+### Declarative Config
+
+| Variable | Default | Description |
+|---|---|---|
+| `CONFIG_FILE` | _(none)_ | Path to YAML config file |
+| `AUTO_APPLY_CONFIG` | `false` | Apply config file on startup |
+
+The simplest useful setup requires the required variables plus a configured LLM provider. Everything else (functions, skills, state, etc.) is optional and can be added incrementally.
 
 ---
 
@@ -163,14 +262,14 @@ All resources can be defined in a YAML file and applied idempotently via the API
 
 ## Authentication
 
-SINAS uses email-based OTP authentication, with API keys available for programmatic access.
+Sinas uses email-based OTP authentication, with API keys available for programmatic access.
 
 ### OTP Authentication
 
 1. Client sends email to `POST /auth/login`
-2. SINAS sends a 6-digit code to that email (valid for 10 minutes by default)
+2. Sinas sends a 6-digit code to that email (valid for 10 minutes by default)
 3. Client submits code to `POST /auth/verify-otp`
-4. SINAS returns an **access token** (short-lived JWT, default 15 min) and a **refresh token** (long-lived, default 30 days)
+4. Sinas returns an **access token** (short-lived JWT, default 15 min) and a **refresh token** (long-lived, default 30 days)
 5. Use the access token in the `Authorization: Bearer <token>` header
 6. When the access token expires, use `POST /auth/refresh` to get a new one
 
@@ -237,7 +336,7 @@ Users are assigned to **roles**, and roles define **permissions**. A user's effe
 
 | Pattern | Matches |
 |---|---|
-| `sinas.*:all` | Everything in SINAS (admin access) |
+| `sinas.*:all` | Everything in Sinas (admin access) |
 | `sinas.agents/*/*.chat:all` | Chat with any agent in any namespace |
 | `sinas.functions/marketing/*.execute:own` | Execute any function in the `marketing` namespace |
 | `sinas.states/*.read:own` | Read own states in any namespace |
@@ -270,14 +369,14 @@ acme.billing.invoices.read:all
 myapp.*:all
 ```
 
-These work identically to built-in permissions — same wildcard matching, same scope hierarchy. This lets you use SINAS as the authorization backend for external applications.
+These work identically to built-in permissions — same wildcard matching, same scope hierarchy. This lets you use Sinas as the authorization backend for external applications.
 
 ### Checking Permissions from External Services
 
 Use the `POST /auth/check-permissions` endpoint to verify whether the current user (identified by their Bearer token or API key) has specific permissions:
 
 ```bash
-curl -X POST http://localhost:8000/auth/check-permissions \
+curl -X POST https://yourdomain.com/auth/check-permissions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -302,7 +401,7 @@ Response:
 - **`logic: "AND"`** — User must have ALL listed permissions (default)
 - **`logic: "OR"`** — User must have AT LEAST ONE of the listed permissions
 
-This makes SINAS usable as a centralized authorization service for any number of external applications.
+This makes Sinas usable as a centralized authorization service for any number of external applications.
 
 ### Managing Roles
 
@@ -323,7 +422,7 @@ GET    /api/v1/permissions/reference        # List all known permissions
 
 ## Runtime API vs Management API
 
-SINAS has two API layers:
+Sinas has two API layers:
 
 ### Runtime API (`/`)
 
@@ -377,7 +476,7 @@ The management API handles CRUD operations on all resources. These are typically
 
 ### OpenAI SDK Adapter (`/adapters/openai`)
 
-An OpenAI SDK-compatible API that maps to SINAS agents and LLM providers. Point any OpenAI SDK client at this endpoint to use SINAS agents.
+An OpenAI SDK-compatible API that maps to Sinas agents and LLM providers. Point any OpenAI SDK client at this endpoint to use Sinas agents.
 
 ```
 POST   /adapters/openai/v1/chat/completions     # Chat completion (maps to agent or direct LLM)
@@ -465,16 +564,16 @@ POST   /chats/{id}/approve-tool/{tool_call_id}       # Approve/reject a tool cal
 **How chat works:**
 
 1. Create a chat linked to an agent (optionally with input variables validated against `input_schema`)
-2. Send a message — SINAS builds the conversation context with the system prompt, preloaded skills, message history, and available tools
+2. Send a message — Sinas builds the conversation context with the system prompt, preloaded skills, message history, and available tools
 3. The LLM generates a response, possibly calling tools
-4. If tools are called, SINAS executes them (in parallel where possible) and sends results back to the LLM for a follow-up response
+4. If tools are called, Sinas executes them (in parallel where possible) and sends results back to the LLM for a follow-up response
 5. The final response is streamed to the client via Server-Sent Events
 
 **Ephemeral chats** can be created with a TTL by passing `expires_in` (seconds) when creating the chat. Expired chats are automatically hard-deleted (with all messages) by a scheduled cleanup job:
 
 ```bash
 # Create an ephemeral chat that expires in 1 hour
-curl -X POST http://localhost:8000/agents/default/default/chats \
+curl -X POST https://yourdomain.com/agents/default/default/chats \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"expires_in": 3600}'
@@ -524,7 +623,7 @@ def handler(input_data, context):
     # {
     #     "user_id":        str,   # ID of the user who triggered execution
     #     "user_email":     str,   # Email of the triggering user
-    #     "access_token":   str,   # Short-lived JWT for calling the SINAS API
+    #     "access_token":   str,   # Short-lived JWT for calling the Sinas API
     #     "execution_id":   str,   # Unique execution ID
     #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "MANUAL"
     #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
@@ -535,7 +634,7 @@ def handler(input_data, context):
 
 > **Legacy:** Functions named after the resource name (e.g. `def send_email(input_data, context)`) still work but log a deprecation warning. Migrate to `def handler(...)`.
 
-The `access_token` lets functions call back into the SINAS API with the triggering user's identity — useful for reading state, triggering other functions, or accessing any other endpoint.
+The `access_token` lets functions call back into the Sinas API with the triggering user's identity — useful for reading state, triggering other functions, or accessing any other endpoint.
 
 #### Trigger-specific input_data
 
@@ -587,10 +686,10 @@ POST   /api/v1/functions/import/openapi                    # Import functions fr
 
 #### OpenAPI Import
 
-Import functions from an OpenAPI v3 specification. Each API operation becomes a SINAS function with generated Python code that calls the external API.
+Import functions from an OpenAPI v3 specification. Each API operation becomes a Sinas function with generated Python code that calls the external API.
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/functions/import/openapi \
+curl -X POST https://yourdomain.com/api/v1/functions/import/openapi \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -627,7 +726,7 @@ POST   /executions/{execution_id}/continue       # Resume a paused execution wit
 
 ### Components
 
-Components are embeddable UI widgets built with JSX/HTML/JS and compiled by SINAS into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
+Components are embeddable UI widgets built with JSX/HTML/JS and compiled by Sinas into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
 
 **Key properties:**
 
@@ -659,7 +758,7 @@ DELETE /api/v1/components/{namespace}/{name}               # Delete component
 POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
 ```
 
-**Share links** allow embedding components outside SINAS with optional expiration and view limits:
+**Share links** allow embedding components outside Sinas with optional expiration and view limits:
 
 ```
 POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
@@ -772,7 +871,7 @@ DELETE /api/v1/skills/{namespace}/{name}    # Delete skill
 
 ### LLM Providers
 
-LLM providers connect SINAS to language model APIs.
+LLM providers connect Sinas to language model APIs.
 
 **Supported providers:**
 
@@ -881,7 +980,7 @@ POST   /templates/{id}/send          # Render and send as email
 
 ### Webhooks
 
-Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, SINAS executes the linked function with the request data.
+Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, Sinas executes the linked function with the request data.
 
 **Key properties:**
 
@@ -903,7 +1002,7 @@ Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook
 
 ```bash
 # Create a webhook
-curl -X POST http://localhost:8000/api/v1/webhooks \
+curl -X POST https://yourdomain.com/api/v1/webhooks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -916,7 +1015,7 @@ curl -X POST http://localhost:8000/api/v1/webhooks \
   }'
 
 # Trigger it
-curl -X POST http://localhost:8000/webhooks/stripe/payment \
+curl -X POST https://yourdomain.com/webhooks/stripe/payment \
   -H "Content-Type: application/json" \
   -d '{"event": "charge.succeeded", "amount": 1000}'
 
@@ -1143,7 +1242,7 @@ Integration packages bundle agents, functions, skills, components, templates, an
 
 **How packages work:**
 
-1. **Create**: Select resources from your SINAS instance → export as `SinasPackage` YAML
+1. **Create**: Select resources from your Sinas instance → export as `SinasPackage` YAML
 2. **Share**: Distribute the YAML file (GitHub, email, package registry)
 3. **Install**: Paste/upload the YAML → preview changes → confirm install
 4. **Uninstall**: Removes all resources created by the package in one operation
@@ -1194,7 +1293,7 @@ GET    /api/v1/packages/{name}/export # Export original YAML
 **Creating a package from existing resources:**
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/packages/create \
+curl -X POST https://yourdomain.com/api/v1/packages/create \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1214,7 +1313,7 @@ Supported resource types: `agent`, `function`, `skill`, `manifest`, `component`,
 
 ### Manifests
 
-Manifests are application declarations that describe what resources, permissions, and stores an application built on SINAS requires. They enable a single API call to validate whether a user has everything needed to run the application.
+Manifests are application declarations that describe what resources, permissions, and stores an application built on Sinas requires. They enable a single API call to validate whether a user has everything needed to run the application.
 
 **Key properties:**
 
@@ -1286,7 +1385,7 @@ See [Role-Based Access Control (RBAC)](#role-based-access-control-rbac) for the 
 
 ### System Workers & Containers
 
-SINAS has a dual-execution model for functions, plus dedicated queue workers for async job processing.
+Sinas has a dual-execution model for functions, plus dedicated queue workers for async job processing.
 
 #### Sandbox Containers
 
@@ -1443,7 +1542,7 @@ Results are stored in Redis with a 24-hour TTL.
 
 #### System Endpoints
 
-Admin endpoints for monitoring and managing the SINAS deployment. All require `sinas.system.read:all` or `sinas.system.update:all` permissions.
+Admin endpoints for monitoring and managing the Sinas deployment. All require `sinas.system.read:all` or `sinas.system.update:all` permissions.
 
 **Health check:**
 
@@ -1548,7 +1647,7 @@ Agents and functions support configurable icons via the `icon` field. Two format
 | Format | Example | Description |
 |---|---|---|
 | `url:<url>` | `url:https://example.com/icon.png` | Direct URL to an image |
-| `collection:<ns>/<coll>/<file>` | `collection:assets/icons/bot.png` | File stored in a SINAS collection |
+| `collection:<ns>/<coll>/<file>` | `collection:assets/icons/bot.png` | File stored in a Sinas collection |
 
 Collection-based icons generate signed JWT URLs for private files and direct URLs for public collection files. Icons are resolved at read time via the icon resolver service.
 
@@ -1611,7 +1710,7 @@ AUTO_APPLY_CONFIG=true
 **Apply via API:**
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/config/apply \
+curl -X POST https://yourdomain.com/api/v1/config/apply \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"config\": \"$(cat config.yaml)\", \"dryRun\": false}"

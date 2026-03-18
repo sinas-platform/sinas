@@ -1,6 +1,6 @@
 """Manifests API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,7 +14,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/manifests", tags=["manifests"])
 
 
-@router.post("", response_model=ManifestResponse)
+@router.post("", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
 async def create_manifest(
     request: Request,
     manifest_data: ManifestCreate,
@@ -53,7 +53,7 @@ async def create_manifest(
     )
 
     db.add(manifest)
-    await db.commit()
+    await db.flush()
     await db.refresh(manifest)
 
     return ManifestResponse.model_validate(manifest)
@@ -170,7 +170,7 @@ async def update_manifest(
     if manifest_data.is_active is not None:
         manifest.is_active = manifest_data.is_active
 
-    await db.commit()
+    await db.flush()
     await db.refresh(manifest)
 
     return ManifestResponse.model_validate(manifest)
@@ -199,6 +199,6 @@ async def delete_manifest(
     set_permission_used(request, f"sinas.manifests/{namespace}/{name}.delete")
 
     await db.delete(manifest)
-    await db.commit()
+    await db.flush()
 
     return None

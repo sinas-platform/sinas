@@ -3,13 +3,12 @@ import secrets
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
-from app.core.database import get_db
+from app.core.database import AsyncSessionLocal, get_db
 from app.core.permissions import check_permission
 from app.models.component import Component
 from app.models.component_share import ComponentShare
@@ -18,8 +17,11 @@ from app.schemas.component import (
     ComponentListResponse,
     ComponentResponse,
     ComponentUpdate,
+    ShareCreateRequest,
+    ShareResponse,
 )
-from app.api.runtime.endpoints.components import generate_component_render_token
+from app.services.content_tokens import generate_component_render_token
+from app.services.component_builder import ComponentBuilderService
 from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/components", tags=["components"])
@@ -45,9 +47,6 @@ def _component_list_response(component: Component, user_id: str) -> ComponentLis
 
 async def _do_compile(component_id, namespace: str, name: str):
     """Background task to compile a component via the builder service."""
-    from app.core.database import AsyncSessionLocal
-    from app.services.component_builder import ComponentBuilderService
-
     async with AsyncSessionLocal() as db:
         component = await db.execute(
             select(Component).where(Component.id == component_id)
@@ -57,7 +56,7 @@ async def _do_compile(component_id, namespace: str, name: str):
             return
 
         component.compile_status = "compiling"
-        await db.commit()
+        await db.flush()
 
         builder = ComponentBuilderService()
         result = await builder.compile(component.source_code)
@@ -73,10 +72,10 @@ async def _do_compile(component_id, namespace: str, name: str):
             component.compiled_bundle = None
             component.source_map = None
 
-        await db.commit()
+        await db.flush()
 
 
-@router.post("", response_model=ComponentResponse)
+@router.post("", response_model=ComponentResponse, status_code=status.HTTP_201_CREATED)
 async def create_component(
     request: Request,
     component_data: ComponentCreate,
@@ -127,7 +126,7 @@ async def create_component(
     )
 
     db.add(component)
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     # Trigger background compilation
@@ -275,7 +274,7 @@ async def update_component(
     if component_data.is_published is not None:
         component.is_published = component_data.is_published
 
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     # Trigger recompilation if source changed
@@ -308,7 +307,7 @@ async def delete_component(
     set_permission_used(request, f"sinas.components/{namespace}/{name}.delete")
 
     component.is_active = False
-    await db.commit()
+    await db.flush()
 
     return None
 
@@ -338,7 +337,7 @@ async def compile_component(
 
     component.compile_status = "pending"
     component.compile_errors = None
-    await db.commit()
+    await db.flush()
     await db.refresh(component)
 
     background_tasks.add_task(_do_compile, component.id, component.namespace, component.name)
@@ -347,29 +346,6 @@ async def compile_component(
 
 
 # --- Share Link Endpoints ---
-
-
-class ShareCreateRequest(BaseModel):
-    input_data: Optional[dict[str, Any]] = None
-    expires_at: Optional[datetime] = None
-    max_views: Optional[int] = None
-    label: Optional[str] = None
-
-
-class ShareResponse(BaseModel):
-    id: str
-    token: str
-    component_id: str
-    input_data: Optional[dict[str, Any]]
-    expires_at: Optional[datetime]
-    max_views: Optional[int]
-    view_count: int
-    label: Optional[str]
-    created_at: datetime
-    share_url: str
-
-    class Config:
-        from_attributes = True
 
 
 @router.post("/{namespace}/{name}/shares", response_model=ShareResponse)
@@ -407,7 +383,7 @@ async def create_share_link(
     )
 
     db.add(share)
-    await db.commit()
+    await db.flush()
     await db.refresh(share)
 
     return ShareResponse(
@@ -502,5 +478,5 @@ async def revoke_share_link(
         raise HTTPException(status_code=404, detail="Share link not found")
 
     await db.delete(share)
-    await db.commit()
+    await db.flush()
     return None

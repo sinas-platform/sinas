@@ -120,14 +120,19 @@ async def get_request_log_stats(
     else:
         set_permission_used(request, "sinas.logs.read:all")
 
-    # Build WHERE conditions
+    # Build WHERE conditions with parameterized queries
     conditions = []
+    parameters = {}
+
     if user_id:
-        conditions.append(f"user_id = '{user_id}'")
+        conditions.append("user_id = {user_id:String}")
+        parameters["user_id"] = user_id
     if start_time:
-        conditions.append(f"timestamp >= '{start_time.isoformat()}'")
+        conditions.append("timestamp >= {start_time:DateTime}")
+        parameters["start_time"] = start_time
     if end_time:
-        conditions.append(f"timestamp <= '{end_time.isoformat()}'")
+        conditions.append("timestamp <= {end_time:DateTime}")
+        parameters["end_time"] = end_time
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -146,7 +151,7 @@ async def get_request_log_stats(
             FROM request_logs
             WHERE {where_clause}
         """
-        stats_result = clickhouse_logger.client.query(stats_query)
+        stats_result = clickhouse_logger.client.query(stats_query, parameters=parameters)
         stats_row = stats_result.result_rows[0]
 
         # Top paths
@@ -158,7 +163,7 @@ async def get_request_log_stats(
             ORDER BY cnt DESC
             LIMIT 10
         """
-        top_paths_result = clickhouse_logger.client.query(top_paths_query)
+        top_paths_result = clickhouse_logger.client.query(top_paths_query, parameters=parameters)
 
         # Top permissions
         top_perms_query = f"""
@@ -169,7 +174,7 @@ async def get_request_log_stats(
             ORDER BY cnt DESC
             LIMIT 10
         """
-        top_perms_result = clickhouse_logger.client.query(top_perms_query)
+        top_perms_result = clickhouse_logger.client.query(top_perms_query, parameters=parameters)
 
         return RequestLogStatsResponse(
             total_requests=stats_row[0],

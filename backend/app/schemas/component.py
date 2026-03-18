@@ -104,3 +104,46 @@ class ComponentListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ShareCreateRequest(BaseModel):
+    """Request to create a share link for a component."""
+
+    input_data: Optional[dict[str, Any]] = None
+    expires_at: Optional[datetime] = None
+    max_views: Optional[int] = None
+    label: Optional[str] = None
+
+
+class ShareResponse(BaseModel):
+    """Response for a share link."""
+
+    id: str
+    token: str
+    component_id: str
+    input_data: Optional[dict[str, Any]]
+    expires_at: Optional[datetime]
+    max_views: Optional[int]
+    view_count: int
+    label: Optional[str]
+    created_at: datetime
+    share_url: str
+
+    class Config:
+        from_attributes = True
+
+
+class ProxyExecuteRequest(BaseModel):
+    """Request to execute a function through the component proxy."""
+
+    input: dict[str, Any] = {}
+    timeout: Optional[int] = None
+
+
+class StateProxyRequest(BaseModel):
+    """Request to access state through the component proxy."""
+
+    action: str  # get, set, delete, list
+    key: Optional[str] = None
+    value: Optional[dict[str, Any]] = None
+    visibility: str = "private"

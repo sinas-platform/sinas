@@ -49,7 +49,7 @@ async def create_api_key(
     )
 
     db.add(api_key)
-    await db.commit()
+    await db.flush()
     await db.refresh(api_key)
 
     # Return response with plain key (only time it's shown)
@@ -178,6 +178,6 @@ async def revoke_api_key(
     api_key.revoked_at = datetime.utcnow()
     api_key.revoked_by = user_id
 
-    await db.commit()
+    await db.flush()
 
     return None

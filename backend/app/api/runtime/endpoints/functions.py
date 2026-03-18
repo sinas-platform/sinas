@@ -2,7 +2,6 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Any, Optional
 
@@ -11,26 +10,14 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
 from app.models.function import Function
+from app.schemas.function import (
+    FunctionExecuteAsyncResponse,
+    FunctionExecuteRequest,
+    FunctionExecuteResponse,
+)
 from app.services.queue_service import queue_service
 
 router = APIRouter()
-
-
-class FunctionExecuteRequest(BaseModel):
-    input: dict[str, Any] = {}
-    timeout: Optional[int] = None  # Timeout in seconds (sync only)
-
-
-class FunctionExecuteResponse(BaseModel):
-    status: str
-    execution_id: str
-    result: Any = None
-    error: Optional[str] = None
-
-
-class FunctionExecuteAsyncResponse(BaseModel):
-    execution_id: str
-    status: str = "queued"
 
 
 @router.post(

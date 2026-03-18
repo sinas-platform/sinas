@@ -1,7 +1,7 @@
 """Package schemas for installable integration packages."""
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -60,3 +60,9 @@ class PackageListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PackageInstallResponse(BaseModel):
+    """Response from package install."""
+    package: dict[str, Any]
+    apply: dict[str, Any]

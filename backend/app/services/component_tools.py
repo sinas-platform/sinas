@@ -130,7 +130,7 @@ class ComponentToolConverter:
             return None
 
         # Generate render token for iframe embedding
-        from app.api.runtime.endpoints.components import generate_component_render_token
+        from app.services.content_tokens import generate_component_render_token
 
         render_token = generate_component_render_token(
             component.namespace, component.name, user_id

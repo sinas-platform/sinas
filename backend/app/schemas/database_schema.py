@@ -140,3 +140,32 @@ class AnnotationItem(BaseModel):
 
 class AnnotationsUpsertRequest(BaseModel):
     annotations: list[AnnotationItem]
+
+
+# ── DDL / DML Responses ───────────────────────────────────────────
+
+class DDLResponse(BaseModel):
+    """Response from DDL operations (create/alter table, create view)."""
+
+    status: str
+    table: Optional[str] = None
+    view: Optional[str] = None
+
+
+class InsertRowsResponse(BaseModel):
+    """Response from inserting rows."""
+
+    inserted: list[dict[str, Any]]
+    count: int
+
+
+class AffectedRowsResponse(BaseModel):
+    """Response from update/delete operations."""
+
+    affected_rows: int
+
+
+class UpsertAnnotationsResponse(BaseModel):
+    """Response from upserting annotations."""
+
+    upserted: int

@@ -2,7 +2,7 @@
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,8 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.core.redis import get_redis
+from app.models.agent import Agent
+from app.models.function import Function
 from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
 from app.services.package_service import detach_if_package_managed
@@ -25,7 +27,7 @@ async def _notify_scheduler(action: str, job_id: str) -> None:
     await redis.publish(SCHEDULER_CHANNEL, json.dumps({"action": action, "job_id": job_id}))
 
 
-@router.post("", response_model=ScheduledJobResponse)
+@router.post("", response_model=ScheduledJobResponse, status_code=status.HTTP_201_CREATED)
 async def create_schedule(
     request: Request,
     schedule_data: ScheduledJobCreate,
@@ -55,8 +57,6 @@ async def create_schedule(
 
     # Verify target exists based on schedule_type
     if schedule_data.schedule_type == "function":
-        from app.models.function import Function
-
         target = await Function.get_by_name(
             db, schedule_data.target_namespace, schedule_data.target_name, user_id
         )
@@ -66,8 +66,6 @@ async def create_schedule(
                 detail=f"Function '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
             )
     else:
-        from app.models.agent import Agent
-
         result = await db.execute(
             select(Agent).where(
                 and_(
@@ -203,8 +201,6 @@ async def update_schedule(
         effective_ns = schedule_data.target_namespace or schedule.target_namespace
 
         if effective_type == "function":
-            from app.models.function import Function
-
             target = await Function.get_by_name(
                 db, effective_ns, schedule_data.target_name, user_id
             )
@@ -214,8 +210,6 @@ async def update_schedule(
                     detail=f"Function '{effective_ns}/{schedule_data.target_name}' not found",
                 )
         else:
-            from app.models.agent import Agent
-
             result = await db.execute(
                 select(Agent).where(
                     and_(
@@ -253,7 +247,7 @@ async def update_schedule(
     return response
 
 
-@router.delete("/{name}")
+@router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_schedule(
     request: Request,
     name: str,
@@ -280,6 +274,6 @@ async def delete_schedule(
     await _notify_scheduler("remove", str(schedule.id))
 
     await db.delete(schedule)
-    await db.commit()
+    await db.flush()
 
-    return {"message": f"Schedule '{schedule.name}' deleted successfully"}
+    return None

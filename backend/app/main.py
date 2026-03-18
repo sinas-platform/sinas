@@ -13,15 +13,33 @@ from app.api.v1 import router as api_v1_router
 from app.core.auth import initialize_default_roles, initialize_superadmin
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.templates import initialize_default_templates
+from app.core.config import settings
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.openapi_generator import generate_runtime_openapi
+
+_cors_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Validate critical secrets are not defaults
+    if settings.secret_key == "your-secret-key-change-in-production":
+        if not settings.debug:
+            raise RuntimeError(
+                "SECRET_KEY is still the default value. Set a secure SECRET_KEY before running in production."
+            )
+        logger.warning("SECRET_KEY is the default value — acceptable only in debug mode")
+
+    if not settings.encryption_key:
+        if not settings.debug:
+            raise RuntimeError(
+                "ENCRYPTION_KEY is not set. Set a Fernet key before running in production."
+            )
+        logger.warning("ENCRYPTION_KEY is not set — encrypted data will not survive restarts")
+
     # Startup - Redis connection
     from app.core.redis import close_redis, get_redis
 
@@ -96,7 +114,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -139,7 +157,7 @@ adapters_openai_app = FastAPI(
 
 adapters_openai_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

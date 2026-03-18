@@ -10,6 +10,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Template
 from app.services.package_service import detach_if_package_managed
+from app.services.template_renderer import render_template
 from app.schemas.template import (
     TemplateCreate,
     TemplateRenderRequest,
@@ -67,7 +68,7 @@ async def create_template(
     )
 
     db.add(template)
-    await db.commit()
+    await db.flush()
     await db.refresh(template)
 
     return TemplateResponse.model_validate(template)
@@ -198,7 +199,7 @@ async def update_template(
 
     template.updated_by = user_uuid
 
-    await db.commit()
+    await db.flush()
     await db.refresh(template)
 
     return TemplateResponse.model_validate(template)
@@ -229,7 +230,7 @@ async def delete_template(
     set_permission_used(req, f"sinas.templates/{template.namespace}/{template.name}.delete")
 
     await db.delete(template)
-    await db.commit()
+    await db.flush()
 
 
 @router.post("/{template_id}/render", response_model=TemplateRenderResponse)
@@ -259,8 +260,6 @@ async def render_template_preview(
 
     # Render template using inline rendering (don't need to look up by name again)
     try:
-        from app.services.template_renderer import render_template
-
         # Validate variables against schema if defined
         if template.variable_schema:
             import jsonschema

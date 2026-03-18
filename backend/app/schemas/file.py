@@ -78,6 +78,7 @@ class FileResponse(BaseModel):
     current_version: int
     file_metadata: dict[str, Any]
     visibility: str
+    url: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -144,6 +145,16 @@ class FileMetadataUpdate(BaseModel):
     """Schema for updating file metadata."""
 
     file_metadata: dict[str, Any]
+
+
+class FileUrlResponse(BaseModel):
+    """Response for temporary file URL generation."""
+
+    url: str
+    filename: str
+    content_type: str
+    version: int
+    expires_in: int
 
 
 class ContentFilterResult(BaseModel):

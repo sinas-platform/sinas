@@ -20,6 +20,17 @@ class UserWithGroupsResponse(UserResponse):
     groups: list[str]  # List of group names
 
 
+class UserWithRolesResponse(BaseModel):
+    id: uuid.UUID
+    email: str
+    last_login_at: Optional[datetime] = None
+    created_at: datetime
+    roles: list[str]
+
+    class Config:
+        from_attributes = True
+
+
 class UserUpdate(BaseModel):
     # No fields to update for now - placeholder for future fields
     pass

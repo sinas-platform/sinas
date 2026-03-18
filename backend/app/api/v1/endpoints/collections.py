@@ -1,5 +1,5 @@
 """Collection management endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/collections", tags=["collections"])
 
 
-@router.post("", response_model=CollectionResponse)
+@router.post("", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
 async def create_collection(
     request: Request,
     collection_data: CollectionCreate,
@@ -64,7 +64,7 @@ async def create_collection(
     )
 
     db.add(collection)
-    await db.commit()
+    await db.flush()
     await db.refresh(collection)
 
     return CollectionResponse.model_validate(collection)
@@ -168,7 +168,7 @@ async def update_collection(
     if collection_data.allow_private_files is not None:
         collection.allow_private_files = collection_data.allow_private_files
 
-    await db.commit()
+    await db.flush()
     await db.refresh(collection)
 
     return CollectionResponse.model_validate(collection)
@@ -198,6 +198,6 @@ async def delete_collection(
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.delete")
 
     await db.delete(collection)
-    await db.commit()
+    await db.flush()
 
     return None

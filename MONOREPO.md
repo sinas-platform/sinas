@@ -65,7 +65,7 @@ poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 # Option 1: Run in Docker
 docker-compose up console
 
-# Option 2: Run dev server (hot reload on localhost:5173)
+# Option 2: Run dev server (hot reload on localhost:51245)
 cd console/
 npm install
 npm run dev

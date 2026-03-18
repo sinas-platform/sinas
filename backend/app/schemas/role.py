@@ -10,14 +10,12 @@ class RoleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     email_domain: Optional[str] = Field(None, max_length=255)
-    external_group_id: Optional[str] = Field(None, max_length=255)
 
 
 class RoleUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     email_domain: Optional[str] = Field(None, max_length=255)
-    external_group_id: Optional[str] = Field(None, max_length=255)
 
 
 class RoleResponse(BaseModel):
@@ -25,7 +23,6 @@ class RoleResponse(BaseModel):
     name: str
     description: Optional[str]
     email_domain: Optional[str]
-    external_group_id: Optional[str]
     created_at: datetime
     updated_at: datetime
 

@@ -1,5 +1,5 @@
 """Store management endpoints."""
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/stores", tags=["stores"])
 
 
-@router.post("", response_model=StoreResponse)
+@router.post("", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
 async def create_store(
     request: Request,
     store_data: StoreCreate,
@@ -59,7 +59,7 @@ async def create_store(
     )
 
     db.add(store)
-    await db.commit()
+    await db.flush()
     await db.refresh(store)
 
     return StoreResponse.model_validate(store)
@@ -153,7 +153,7 @@ async def update_store(
     if store_data.encrypted is not None:
         store.encrypted = store_data.encrypted
 
-    await db.commit()
+    await db.flush()
     await db.refresh(store)
 
     return StoreResponse.model_validate(store)
@@ -182,6 +182,6 @@ async def delete_store(
     set_permission_used(request, f"sinas.stores/{namespace}/{name}.delete")
 
     await db.delete(store)
-    await db.commit()
+    await db.flush()
 
     return None

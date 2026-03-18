@@ -23,11 +23,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import require_permission
+from app.core.auth import get_user_permissions, require_permission
 from app.core.database import get_db
+from app.core.permissions import check_permission
 from app.models.database_connection import DatabaseConnection
 from app.models.table_annotation import TableAnnotation
 from app.schemas.database_schema import (
+    AffectedRowsResponse,
     AlterTableRequest,
     AnnotationItem,
     AnnotationsUpsertRequest,
@@ -36,14 +38,17 @@ from app.schemas.database_schema import (
     ConstraintInfo,
     CreateTableRequest,
     CreateViewRequest,
+    DDLResponse,
     DeleteRowsRequest,
     FilterCondition,
     IndexInfo,
     InsertRowsRequest,
+    InsertRowsResponse,
     SchemaInfo,
     TableDetail,
     TableInfo,
     UpdateRowsRequest,
+    UpsertAnnotationsResponse,
     ViewInfo,
 )
 from app.services.database import get_schema_service
@@ -251,7 +256,7 @@ async def create_table(
         )
     except Exception as e:
         raise _pg_error_response(e)
-    return {"status": "created", "table": f"{request.schema_name}.{request.table_name}"}
+    return DDLResponse(status="created", table=f"{request.schema_name}.{request.table_name}")
 
 
 @router.post(
@@ -278,7 +283,7 @@ async def create_view(
         )
     except Exception as e:
         raise _pg_error_response(e)
-    return {"status": "created", "view": f"{request.schema_name}.{request.name}"}
+    return DDLResponse(status="created", view=f"{request.schema_name}.{request.name}")
 
 
 @router.patch(
@@ -297,11 +302,7 @@ async def alter_table(
 
     # Drop columns is destructive — require destroy permission
     if request.drop_columns:
-        from app.core.permissions import check_permission
-
         # Need to load permissions for this user
-        from app.core.auth import get_user_permissions
-
         permissions = await get_user_permissions(db, user_id)
         if not check_permission(permissions, "sinas.database_connections.schema_destroy:all"):
             raise HTTPException(
@@ -321,7 +322,7 @@ async def alter_table(
         )
     except Exception as e:
         raise _pg_error_response(e)
-    return {"status": "altered", "table": f"{request.schema_name}.{table}"}
+    return DDLResponse(status="altered", table=f"{request.schema_name}.{table}")
 
 
 # ── Destructive DDL (schema_destroy:all + writable) ────────────────
@@ -440,7 +441,7 @@ async def insert_rows(
         inserted = await svc.insert_rows(pool, table, request.rows, schema=schema)
     except Exception as e:
         raise _pg_error_response(e)
-    return {"inserted": inserted, "count": len(inserted)}
+    return InsertRowsResponse(inserted=inserted, count=len(inserted))
 
 
 @router.patch(
@@ -464,7 +465,7 @@ async def update_rows(
         )
     except Exception as e:
         raise _pg_error_response(e)
-    return {"affected_rows": affected}
+    return AffectedRowsResponse(affected_rows=affected)
 
 
 @router.delete(
@@ -486,7 +487,7 @@ async def delete_rows(
         affected = await svc.delete_rows(pool, table, where=request.where, schema=schema)
     except Exception as e:
         raise _pg_error_response(e)
-    return {"affected_rows": affected}
+    return AffectedRowsResponse(affected_rows=affected)
 
 
 # ── Annotations ────────────────────────────────────────────────────
@@ -572,5 +573,5 @@ async def upsert_annotations(
             )
         upserted += 1
 
-    await db.commit()
-    return {"upserted": upserted}
+    await db.flush()
+    return UpsertAnnotationsResponse(upserted=upserted)

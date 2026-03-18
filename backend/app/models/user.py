@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text, select
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -136,6 +136,7 @@ class OTPSession(Base):
     otp_code: Mapped[str] = mapped_column(String(10), nullable=False)
     expires_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
     verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     created_at: Mapped[created_at]
 
 

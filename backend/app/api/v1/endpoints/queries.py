@@ -2,7 +2,7 @@
 import time
 
 import jsonschema
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.query import Query
+from app.models.user import User
 from app.schemas.query import (
     QueryCreate,
     QueryExecuteRequest,
@@ -23,7 +24,7 @@ from app.services.package_service import detach_if_package_managed
 router = APIRouter(prefix="/queries", tags=["queries"])
 
 
-@router.post("", response_model=QueryResponse)
+@router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
 async def create_query(
     request: Request,
     query_data: QueryCreate,
@@ -66,7 +67,7 @@ async def create_query(
     )
 
     db.add(query)
-    await db.commit()
+    await db.flush()
     await db.refresh(query)
 
     return QueryResponse.model_validate(query)
@@ -187,7 +188,7 @@ async def update_query(
     if query_data.is_active is not None:
         query.is_active = query_data.is_active
 
-    await db.commit()
+    await db.flush()
     await db.refresh(query)
 
     return QueryResponse.model_validate(query)
@@ -216,7 +217,7 @@ async def delete_query(
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.delete")
 
     await db.delete(query)
-    await db.commit()
+    await db.flush()
 
     return None
 
@@ -255,10 +256,7 @@ async def execute_query(
     params = {**execute_request.input}
     params["user_id"] = str(user_id)
     # Get user email
-    from app.models.user import User
-    from sqlalchemy import select as sa_select
-
-    user_result = await db.execute(sa_select(User).where(User.id == user_id))
+    user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
     if user:
         params["user_email"] = user.email

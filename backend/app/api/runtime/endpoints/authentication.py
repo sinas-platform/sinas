@@ -11,6 +11,7 @@ from app.core.auth import (
     get_current_user,
     get_current_user_with_permissions,
     get_user_by_email,
+    normalize_email,
     revoke_refresh_token,
     set_permission_used,
     validate_refresh_token,
@@ -18,6 +19,8 @@ from app.core.auth import (
 )
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.permissions import check_permission
+from app.core.rate_limit import rate_limit_by_ip, rate_limit_by_value
 from app.models import User
 from app.schemas.auth import (
     LoginRequest,
@@ -37,15 +40,16 @@ router = APIRouter()
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(request: LoginRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
     """
     Initiate login by sending OTP to email.
 
     User must exist - users are created by admins only.
     """
-    # Check if user exists - no auto-provisioning
-    from app.core.auth import normalize_email
+    await rate_limit_by_ip(http_request, "login", settings.rate_limit_login_ip_max, settings.rate_limit_window_seconds)
+    await rate_limit_by_value(request.email, "login:email", settings.rate_limit_login_email_max, settings.rate_limit_window_seconds)
 
+    # Check if user exists - no auto-provisioning
     result = await db.execute(select(User).where(User.email == normalize_email(request.email)))
     user = result.scalar_one_or_none()
     if not user:
@@ -67,12 +71,14 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/verify-otp", response_model=OTPVerifyResponse)
-async def verify_otp(request: OTPVerifyRequest, db: AsyncSession = Depends(get_db)):
+async def verify_otp(request: OTPVerifyRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
     """
     Verify OTP and return access + refresh tokens.
 
     Returns short-lived access token (15 min) and long-lived refresh token (30 days).
     """
+    await rate_limit_by_ip(http_request, "verify_otp", settings.rate_limit_otp_ip_max, settings.rate_limit_window_seconds)
+
     # Verify OTP
     otp_session = await verify_otp_code(db, str(request.session_id), request.otp_code)
 
@@ -186,8 +192,6 @@ async def check_permissions(
     }
     ```
     """
-    from app.core.permissions import check_permission
-
     user_id, permissions = current_user_data
 
     # Check each permission and log the check

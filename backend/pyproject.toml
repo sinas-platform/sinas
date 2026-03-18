@@ -65,6 +65,11 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]

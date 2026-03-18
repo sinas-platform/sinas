@@ -1,226 +1,112 @@
-# SINAS Installation Guide
+# Development Environment Setup
 
-## Quick Install (Recommended)
+This guide is for **contributors and developers** working on the Sinas codebase. For production deployment, see [DOCS.md](DOCS.md).
 
-Run the automated installer on a fresh Ubuntu 22.04+ VPS:
+## Prerequisites
 
-```bash
-# Clone repository
-git clone <your-sinas-repo>
-cd SINAS
+- Docker and Docker Compose
+- Git
+- An SMTP service for OTP login (SendGrid, Mailgun, etc.)
 
-# Run installer
-sudo bash install.sh
-```
-
-The script will:
-- ✅ Install Docker & Docker Compose
-- ✅ Generate secure keys automatically
-- ✅ Prompt for configuration (domain, SMTP, etc.)
-- ✅ Create `.env` file
-- ✅ Start all services
-- ✅ Auto-provision SSL certificates
-
-**That's it!** SINAS will be running at:
-- Backend API: `https://your-domain.com` (via Caddy with auto SSL)
-- Console UI: `https://your-domain.com:51245` (via Caddy with auto SSL)
-
----
-
-## Manual Installation
-
-If you prefer to configure manually:
-
-### 1. Prerequisites
+## Setup
 
 ```bash
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-
-# Install Docker Compose
-apt install docker-compose-plugin
-```
-
-### 2. Configure
-
-```bash
-# Copy example environment
+git clone https://github.com/sinas-platform/sinas.git
+cd sinas
 cp .env.example .env
-
-# Edit configuration
-nano .env
 ```
 
-**Required variables:**
+Edit `.env` with your configuration:
+
 ```bash
-SECRET_KEY=<openssl rand -hex 32>
-ENCRYPTION_KEY=<python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
-DATABASE_PASSWORD=<secure-password>
+# Required
+DATABASE_PASSWORD=devpassword
+SECRET_KEY=$(openssl rand -hex 32)
+ENCRYPTION_KEY=<generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
+SUPERADMIN_EMAIL=you@example.com
+
+# SMTP (required for OTP login)
 SMTP_HOST=smtp.sendgrid.net
 SMTP_PORT=587
 SMTP_USER=apikey
-SMTP_PASSWORD=<your-api-key>
-SMTP_DOMAIN=yourdomain.com
-DOMAIN=yourdomain.com
-SUPERADMIN_EMAIL=admin@yourdomain.com
+SMTP_PASSWORD=your-api-key
+SMTP_DOMAIN=example.com
 ```
 
-### 3. DNS Setup
-
-Point your domain to the server:
-```
-A Record: yourdomain.com → YOUR_SERVER_IP
-```
-
-**Open firewall ports:**
-- 80 (HTTP → HTTPS redirect)
-- 443 (Backend API HTTPS)
-- 51245 (Console UI HTTPS)
-- 22 (SSH)
-
-### 4. Start Services
+## Start
 
 ```bash
-# Build and start all services
-docker-compose build
-docker-compose up -d
+docker compose -f docker-compose.dev.yml up -d --build
 ```
 
-### 5. Verify
+This starts all services with hot-reload enabled:
+- **Backend API**: http://localhost:8000 (with `--reload`)
+- **API Docs**: http://localhost:8000/docs
+- **Console**: http://localhost:51245
+- **PostgreSQL**: localhost:5432 (via pgbouncer, for tests and tools)
+
+Source code is volume-mounted, so changes to `backend/` are picked up automatically.
+
+## Common Tasks
 
 ```bash
-# Check backend health
-curl https://yourdomain.com/health
-# Should return: {"status":"healthy"}
+# Rebuild after dependency changes
+docker compose -f docker-compose.dev.yml up -d --build
 
-# Access console
-# https://yourdomain.com:51245
+# View logs
+docker compose -f docker-compose.dev.yml logs -f backend
+
+# Run database migrations
+docker exec -it sinas-backend alembic upgrade head
+
+# Create a new migration
+docker exec -it sinas-backend alembic revision --autogenerate -m "description"
+
+# Access backend shell
+docker exec -it sinas-backend sh
 ```
 
----
+## Running Tests
 
-## What Gets Installed
-
-The Docker Compose stack includes:
-
-- **sinas-backend** - FastAPI application (internal port 8000)
-- **sinas-console** - React UI served by Nginx (internal port 80)
-- **postgres** - PostgreSQL database
-- **clickhouse** - Analytics database (optional)
-- **caddy** - Reverse proxy with automatic HTTPS
-
----
-
-## Post-Installation
-
-### Access Console UI
-```
-http://your-domain.com:51245
-```
-
-Note: Console is HTTP on port 51245. For HTTPS, configure nginx inside the console container or use a separate reverse proxy.
-
-### Login as Superadmin
-1. Go to console UI
-2. Enter your superadmin email
-3. Check email for OTP code
-4. Enter OTP to log in
-
-### View Logs
-```bash
-# All services
-docker-compose logs -f
-
-# Specific service
-docker-compose logs -f backend
-docker-compose logs -f console
-```
-
-### Update SINAS
-```bash
-git pull
-docker-compose build
-docker-compose up -d
-```
-
-### Backup Database
-```bash
-docker exec sinas-postgres pg_dump -U postgres sinas > backup.sql
-```
-
----
-
-## Local Development
-
-For local development (no HTTPS):
+Tests use the dev database (via pgbouncer on localhost:5432) with transaction rollback per test.
 
 ```bash
-# Don't set DOMAIN in .env (or set DOMAIN=localhost)
-docker-compose up -d
-
-# Backend: http://localhost:8000
-# Console: http://localhost:51245
+cd backend
+pip install -e ".[dev]"
+python -m pytest tests/ -v
 ```
 
-Caddy is automatically disabled for local dev - services expose ports directly.
+## Local Backend (without Docker)
 
----
+For faster iteration on the backend without Docker:
 
-## Troubleshooting
-
-### SSL Not Working?
-- Check DNS: `dig yourdomain.com`
-- View Caddy logs: `docker-compose logs caddy`
-- Wait 1-2 minutes for certificate provisioning
-- Ensure ports 80, 443, 51245 are open in firewall
-
-### Services Not Starting?
 ```bash
-docker-compose ps        # Check status
-docker-compose logs      # View errors
+cd backend
+pip install -e ".[dev]"
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Database Connection Issues?
-- Verify `DATABASE_PASSWORD` in `.env`
-- Check if postgres is running: `docker-compose ps postgres`
+Requires PostgreSQL, Redis, and ClickHouse running separately (e.g., via the dev compose with just infra services).
 
-### Email (OTP) Not Sending?
-- Verify SMTP credentials in `.env`
-- Check app logs: `docker-compose logs backend | grep SMTP`
+## Console Development
 
-### Console Not Loading?
-- Check nginx logs: `docker-compose logs console`
-- Verify port 51245 is open
-- Try clearing browser cache
+```bash
+cd console
+npm install
+npm run dev
+```
 
----
+The console dev server runs on port 5173 and proxies API requests to localhost:8000.
 
-## Minimum Requirements
+## Code Quality
 
-- **OS:** Ubuntu 22.04+ (or any Linux with Docker support)
-- **RAM:** 2GB minimum, 4GB recommended
-- **CPU:** 2 cores minimum
-- **Storage:** 50GB minimum
-- **Ports:** 80, 443, 51245, 22 (SSH)
+```bash
+cd backend
+black .          # Format
+ruff check .     # Lint
+mypy .           # Type check
+```
 
----
+## Architecture
 
-## Security Recommendations
-
-1. **Use strong passwords** - Auto-generated by install script
-2. **Configure firewall** - Use UFW or cloud provider firewall
-3. **Keep updated** - Run `git pull && docker-compose up -d --build` regularly
-4. **Backup regularly** - Set up automated database backups
-5. **Use SSH keys** - Disable password authentication for SSH
-6. **SSL/TLS** - Caddy handles this automatically via Let's Encrypt
-
----
-
-## Architecture Overview
-
-See [MONOREPO.md](MONOREPO.md) for detailed architecture and development workflow.
-
-SINAS is a monorepo with:
-- **Backend** (`backend/`): Python/FastAPI
-- **Console** (`console/`): React/TypeScript
-- **Deployment**: Multi-container Docker setup with Nginx and Caddy
+See [README.md](README.md) for architecture overview and [DOCS.md](DOCS.md) for the full feature reference.

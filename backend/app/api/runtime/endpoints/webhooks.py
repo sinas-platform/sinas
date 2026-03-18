@@ -11,6 +11,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
 from app.models.webhook import Webhook
+from app.services.queue_service import queue_service
 
 
 router = APIRouter()
@@ -49,11 +50,26 @@ async def execute_webhook(
     user_id: Optional[str] = None
     if webhook.requires_auth:
         auth_header = request.headers.get("authorization")
-        if not auth_header:
+        api_key_header = request.headers.get("x-api-key")
+
+        if not auth_header and not api_key_header:
             raise HTTPException(status_code=401, detail="Authorization required")
 
         try:
-            user_id, email, permissions = await verify_jwt_or_api_key(auth_header, db)
+            # Build credentials in the format verify_jwt_or_api_key expects
+            from fastapi.security import HTTPAuthorizationCredentials
+
+            credentials = None
+            if auth_header and auth_header.lower().startswith("bearer "):
+                credentials = HTTPAuthorizationCredentials(
+                    scheme="Bearer", credentials=auth_header[7:]
+                )
+
+            user_id, email, permissions = await verify_jwt_or_api_key(
+                credentials=credentials,
+                x_api_key=api_key_header,
+                db=db,
+            )
 
             # Check function execute permission
             function_perm = f"sinas.functions/{webhook.function_namespace}/{webhook.function_name}.execute:own"
@@ -101,8 +117,6 @@ async def execute_webhook(
 
         execution_id = str(uuid.uuid4())
         chat_id = request.headers.get("x-chat-id")
-
-        from app.services.queue_service import queue_service
 
         result = await queue_service.enqueue_and_wait(
             function_namespace=webhook.function_namespace,

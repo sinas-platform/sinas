@@ -2,210 +2,46 @@
 import asyncio
 import json
 import logging
-import time
-import traceback
-import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any, Optional
 
 import jsonschema
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
+from app.core.auth import get_user_permissions
+from app.core.config import settings
 from app.models import Agent, Chat, Message
-from app.models.execution import Execution, ExecutionStatus
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
-from app.models.pending_approval import PendingToolApproval
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
-from app.core.config import settings
-from app.core.permissions import check_permission
-from app.services.content_converter import ContentConverter
-
+from app.services.component_tools import ComponentToolConverter
+from app.utils.schema import validate_with_coercion
+from app.services.content_tokens import strip_base64_data, refresh_message_tokens  # noqa: F401 — re-exported
+from app.services.conversation_history import build_conversation_history
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
-from app.services.queue_service import queue_service
-from app.services.component_tools import ComponentToolConverter
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
-from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
+from app.services.tool_discovery import (
+    get_available_tools,
+    parse_function_name,
+    strip_tool_metadata,
+)
+from app.services.tool_execution import (
+    build_tool_status,
+    check_approval_requirements,
+    execute_single_tool,
+    is_sequential_tool,
+    safe_parse_arguments,
+    validate_tool_calls,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Refresh expired SINAS file-serve URLs in multimodal content.
-
-    Detects image parts whose URL points to /files/serve/{jwt}, decodes the
-    expired JWT to extract file_id + version, and regenerates a fresh signed
-    URL.  External URLs are left untouched.
-    """
-    from jose import jwt as jose_jwt
-    from app.core.config import settings
-    from app.services.file_storage import generate_file_url
-
-    refreshed: list[dict[str, Any]] = []
-    for part in content_parts:
-        if part.get("type") != "image":
-            refreshed.append(part)
-            continue
-
-        url = part.get("image", "")
-        if "/files/serve/" not in url:
-            # External URL — pass through
-            refreshed.append(part)
-            continue
-
-        # Extract the JWT token (last path segment)
-        token = url.rsplit("/files/serve/", 1)[-1]
-        try:
-            payload = jose_jwt.decode(
-                token,
-                settings.secret_key,
-                algorithms=[settings.algorithm],
-                options={"verify_exp": False},
-            )
-            file_id = payload.get("file_id")
-            version = payload.get("version")
-            if file_id is None or version is None:
-                raise ValueError("Missing file_id or version in token")
-
-            # Keep existing URL if token still has > 10 min remaining
-            exp = payload.get("exp", 0)
-            if exp - time.time() > 600:
-                refreshed.append(part)
-                continue
-
-            new_url = generate_file_url(str(file_id), version)
-            if new_url:
-                refreshed.append({**part, "image": new_url})
-            else:
-                # Domain not set / localhost — drop image, add placeholder
-                refreshed.append({"type": "text", "text": "[Image unavailable]"})
-        except Exception:
-            logger.debug("Failed to refresh SINAS image URL, replacing with placeholder", exc_info=True)
-            refreshed.append({"type": "text", "text": "[Image no longer available]"})
-
-    return refreshed
-
-
-def _refresh_component_render_tokens(
-    content_parts: list[dict[str, Any]], user_id: str
-) -> list[dict[str, Any]]:
-    """Refresh expired component render tokens in multimodal content.
-
-    Detects component parts with a render_token, decodes the (possibly expired)
-    JWT to extract namespace + name, and regenerates a fresh signed token.
-    """
-    from jose import jwt as jose_jwt
-    from app.core.config import settings
-    from app.api.runtime.endpoints.components import generate_component_render_token
-
-    refreshed: list[dict[str, Any]] = []
-    for part in content_parts:
-        if part.get("type") != "component" or not part.get("render_token"):
-            refreshed.append(part)
-            continue
-
-        token = part["render_token"]
-        try:
-            payload = jose_jwt.decode(
-                token,
-                settings.secret_key,
-                algorithms=[settings.algorithm],
-                options={"verify_exp": False},
-            )
-            namespace = payload.get("namespace")
-            name = payload.get("name")
-            if not namespace or not name:
-                raise ValueError("Missing namespace or name in token")
-
-            # Keep existing token if still > 10 min remaining
-            exp = payload.get("exp", 0)
-            if exp - time.time() > 600:
-                refreshed.append(part)
-                continue
-
-            new_token = generate_component_render_token(namespace, name, user_id)
-            refreshed.append({**part, "render_token": new_token})
-        except Exception:
-            logger.debug(
-                "Failed to refresh component render token", exc_info=True
-            )
-            refreshed.append(part)
-
-    return refreshed
-
-
-def strip_base64_data(content: str | None) -> str | None:
-    """Strip inline base64 data from message content to reduce payload size.
-
-    Replaces base64 data URIs with a placeholder while keeping URLs intact.
-    Skipped on localhost (no DOMAIN) since LLMs can't fetch local URLs and need
-    the inline data.
-    """
-    domain = settings.domain
-    if not domain or domain.lower() in ("localhost", "127.0.0.1"):
-        return content
-
-    if not content:
-        return content
-
-    try:
-        parsed = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        return content
-
-    if not isinstance(parsed, list):
-        return content
-
-    stripped = []
-    for part in parsed:
-        if not isinstance(part, dict):
-            stripped.append(part)
-            continue
-
-        p = dict(part)
-        # Image: strip data URIs (data:image/...) but keep regular URLs
-        if p.get("type") == "image" and isinstance(p.get("image"), str):
-            if p["image"].startswith("data:"):
-                p["image"] = "data:stripped"
-        # Audio: always inline base64
-        if p.get("type") == "audio" and p.get("data"):
-            p["data"] = "stripped"
-        # File: strip inline base64 file data
-        if p.get("type") == "file" and p.get("file_data"):
-            p["file_data"] = "stripped"
-
-        stripped.append(p)
-
-    return json.dumps(stripped)
-
-
-def refresh_message_tokens(content: str | None, user_id: str) -> str | None:
-    """Refresh expired tokens (image URLs + component render tokens) in message content."""
-    if not content:
-        return content
-
-    try:
-        parsed = json.loads(content)
-    except (json.JSONDecodeError, TypeError):
-        return content
-
-    if isinstance(parsed, list):
-        parsed = _refresh_sinas_image_urls(parsed)
-        parsed = _refresh_component_render_tokens(parsed, user_id)
-        return json.dumps(parsed)
-
-    if isinstance(parsed, dict) and parsed.get("type") == "component" and parsed.get("render_token"):
-        refreshed = _refresh_component_render_tokens([parsed], user_id)
-        return json.dumps(refreshed[0])
-
-    return content
 
 
 class MessageService:
@@ -220,45 +56,10 @@ class MessageService:
         self.collection_converter = CollectionToolConverter()
         self.context_tools = StateTools()
 
-    def _validate_tool_calls(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """
-        Validate tool calls and filter out corrupted ones.
-        Returns only valid tool calls.
-        """
-        if not tool_calls:
-            return []
-
-        valid_tool_calls = []
-        for tc in tool_calls:
-            try:
-                # Check required fields
-                if not tc.get("id") or not tc.get("function", {}).get("name"):
-                    print(f"⚠️ Skipping tool call without id or name: {tc}")
-                    continue
-
-                # Validate arguments is valid JSON
-                args_str = tc.get("function", {}).get("arguments", "")
-                if args_str:
-                    json.loads(args_str)  # This will raise if invalid
-
-                valid_tool_calls.append(tc)
-            except json.JSONDecodeError as e:
-                print(f"⚠️ Invalid tool call arguments JSON: {e}")
-                print(f"   Tool call: {tc.get('function', {}).get('name')}")
-                print(f"   Arguments: {repr(args_str[:200])}")
-                # Skip this tool call - don't add to valid list
-                continue
-            except Exception as e:
-                print(f"⚠️ Error validating tool call: {e}")
-                continue
-
-        return valid_tool_calls
-
     async def create_chat_with_agent(
         self, agent_id: str, user_id: str, input_data: dict[str, Any], name: Optional[str] = None
     ) -> Chat:
-        """
-        Create a chat with an agent using input validation and template rendering.
+        """Create a chat with an agent using input validation and template rendering.
 
         Args:
             agent_id: Agent to use
@@ -281,15 +82,11 @@ class MessageService:
         # Validate input against agent's input_schema
         if agent.input_schema:
             try:
-                from app.utils.schema import validate_with_coercion
-
                 input_data = validate_with_coercion(input_data, agent.input_schema)
             except jsonschema.ValidationError as e:
                 raise ValueError(f"Input validation failed: {e.message}")
 
         # Create chat
-        # Note: Chat no longer stores tool config - this is managed at agent level
-        # Store agent input context in chat_metadata for function parameter templating
         chat = Chat(
             user_id=user_id,
             agent_id=agent_id,
@@ -305,7 +102,6 @@ class MessageService:
         # Pre-populate with initial_messages if present
         if agent.initial_messages:
             for msg_data in agent.initial_messages:
-                # Render message content with input_data if it's a string
                 content = msg_data["content"]
                 if isinstance(content, str) and input_data:
                     try:
@@ -331,8 +127,7 @@ class MessageService:
         context_limit: int,
         template_variables: Optional[dict[str, Any]],
     ) -> dict[str, Any]:
-        """
-        Prepare message context (shared logic for streaming and non-streaming).
+        """Prepare message context (shared logic for streaming and non-streaming).
 
         Returns dict with: chat, user_message, messages, tools, llm_provider,
         provider_name, final_model, final_temperature, final_max_tokens, response_format
@@ -348,8 +143,6 @@ class MessageService:
         # Get agent settings if chat has an agent
         agent = None
         if chat.agent_id:
-            from sqlalchemy.orm import joinedload
-
             result = await self.db.execute(
                 select(Agent)
                 .options(joinedload(Agent.llm_provider))
@@ -359,13 +152,10 @@ class MessageService:
 
         # Determine final provider/model/temperature
         # Priority: message params > agent settings > database default
-
-        # Get provider name (for create_provider call)
         provider_name = None
         if provider:
             provider_name = provider
         elif agent and agent.llm_provider_id:
-            # Load provider relationship if needed (only active providers)
             if not agent.llm_provider:
                 result = await self.db.execute(
                     select(LLMProvider).where(
@@ -378,7 +168,6 @@ class MessageService:
             if agent.llm_provider:
                 provider_name = agent.llm_provider.name
             else:
-                # Provider exists but is inactive - raise clear error
                 result = await self.db.execute(
                     select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
                 )
@@ -390,7 +179,6 @@ class MessageService:
                         f"provider or update the agent's LLM provider setting."
                     )
 
-        # Get model: message param > agent model > provider default
         final_model = model or (agent.model if agent else None)
         if not final_model and agent and agent.llm_provider:
             final_model = agent.llm_provider.default_model
@@ -400,7 +188,7 @@ class MessageService:
         )
         final_max_tokens = agent.max_tokens if agent else None
 
-        # Get provider type for content conversion (needed before building conversation history)
+        # Get provider type for content conversion
         provider_type = None
         provider_config = None
         if provider_name:
@@ -411,16 +199,14 @@ class MessageService:
             if provider_config:
                 provider_type = provider_config.provider_type
 
-        # If still no provider type, try to detect from model
         if not provider_type and final_model:
             if final_model.startswith("gpt-") or final_model.startswith("o1-"):
                 provider_type = "openai"
             elif final_model.startswith("mistral-") or final_model.startswith("pixtral-"):
                 provider_type = "mistral"
             else:
-                provider_type = "ollama"  # Default fallback
+                provider_type = "ollama"
 
-        # If still no provider type, get default provider to determine type
         if not provider_type:
             result = await self.db.execute(
                 select(LLMProvider).where(
@@ -430,11 +216,10 @@ class MessageService:
             provider_config = result.scalar_one_or_none()
             if provider_config:
                 provider_type = provider_config.provider_type
-                # Also set final_model if not set
                 if not final_model:
                     final_model = provider_config.default_model
 
-        # Save user message (strip inline base64 before persisting — URLs are kept)
+        # Save user message (strip inline base64 before persisting)
         user_message = Message(chat_id=chat_id, role="user", content=strip_base64_data(content))
         self.db.add(user_message)
         await self.db.commit()
@@ -445,10 +230,11 @@ class MessageService:
         if final_template_variables is None and chat.chat_metadata:
             final_template_variables = chat.chat_metadata.get("agent_input")
 
-        # Build conversation history (with content conversion).
-        # Pass original (unstripped) content so the LLM sees full data for the current turn.
-        messages = await self._build_conversation_history(
+        # Build conversation history
+        messages = await build_conversation_history(
+            db=self.db,
             chat=chat,
+            skill_converter=self.skill_converter,
             inject_context=inject_context,
             user_id=user_id,
             context_limit=context_limit,
@@ -458,9 +244,15 @@ class MessageService:
         )
 
         # Get available tools
-        tools = await self._get_available_tools(
+        tools = await get_available_tools(
+            db=self.db,
             user_id=user_id,
             chat=chat,
+            function_converter=self.function_converter,
+            query_converter=self.query_converter,
+            skill_converter=self.skill_converter,
+            component_converter=self.component_converter,
+            collection_converter=self.collection_converter,
         )
 
         # Create LLM provider
@@ -468,7 +260,6 @@ class MessageService:
 
         # If no model specified, use the provider's default model
         if not final_model:
-            # Get the provider config that was used
             if provider_name:
                 result = await self.db.execute(
                     select(LLMProvider).where(
@@ -488,7 +279,6 @@ class MessageService:
         # Build response_format from agent's output_schema if present
         response_format = None
         if agent and agent.output_schema and agent.output_schema.get("properties"):
-            # Ensure schema has additionalProperties: false for strict mode
             schema = dict(agent.output_schema)
             if "additionalProperties" not in schema:
                 schema["additionalProperties"] = False
@@ -519,12 +309,7 @@ class MessageService:
     async def send_message(
         self, chat_id: str, user_id: str, user_token: str, content: str
     ) -> Message:
-        """
-        Send a message and get LLM response (non-streaming).
-
-        All agent behavior (LLM, tools, context) is defined by the agent.
-        """
-        # Prepare message context
+        """Send a message and get LLM response (non-streaming)."""
         prep = await self._prepare_message_context(
             chat_id=chat_id,
             user_id=user_id,
@@ -533,21 +318,17 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-
             context_limit=5,
             template_variables=None,
         )
 
-        # Get response from LLM (non-streaming)
         start_time = datetime.now(UTC)
 
-        # Build kwargs for LLM provider
         llm_kwargs = {}
         if prep["response_format"]:
             llm_kwargs["response_format"] = prep["response_format"]
 
-        # Strip _metadata from tools before sending to LLM
-        clean_tools = self._strip_tool_metadata(prep["tools"])
+        clean_tools = strip_tool_metadata(prep["tools"])
 
         response = await prep["llm_provider"].complete(
             messages=prep["messages"],
@@ -559,7 +340,6 @@ class MessageService:
         )
         end_time = datetime.now(UTC)
 
-        # Log request
         await self._log_request(
             user_id=user_id,
             chat_id=str(chat_id),
@@ -571,12 +351,10 @@ class MessageService:
             latency_ms=int((end_time - start_time).total_seconds() * 1000),
         )
 
-        # Handle tool calls if present
         if response.get("tool_calls"):
-            # Check if any functions require approval
             for tool_call in response["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
-                namespace, name = self._parse_function_name(tool_name)
+                namespace, name = parse_function_name(tool_name)
                 if namespace and name:
                     function = await Function.get_by_name(self.db, namespace, name)
                     if function and function.requires_approval:
@@ -585,8 +363,6 @@ class MessageService:
                             "Please use streaming mode to handle approval flow."
                         )
 
-            # Consume the generator to get the final message (non-streaming)
-            final_msg = None
             async for chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
@@ -599,10 +375,8 @@ class MessageService:
                 max_tokens=prep["final_max_tokens"],
                 tools=prep["tools"],
             ):
-                # In non-streaming mode, we just consume chunks but don't yield them
                 pass
 
-            # After generator completes, return the final message from DB
             result = await self.db.execute(
                 select(Message)
                 .where(Message.chat_id == chat_id)
@@ -611,7 +385,6 @@ class MessageService:
             )
             return result.scalar_one()
 
-        # Save assistant message
         assistant_message = Message(
             chat_id=chat_id, role="assistant", content=response.get("content", "")
         )
@@ -628,15 +401,7 @@ class MessageService:
         user_token: str,
         content: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        """
-        Send a message and stream LLM response.
-
-        All agent behavior (LLM, tools, context) is defined by the agent.
-
-        Yields:
-            Dict chunks with response data
-        """
-        # Prepare message (reuse common logic)
+        """Send a message and stream LLM response."""
         prep = await self._prepare_message_context(
             chat_id=chat_id,
             user_id=user_id,
@@ -645,12 +410,10 @@ class MessageService:
             model=None,
             temperature=None,
             inject_context=True,
-
             context_limit=5,
             template_variables=None,
         )
 
-        # Stream response
         async for chunk in self._stream_response(
             llm_provider=prep["llm_provider"],
             messages=prep["messages"],
@@ -666,35 +429,6 @@ class MessageService:
         ):
             yield chunk
 
-    def _strip_tool_metadata(
-        self, tools: Optional[list[dict[str, Any]]]
-    ) -> Optional[list[dict[str, Any]]]:
-        """
-        Remove _metadata from tools before sending to LLM provider.
-        LLM providers don't accept extra fields in tool definitions.
-
-        Args:
-            tools: Tools list with optional _metadata fields
-
-        Returns:
-            Clean tools list without _metadata
-        """
-        if not tools:
-            return tools
-
-        clean_tools = []
-        for tool in tools:
-            clean_tool = tool.copy()
-            if "function" in clean_tool and "_metadata" in clean_tool["function"]:
-                clean_tool = {
-                    **clean_tool,
-                    "function": {
-                        k: v for k, v in clean_tool["function"].items() if k != "_metadata"
-                    },
-                }
-            clean_tools.append(clean_tool)
-        return clean_tools
-
     async def _stream_response(
         self,
         llm_provider,
@@ -709,18 +443,11 @@ class MessageService:
         provider_name: Optional[str],
         status_templates: dict[str, str] = {},
     ) -> AsyncIterator[dict[str, Any]]:
-        """
-        Stream LLM response.
-
-        Yields:
-            Dict chunks with response data
-        """
-        # Stream response
+        """Stream LLM response."""
         full_content = ""
-        tool_calls_list = []  # Accumulate tool calls by index (OpenAI sends by index)
+        tool_calls_list = []
 
-        # Strip _metadata from tools before sending to LLM (keep original tools for later lookup)
-        clean_tools = self._strip_tool_metadata(tools)
+        clean_tools = strip_tool_metadata(tools)
 
         async for chunk in llm_provider.stream(
             messages=messages,
@@ -732,30 +459,21 @@ class MessageService:
             if chunk.get("content"):
                 full_content += chunk["content"]
 
-            # Accumulate tool calls (streaming sends deltas with index)
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    # OpenAI sends tool calls with an index property in streaming
-                    # First chunk has id/type/name, subsequent chunks have only arguments
                     tc_index = tc.get("index")
 
-                    # If no index provided, try to find by ID (for providers that send complete tool calls)
                     if tc_index is None and tc.get("id"):
-                        # Look for existing tool call with this ID
                         for idx, existing_tc in enumerate(tool_calls_list):
                             if existing_tc.get("id") == tc["id"]:
                                 tc_index = idx
                                 break
-
-                        # If not found and this has an ID, it's a new tool call - append it
                         if tc_index is None:
                             tc_index = len(tool_calls_list)
 
-                    # If still no index, default to 0
                     if tc_index is None:
                         tc_index = 0
 
-                    # Extend list if needed
                     while len(tool_calls_list) <= tc_index:
                         tool_calls_list.append(
                             {
@@ -765,15 +483,12 @@ class MessageService:
                             }
                         )
 
-                    # Update ID, type, name if provided (first chunk)
                     if tc.get("id"):
                         tool_calls_list[tc_index]["id"] = tc["id"]
                     if tc.get("type"):
                         tool_calls_list[tc_index]["type"] = tc["type"]
                     if tc.get("function", {}).get("name"):
                         tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-
-                    # Accumulate arguments (all chunks)
                     if tc.get("function", {}).get("arguments"):
                         tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
                             "arguments"
@@ -781,18 +496,14 @@ class MessageService:
 
             yield chunk
 
-        # Use accumulated tool calls
         tool_calls = tool_calls_list if tool_calls_list else []
 
-        # Validate tool calls before saving
         if tool_calls:
-            tool_calls = self._validate_tool_calls(tool_calls)
-            # Persist resolved status description on each tool call
+            tool_calls = validate_tool_calls(tool_calls)
             for tc in tool_calls:
-                args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
-                tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
+                args = safe_parse_arguments(tc["function"].get("arguments", ""))
+                tc["description"] = build_tool_status(tc["function"]["name"], args, status_templates)
 
-        # Save assistant message after streaming completes
         assistant_message = Message(
             chat_id=chat_id,
             role="assistant",
@@ -803,10 +514,9 @@ class MessageService:
         await self.db.commit()
         await self.db.refresh(assistant_message)
 
-        # Handle tool calls if present
         if tool_calls:
-            # Check if any functions require approval
-            approval_needed = await self._check_approval_requirements(
+            approval_needed = await check_approval_requirements(
+                db=self.db,
                 tool_calls=tool_calls,
                 chat_id=chat_id,
                 user_id=user_id,
@@ -816,24 +526,20 @@ class MessageService:
                 model=final_model,
                 temperature=final_temperature,
                 max_tokens=max_tokens,
-                tools=tools,  # Pass tools with metadata for later execution
+                tools=tools,
             )
 
             if approval_needed:
-                # Yield approval_required events
                 for tool_call in tool_calls:
                     tool_name = tool_call["function"]["name"]
                     arguments_str = tool_call["function"]["arguments"]
 
-                    # Parse namespace/name from tool_name
-                    namespace, name = self._parse_function_name(tool_name)
+                    namespace, name = parse_function_name(tool_name)
                     if not namespace or not name:
                         continue
 
-                    # Check if this specific function requires approval
                     function = await Function.get_by_name(self.db, namespace, name)
                     if function and function.requires_approval:
-                        # Parse arguments safely - handle empty strings
                         parsed_args = arguments_str
                         if isinstance(arguments_str, str):
                             parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
@@ -846,10 +552,8 @@ class MessageService:
                             "arguments": parsed_args,
                         }
 
-                # PAUSE - don't execute tools yet, wait for approval
                 return
 
-            # No approval needed - execute tools immediately and stream the response
             async for chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
@@ -865,997 +569,6 @@ class MessageService:
             ):
                 yield chunk
 
-    def _parse_function_name(self, tool_name: str) -> tuple[Optional[str], Optional[str]]:
-        """
-        Parse namespace and name from tool_name.
-
-        Handles both namespace__name (LLM format) and namespace/name formats.
-
-        Returns:
-            Tuple of (namespace, name) or (None, None) if not a function
-        """
-        # Skip non-function tools
-        if tool_name in [
-            "save_state",
-            "retrieve_state",
-            "update_state",
-            "delete_state",
-            "continue_execution",
-            "execute_code",
-        ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
-            return None, None
-
-        # Convert namespace__name to namespace/name if needed
-        if "__" in tool_name and "/" not in tool_name:
-            tool_name = tool_name.replace("__", "/", 1)
-
-        # Parse namespace/name
-        if "/" not in tool_name:
-            return None, None
-
-        namespace, name = tool_name.split("/", 1)
-        return namespace, name
-
-    async def _check_approval_requirements(
-        self,
-        tool_calls: list[dict[str, Any]],
-        chat_id: str,
-        user_id: str,
-        message_id: str,
-        messages: list[dict[str, Any]],
-        provider: Optional[str],
-        model: Optional[str],
-        temperature: float,
-        max_tokens: Optional[int],
-        tools: Optional[list[dict[str, Any]]] = None,
-    ) -> bool:
-        """
-        Check if any tool calls require user approval before execution.
-
-        If approval is needed, creates PendingToolApproval records.
-
-        Returns:
-            True if any tool calls require approval, False otherwise
-        """
-        requires_approval = False
-
-        for tool_call in tool_calls:
-            tool_name = tool_call["function"]["name"]
-            arguments_str = tool_call["function"]["arguments"]
-
-            # Parse namespace/name from tool_name
-            namespace, name = self._parse_function_name(tool_name)
-            if not namespace or not name:
-                # Not a function tool, skip
-                continue
-
-            # Load function to check requires_approval flag
-            function = await Function.get_by_name(self.db, namespace, name)
-            if not function or not function.requires_approval:
-                continue
-
-            # This function requires approval
-            requires_approval = True
-
-            # Parse arguments safely - handle empty strings
-            parsed_args = arguments_str
-            if isinstance(arguments_str, str):
-                parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
-
-            # Create PendingToolApproval record
-            pending_approval = PendingToolApproval(
-                chat_id=chat_id,
-                message_id=message_id,
-                user_id=user_id,
-                tool_call_id=tool_call["id"],
-                function_namespace=namespace,
-                function_name=name,
-                arguments=parsed_args,
-                all_tool_calls=tool_calls,
-                conversation_context={
-                    "provider": provider,
-                    "model": model,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "messages": messages,
-                    "tools": tools,  # Store tools list with metadata for resuming execution
-                },
-            )
-            self.db.add(pending_approval)
-
-        if requires_approval:
-            await self.db.commit()
-
-        return requires_approval
-
-    async def _build_conversation_history(
-        self,
-        chat: Chat,
-        inject_context: bool = False,
-        user_id: Optional[str] = None,
-        context_limit: int = 5,
-        template_variables: Optional[dict[str, Any]] = None,
-        provider_type: Optional[str] = None,
-        current_user_content: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
-        """
-        Build conversation history for LLM with optional context injection.
-
-        Args:
-            chat: Chat object
-            inject_context: Whether to inject stored context
-            user_id: User ID for context retrieval
-
-            context_limit: Max context items to inject
-            template_variables: Variables for Jinja2 template rendering in system_prompt
-
-        Returns:
-            List of message dicts for LLM
-        """
-        messages = []
-
-        # Add system prompt from agent if exists
-        system_content = ""
-        if chat.agent_id:
-            result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
-            agent = result.scalar_one_or_none()
-            if agent and agent.system_prompt:
-                # Render system prompt with Jinja2 if template_variables provided
-                if template_variables:
-                    try:
-                        system_content = render_template(agent.system_prompt, template_variables)
-                    except Exception as e:
-                        logger.error(f"Failed to render system prompt template: {e}")
-                        system_content = agent.system_prompt
-                else:
-                    system_content = agent.system_prompt
-
-            # Inject preloaded skills content into system prompt
-            if agent and agent.enabled_skills:
-                preloaded_content = await self.skill_converter.get_preloaded_skills_content(
-                    db=self.db, enabled_skills=agent.enabled_skills
-                )
-                if preloaded_content:
-                    system_content += f"\n\n# Preloaded Skills\n\n{preloaded_content}"
-
-            # Add output schema instruction if agent has one
-            if agent and agent.output_schema and agent.output_schema.get("properties"):
-                schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
-                system_content += schema_instruction
-
-        # Inject relevant context if enabled
-        # No agent = no context injection
-        if inject_context and user_id and chat.agent_id:
-            # Determine which stores to use for context injection
-            final_stores = None
-            result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
-            agent = result.scalar_one_or_none()
-            if agent:
-                final_stores = agent.enabled_stores or []
-
-            # Context access is opt-in: None or [] means no access
-            if not final_stores:
-                # No stores = no context injection
-                pass
-            else:
-                relevant_contexts = await StateTools.get_relevant_contexts(
-                    db=self.db,
-                    user_id=user_id,
-                    agent_id=str(chat.agent_id) if chat.agent_id else None,
-                    enabled_stores=final_stores,
-                    limit=context_limit,
-                )
-
-                if relevant_contexts:
-                    context_section = "\n\n## Stored Context\n"
-                    context_section += "The following information has been saved about the user and should inform your responses:\n\n"
-
-                    for ctx in relevant_contexts:
-                        store_label = f"{ctx.store.namespace}/{ctx.store.name}" if ctx.store else "unknown"
-                        context_section += f"**{store_label}/{ctx.key}**"
-                        if ctx.description:
-                            context_section += f" - {ctx.description}"
-                        context_section += "\n"
-                        context_section += f"```json\n{json.dumps(ctx.value, indent=2)}\n```\n\n"
-
-                    if system_content:
-                        system_content += context_section
-                    else:
-                        system_content = context_section.strip()
-
-        if system_content:
-            messages.append({"role": "system", "content": system_content})
-
-        # Add chat message history (with windowing for long conversations)
-        from app.core.config import settings
-
-        result = await self.db.execute(
-            select(Message).where(Message.chat_id == chat.id).order_by(Message.created_at)
-        )
-        all_messages = result.scalars().all()
-
-        # Apply windowing if conversation exceeds max_history_messages
-        if len(all_messages) > settings.max_history_messages:
-            chat_messages = all_messages[-settings.max_history_messages:]
-
-            # Ensure tool call/result pairs aren't split by the window boundary.
-            # Walk backwards from the start of the window to include any orphaned
-            # assistant messages that contain tool_calls referenced by tool results
-            # at the start of the window, and vice versa.
-            window_start_idx = len(all_messages) - settings.max_history_messages
-            prepend = []
-
-            # Collect tool_call_ids referenced by tool messages at the start of the window
-            referenced_tc_ids = set()
-            for msg in chat_messages:
-                if msg.role == "tool" and msg.tool_call_id:
-                    referenced_tc_ids.add(msg.tool_call_id)
-                elif msg.role != "tool":
-                    break  # Stop once we hit non-tool messages
-
-            if referenced_tc_ids:
-                # Scan messages before the window for assistant messages with matching tool_calls
-                for msg in reversed(all_messages[:window_start_idx]):
-                    if msg.tool_calls:
-                        msg_tc_ids = {tc.get("id") for tc in msg.tool_calls if tc.get("id")}
-                        if msg_tc_ids & referenced_tc_ids:
-                            prepend.insert(0, msg)
-                            referenced_tc_ids -= msg_tc_ids
-                    if not referenced_tc_ids:
-                        break
-
-            chat_messages = prepend + list(chat_messages)
-        else:
-            chat_messages = all_messages
-
-        # Repair orphaned tool calls: if an assistant message has tool_calls
-        # but some don't have matching tool result messages, inject synthetic
-        # error results so the LLM provider doesn't reject the history.
-        chat_messages = list(chat_messages)
-        existing_tool_result_ids = {
-            msg.tool_call_id for msg in chat_messages
-            if msg.role == "tool" and msg.tool_call_id
-        }
-        repairs: list[tuple[int, list[dict]]] = []  # (insert_after_idx, messages)
-        for idx, msg in enumerate(chat_messages):
-            if msg.tool_calls:
-                missing = []
-                for tc in msg.tool_calls:
-                    tc_id = tc.get("id")
-                    if tc_id and tc_id not in existing_tool_result_ids:
-                        missing.append(SimpleNamespace(
-                            role="tool",
-                            content="[Error: function call was interrupted or timed out]",
-                            tool_call_id=tc_id,
-                            tool_calls=None,
-                            name=tc.get("function", {}).get("name", "unknown"),
-                        ))
-                if missing:
-                    repairs.append((idx, missing))
-
-        # Insert repairs in reverse order to preserve indices
-        for insert_idx, repair_msgs in reversed(repairs):
-            for i, rm in enumerate(repair_msgs):
-                chat_messages.insert(insert_idx + 1 + i, rm)
-
-        for idx, msg in enumerate(chat_messages):
-            message_dict = {"role": msg.role}
-
-            # For the last user message, use original unstripped content so the
-            # LLM sees full base64 data for the current turn (DB has the stripped version).
-            is_last_user = (
-                current_user_content is not None
-                and idx == len(chat_messages) - 1
-                and msg.role == "user"
-            )
-            content = current_user_content if is_last_user else msg.content
-            if content and provider_type:
-                # Try to parse JSON content (might be multimodal)
-                try:
-                    parsed_content = json.loads(content)
-                    # If it's a list, it might be multimodal content
-                    if isinstance(parsed_content, list):
-                        parsed_content = _refresh_sinas_image_urls(parsed_content)
-                        content = ContentConverter.convert_message_content(
-                            parsed_content, provider_type
-                        )
-                except (json.JSONDecodeError, TypeError):
-                    # Not JSON, treat as plain string (no conversion needed)
-                    pass
-
-            # Always include content, even if None (required for assistant messages with tool_calls)
-            message_dict["content"] = content
-
-            if msg.tool_calls:
-                # Strip UI-only fields (e.g. description) before sending to LLM
-                message_dict["tool_calls"] = [
-                    {k: v for k, v in tc.items() if k != "description"}
-                    for tc in msg.tool_calls
-                ]
-
-            if msg.tool_call_id:
-                message_dict["tool_call_id"] = msg.tool_call_id
-
-            if msg.name:
-                message_dict["name"] = msg.name
-
-            messages.append(message_dict)
-
-        return messages
-
-    async def _resolve_agent_patterns(
-        self,
-        patterns: list[str],
-        user_id: str,
-        permissions: dict[str, bool],
-        db: Optional[AsyncSession] = None,
-    ) -> list[Agent]:
-        """
-        Resolve agent patterns to Agent objects.
-
-        Supports:
-        - "*/*" — all active agents
-        - "namespace/*" — all active agents in namespace
-        - "namespace/name" — specific agent by namespace/name
-        - UUID string — legacy lookup by ID
-        """
-        db = db or self.db
-        seen_ids: set[uuid.UUID] = set()
-        resolved: list[Agent] = []
-
-        for pattern in patterns:
-            agents_to_check: list[Agent] = []
-
-            if pattern == "*/*":
-                result = await db.execute(
-                    select(Agent).where(Agent.is_active == True)
-                )
-                agents_to_check = list(result.scalars().all())
-            elif pattern.endswith("/*"):
-                ns = pattern[:-2]
-                result = await db.execute(
-                    select(Agent).where(Agent.namespace == ns, Agent.is_active == True)
-                )
-                agents_to_check = list(result.scalars().all())
-            elif "/" in pattern:
-                ns, name = pattern.split("/", 1)
-                agent = await Agent.get_by_name(db, ns, name)
-                if agent:
-                    agents_to_check = [agent]
-            else:
-                # Try as UUID (legacy)
-                try:
-                    uuid.UUID(pattern)
-                    result = await db.execute(
-                        select(Agent).where(Agent.id == pattern, Agent.is_active == True)
-                    )
-                    agent = result.scalar_one_or_none()
-                    if agent:
-                        agents_to_check = [agent]
-                except ValueError:
-                    pass
-
-            for agent in agents_to_check:
-                if agent.id in seen_ids:
-                    continue
-                perm = f"sinas.agents/{agent.namespace}/{agent.name}.read:own"
-                if check_permission(permissions, perm):
-                    seen_ids.add(agent.id)
-                    resolved.append(agent)
-
-        return resolved
-
-    async def _get_agent_tools(self, agents: list[Agent]) -> list[dict[str, Any]]:
-        """Get tool definitions for resolved agent objects."""
-        tools = []
-
-        for agent in agents:
-            if not agent.is_active:
-                continue
-
-            # Build tool definition for this agent
-            # Use clean name, store ID as hidden parameter
-            tool_def = {
-                "type": "function",
-                "function": {
-                    "name": f"call_agent_{agent.name.lower().replace(' ', '_').replace('-', '_')}",
-                    "description": f"{agent.name}: {agent.description}"
-                    if agent.description
-                    else f"Call the {agent.name} agent",
-                },
-            }
-
-            # Hidden parameters included in all agent tools
-            _hidden = {
-                "_agent_id": {
-                    "type": "string",
-                    "description": "Internal agent identifier",
-                    "const": str(agent.id),
-                    "default": str(agent.id),
-                },
-                "_chat_id": {
-                    "type": "string",
-                    "description": "Optional chat ID to resume a previous conversation with this agent instead of starting a new one. Use a chat_id returned from a previous call to continue that conversation.",
-                },
-            }
-
-            # Build parameters - always include prompt + agent_id
-            _prompt = {
-                "prompt": {
-                    "type": "string",
-                    "description": "The message or query to send to the agent",
-                },
-            }
-
-            if agent.input_schema and agent.input_schema.get("properties"):
-                # Merge input_schema with prompt and hidden params
-                params = dict(agent.input_schema)
-                if "properties" not in params:
-                    params["properties"] = {}
-                params["properties"] = {**_prompt, **params["properties"], **_hidden}
-                if "required" not in params:
-                    params["required"] = []
-                for req in ["prompt", "_agent_id"]:
-                    if req not in params["required"]:
-                        params["required"].append(req)
-                tool_def["function"]["parameters"] = params
-            else:
-                # Default: simple prompt + hidden params
-                tool_def["function"]["parameters"] = {
-                    "type": "object",
-                    "properties": {
-                        **_prompt,
-                        **_hidden,
-                    },
-                    "required": ["prompt", "_agent_id"],
-                }
-
-            tools.append(tool_def)
-
-        return tools
-
-    async def _get_available_tools(
-        self,
-        user_id: str,
-        chat: Chat,
-    ) -> list[dict[str, Any]]:
-        """Get all available tools (functions + context + agents + execution continuation)."""
-        tools = []
-
-        # No agent = no tools
-        if not chat.agent_id:
-            return tools
-
-        # Get agent configuration
-        agent = None
-        result = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
-        agent = result.scalar_one_or_none()
-        if not agent:
-            return tools
-
-        # Add state tools (based on agent's enabled stores)
-        context_tool_defs = await StateTools.get_tool_definitions(
-            db=self.db,
-            user_id=user_id,
-            enabled_stores=agent.enabled_stores,
-        )
-        tools.extend(context_tool_defs)
-
-        # Ontology tools removed - extracted to sinas-ontology project
-
-        # Add agent tools (other agents this agent can call)
-        agent_enabled = agent.enabled_agents or []
-        if agent_enabled:
-            from app.core.auth import get_user_permissions
-
-            user_permissions = await get_user_permissions(self.db, user_id)
-            resolved_agents = await self._resolve_agent_patterns(
-                agent_enabled, user_id, user_permissions
-            )
-            # Exclude self to prevent recursion
-            resolved_agents = [a for a in resolved_agents if a.id != chat.agent_id]
-            agent_tools = await self._get_agent_tools(resolved_agents)
-            tools.extend(agent_tools)
-
-        # Get agent input context for function parameter templating
-        agent_input_context = {}
-        if chat.chat_metadata and "agent_input" in chat.chat_metadata:
-            agent_input_context = chat.chat_metadata["agent_input"]
-
-        # Get function tools (only if list has items - opt-in)
-        if agent.enabled_functions and len(agent.enabled_functions) > 0:
-            function_tools = await self.function_converter.get_available_functions(
-                db=self.db,
-                user_id=user_id,
-                enabled_functions=agent.enabled_functions,
-                function_parameters=agent.function_parameters,
-                agent_input_context=agent_input_context,
-            )
-            tools.extend(function_tools)
-
-        # Get query tools (only if list has items - opt-in)
-        if agent.enabled_queries and len(agent.enabled_queries) > 0:
-            query_tools = await self.query_converter.get_available_queries(
-                db=self.db,
-                user_id=user_id,
-                enabled_queries=agent.enabled_queries,
-                query_parameters=agent.query_parameters,
-                agent_input_context=agent_input_context,
-            )
-            tools.extend(query_tools)
-
-        # Get skill tools (only if list has items - opt-in)
-        if agent.enabled_skills and len(agent.enabled_skills) > 0:
-            skill_tools = await self.skill_converter.get_available_skills(
-                db=self.db, enabled_skills=agent.enabled_skills
-            )
-            tools.extend(skill_tools)
-
-        # Get collection tools (only if list has items - opt-in)
-        if agent.enabled_collections and len(agent.enabled_collections) > 0:
-            collection_tools = await self.collection_converter.get_available_collections(
-                db=self.db, user_id=user_id, enabled_collections=agent.enabled_collections
-            )
-            tools.extend(collection_tools)
-
-        # Get component tools (only if list has items - opt-in)
-        if agent.enabled_components and len(agent.enabled_components) > 0:
-            component_tools = await self.component_converter.get_available_components(
-                db=self.db, enabled_components=agent.enabled_components
-            )
-            tools.extend(component_tools)
-
-        # Add code execution tool if enabled on the agent
-        if agent.enable_code_execution:
-            from app.services.code_execution import get_tool_definition
-            tools.append(await get_tool_definition(self.db))
-
-        # Check for paused executions belonging to this chat
-        result = await self.db.execute(
-            select(Execution)
-            .where(Execution.chat_id == chat.id, Execution.status == ExecutionStatus.AWAITING_INPUT)
-            .limit(10)
-        )
-        paused_executions = result.scalars().all()
-
-        if paused_executions:
-            # Add continue_execution tool with details about paused executions
-            execution_list = "\n".join(
-                [
-                    f"- {ex.execution_id}: {ex.function_name} - {ex.input_prompt}"
-                    for ex in paused_executions
-                ]
-            )
-
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "continue_execution",
-                        "description": f"Continue a paused function execution by providing required input. Currently paused executions:\n{execution_list}",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "execution_id": {
-                                    "type": "string",
-                                    "description": "The execution ID to continue",
-                                    "enum": [ex.execution_id for ex in paused_executions],
-                                },
-                                "input": {
-                                    "type": "object",
-                                    "description": "Input data to provide to the paused execution",
-                                },
-                            },
-                            "required": ["execution_id", "input"],
-                        },
-                    },
-                }
-            )
-
-        return tools
-
-    async def _execute_agent_tool(
-        self,
-        chat: Chat,
-        user_id: str,
-        user_token: str,
-        tool_name: str,
-        arguments: dict[str, Any],
-        enabled_agent_ids: list[str],
-    ) -> dict[str, Any]:
-        """Execute an agent tool call by creating or resuming a chat."""
-        # Extract agent ID from arguments (passed as _agent_id parameter)
-        agent_id_str = arguments.get("_agent_id")
-        if not agent_id_str:
-            return {"error": "Missing _agent_id in agent tool call"}
-
-        # Verify this agent ID is in enabled list
-        if agent_id_str not in enabled_agent_ids:
-            return {"error": f"Agent {agent_id_str} not enabled for this agent"}
-
-        # Load agent
-        result = await self.db.execute(select(Agent).where(Agent.id == agent_id_str))
-        agent = result.scalar_one_or_none()
-
-        if not agent:
-            return {"error": f"Agent not found: {agent_id_str}"}
-
-        # Prepare input data for the agent
-        # Filter out internal _* parameters and extract prompt
-        user_arguments = {k: v for k, v in arguments.items() if not k.startswith("_")}
-        content = user_arguments.pop("prompt", "")
-        input_data = user_arguments  # Remaining args become input variables
-
-        # Resume existing chat or create a new one
-        resume_chat_id = arguments.get("_chat_id")
-        try:
-            if resume_chat_id:
-                # Verify the chat exists, belongs to this user and agent
-                result = await self.db.execute(
-                    select(Chat).where(
-                        Chat.id == resume_chat_id,
-                        Chat.user_id == user_id,
-                        Chat.agent_id == agent_id_str,
-                    )
-                )
-                sub_chat = result.scalar_one_or_none()
-                if not sub_chat:
-                    return {"error": f"Chat {resume_chat_id} not found or does not belong to this agent"}
-                logger.info(f"Resuming sub-agent chat {sub_chat.id} with {agent.namespace}/{agent.name}")
-            else:
-                sub_chat = await self.create_chat_with_agent(
-                    agent_id=str(agent.id),
-                    user_id=user_id,
-                    input_data=input_data,
-                    name=f"Sub-chat: {agent.name}",
-                )
-
-            # Route agent-to-agent calls through the queue so each sub-agent
-            # runs in its own worker — enables agent swarms without recursive blocking.
-            channel_id = str(uuid.uuid4())
-
-            await queue_service.enqueue_agent_message(
-                chat_id=str(sub_chat.id),
-                user_id=user_id,
-                user_token=user_token,
-                content=content,
-                channel_id=channel_id,
-                agent=f"{agent.namespace}/{agent.name}",
-            )
-
-            # Wait for the sub-agent to finish by reading the Redis stream
-            final_content = ""
-            async for event in stream_relay.subscribe(channel_id):
-                if event.get("content"):
-                    final_content += event["content"]
-                if event.get("type") in ("done", "error"):
-                    if event.get("type") == "error":
-                        return {
-                            "agent_name": agent.name,
-                            "error": event.get("error", "Sub-agent failed"),
-                            "chat_id": str(sub_chat.id),
-                        }
-                    break
-
-            return {
-                "agent_name": agent.name,
-                "response": final_content,
-                "chat_id": str(sub_chat.id),
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to execute agent tool {tool_name}: {e}")
-            return {"error": str(e)}
-
-    def _is_sequential_tool(self, tool_name: str) -> bool:
-        """Check if a tool must be executed sequentially (not parallelizable)."""
-        return tool_name.startswith("call_agent_") or tool_name == "continue_execution" or tool_name == "execute_code"
-
-    async def _execute_single_tool(
-        self,
-        tool_call: dict[str, Any],
-        chat_id: str,
-        user_id: str,
-        user_token: str,
-        tools: list[dict[str, Any]],
-    ) -> tuple[str, str, str]:
-        """
-        Execute a single tool call. Uses its own DB session for parallel safety.
-
-        Returns:
-            Tuple of (tool_call_id, tool_name, result_content)
-        """
-        from app.core.database import AsyncSessionLocal
-
-        tool_name = tool_call["function"]["name"]
-        arguments_str = tool_call["function"]["arguments"]
-
-        # Handle arguments parsing
-        try:
-            if isinstance(arguments_str, str):
-                arguments = json.loads(arguments_str) if arguments_str.strip() else {}
-            else:
-                arguments = arguments_str
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse tool arguments for {tool_name}: {e}")
-            result_content = json.dumps({
-                "error": f"Invalid JSON arguments: {str(e)}",
-                "raw_arguments": arguments_str[:200] if isinstance(arguments_str, str) else str(arguments_str)[:200]
-            })
-            return (tool_call["id"], tool_name, result_content)
-
-        # Execute tool with its own session
-        try:
-            async with AsyncSessionLocal() as db:
-                # Get chat for context
-                result_chat = await db.execute(select(Chat).where(Chat.id == chat_id))
-                chat = result_chat.scalar_one_or_none()
-
-                if tool_name in [
-                    "save_state",
-                    "retrieve_state",
-                    "update_state",
-                    "delete_state",
-                ]:
-                    result = await StateTools.execute_tool(
-                        db=db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        chat_id=str(chat_id),
-                        agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
-                    )
-                elif tool_name == "continue_execution":
-                    # Resume directly in the container (bypasses queue)
-                    from app.services.execution_engine import executor as fn_executor
-
-                    result = await fn_executor.resume_execution(
-                        execution_id=arguments["execution_id"],
-                        resume_value=arguments["input"],
-                    )
-                elif tool_name.startswith("call_agent_"):
-                    # Resolve enabled agent patterns to actual agent IDs
-                    enabled_agent_ids = []
-                    if chat and chat.agent_id:
-                        result_agent = await db.execute(
-                            select(Agent).where(Agent.id == chat.agent_id)
-                        )
-                        chat_agent = result_agent.scalar_one_or_none()
-                        if chat_agent and chat_agent.enabled_agents:
-                            from app.core.auth import get_user_permissions
-
-                            user_perms = await get_user_permissions(db, user_id)
-                            resolved = await self._resolve_agent_patterns(
-                                chat_agent.enabled_agents, user_id, user_perms, db=db
-                            )
-                            enabled_agent_ids = [str(a.id) for a in resolved]
-
-                    result = await self._execute_agent_tool(
-                        chat=chat,
-                        user_id=user_id,
-                        user_token=user_token,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        enabled_agent_ids=enabled_agent_ids,
-                    )
-                elif tool_name == "execute_code":
-                    from app.services.code_execution import execute as execute_code
-
-                    start_time = time.time()
-                    result = await execute_code(
-                        code=arguments.get("code", ""),
-                        user_id=user_id,
-                        chat_id=str(chat_id),
-                    )
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Code execution completed in {elapsed:.3f}s")
-                elif tool_name.startswith("show_component_"):
-                    start_time = time.time()
-                    result = await self.component_converter.handle_component_tool_call(
-                        db=db, tool_name=tool_name, arguments=arguments, user_id=user_id
-                    )
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Component tool completed in {elapsed:.3f}s: {tool_name}")
-                    if result is None:
-                        result = {"error": f"Component not found for tool: {tool_name}"}
-                elif tool_name.startswith("get_skill_"):
-                    start_time = time.time()
-                    result = await self.skill_converter.handle_skill_tool_call(
-                        db=db, tool_name=tool_name, arguments=arguments
-                    )
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
-                    if result is None:
-                        result = {"error": f"Skill not found for tool: {tool_name}"}
-                elif tool_name.startswith("query_"):
-                    start_time = time.time()
-                    # Extract metadata for locked/overridable params
-                    tool_metadata = {}
-                    for tool in tools:
-                        if tool.get("function", {}).get("name") == tool_name:
-                            tool_metadata = tool.get("function", {}).get("_metadata", {})
-                            break
-
-                    # Get enabled queries list from agent
-                    enabled_query_list = []
-                    if chat and chat.agent_id:
-                        result_agent = await db.execute(
-                            select(Agent).where(Agent.id == chat.agent_id)
-                        )
-                        chat_agent = result_agent.scalar_one_or_none()
-                        if chat_agent:
-                            enabled_query_list = chat_agent.enabled_queries or []
-
-                    # Get user email for context injection
-                    from app.models.user import User
-
-                    user_email = None
-                    user_result = await db.execute(select(User).where(User.id == user_id))
-                    user_obj = user_result.scalar_one_or_none()
-                    if user_obj:
-                        user_email = user_obj.email
-
-                    result = await self.query_converter.execute_query_tool(
-                        db=db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        user_email=user_email,
-                        locked_params=tool_metadata.get("locked_params", {}),
-                        overridable_params=tool_metadata.get("overridable_params", {}),
-                        enabled_queries=enabled_query_list,
-                    )
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Query execution completed in {elapsed:.3f}s: {tool_name}")
-                elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
-                    start_time = time.time()
-                    tool_metadata = {}
-                    for tool in tools:
-                        if tool.get("function", {}).get("name") == tool_name:
-                            tool_metadata = tool.get("function", {}).get("_metadata", {})
-                            break
-                    result = await self.collection_converter.execute_tool(
-                        db=db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        metadata=tool_metadata,
-                    )
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Collection tool completed in {elapsed:.3f}s: {tool_name}")
-                else:
-                    # Default: execute as function tool
-                    start_time = time.time()
-
-                    tool_found = False
-                    locked_params = {}
-                    overridable_params = {}
-
-                    for tool in tools:
-                        if tool.get("function", {}).get("name") == tool_name:
-                            tool_found = True
-                            metadata = tool.get("function", {}).get("_metadata", {})
-                            locked_params = metadata.get("locked_params", {})
-                            overridable_params = metadata.get("overridable_params", {})
-                            break
-
-                    if not tool_found:
-                        logger.warning(
-                            f"Security: Tool '{tool_name}' was not in approved tools list. "
-                            f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
-                        )
-                        result = {
-                            "error": "Unauthorized tool call",
-                            "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
-                        }
-                    else:
-                        enabled_function_list = []
-                        if chat and chat.agent_id:
-                            result_agent = await db.execute(
-                                select(Agent).where(Agent.id == chat.agent_id)
-                            )
-                            chat_agent = result_agent.scalar_one_or_none()
-                            if chat_agent:
-                                enabled_function_list = chat_agent.enabled_functions or []
-
-                        result = await self.function_converter.execute_function_tool(
-                            db=db,
-                            tool_name=tool_name,
-                            arguments=arguments,
-                            user_id=user_id,
-                            user_token=user_token,
-                            chat_id=str(chat_id),
-                            locked_params=locked_params,
-                            overridable_params=overridable_params,
-                            enabled_functions=enabled_function_list,
-                        )
-
-                    elapsed = time.time() - start_time
-                    logger.debug(f"Function execution completed in {elapsed:.3f}s: {tool_name}")
-
-                result_content = json.dumps(result) if not isinstance(result, str) else result
-
-        except Exception as e:
-            logger.error(f"Tool execution failed: {e}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            result_content = json.dumps({"error": str(e)})
-
-        return (tool_call["id"], tool_name, result_content)
-
-    def _safe_parse_arguments(self, arguments: Any) -> dict:
-        """Safely parse tool call arguments to a dict."""
-        if isinstance(arguments, dict):
-            return arguments
-        if isinstance(arguments, str) and arguments.strip():
-            try:
-                return json.loads(arguments)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return {}
-
-    def _tool_name_to_status_key(self, tool_name: str) -> str:
-        """Convert LLM tool name to status_templates lookup key.
-
-        LLM tool names -> prefixed keys:
-          "default__search_web"                -> "function:default/search_web"
-          "call_agent_support__helper"         -> "agent:support/helper"
-          "query_analytics__daily_report"      -> "query:analytics/daily_report"
-          "search_collection_docs__manuals"    -> "collection:docs/manuals"
-          "get_file_docs__manuals"             -> "collection:docs/manuals"
-          "get_skill_default__tone"            -> "skill:default/tone"
-          "show_component_ui__chart"           -> "component:ui/chart"
-          "save_state"                         -> "state:save_state"
-        """
-        if tool_name.startswith("call_agent_"):
-            return "agent:" + tool_name[len("call_agent_"):].replace("__", "/", 1)
-        if tool_name.startswith("get_skill_"):
-            return "skill:" + tool_name[len("get_skill_"):].replace("__", "/", 1)
-        if tool_name.startswith("query_"):
-            return "query:" + tool_name[len("query_"):].replace("__", "/", 1)
-        if tool_name.startswith("search_collection_"):
-            return "collection:" + tool_name[len("search_collection_"):].replace("__", "/", 1)
-        if tool_name.startswith("get_file_"):
-            return "collection:" + tool_name[len("get_file_"):].replace("__", "/", 1)
-        if tool_name.startswith("show_component_"):
-            return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
-        if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
-            return f"state:{tool_name}"
-        # Default: function
-        return "function:" + tool_name.replace("__", "/", 1)
-
-    def _build_tool_status(self, tool_name: str, arguments: dict, status_templates: dict[str, str]) -> str:
-        """Build human-readable status for a tool call.
-
-        Looks up status_templates by type-prefixed key (e.g. "function:web/search").
-        Falls back to humanized tool name.
-        """
-        key = self._tool_name_to_status_key(tool_name)
-        template = status_templates.get(key)
-        if template:
-            try:
-                return render_template(template, arguments)
-            except Exception:
-                pass
-
-        # Fallback: humanize by tool type
-        if key.startswith("agent:"):
-            return f"Calling {key[6:]}"
-        if key.startswith("skill:"):
-            return f"Loading skill {key[6:]}"
-        if key.startswith("query:"):
-            ref = key[6:]
-            return f"Running query {ref.split('/')[-1].replace('_', ' ')}"
-        if key.startswith("collection:"):
-            return "Searching files"
-        if key.startswith("component:"):
-            return f"Rendering {key[10:]}"
-        if key.startswith("state:"):
-            verb = tool_name.split("_")[0].capitalize()
-            return f"{verb} state"
-        # function:ns/name
-        ref = key[9:]  # strip "function:"
-        return f"Running {ref.split('/')[-1].replace('_', ' ')}"
-
     async def _handle_tool_calls(
         self,
         chat_id: str,
@@ -1870,15 +583,13 @@ class MessageService:
         tools: list[dict[str, Any]],
         permissions: Optional[dict[str, bool]] = None,
         status_templates: dict[str, str] = {},
+        depth: int = 0,
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute tool calls, stream LLM follow-up response, and save final message."""
-        # Get permissions if not provided
         if permissions is None:
-            from app.core.auth import get_user_permissions
-
             permissions = await get_user_permissions(self.db, user_id)
 
-        # Check if assistant message with these tool calls already exists (e.g., from approval flow)
+        # Check if assistant message with these tool calls already exists
         first_tool_call_id = tool_calls[0]["id"] if tool_calls else None
         existing_message = None
 
@@ -1900,13 +611,11 @@ class MessageService:
                     existing_message = msg
                     break
 
-        # Only create assistant message if it doesn't already exist
         if not existing_message:
-            # Persist resolved status description on each tool call
             for tc in tool_calls:
                 if "description" not in tc:
-                    args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
-                    tc["description"] = self._build_tool_status(tc["function"]["name"], args, status_templates)
+                    args = safe_parse_arguments(tc["function"].get("arguments", ""))
+                    tc["description"] = build_tool_status(tc["function"]["name"], args, status_templates)
             assistant_message = Message(
                 chat_id=chat_id, role="assistant", content=None, tool_calls=tool_calls
             )
@@ -1920,34 +629,36 @@ class MessageService:
 
         for tc in valid_tool_calls:
             tool_name = tc["function"]["name"]
-            if self._is_sequential_tool(tool_name):
+            if is_sequential_tool(tool_name):
                 sequential_calls.append(tc)
             else:
                 parallel_calls.append(tc)
 
-        # Collect all results preserving original order
-        tool_results: dict[str, tuple[str, str, str]] = {}  # tool_call_id -> (id, name, content)
+        tool_results: dict[str, tuple[str, str, str]] = {}
 
         # Execute parallel tools concurrently
         if parallel_calls:
-            # Emit tool_start for all parallel tools before execution
             for tc in parallel_calls:
-                args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+                args = safe_parse_arguments(tc["function"].get("arguments", ""))
                 yield {
                     "type": "tool_start",
                     "tool_call_id": tc["id"],
                     "name": tc["function"]["name"],
                     "arguments": tc["function"].get("arguments", "{}"),
-                    "description": self._build_tool_status(tc["function"]["name"], args, status_templates),
+                    "description": build_tool_status(tc["function"]["name"], args, status_templates),
                 }
 
             parallel_tasks = [
-                self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
+                execute_single_tool(
+                    tc, chat_id, user_id, user_token, tools,
+                    self.function_converter, self.query_converter,
+                    self.skill_converter, self.component_converter,
+                    self.collection_converter, self.create_chat_with_agent,
+                )
                 for tc in parallel_calls
             ]
             parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
 
-            # Emit tool_end for all parallel tools
             for i, res in enumerate(parallel_results):
                 tc = parallel_calls[i]
                 result_content = json.dumps({"error": str(res)}) if isinstance(res, Exception) else res[2]
@@ -1964,15 +675,20 @@ class MessageService:
 
         # Execute sequential tools one by one
         for tc in sequential_calls:
-            args = self._safe_parse_arguments(tc["function"].get("arguments", ""))
+            args = safe_parse_arguments(tc["function"].get("arguments", ""))
             yield {
                 "type": "tool_start",
                 "tool_call_id": tc["id"],
                 "name": tc["function"]["name"],
                 "arguments": tc["function"].get("arguments", "{}"),
-                "description": self._build_tool_status(tc["function"]["name"], args, status_templates),
+                "description": build_tool_status(tc["function"]["name"], args, status_templates),
             }
-            res = await self._execute_single_tool(tc, chat_id, user_id, user_token, tools)
+            res = await execute_single_tool(
+                tc, chat_id, user_id, user_token, tools,
+                self.function_converter, self.query_converter,
+                self.skill_converter, self.component_converter,
+                self.collection_converter, self.create_chat_with_agent,
+            )
             yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": res[2]}
             tool_results[tc["id"]] = res
 
@@ -1990,19 +706,16 @@ class MessageService:
 
         await self.db.commit()
 
-        # Get final response from LLM with tool results
-        # First, rebuild system prompt with template variables
+        # Rebuild messages with tool results for LLM follow-up
         result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
         chat = result_chat.scalar_one_or_none()
 
         updated_messages = []
 
-        # Add system prompt from agent if exists
         if chat and chat.agent_id:
             result_agent = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
             agent = result_agent.scalar_one_or_none()
             if agent and agent.system_prompt:
-                # Render system prompt with template variables from chat metadata
                 system_content = agent.system_prompt
                 if chat.chat_metadata and "agent_input" in chat.chat_metadata:
                     try:
@@ -2012,14 +725,12 @@ class MessageService:
                     except Exception as e:
                         logger.error(f"Failed to render system prompt template: {e}")
 
-                # Add output schema instruction if agent has one
                 if agent.output_schema and agent.output_schema.get("properties"):
                     schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
                     system_content += schema_instruction
 
                 updated_messages.append({"role": "system", "content": system_content})
 
-        # Rebuild messages with tool results
         result = await self.db.execute(
             select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
         )
@@ -2028,17 +739,14 @@ class MessageService:
             if msg.content:
                 message_dict["content"] = msg.content
             if msg.tool_calls:
-                # Validate tool calls when loading from DB to filter out corrupted ones
-                validated_tool_calls = self._validate_tool_calls(msg.tool_calls)
-                if validated_tool_calls:
-                    # Strip UI-only fields (e.g. description) before sending to LLM
+                validated_tc = validate_tool_calls(msg.tool_calls)
+                if validated_tc:
                     message_dict["tool_calls"] = [
                         {k: v for k, v in tc.items() if k != "description"}
-                        for tc in validated_tool_calls
+                        for tc in validated_tc
                     ]
-                elif msg.tool_calls:  # Had tool calls but all were invalid
-                    # Skip this message entirely to avoid breaking the conversation
-                    print(f"⚠️ Skipping message {msg.id} with corrupted tool calls")
+                elif msg.tool_calls:
+                    print(f"\u26a0\ufe0f Skipping message {msg.id} with corrupted tool calls")
                     continue
             if msg.tool_call_id:
                 message_dict["tool_call_id"] = msg.tool_call_id
@@ -2048,8 +756,7 @@ class MessageService:
 
         llm_provider = await create_provider(provider, model, self.db)
 
-        # Strip _metadata from tools before sending to LLM
-        clean_tools = self._strip_tool_metadata(tools)
+        clean_tools = strip_tool_metadata(tools)
 
         # Stream the response after tool execution
         full_content = ""
@@ -2065,28 +772,21 @@ class MessageService:
             if chunk.get("content"):
                 full_content += chunk["content"]
 
-            # Accumulate tool calls (streaming sends deltas with index)
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
                     tc_index = tc.get("index")
 
-                    # If no index provided, try to find by ID (for providers that send complete tool calls)
                     if tc_index is None and tc.get("id"):
-                        # Look for existing tool call with this ID
                         for idx, existing_tc in enumerate(tool_calls_list):
                             if existing_tc.get("id") == tc["id"]:
                                 tc_index = idx
                                 break
-
-                        # If not found and this has an ID, it's a new tool call - append it
                         if tc_index is None:
                             tc_index = len(tool_calls_list)
 
-                    # If still no index, default to 0
                     if tc_index is None:
                         tc_index = 0
 
-                    # Extend list if needed
                     while len(tool_calls_list) <= tc_index:
                         tool_calls_list.append(
                             {
@@ -2096,28 +796,34 @@ class MessageService:
                             }
                         )
 
-                    # Update ID, type, name if provided (first chunk)
                     if tc.get("id"):
                         tool_calls_list[tc_index]["id"] = tc["id"]
                     if tc.get("type"):
                         tool_calls_list[tc_index]["type"] = tc["type"]
                     if tc.get("function", {}).get("name"):
                         tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-
-                    # Accumulate arguments (all chunks)
                     if tc.get("function", {}).get("arguments"):
                         tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
                             "arguments"
                         ]
 
-            # Yield the chunk for streaming
             yield chunk
 
         final_tool_calls = tool_calls_list if tool_calls_list else None
 
-        # Check if the response has more tool calls (for multi-step tool usage)
         if final_tool_calls:
-            # Recursively handle the next round of tool calls
+            if depth >= settings.max_tool_iterations:
+                logger.warning(
+                    "Tool iteration limit (%d) reached for chat %s — stopping",
+                    settings.max_tool_iterations,
+                    chat_id,
+                )
+                yield {
+                    "type": "error",
+                    "error": f"Tool iteration limit ({settings.max_tool_iterations}) reached. Stopping to prevent runaway loops.",
+                }
+                return
+
             async for result_chunk in self._handle_tool_calls(
                 chat_id=chat_id,
                 user_id=user_id,
@@ -2130,18 +836,17 @@ class MessageService:
                 max_tokens=max_tokens,
                 tools=tools,
                 status_templates=status_templates,
+                depth=depth + 1,
             ):
                 yield result_chunk
             return
 
-        # Save final assistant message
         final_message = Message(
             chat_id=chat_id, role="assistant", content=full_content if full_content else None
         )
         self.db.add(final_message)
         await self.db.commit()
         await self.db.refresh(final_message)
-        # Generator ends here (can't return value from async generator)
 
     async def _log_request(
         self,
@@ -2154,13 +859,5 @@ class MessageService:
         response: dict[str, Any],
         latency_ms: int,
     ):
-        """
-        Log LLM request for analytics.
-
-        Note: This is now handled by the global RequestLoggerMiddleware which logs
-        all requests to ClickHouse. LLM-specific metadata could be added to request.state
-        if needed for more detailed LLM analytics.
-        """
-        # LLM request logging now handled by middleware
-        # Keeping method for backward compatibility but it's a no-op
+        """Log LLM request for analytics (no-op, handled by middleware)."""
         pass

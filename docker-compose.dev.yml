@@ -1,0 +1,75 @@
+# Development overrides — build from source, hot-reload, exposed ports for testing.
+# Usage: docker compose -f docker-compose.dev.yml up -d --build
+services:
+  postgres:
+    ports:
+      - "5433:5432"
+
+  pgbouncer:
+    ports:
+      - "5432:5432"
+
+  executor:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.executor
+    image: sinas-executor
+    entrypoint: ["true"]
+    restart: "no"
+    deploy:
+      replicas: 1
+
+  builder:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.builder
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  queue-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+
+  queue-agent:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+      - file_storage:/var/sinas/files
+
+  cdc-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+
+  console:
+    build:
+      context: ./console
+      args:
+        USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}

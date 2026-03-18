@@ -100,12 +100,12 @@ class QueryConfig(BaseModel):
 class FunctionConfig(BaseModel):
     """Function configuration"""
 
+    namespace: str = "default"
     name: str
     description: Optional[str] = None
     code: str
     inputSchema: Optional[dict[str, Any]] = None
     outputSchema: Optional[dict[str, Any]] = None
-    tags: list[str] = Field(default_factory=list)
     icon: Optional[str] = None
     timeout: Optional[int] = None
 

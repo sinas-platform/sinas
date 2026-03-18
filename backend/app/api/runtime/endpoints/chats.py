@@ -31,12 +31,13 @@ from app.schemas.chat import (
     ChatWithMessages,
     MessageResponse,
     MessageSendRequest,
+    PendingApprovalResponse,
     ToolApprovalRequest,
     ToolApprovalResponse,
 )
 from app.services.message_service import MessageService, refresh_message_tokens
 from app.services.queue_service import queue_service
-from app.services.stream_relay import stream_relay
+from app.services.stream_relay import STREAM_TTL_KEEP_ALIVE, stream_relay
 from app.services.template_renderer import render_template
 from app.utils.schema import validate_with_coercion
 
@@ -154,7 +155,7 @@ async def create_chat_with_agent(
         job_timeout=chat_job_timeout,
     )
     db.add(chat)
-    await db.commit()
+    await db.flush()
     await db.refresh(chat)
 
     # 5. Pre-populate with initial_messages if present (rendered with input data)
@@ -170,7 +171,6 @@ async def create_chat_with_agent(
 
             message = Message(chat_id=chat.id, role=msg_data["role"], content=content)
             db.add(message)
-        await db.commit()
 
     # Get user email
     user_result = await db.execute(select(User).where(User.id == user_id))
@@ -315,8 +315,6 @@ async def stream_message(
 
     if effective_keep_alive:
         # --- Keep-alive mode: route through queue, subscribe to stream ---
-        from app.services.stream_relay import STREAM_TTL_KEEP_ALIVE
-
         channel_id = str(uuid.uuid4())
 
         # Persist active_channel_id for reconnection
@@ -695,7 +693,6 @@ async def get_chat(
         message_responses.append(resp)
 
     # Load any unresolved pending approvals for this chat
-    from app.schemas.chat import PendingApprovalResponse
     approval_result = await db.execute(
         select(PendingToolApproval).where(
             PendingToolApproval.chat_id == chat_id,
@@ -767,7 +764,7 @@ async def update_chat(
     if request.archived is not None:
         chat.archived = request.archived
 
-    await db.commit()
+    await db.flush()
     await db.refresh(chat)
 
     # Get user email and last message timestamp
@@ -828,6 +825,6 @@ async def delete_chat(
     set_permission_used(http_request, agent_chat_perm)
 
     chat.archived = True
-    await db.commit()
+    await db.flush()
 
     return None

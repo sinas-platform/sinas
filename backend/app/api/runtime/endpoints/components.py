@@ -9,7 +9,6 @@ import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from jose import JWTError, jwt
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,28 +21,14 @@ from app.models.component_share import ComponentShare
 from app.models.function import Function
 from app.models.query import Query
 from app.models.user import User
+from app.models.execution import TriggerType
+from app.schemas.component import ProxyExecuteRequest, StateProxyRequest
+from app.models.state import State
+from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
+from app.services.queue_service import queue_service
 
 router = APIRouter()
-
-
-def generate_component_render_token(
-    namespace: str, name: str, user_id: str, expires_in: int = 3600
-) -> str:
-    """
-    Generate a signed render token for a component (like file serve tokens).
-
-    The token is purpose-scoped and short-lived. It allows the render endpoint
-    to authenticate iframe requests without Authorization headers.
-    """
-    payload = {
-        "namespace": namespace,
-        "name": name,
-        "sub": user_id,
-        "purpose": "component_render",
-        "exp": int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp()),
-    }
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
 def _build_html_shell(component: Component, input_vars: dict) -> str:
@@ -323,7 +308,7 @@ async def render_shared_component(
 
     # Increment view count
     share.view_count += 1
-    await db.commit()
+    await db.flush()
 
     input_vars = share.input_data or {}
     html = _build_html_shell(component, input_vars)
@@ -332,11 +317,6 @@ async def render_shared_component(
 
 # --- Proxy Endpoints ---
 # These provide scoped access to SINAS resources for components
-
-
-class ProxyExecuteRequest(BaseModel):
-    input: dict[str, Any] = {}
-    timeout: Optional[int] = None
 
 
 async def _get_component_or_404(
@@ -469,9 +449,6 @@ async def proxy_function_execute(
 
     set_permission_used(request, permission)
 
-    from app.models.execution import TriggerType
-    from app.services.queue_service import queue_service
-
     execution_id = str(uuid.uuid4())
 
     try:
@@ -496,13 +473,6 @@ async def proxy_function_execute(
         return {"status": "error", "execution_id": execution_id, "error": str(e)}
 
 
-class StateProxyRequest(BaseModel):
-    action: str  # get, set, delete, list
-    key: Optional[str] = None
-    value: Optional[dict[str, Any]] = None
-    visibility: str = "private"
-
-
 @router.post(
     "/components/{ns}/{name}/proxy/states/{state_ns}",
     tags=["runtime-components"],
@@ -517,8 +487,6 @@ async def proxy_state(
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Access state through the component proxy (scoped to enabled state namespaces)."""
-    from app.models.state import State
-
     user_id, permissions = current_user_data
     component = await _get_component_or_404(db, ns, name)
 
@@ -587,7 +555,7 @@ async def proxy_state(
                 visibility=body.visibility,
             )
             db.add(state)
-        await db.commit()
+        await db.flush()
         return {"success": True, "key": body.key}
 
     elif body.action == "delete":
@@ -603,7 +571,7 @@ async def proxy_state(
         state = result.scalar_one_or_none()
         if state:
             await db.delete(state)
-            await db.commit()
+            await db.flush()
         return {"success": True, "key": body.key}
 
     else:
