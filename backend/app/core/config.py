@@ -57,9 +57,6 @@ class Settings(BaseSettings):
     rate_limit_otp_ip_max: int = 10  # Max OTP verify requests per IP per window
     rate_limit_window_seconds: int = 900  # Rate limit window (15 minutes)
 
-    # CORS
-    cors_origins: str = "http://localhost:51245"  # Comma-separated allowed origins
-
     # SMTP Configuration (for sending emails)
     smtp_host: Optional[str] = None
     smtp_port: int = 587

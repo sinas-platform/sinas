@@ -154,7 +154,6 @@ services:
       FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       BUILDER_URL: http://sinas-builder:3000
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:51245,http://localhost:8000}
     depends_on:
       clickhouse:
         condition: service_healthy
