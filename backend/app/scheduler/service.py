@@ -14,6 +14,23 @@ import logging
 import signal
 import uuid
 
+import asyncpg
+from sqlalchemy import select
+
+from app.core.config import settings
+from app.core.database import AsyncSessionLocal
+from app.core.encryption import encryption_service
+from app.core.redis import close_redis, get_redis
+from app.models.database_connection import DatabaseConnection
+from app.models.schedule import ScheduledJob
+from app.models.user import Role, User, UserRole
+from app.scheduler.jobs.cleanup_expired_chats import cleanup_expired_chats
+from app.services.config_apply import ConfigApplyService
+from app.services.config_parser import ConfigParser
+from app.services.container_pool import container_pool
+from app.services.scheduler import scheduler
+from app.services.shared_worker_manager import shared_worker_manager
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [scheduler] %(levelname)s %(name)s: %(message)s",
@@ -23,13 +40,57 @@ logger = logging.getLogger(__name__)
 SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
 
 
+async def _initialize_builtin_database() -> None:
+    """Ensure the sinas_data database and its Database Connection record exist."""
+    direct_host = settings.database_direct_host or settings.database_host
+    try:
+        conn = await asyncpg.connect(
+            host=direct_host,
+            port=int(settings.database_port),
+            user=settings.database_user,
+            password=settings.database_password,
+            database=settings.database_name,
+        )
+        try:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_database WHERE datname = 'sinas_data'"
+            )
+            if not exists:
+                await conn.execute("CREATE DATABASE sinas_data")
+                print("✅ Created sinas_data database")
+        finally:
+            await conn.close()
+    except Exception as e:
+        logger.warning(f"Could not ensure sinas_data database: {e}")
+        return
+
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(
+            select(DatabaseConnection).where(DatabaseConnection.name == "built-in")
+        )
+        if existing.scalar_one_or_none():
+            return
+
+        connection = DatabaseConnection(
+            name="built-in",
+            connection_type="postgresql",
+            host=direct_host,
+            port=int(settings.database_port),
+            database="sinas_data",
+            username=settings.database_user,
+            password=encryption_service.encrypt(settings.database_password),
+            is_active=True,
+            read_only=False,
+            managed_by="system",
+            config={"pool_size": 5, "max_overflow": 10},
+        )
+        db.add(connection)
+        await db.commit()
+        print("✅ Built-in database connection created (sinas_data)")
+
+
 async def _listen_for_job_changes(stop_event: asyncio.Event) -> None:
     """Subscribe to Redis pub/sub and apply job changes to APScheduler."""
-    from app.core.database import AsyncSessionLocal
-    from app.core.redis import get_redis
-    from app.models.schedule import ScheduledJob
-    from app.services.scheduler import scheduler
-
     redis = await get_redis()
     pubsub = redis.pubsub()
     await pubsub.subscribe(SCHEDULER_CHANNEL)
@@ -79,13 +140,6 @@ async def _listen_for_job_changes(stop_event: asyncio.Event) -> None:
 
 
 async def main() -> None:
-    from app.core.config import settings
-    from app.core.database import AsyncSessionLocal
-    from app.core.redis import close_redis, get_redis
-    from app.services.container_pool import container_pool
-    from app.services.scheduler import scheduler
-    from app.services.shared_worker_manager import shared_worker_manager
-
     # --- Redis ---
     redis = await get_redis()
     await redis.ping()
@@ -95,12 +149,6 @@ async def main() -> None:
     if settings.config_file and settings.auto_apply_config:
         logger.info(f"🔧 AUTO_APPLY_CONFIG enabled, applying config from {settings.config_file}...")
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select
-
-            from app.models.user import Role, User, UserRole
-            from app.services.config_apply import ConfigApplyService
-            from app.services.config_parser import ConfigParser
-
             try:
                 # Look up superadmin user to own config-created resources
                 admin_role_result = await db.execute(
@@ -171,6 +219,9 @@ async def main() -> None:
                 logger.error(f"❌ Failed to apply config: {e}", exc_info=True)
                 raise
 
+    # --- Built-in database (sinas_data) ---
+    await _initialize_builtin_database()
+
     # --- Sandbox containers ---
     async with AsyncSessionLocal() as db:
         await container_pool.initialize(db)
@@ -182,8 +233,6 @@ async def main() -> None:
     await scheduler.start()
 
     # --- System jobs ---
-    from app.scheduler.jobs.cleanup_expired_chats import cleanup_expired_chats
-
     scheduler.scheduler.add_job(
         func=cleanup_expired_chats,
         trigger="interval",

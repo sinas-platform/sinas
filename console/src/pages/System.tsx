@@ -48,8 +48,14 @@ export function System() {
 
   const { data: systemHealth } = useQuery({
     queryKey: ['system-health'],
-    queryFn: () => apiClient.getSystemHealth(),
+    queryFn: () => apiClient.getSystemHealth(false),
     refetchInterval: 10000,
+  });
+
+  const { data: systemHealthWithStats } = useQuery({
+    queryKey: ['system-health-stats'],
+    queryFn: () => apiClient.getSystemHealth(true),
+    refetchInterval: 30000,
   });
 
   const { data: stats } = useQuery({
@@ -230,8 +236,12 @@ export function System() {
   const warningWarnings = warnings.filter((w: any) => w.level === 'warning');
   const infoWarnings = warnings.filter((w: any) => w.level === 'info');
 
-  const host = systemHealth?.host || {};
-  const services = systemHealth?.services || [];
+  const host = systemHealthWithStats?.host || systemHealth?.host || {};
+  // Merge: use fast services list, overlay stats when available
+  const fastServices = systemHealth?.services || [];
+  const statsServices = systemHealthWithStats?.services || [];
+  const statsMap = new Map(statsServices.map((s: any) => [s.name, s]));
+  const services = fastServices.map((s: any) => ({ ...s, ...(statsMap.get(s.name) || {}) }));
 
   return (
     <div className="space-y-6">
@@ -426,7 +436,7 @@ export function System() {
                       {svc.uptime_seconds > 0 ? formatUptimeSeconds(svc.uptime_seconds) : '-'}
                     </td>
                     <td className="py-2 pr-4 text-gray-400">
-                      {svc.status === 'running' ? `${svc.cpu_percent}%` : '-'}
+                      {svc.status === 'running' && svc.cpu_percent != null ? `${svc.cpu_percent}%` : '-'}
                     </td>
                     <td className="py-2 pr-4 text-gray-400">
                       {svc.status === 'running' && svc.memory ? (

@@ -56,7 +56,7 @@ For local development, clone the repo and use the dev compose file:
 ```bash
 git clone https://github.com/sinas-platform/sinas.git && cd sinas
 cp .env.example .env   # Edit with your keys and SMTP config
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 - **Console**: http://localhost:51245

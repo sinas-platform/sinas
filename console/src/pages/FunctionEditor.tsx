@@ -91,29 +91,10 @@ export function FunctionEditor() {
     namespace: 'default',
     name: '',
     description: '',
-    code: `def my_function(input, context):
-    """
-    Function entry point.
+    code: `def handler(input, context):
+    # input: dict validated against input_schema
+    # context: {user_id, user_email, access_token, execution_id, trigger_type, chat_id}
 
-    Args:
-        input: Input parameters validated against input_schema
-        context: Execution context containing:
-            - user_id: Authenticated user's ID
-            - user_email: User's email address
-            - access_token: JWT token for making authenticated API calls
-            - execution_id: Current execution ID
-            - trigger_type: How function was triggered (WEBHOOK, AGENT, SCHEDULE)
-            - chat_id: Optional chat ID if triggered from a chat
-
-    Returns:
-        Any type matching output_schema (string, number, boolean, array, object, etc.)
-    """
-    # Example: Use access token to call other SINAS APIs
-    # import requests
-    # headers = {"Authorization": f"Bearer {context['access_token']}"}
-    # response = requests.get("http://host.docker.internal:8000/api/v1/...", headers=headers)
-
-    # Your code here
     return {"result": "success"}`,
     input_schema: {
       type: "object",
@@ -219,7 +200,7 @@ export function FunctionEditor() {
     const handlerRegex = /def\s+handler\s*\(/;
     const legacyRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
     if (!handlerRegex.test(formData.code) && !legacyRegex.test(formData.code)) {
-      alert(`Code must contain a function definition: def handler(input_data, context) or def ${formData.name}(input_data, context)`);
+      alert(`Code must contain a function definition: def handler(input, context)`);
       return;
     }
 

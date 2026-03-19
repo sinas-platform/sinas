@@ -957,8 +957,10 @@ class APIClient {
 
   // Container Pool
   // System Health
-  async getSystemHealth(): Promise<any> {
-    const response = await this.configClient.get('/system/health');
+  async getSystemHealth(includeStats: boolean = false): Promise<any> {
+    const response = await this.configClient.get('/system/health', {
+      params: { include_stats: includeStats },
+    });
     return response.data;
   }
 
@@ -1086,6 +1088,11 @@ class APIClient {
     offset?: number;
   }): Promise<any> {
     const response = await this.configClient.get('/messages', { params });
+    return response.data;
+  }
+
+  async getMessageStats(days: number = 7): Promise<any> {
+    const response = await this.configClient.get('/messages/stats', { params: { days } });
     return response.data;
   }
 

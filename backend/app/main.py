@@ -101,6 +101,7 @@ async def lifespan(app: FastAPI):
     await close_redis()
 
 
+
 # Create main application with runtime API documentation
 app = FastAPI(
     title="SINAS Runtime API",
