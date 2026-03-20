@@ -12,6 +12,7 @@ from app.core.encryption import EncryptionService
 from app.models.agent import Agent
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
+from app.models.secret import Secret
 
 from app.models.database_connection import DatabaseConnection
 from app.models.database_trigger import DatabaseTrigger
@@ -58,6 +59,7 @@ class ConfigExportService:
         config_dict["spec"]["llmProviders"] = await self._export_llm_providers()
 
 
+        config_dict["spec"]["secrets"] = await self._export_secrets()
         config_dict["spec"]["functions"] = await self._export_functions()
         config_dict["spec"]["templates"] = await self._export_templates()
         config_dict["spec"]["stores"] = await self._export_stores()
@@ -156,6 +158,26 @@ class ConfigExportService:
                 provider_dict["apiKey"] = EncryptionService.decrypt(provider.api_key)
 
             exported.append(provider_dict)
+
+        return exported
+
+    async def _export_secrets(self) -> list[dict]:
+        """Export secrets (names and descriptions only, never values)."""
+        stmt = select(Secret)
+        if self.managed_only:
+            stmt = stmt.where(Secret.managed_by == self.managed_by)
+
+        result = await self.db.execute(stmt)
+        secrets = result.scalars().all()
+
+        exported = []
+        for secret in secrets:
+            secret_dict = {
+                "name": secret.name,
+                "description": secret.description,
+                # value intentionally omitted — secrets are write-only
+            }
+            exported.append(_remove_none_values(secret_dict))
 
         return exported
 

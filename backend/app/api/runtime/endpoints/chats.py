@@ -29,6 +29,8 @@ from app.schemas.chat import (
     ChatResponse,
     ChatUpdate,
     ChatWithMessages,
+    InvokeRequest,
+    InvokeResponse,
     MessageResponse,
     MessageSendRequest,
     PendingApprovalResponse,
@@ -191,6 +193,135 @@ async def create_chat_with_agent(
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=None,  # New chat has no messages yet
+    )
+
+
+@router.post("/agents/{namespace}/{agent_name}/invoke", response_model=InvokeResponse)
+async def invoke_agent(
+    namespace: str,
+    agent_name: str,
+    request: InvokeRequest,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Synchronous agent invoke — send a message, get a reply.
+
+    Combines chat creation + message send into one request/response.
+    Supports session keys for conversation continuity across calls.
+    """
+    user_id, permissions = current_user_data
+
+    # 1. Load agent
+    agent = await Agent.get_by_name(db, namespace, agent_name)
+    if not agent or not agent.is_active:
+        raise HTTPException(404, f"Agent '{namespace}/{agent_name}' not found")
+
+    # 2. Check permission
+    agent_chat_perm = f"sinas.agents/{namespace}/{agent_name}.chat:all"
+    if not check_permission(permissions, agent_chat_perm):
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(403, f"Not authorized to chat with agent '{namespace}/{agent_name}'")
+    set_permission_used(http_request, agent_chat_perm)
+
+    # 3. Resolve or create chat
+    chat = None
+    is_new_chat = False
+
+    if request.session_key:
+        # Look up existing chat by session key
+        result = await db.execute(
+            select(Chat).where(
+                Chat.agent_id == agent.id,
+                Chat.session_key == request.session_key,
+                Chat.archived == False,
+            )
+        )
+        chat = result.scalar_one_or_none()
+
+        if chat and request.reset:
+            # Archive old chat, create new one
+            chat.archived = True
+            await db.flush()
+            chat = None
+
+        if chat:
+            # Verify ownership
+            if str(chat.user_id) != user_id:
+                raise HTTPException(403, "Not authorized to use this session")
+        else:
+            is_new_chat = True
+    else:
+        is_new_chat = True
+
+    if is_new_chat:
+        # Validate input
+        validated_input = request.input
+        if request.input and agent.input_schema:
+            try:
+                validated_input = validate_with_coercion(request.input, agent.input_schema)
+            except jsonschema.ValidationError as e:
+                raise HTTPException(400, f"Input validation failed: {e.message}")
+
+        chat = Chat(
+            user_id=user_id,
+            agent_id=agent.id,
+            agent_namespace=namespace,
+            agent_name=agent_name,
+            title=f"invoke:{request.session_key or 'one-shot'}",
+            session_key=request.session_key,
+            chat_metadata={"agent_input": validated_input} if validated_input else None,
+            job_timeout=agent.default_job_timeout,
+        )
+        db.add(chat)
+        await db.flush()
+        await db.refresh(chat)
+
+        # Pre-populate initial messages
+        if agent.initial_messages:
+            for msg_data in agent.initial_messages:
+                content = msg_data["content"]
+                if isinstance(content, str) and validated_input:
+                    try:
+                        content = render_template(content, validated_input)
+                    except Exception:
+                        pass
+                message = Message(chat_id=chat.id, role=msg_data["role"], content=content)
+                db.add(message)
+
+    # 4. Save user message
+    content_str = (
+        request.message
+        if isinstance(request.message, str)
+        else json.dumps([part.model_dump(exclude_none=True) for part in request.message])
+    )
+
+    # 5. Execute (inline, non-streaming)
+    user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
+    message_service = MessageService(db)
+
+    try:
+        timeout = agent.default_job_timeout or settings.function_timeout or 300
+        response_message = await asyncio.wait_for(
+            message_service.send_message(
+                chat_id=str(chat.id),
+                user_id=user_id,
+                user_token=user_token,
+                content=content_str,
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Agent execution timed out")
+
+    # 6. Return response
+    reply = response_message.content or ""
+
+    return InvokeResponse(
+        reply=reply,
+        chat_id=chat.id,
+        session_key=request.session_key,
     )
 
 

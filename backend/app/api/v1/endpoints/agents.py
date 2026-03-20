@@ -93,6 +93,8 @@ async def create_agent(
         enabled_stores=[s.model_dump() for s in agent_data.enabled_stores] if agent_data.enabled_stores else [],
         enabled_collections=agent_data.enabled_collections or [],
         enabled_components=agent_data.enabled_components or [],
+        enabled_connectors=agent_data.enabled_connectors or [],
+        hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
         icon=agent_data.icon,
         is_active=True,
         is_default=agent_data.is_default or False,
@@ -242,6 +244,10 @@ async def update_agent(
         agent.enabled_collections = agent_data.enabled_collections
     if agent_data.enabled_components is not None:
         agent.enabled_components = agent_data.enabled_components
+    if agent_data.enabled_connectors is not None:
+        agent.enabled_connectors = agent_data.enabled_connectors
+    if agent_data.hooks is not None:
+        agent.hooks = agent_data.hooks.model_dump(by_alias=True)
     if agent_data.icon is not None:
         agent.icon = agent_data.icon
     if agent_data.is_active is not None:

@@ -61,14 +61,22 @@ async def _initialize_builtin_database() -> None:
         finally:
             await conn.close()
     except Exception as e:
+        print(f"⚠️  Could not ensure sinas_data database: {e}")
         logger.warning(f"Could not ensure sinas_data database: {e}")
         return
 
     async with AsyncSessionLocal() as db:
-        existing = await db.execute(
+        result = await db.execute(
             select(DatabaseConnection).where(DatabaseConnection.name == "built-in")
         )
-        if existing.scalar_one_or_none():
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Ensure host points at postgres directly (not pgbouncer)
+            if existing.host != direct_host:
+                existing.host = direct_host
+                await db.commit()
+                print(f"✅ Updated built-in database connection host to {direct_host}")
             return
 
         connection = DatabaseConnection(

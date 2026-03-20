@@ -535,7 +535,33 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `query_parameters` | Default query parameter values |
 | `enabled_collections` | File collections the agent can search |
 | `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
+| `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...]}` |
+| `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
 | `icon` | Icon reference (see [Icons](#icons)) |
+
+**Message hooks:** Functions that run before/after agent messages. Each hook has:
+- `function`: reference to a function (`namespace/name`)
+- `async`: if true, fire-and-forget (no impact on latency)
+- `on_timeout`: `block` (stop pipeline) or `passthrough` (continue) — sync hooks only
+
+Hook functions receive `{"message": {"role": "...", "content": "..."}, "chat_id": "...", "agent": {"namespace": "...", "name": "..."}, "user_id": "..."}` and can return:
+- `{"content": "..."}` to mutate the message
+- `{"block": true, "reply": "..."}` to stop the pipeline
+- `null` to pass through unchanged
+
+```yaml
+agents:
+  - name: my-agent
+    hooks:
+      onUserMessage:
+        - function: default/guardrail
+          async: false
+          onTimeout: block
+      onAssistantMessage:
+        - function: default/pii-filter
+          async: false
+          onTimeout: passthrough
+```
 
 **Management endpoints:**
 
@@ -550,6 +576,7 @@ DELETE /api/v1/agents/{namespace}/{name}    # Delete agent
 **Runtime endpoints (chats):**
 
 ```
+POST   /agents/{namespace}/{name}/invoke             # Invoke (sync request/response)
 POST   /agents/{namespace}/{name}/chats              # Create chat
 GET    /chats                                        # List user's chats
 GET    /chats/{id}                                   # Get chat with messages
@@ -560,6 +587,29 @@ POST   /chats/{id}/messages/stream                   # Send message (SSE streami
 GET    /chats/{id}/stream/{channel_id}               # Reconnect to active stream
 POST   /chats/{id}/approve-tool/{tool_call_id}       # Approve/reject a tool call
 ```
+
+**Invoke endpoint:** A synchronous request/response alternative to the two-step chat flow. Intended for integrations (Slack, Telegram, webhooks) that need a simple call-and-response.
+
+```bash
+# Simple invoke
+curl -X POST https://yourdomain.com/agents/support/helper/invoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the status of order #123?"}'
+# → {"reply": "Your order is on its way...", "chat_id": "c_abc123"}
+
+# With session key (conversation continuity)
+curl -X POST https://yourdomain.com/agents/support/helper/invoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Follow up on that", "session_key": "slack:U09ABC123"}'
+# → Same chat_id as previous call with this session_key
+```
+
+- `session_key`: Maps an external identifier (Slack channel, Telegram chat, WhatsApp number) to a persistent Sinas chat. One chat per `(agent_id, session_key)` pair.
+- `reset: true`: Archives the existing session and starts a new conversation.
+- `input`: Agent input variables, only used when creating a new chat.
+- Streams internally, returns assembled reply as a single JSON payload.
 
 **How chat works:**
 
@@ -625,8 +675,9 @@ def handler(input_data, context):
     #     "user_email":     str,   # Email of the triggering user
     #     "access_token":   str,   # Short-lived JWT for calling the Sinas API
     #     "execution_id":   str,   # Unique execution ID
-    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "MANUAL"
+    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "HOOK" | "MANUAL"
     #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
+    #     "secrets":        dict,  # Decrypted secrets (shared pool only): {"NAME": "value"}
     # }
 
     return {"result": "value"}  # Must match output_schema
@@ -645,8 +696,21 @@ Depending on how the function is invoked, `input_data` is populated differently:
 | **AGENT / API / MANUAL / SCHEDULE** | Values matching your input schema, provided by the caller |
 | **WEBHOOK** | Webhook `default_values` merged with request body/query params |
 | **CDC** | `{"table": "schema.table", "operation": "CHANGE", "rows": [...], "poll_column": str, "count": int, "timestamp": str}` |
+| **HOOK** | `{"message": {"role": "user"\|"assistant", "content": "..."}, "chat_id": str, "agent": {"namespace": str, "name": str}, "session_key": str\|null, "user_id": str}` |
 | **Collection content filter** | `{"content_base64": str, "namespace": str, "collection": str, "filename": str, "content_type": str, "size_bytes": int, "user_metadata": dict, "user_id": str}` |
 | **Collection post-upload** | `{"file_id": str, "namespace": str, "collection": str, "filename": str, "version": int, "file_path": str, "user_id": str, "metadata": dict}` |
+
+#### Hook function return values
+
+Functions used as message hooks (configured in agent's `hooks` field) can return:
+
+| Return value | Effect |
+|---|---|
+| `None` or `{}` | Pass through unchanged |
+| `{"content": "..."}` | Mutate the message content |
+| `{"block": true, "reply": "..."}` | Block the pipeline, return reply to client (sync hooks only) |
+
+Async hooks run fire-and-forget. For `on_assistant_message` async hooks, the return value retroactively updates the stored message (not the already-streamed response).
 
 #### Interactive input (shared containers only)
 
@@ -681,31 +745,90 @@ GET    /api/v1/functions/{namespace}/{name}                # Get function
 PUT    /api/v1/functions/{namespace}/{name}                # Update function
 DELETE /api/v1/functions/{namespace}/{name}                # Delete function
 GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
-POST   /api/v1/functions/import/openapi                    # Import functions from OpenAPI spec
 ```
 
-#### OpenAPI Import
+### Secrets
 
-Import functions from an OpenAPI v3 specification. Each API operation becomes a Sinas function with generated Python code that calls the external API.
+Write-only credential store. Values are encrypted at rest and never returned via the API. Secrets are available in function context as `context['secrets']` — only for shared pool (trusted) functions.
 
-```bash
-curl -X POST https://yourdomain.com/api/v1/functions/import/openapi \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "spec": "... OpenAPI YAML or JSON ...",
-    "namespace": "stripe",
-    "base_url": "https://api.stripe.com",
-    "auth_type": "bearer",
-    "dry_run": true
-  }'
+**Endpoints:**
+
+```
+POST   /api/v1/secrets                  # Create or update (upsert by name)
+GET    /api/v1/secrets                  # List names and descriptions (no values)
+GET    /api/v1/secrets/{name}           # Get metadata (no value)
+PUT    /api/v1/secrets/{name}           # Update value or description
+DELETE /api/v1/secrets/{name}           # Delete
 ```
 
-- **`auth_type`**: `bearer` (Authorization header), `api_key` (X-API-Key header), or `none`
-- **`dry_run`**: Preview which functions would be created without making changes
-- Generated functions include proper HTTP method routing, parameter handling (path, query, body), and error handling
-- Input/output schemas are extracted from the OpenAPI spec
-- Function names are derived from `operationId` or method+path
+**Access at runtime (shared pool functions only):**
+
+```python
+def my_function(input, context):
+    token = context['secrets']['SLACK_BOT_TOKEN']
+```
+
+**YAML config:**
+
+```yaml
+secrets:
+  - name: SLACK_BOT_TOKEN
+    value: xoxb-...          # omit to skip value update on re-apply
+    description: Slack bot OAuth token
+```
+
+### Connectors
+
+Named HTTP client configurations with typed operations. Executed in-process in the backend (no container overhead). Operations are exposed as agent tools. Auth resolved from the Secrets store at call time.
+
+**Endpoints:**
+
+```
+POST   /api/v1/connectors                                        # Create connector
+GET    /api/v1/connectors                                        # List connectors
+GET    /api/v1/connectors/{namespace}/{name}                     # Get connector
+PUT    /api/v1/connectors/{namespace}/{name}                     # Update connector
+DELETE /api/v1/connectors/{namespace}/{name}                     # Delete connector
+POST   /api/v1/connectors/{namespace}/{name}/import-openapi      # Import operations from OpenAPI spec
+POST   /api/v1/connectors/{namespace}/{name}/test/{operation}    # Test an operation
+```
+
+**Auth types:** `bearer`, `basic`, `api_key`, `sinas_token` (forwards caller's JWT), `none`
+
+**Agent configuration:**
+
+```yaml
+agents:
+  - name: slack-bot
+    enabledConnectors:
+      - connector: default/slack-api
+        operations: [post_message, get_channel_info]
+        parameters:
+          post_message:
+            channel: "{{ default_channel }}"
+```
+
+**YAML config:**
+
+```yaml
+connectors:
+  - name: slack-api
+    namespace: default
+    baseUrl: https://slack.com/api
+    auth:
+      type: bearer
+      secret: SLACK_BOT_TOKEN
+    operations:
+      - name: post_message
+        method: POST
+        path: /chat.postMessage
+        parameters:
+          type: object
+          properties:
+            channel: { type: string }
+            text: { type: string }
+          required: [channel, text]
+```
 
 **Execution history:**
 

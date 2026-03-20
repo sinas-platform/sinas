@@ -244,6 +244,7 @@ services:
       DATABASE_PORT: "5432"
       DATABASE_NAME: ${DATABASE_NAME:-sinas}
       DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@pgbouncer:5432/${DATABASE_NAME:-sinas}
+      DATABASE_DIRECT_HOST: postgres
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
       CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}

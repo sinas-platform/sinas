@@ -24,9 +24,11 @@ from app.services.config_apply.data_sources import (
 from app.services.config_apply.resources import (
     apply_collections,
     apply_components,
+    apply_connectors,
     apply_functions,
     apply_manifests,
     apply_queries,
+    apply_secrets,
     apply_skills,
     apply_stores,
 )
@@ -163,6 +165,18 @@ class ConfigApplyService:
                     **common,
                     connections=config.spec.databaseConnections,
                     database_connection_ids=self.database_connection_ids,
+                )
+
+            if "secrets" not in self.skip_resource_types:
+                await apply_secrets(
+                    **common_with_owner,
+                    secrets=config.spec.secrets,
+                )
+
+            if "connectors" not in self.skip_resource_types:
+                await apply_connectors(
+                    **common_with_owner,
+                    connectors=config.spec.connectors,
                 )
 
             if "functions" not in self.skip_resource_types:

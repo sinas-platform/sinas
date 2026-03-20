@@ -486,6 +486,72 @@ class APIClient {
     await this.runtimeClient.delete(`/states/${stateId}`);
   }
 
+  // Secrets
+  async listSecrets(): Promise<any[]> {
+    const response = await this.configClient.get('/secrets');
+    return response.data;
+  }
+
+  async createSecret(data: { name: string; value: string; description?: string }): Promise<any> {
+    const response = await this.configClient.post('/secrets', data);
+    return response.data;
+  }
+
+  async updateSecret(name: string, data: { value?: string; description?: string }): Promise<any> {
+    const response = await this.configClient.put(`/secrets/${name}`, data);
+    return response.data;
+  }
+
+  async deleteSecret(name: string): Promise<void> {
+    await this.configClient.delete(`/secrets/${name}`);
+  }
+
+  // Agent invoke
+  async invokeAgent(namespace: string, name: string, data: { message: string; session_key?: string; reset?: boolean; input?: Record<string, any> }): Promise<{ reply: string; chat_id: string; session_key?: string; usage?: Record<string, any> }> {
+    const response = await this.runtimeClient.post(`/agents/${namespace}/${name}/invoke`, data);
+    return response.data;
+  }
+
+  // Connectors
+  async listConnectors(): Promise<any[]> {
+    const response = await this.configClient.get('/connectors');
+    return response.data;
+  }
+
+  async getConnector(namespace: string, name: string): Promise<any> {
+    const response = await this.configClient.get(`/connectors/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createConnector(data: any): Promise<any> {
+    const response = await this.configClient.post('/connectors', data);
+    return response.data;
+  }
+
+  async updateConnector(namespace: string, name: string, data: any): Promise<any> {
+    const response = await this.configClient.put(`/connectors/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteConnector(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/connectors/${namespace}/${name}`);
+  }
+
+  async parseConnectorOpenAPI(data: any): Promise<any> {
+    const response = await this.configClient.post('/connectors/parse-openapi', data);
+    return response.data;
+  }
+
+  async importConnectorOpenAPI(namespace: string, name: string, data: any): Promise<any> {
+    const response = await this.configClient.post(`/connectors/${namespace}/${name}/import-openapi`, data);
+    return response.data;
+  }
+
+  async testConnectorOperation(namespace: string, name: string, operation: string, params: any): Promise<any> {
+    const response = await this.configClient.post(`/connectors/${namespace}/${name}/test/${operation}`, { parameters: params });
+    return response.data;
+  }
+
   // Store management (admin CRUD)
   async listStores(params?: { namespace?: string }): Promise<any[]> {
     const response = await this.configClient.get('/stores', { params });
@@ -561,10 +627,6 @@ class APIClient {
     return response.data;
   }
 
-  async importOpenAPI(data: import('../types').OpenAPIImportRequest): Promise<import('../types').OpenAPIImportResponse> {
-    const response = await this.configClient.post('/functions/import/openapi', data);
-    return response.data;
-  }
 
   // Webhooks
   async listWebhooks(): Promise<Webhook[]> {

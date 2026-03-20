@@ -2,6 +2,7 @@ from .agent import Agent
 from .manifest import Manifest
 from .base import Base
 from .chat import Chat, Message
+from .connector import Connector
 from .component import Component
 from .component_share import ComponentShare
 from .database_connection import DatabaseConnection
@@ -16,6 +17,7 @@ from .package import Package
 from .query import Query
 from .pending_approval import PendingToolApproval
 from .schedule import ScheduledJob
+from .secret import Secret
 from .skill import Skill
 from .state import State
 from .store import Store
@@ -47,6 +49,7 @@ __all__ = [
     "Manifest",
     "Component",
     "ComponentShare",
+    "Connector",
     "LLMProvider",
     "DatabaseConnection",
     "DatabaseTrigger",
@@ -54,6 +57,7 @@ __all__ = [
     "State",
     "Store",
     "PendingToolApproval",
+    "Secret",
     "Template",
     "Skill",
     "Collection",

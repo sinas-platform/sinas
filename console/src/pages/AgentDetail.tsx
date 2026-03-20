@@ -60,6 +60,12 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: connectors } = useQuery({
+    queryKey: ['connectors'],
+    queryFn: () => apiClient.listConnectors(),
+    retry: false,
+  });
+
   const [formData, setFormData] = useState<AgentUpdate>({});
   const { data: components } = useQuery({
     queryKey: ['components'],
@@ -67,7 +73,7 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'status'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'hooks' | 'status'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
@@ -100,6 +106,8 @@ export function AgentDetail() {
         enabled_stores: agent.enabled_stores || [],
         enabled_collections: agent.enabled_collections || [],
         enabled_components: agent.enabled_components || [],
+        enabled_connectors: agent.enabled_connectors || [],
+        hooks: agent.hooks || { on_user_message: [], on_assistant_message: [] },
         status_templates: agent.status_templates || {},
         icon: agent.icon || undefined,
         default_job_timeout: agent.default_job_timeout ?? undefined,
@@ -186,6 +194,22 @@ export function AgentDetail() {
         <ApiUsage
           curl={[
             {
+              label: 'Invoke (simple request/response)',
+              language: 'bash',
+              code: `curl -X POST ${API_BASE_URL}/agents/${agent.namespace}/${agent.name}/invoke \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"message": "Hello"${agent.input_schema && Object.keys(agent.input_schema.properties || {}).length > 0
+    ? `, "input": {${Object.keys(agent.input_schema.properties || {}).map(k => `"${k}": "..."`).join(', ')}}`
+    : ''}}'
+
+# With session key (conversation continuity):
+curl -X POST ${API_BASE_URL}/agents/${agent.namespace}/${agent.name}/invoke \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"message": "Hello", "session_key": "slack:U09ABC123"}'`,
+            },
+            {
               label: 'Create a chat',
               language: 'bash',
               code: `curl -X POST ${API_BASE_URL}/agents/${agent.namespace}/${agent.name}/chats \\
@@ -212,17 +236,21 @@ export function AgentDetail() {
 
 client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
 
-chat = client.chats.create("${agent.namespace}", "${agent.name}",
-    title="My chat"${
+# Simple invoke (one request, one response)
+result = client.agents.invoke("${agent.namespace}", "${agent.name}",
+    message="Hello"${
   agent.input_schema && Object.keys(agent.input_schema.properties || {}).length > 0
     ? `,\n    input={${Object.keys(agent.input_schema.properties || {}).map(k => `"${k}": "..."`).join(', ')}}`
     : ''})
+print(result["reply"])
 
-# Blocking
-response = client.chats.send(chat["id"], "Hello")
-print(response["content"])
+# With session key (maintains conversation across calls)
+result = client.agents.invoke("${agent.namespace}", "${agent.name}",
+    message="What was my last question?",
+    session_key="slack:U09ABC123")
 
-# Streaming
+# Streaming (for longer interactions)
+chat = client.chats.create("${agent.namespace}", "${agent.name}")
 import json
 for chunk in client.chats.stream(chat["id"], "Hello"):
     data = json.loads(chunk)
@@ -590,19 +618,20 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
           </p>
 
           <div className="space-y-6">
-            <JSONSchemaEditor
-              label="Input Schema"
-              description="Define input variables that can be used in system prompt templates (e.g., {{variable_name}})"
-              value={formData.input_schema ?? agent.input_schema ?? {}}
-              onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
-            />
-
-            <JSONSchemaEditor
-              label="Output Schema"
-              description="Define expected response structure (empty = no enforcement). Agents will be instructed to follow this schema."
-              value={formData.output_schema ?? agent.output_schema ?? {}}
-              onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
-            />
+            <div className="grid grid-cols-2 gap-6">
+              <JSONSchemaEditor
+                label="Input Schema"
+                description="Input variables for system prompt templates (e.g., {{variable_name}})"
+                value={formData.input_schema ?? agent.input_schema ?? {}}
+                onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
+              />
+              <JSONSchemaEditor
+                label="Output Schema"
+                description="Expected response structure (empty = no enforcement)"
+                value={formData.output_schema ?? agent.output_schema ?? {}}
+                onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
+              />
+            </div>
 
             <div>
               <label htmlFor="initial_messages" className="block text-sm font-medium text-gray-300 mb-2">
@@ -711,6 +740,28 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               }`}
             >
               Components
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('connectors')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'connectors'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+            >
+              Connectors
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('hooks')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'hooks'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+            >
+              Hooks
             </button>
             <div className="mx-1 w-px bg-white/[0.06] self-stretch" />
             <button
@@ -1328,6 +1379,223 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               </div>
             )}
 
+            {/* Hooks Tab */}
+            {toolsTab === 'hooks' && (() => {
+              const hooks = formData.hooks || agent.hooks || { on_user_message: [], on_assistant_message: [] };
+              const allFunctions = functions || [];
+
+              const renderHookList = (hookType: 'on_user_message' | 'on_assistant_message', label: string) => {
+                const hookList = hooks[hookType] || [];
+
+                const addHook = () => {
+                  const updated = { ...hooks, [hookType]: [...hookList, { function: '', async: false, on_timeout: 'passthrough' }] };
+                  setFormData({ ...formData, hooks: updated });
+                };
+
+                const removeHook = (index: number) => {
+                  const updated = { ...hooks, [hookType]: hookList.filter((_: any, i: number) => i !== index) };
+                  setFormData({ ...formData, hooks: updated });
+                };
+
+                const updateHook = (index: number, field: string, value: any) => {
+                  const newList = [...hookList];
+                  newList[index] = { ...newList[index], [field]: value };
+                  const updated = { ...hooks, [hookType]: newList };
+                  setFormData({ ...formData, hooks: updated });
+                };
+
+                const moveHook = (index: number, direction: -1 | 1) => {
+                  const newIndex = index + direction;
+                  if (newIndex < 0 || newIndex >= hookList.length) return;
+                  const newList = [...hookList];
+                  [newList[index], newList[newIndex]] = [newList[newIndex], newList[index]];
+                  const updated = { ...hooks, [hookType]: newList };
+                  setFormData({ ...formData, hooks: updated });
+                };
+
+                return (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-sm font-medium text-gray-300">{label}</h4>
+                      <button type="button" onClick={addHook} className="text-xs text-primary-400 hover:text-primary-300">+ Add Hook</button>
+                    </div>
+                    {hookList.length === 0 ? (
+                      <p className="text-xs text-gray-600 p-3 border border-white/[0.06] rounded-lg">No hooks configured</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {hookList.map((hook: any, i: number) => (
+                          <div key={i} className="border border-white/[0.06] rounded-lg p-3 space-y-2">
+                            <div className="flex items-center gap-2">
+                              <div className="flex flex-col gap-0.5">
+                                <button type="button" onClick={() => moveHook(i, -1)} disabled={i === 0}
+                                  className="text-[10px] text-gray-500 hover:text-gray-300 disabled:opacity-30">▲</button>
+                                <button type="button" onClick={() => moveHook(i, 1)} disabled={i === hookList.length - 1}
+                                  className="text-[10px] text-gray-500 hover:text-gray-300 disabled:opacity-30">▼</button>
+                              </div>
+                              <div className="flex-1">
+                                <select value={hook.function || ''} onChange={e => updateHook(i, 'function', e.target.value)}
+                                  className="input w-full text-sm font-mono">
+                                  <option value="">Select function...</option>
+                                  {allFunctions.map((f: any) => (
+                                    <option key={`${f.namespace}/${f.name}`} value={`${f.namespace}/${f.name}`}>
+                                      {f.namespace}/{f.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button type="button" onClick={() => removeHook(i)}
+                                className="text-gray-500 hover:text-red-400 p-1">
+                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                              </button>
+                            </div>
+                            <div className="flex items-center gap-4 ml-7">
+                              <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+                                <input type="checkbox" checked={hook.async || false}
+                                  onChange={e => updateHook(i, 'async', e.target.checked)}
+                                  className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded" />
+                                Fire-and-forget
+                              </label>
+                              {!hook.async && (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500">On timeout:</span>
+                                  <select value={hook.on_timeout || 'passthrough'}
+                                    onChange={e => updateHook(i, 'on_timeout', e.target.value)}
+                                    className="input text-xs py-1 w-auto">
+                                    <option value="passthrough">Skip and continue</option>
+                                    <option value="block">Block message</option>
+                                  </select>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              return (
+                <div className="space-y-6">
+                  <p className="text-xs text-gray-500">
+                    Functions that run at defined points in the message pipeline. Sync hooks can mutate or block messages. Async hooks are fire-and-forget.
+                  </p>
+                  {renderHookList('on_user_message', 'On User Message')}
+                  {renderHookList('on_assistant_message', 'On Assistant Message')}
+                </div>
+              );
+            })()}
+
+            {/* Connectors Tab */}
+            {toolsTab === 'connectors' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable connector operations as agent tools. Select which operations the agent can call.
+                </p>
+                {connectors && connectors.length > 0 ? (
+                  <div className="space-y-3">
+                    {connectors.filter((c: any) => c.is_active).map((conn: any) => {
+                      const connRef = `${conn.namespace}/${conn.name}`;
+                      const enabledConnectors: any[] = formData.enabled_connectors || agent.enabled_connectors || [];
+                      const entry = enabledConnectors.find((ec: any) => ec.connector === connRef);
+                      const isEnabled = !!entry;
+                      const enabledOps: string[] = entry?.operations || [];
+
+                      return (
+                        <div key={connRef} className="border border-white/[0.06] rounded-lg p-3">
+                          <label className="flex items-start cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isEnabled}
+                              onChange={(e) => {
+                                let updated = [...enabledConnectors];
+                                if (e.target.checked) {
+                                  // Enable with all operations selected by default
+                                  const allOps = (conn.operations || []).map((op: any) => op.name);
+                                  updated.push({ connector: connRef, operations: allOps, parameters: {} });
+                                } else {
+                                  updated = updated.filter((ec: any) => ec.connector !== connRef);
+                                }
+                                setFormData({ ...formData, enabled_connectors: updated });
+                              }}
+                              className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            />
+                            <div className="ml-3 flex-1">
+                              <span className="text-sm font-medium text-gray-100 font-mono">{connRef}</span>
+                              <span className="text-xs text-gray-500 ml-2">{conn.base_url}</span>
+                              {conn.description && (
+                                <p className="text-xs text-gray-500 mt-0.5">{conn.description}</p>
+                              )}
+                            </div>
+                          </label>
+
+                          {isEnabled && conn.operations && conn.operations.length > 0 && (
+                            <div className="mt-3 ml-7 space-y-1">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs text-gray-500">Operations</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = enabledConnectors.map((ec: any) => {
+                                      if (ec.connector !== connRef) return ec;
+                                      const allOps = (conn.operations || []).map((op: any) => op.name);
+                                      const allSelected = allOps.every((o: string) => ec.operations?.includes(o));
+                                      return { ...ec, operations: allSelected ? [] : allOps };
+                                    });
+                                    setFormData({ ...formData, enabled_connectors: updated });
+                                  }}
+                                  className="text-xs text-primary-400 hover:text-primary-300"
+                                >
+                                  {enabledOps.length === conn.operations.length ? 'Deselect All' : 'Select All'}
+                                </button>
+                              </div>
+                              {conn.operations.map((op: any) => {
+                                const isOpEnabled = enabledOps.includes(op.name);
+                                const methodColors: Record<string, string> = {
+                                  GET: 'text-green-400', POST: 'text-blue-400',
+                                  PUT: 'text-yellow-400', PATCH: 'text-orange-400', DELETE: 'text-red-400',
+                                };
+                                return (
+                                  <label key={op.name} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={isOpEnabled}
+                                      onChange={(e) => {
+                                        const updated = enabledConnectors.map((ec: any) => {
+                                          if (ec.connector !== connRef) return ec;
+                                          const ops = e.target.checked
+                                            ? [...(ec.operations || []), op.name]
+                                            : (ec.operations || []).filter((o: string) => o !== op.name);
+                                          return { ...ec, operations: ops };
+                                        });
+                                        setFormData({ ...formData, enabled_connectors: updated });
+                                      }}
+                                      className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                                    />
+                                    <span className={`text-[10px] font-bold uppercase ${methodColors[op.method] || 'text-gray-400'}`}>
+                                      {op.method}
+                                    </span>
+                                    <span className="text-sm font-mono text-gray-300">{op.name}</span>
+                                    {op.description && (
+                                      <span className="text-xs text-gray-600 truncate">{op.description}</span>
+                                    )}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                    <p className="text-sm text-gray-500">No connectors available. Create connectors first.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {toolsTab === 'status' && (() => {
               const templates = formData.status_templates || {};
               const enabledTools: { key: string; label: string; type: string }[] = [];
@@ -1359,6 +1627,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               // Components
               (formData.enabled_components || agent.enabled_components || []).forEach((ref: string) => {
                 enabledTools.push({ key: `component:${ref}`, label: ref, type: 'Component' });
+              });
+              // Connectors
+              (formData.enabled_connectors || agent.enabled_connectors || []).forEach((entry: any) => {
+                const connRef = entry.connector || '';
+                (entry.operations || []).forEach((opName: string) => {
+                  enabledTools.push({ key: `connector:${connRef}/${opName}`, label: `${connRef}/${opName}`, type: 'Connector' });
+                });
               });
 
               return (

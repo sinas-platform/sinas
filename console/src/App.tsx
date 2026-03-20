@@ -39,6 +39,9 @@ import { Packages } from './pages/Packages';
 import { Queries } from './pages/Queries';
 import { QueryDetail } from './pages/QueryDetail';
 import { DatabaseTriggers } from './pages/DatabaseTriggers';
+import { Connectors } from './pages/Connectors';
+import { ConnectorEditor } from './pages/ConnectorEditor';
+import { Secrets } from './pages/Secrets';
 import { Stores } from './pages/Stores';
 
 const queryClient = new QueryClient({
@@ -139,6 +142,9 @@ function App() {
               <Route path="packages" element={<Packages />} />
               <Route path="manifests" element={<Manifests />} />
               <Route path="config" element={<ConfigManager />} />
+              <Route path="connectors" element={<Connectors />} />
+              <Route path="connectors/:namespace/:name" element={<ConnectorEditor />} />
+              <Route path="secrets" element={<Secrets />} />
               <Route path="stores" element={<Stores />} />
               <Route path="logs" element={<RequestLogs />} />
               <Route path="system" element={<System />} />

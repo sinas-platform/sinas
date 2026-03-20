@@ -149,34 +149,3 @@ class FunctionExecuteAsyncResponse(BaseModel):
     status: str = "queued"
 
 
-class OpenAPIImportRequest(BaseModel):
-    spec: Optional[str] = None
-    spec_url: Optional[str] = None
-    namespace: Optional[str] = None
-    base_url_override: Optional[str] = None
-    auth_type: str = Field(default="none", pattern=r"^(none|api_key|bearer)$")
-    auth_header: str = "Authorization"
-    auth_state_namespace: Optional[str] = None
-    auth_state_key: Optional[str] = None
-    operations: Optional[list[str]] = None
-    dry_run: bool = True
-
-
-class OpenAPIFunctionPreview(BaseModel):
-    name: str
-    description: Optional[str] = None
-    method: str
-    path: str
-    operation_id: Optional[str] = None
-    input_schema: dict[str, Any]
-    output_schema: dict[str, Any]
-    code: str
-    status: str
-
-
-class OpenAPIImportResponse(BaseModel):
-    namespace: str
-    functions: list[OpenAPIFunctionPreview]
-    warnings: list[str]
-    created: int
-    skipped: int

@@ -483,6 +483,27 @@ async def execute_single_tool(
                 )
                 elapsed = time.time() - start_time
                 logger.debug(f"Collection tool completed in {elapsed:.3f}s: {tool_name}")
+            elif tool_name.startswith("connector__"):
+                # Connector tool — execute in-process HTTP call
+                start_time = time.time()
+                tool_metadata = {}
+                for tool in tools:
+                    if tool.get("function", {}).get("name") == tool_name:
+                        tool_metadata = tool.get("function", {}).get("_metadata", {})
+                        break
+                locked_params = tool_metadata.get("locked_params", {})
+
+                from app.services.connector_tools import ConnectorToolConverter
+                connector_tool_converter = ConnectorToolConverter()
+                result = await connector_tool_converter.execute_connector_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_token=user_token,
+                    locked_params=locked_params,
+                )
+                elapsed = time.time() - start_time
+                logger.debug(f"Connector tool completed in {elapsed:.3f}s: {tool_name}")
             else:
                 # Default: execute as function tool
                 start_time = time.time()

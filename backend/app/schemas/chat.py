@@ -25,6 +25,7 @@ class ChatResponse(BaseModel):
     agent_name: Optional[str]
     title: str
     archived: bool = False
+    session_key: Optional[str] = None
     expires_at: Optional[datetime] = None
     keep_alive: Optional[bool] = None
     active_channel_id: Optional[str] = None
@@ -152,6 +153,32 @@ class PendingApprovalResponse(BaseModel):
 class ChatWithMessages(ChatResponse):
     messages: list[MessageResponse]
     pending_approvals: list[PendingApprovalResponse] = []
+
+
+class InvokeRequest(BaseModel):
+    """Synchronous agent invoke — send message, get reply."""
+
+    message: Union[str, list[ContentPart]] = Field(
+        description="Message to send to the agent"
+    )
+    session_key: Optional[str] = Field(
+        None, description="Session key for conversation continuity"
+    )
+    reset: Optional[bool] = Field(
+        False, description="If true, archive existing session and start fresh"
+    )
+    input: Optional[dict[str, Any]] = Field(
+        None, description="Agent input variables (only used when creating a new chat)"
+    )
+
+
+class InvokeResponse(BaseModel):
+    """Response from synchronous agent invoke."""
+
+    reply: str
+    chat_id: uuid.UUID
+    session_key: Optional[str] = None
+    usage: Optional[dict[str, Any]] = None
 
 
 class ToolApprovalRequest(BaseModel):

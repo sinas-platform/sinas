@@ -13,6 +13,7 @@ from app.models.execution import Execution, ExecutionStatus
 from app.services.code_execution import get_tool_definition as get_code_exec_tool_definition
 from app.services.collection_tools import CollectionToolConverter
 from app.services.component_tools import ComponentToolConverter
+from app.services.connector_tools import ConnectorToolConverter
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -215,6 +216,7 @@ async def get_available_tools(
     skill_converter: SkillToolConverter,
     component_converter: ComponentToolConverter,
     collection_converter: CollectionToolConverter,
+    connector_converter: Optional[ConnectorToolConverter] = None,
 ) -> list[dict[str, Any]]:
     """Get all available tools (functions + context + agents + execution continuation)."""
     tools: list[dict[str, Any]] = []
@@ -296,6 +298,16 @@ async def get_available_tools(
             db=db, enabled_components=agent.enabled_components
         )
         tools.extend(component_tools)
+
+    # Get connector tools (only if list has items - opt-in)
+    if connector_converter and agent.enabled_connectors and len(agent.enabled_connectors) > 0:
+        agent_input = chat.chat_metadata.get("agent_input", {}) if chat.chat_metadata else {}
+        connector_tools = await connector_converter.get_available_connectors(
+            db=db,
+            enabled_connectors=agent.enabled_connectors,
+            agent_input_context=agent_input,
+        )
+        tools.extend(connector_tools)
 
     # Add code execution tool if enabled on the agent
     if agent.enable_code_execution:

@@ -101,6 +101,10 @@ async def apply_agents(
                     "enabled_components": sorted(agent_config.enabledComponents)
                     if agent_config.enabledComponents
                     else [],
+                    "enabled_connectors": agent_config.enabledConnectors
+                    if agent_config.enabledConnectors
+                    else [],
+                    "hooks": agent_config.hooks,
                     "icon": agent_config.icon,
                     "is_default": agent_config.isDefault,
                     "default_job_timeout": agent_config.defaultJobTimeout,
@@ -147,6 +151,8 @@ async def apply_agents(
                     existing.query_parameters = agent_config.queryParameters
                     existing.enabled_collections = agent_config.enabledCollections
                     existing.enabled_components = agent_config.enabledComponents
+                    existing.enabled_connectors = agent_config.enabledConnectors
+                    existing.hooks = agent_config.hooks
                     existing.icon = agent_config.icon
                     existing.default_job_timeout = agent_config.defaultJobTimeout
                     existing.default_keep_alive = agent_config.defaultKeepAlive
@@ -197,6 +203,8 @@ async def apply_agents(
                         query_parameters=agent_config.queryParameters,
                         enabled_collections=agent_config.enabledCollections,
                         enabled_components=agent_config.enabledComponents,
+                        enabled_connectors=agent_config.enabledConnectors,
+                        hooks=agent_config.hooks,
                         icon=agent_config.icon,
                         is_default=agent_config.isDefault,
                         default_job_timeout=agent_config.defaultJobTimeout,

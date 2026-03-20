@@ -306,6 +306,16 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.stores/*/*.write_state:own": True,
         # Database Triggers - read-only for users
         "sinas.database_triggers.read:own": True,
+        # Connectors (namespaced)
+        "sinas.connectors/*/*.create:own": True,
+        "sinas.connectors/*/*.read:own": True,
+        "sinas.connectors/*/*.update:own": True,
+        "sinas.connectors/*/*.delete:own": True,
+        # Secrets (non-namespaced)
+        "sinas.secrets.create:own": True,
+        "sinas.secrets.read:own": True,
+        "sinas.secrets.update:own": True,
+        "sinas.secrets.delete:own": True,
         # Webhooks (non-namespaced)
         "sinas.webhooks.create:own": True,
         "sinas.webhooks.read:own": True,

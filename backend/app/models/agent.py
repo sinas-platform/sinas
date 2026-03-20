@@ -97,6 +97,15 @@ class Agent(Base, PermissionMixin):
         JSON, nullable=False, default=list, server_default="[]"
     )  # List of "namespace/name" component references
 
+    # Connector access
+    enabled_connectors: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+
+    # Message lifecycle hooks
+    hooks: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # {"on_user_message": [...], "on_assistant_message": [...]}
+
     # Icon reference ("collection:ns/coll/file" or "url:https://...")
     icon: Mapped[Optional[str]] = mapped_column(String(512))
 
