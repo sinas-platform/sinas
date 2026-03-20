@@ -164,7 +164,7 @@ services:
         condition: service_healthy
       builder:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS:-4}"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   queue-worker:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}

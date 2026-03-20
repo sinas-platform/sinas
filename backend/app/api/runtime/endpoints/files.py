@@ -333,7 +333,9 @@ async def upload_file(
         filter_execution_id = str(uuid_lib.uuid4())
 
         try:
-            # Execute content filter function via queue
+            # Release DB connection before blocking wait — prevents connection
+            # starvation when the filter function calls back into the API
+            await db.commit()
 
             filter_result = await queue_service.enqueue_and_wait(
                 function_namespace=filter_namespace,
