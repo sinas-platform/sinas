@@ -46,33 +46,41 @@ def _component_list_response(component: Component, user_id: str) -> ComponentLis
 
 
 async def _do_compile(component_id, namespace: str, name: str):
-    """Background task to compile a component via the builder service."""
+    """Background task to compile a component via the builder service.
+
+    Uses explicit commit() — this runs outside get_db so flush() would leave
+    the transaction open indefinitely, blocking all other DB connections.
+    """
     async with AsyncSessionLocal() as db:
-        component = await db.execute(
-            select(Component).where(Component.id == component_id)
-        )
-        component = component.scalar_one_or_none()
-        if not component:
-            return
+        try:
+            component = await db.execute(
+                select(Component).where(Component.id == component_id)
+            )
+            component = component.scalar_one_or_none()
+            if not component:
+                return
 
-        component.compile_status = "compiling"
-        await db.flush()
+            component.compile_status = "compiling"
+            await db.commit()
 
-        builder = ComponentBuilderService()
-        result = await builder.compile(component.source_code)
+            builder = ComponentBuilderService()
+            result = await builder.compile(component.source_code)
 
-        if result["success"]:
-            component.compiled_bundle = result["bundle"]
-            component.source_map = result.get("sourceMap")
-            component.compile_status = "success"
-            component.compile_errors = None
-        else:
-            component.compile_status = "error"
-            component.compile_errors = result.get("errors", [])
-            component.compiled_bundle = None
-            component.source_map = None
+            if result["success"]:
+                component.compiled_bundle = result["bundle"]
+                component.source_map = result.get("sourceMap")
+                component.compile_status = "success"
+                component.compile_errors = None
+            else:
+                component.compile_status = "error"
+                component.compile_errors = result.get("errors", [])
+                component.compiled_bundle = None
+                component.source_map = None
 
-        await db.flush()
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
 
 
 @router.post("", response_model=ComponentResponse, status_code=status.HTTP_201_CREATED)

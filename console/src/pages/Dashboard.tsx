@@ -28,9 +28,9 @@ export function Dashboard() {
     retry: false,
   });
 
-  const { data: messagesData } = useQuery({
-    queryKey: ['messages-dashboard'],
-    queryFn: () => apiClient.searchMessages({ limit: 1000 }),
+  const { data: messageStats } = useQuery({
+    queryKey: ['message-stats'],
+    queryFn: () => apiClient.getMessageStats(7),
     enabled: !!user,
     retry: false,
   });
@@ -49,8 +49,6 @@ export function Dashboard() {
     retry: false,
   });
 
-  const messages = messagesData?.messages || [];
-
   // Onboarding state
   const hasProviders = (llmProviders?.filter((p) => p.is_active)?.length || 0) > 0;
   const hasAgents = (agents?.length || 0) > 0;
@@ -63,7 +61,7 @@ export function Dashboard() {
     setOnboardingDismissed(true);
   };
 
-  // Calculate activity over last 7 days
+  // Activity by day from stats endpoint
   const last7Days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
@@ -72,38 +70,20 @@ export function Dashboard() {
 
   const activityByDay = last7Days.map((date) => ({
     date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    messages: messages.filter((m: any) => m.created_at.startsWith(date)).length,
+    messages: messageStats?.activity_by_day?.[date] || 0,
   }));
 
-  // Top agents by message count
-  const agentUsage = messages.reduce((acc: any, msg: any) => {
-    if (msg.chat?.agent_namespace && msg.chat?.agent_name) {
-      const key = `${msg.chat.agent_namespace}/${msg.chat.agent_name}`;
-      acc[key] = (acc[key] || 0) + 1;
-    }
-    return acc;
-  }, {});
+  const topAgents = messageStats?.agent_usage || [];
 
-  const topAgents = Object.entries(agentUsage)
-    .sort(([, a]: any, [, b]: any) => b - a)
-    .slice(0, 5)
-    .map(([agent, count]) => ({ agent, count }));
-
-  // Role distribution
-  const roleDistribution = messages.reduce((acc: any, msg: any) => {
-    acc[msg.role] = (acc[msg.role] || 0) + 1;
-    return acc;
-  }, {});
-
-  const roleData = Object.entries(roleDistribution).map(([name, value]) => ({ name, value }));
+  const roleData = Object.entries(messageStats?.role_distribution || {}).map(([name, value]) => ({ name, value }));
 
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#6366f1'];
 
   const stats = [
-    { name: 'Total Messages', value: messages.length, icon: MessageSquare, color: 'blue' },
+    { name: 'Messages (7d)', value: messageStats?.total_messages || 0, icon: MessageSquare, color: 'blue' },
     { name: 'Active Agents', value: agents?.filter((a) => a.is_active).length || 0, icon: Bot, color: 'purple' },
     { name: 'Functions', value: functions?.length || 0, icon: Code, color: 'green' },
-    { name: 'Tool Calls', value: messages.filter((m: any) => m.tool_calls && m.tool_calls.length > 0).length, icon: Zap, color: 'orange' },
+    { name: 'Tool Calls', value: messageStats?.tool_calls || 0, icon: Zap, color: 'orange' },
   ];
 
   const getColorClasses = (color: string) => {
@@ -283,7 +263,7 @@ export function Dashboard() {
         <div className="card">
           <h3 className="text-lg font-semibold text-gray-100 mb-4">Most Used Agents</h3>
           <div className="space-y-3">
-            {topAgents.map((item: any, index) => (
+            {topAgents.map((item: any, index: number) => (
               <div key={item.agent} className="flex items-center justify-between">
                 <div className="flex items-center gap-3 flex-1">
                   <div

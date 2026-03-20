@@ -36,7 +36,7 @@ SMTP_DOMAIN=example.com
 ## Start
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 This starts all services with hot-reload enabled:
@@ -51,7 +51,7 @@ Source code is volume-mounted, so changes to `backend/` are picked up automatica
 
 ```bash
 # Rebuild after dependency changes
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 # View logs
 docker compose -f docker-compose.dev.yml logs -f backend

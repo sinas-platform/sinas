@@ -83,3 +83,7 @@ services:
         USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
     ports:
       - "51245:80"
+
+  caddy:
+    profiles:
+      - disabled

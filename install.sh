@@ -91,6 +91,8 @@ curl -fsSL "${RAW_URL}/Caddyfile" -o Caddyfile
 
 mkdir -p backend/clickhouse
 curl -fsSL "${RAW_URL}/backend/init-clickhouse.sql" -o backend/init-clickhouse.sql
+curl -fsSL "${RAW_URL}/backend/init-postgres.sh" -o backend/init-postgres.sh
+chmod +x backend/init-postgres.sh
 curl -fsSL "${RAW_URL}/backend/clickhouse/entrypoint-wrapper.sh" -o backend/clickhouse/entrypoint-wrapper.sh
 curl -fsSL "${RAW_URL}/backend/clickhouse/system-logs.xml" -o backend/clickhouse/system-logs.xml
 curl -fsSL "${RAW_URL}/backend/clickhouse/resource-limits.xml" -o backend/clickhouse/resource-limits.xml
@@ -154,6 +156,7 @@ else
     echo -e "${GREEN}✓ Database password auto-generated${NC}"
 
     echo ""
+    echo ""
     echo -e "${YELLOW}SMTP Configuration (required for login emails):${NC}"
     echo "  SendGrid: smtp.sendgrid.net:587, user: apikey"
     echo "  Mailgun:  smtp.mailgun.org:587"
@@ -168,7 +171,7 @@ else
     echo ""
 
     while [ -z "$SMTP_HOST" ] || [ -z "$SMTP_USER" ] || [ -z "$SMTP_PASSWORD" ]; do
-        echo -e "${RED}SMTP configuration is required${NC}"
+        echo -e "${RED}SMTP configuration is required for OTP login${NC}"
         read -p "SMTP Host: " SMTP_HOST
         read -p "SMTP Username: " SMTP_USER
         read -s -p "SMTP Password: " SMTP_PASSWORD

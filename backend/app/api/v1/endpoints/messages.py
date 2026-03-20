@@ -1,8 +1,9 @@
 """Messages API endpoints for analytics and insights."""
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, cast, func, select, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -20,7 +21,7 @@ async def list_messages(
     agent: Optional[str] = Query(None, description="Filter by agent (namespace/name)"),
     role: Optional[str] = Query(None, description="Filter by role (user/assistant/tool/system)"),
     search: Optional[str] = Query(None, description="Search in content"),
-    limit: int = Query(100, ge=1, le=1000, description="Max messages to return"),
+    limit: int = Query(50, ge=1, le=1000, description="Max messages to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
     db: AsyncSession = Depends(get_db),
@@ -93,22 +94,24 @@ async def list_messages(
     # Apply pagination
     query = query.limit(limit).offset(offset)
 
-    # Execute query
-    result = await db.execute(query)
-    messages = result.scalars().all()
+    # Execute query with chat and user info in a single query (avoid N+1)
+    enriched_query = (
+        query.add_columns(
+            Chat.agent_namespace,
+            Chat.agent_name,
+            User.email.label("user_email"),
+        )
+    )
 
-    # Enrich with chat and user info
+    result = await db.execute(enriched_query)
+    rows = result.all()
+
     enriched_messages = []
-    for msg in messages:
-        # Get chat details
-        chat_result = await db.execute(select(Chat).where(Chat.id == msg.chat_id))
-        chat = chat_result.scalar_one_or_none()
-
-        # Get user details if chat exists
-        user_email = None
-        if chat and chat.user_id:
-            user_result = await db.execute(select(User.email).where(User.id == chat.user_id))
-            user_email = user_result.scalar_one_or_none()
+    for row in rows:
+        msg = row[0]  # Message object
+        agent_namespace = row[1]
+        agent_name = row[2]
+        user_email = row[3]
 
         enriched_messages.append(
             {
@@ -120,13 +123,107 @@ async def list_messages(
                 "tool_call_id": msg.tool_call_id,
                 "created_at": msg.created_at.isoformat(),
                 "chat": {
-                    "agent_namespace": chat.agent_namespace if chat else None,
-                    "agent_name": chat.agent_name if chat else None,
-                }
-                if chat
-                else None,
+                    "agent_namespace": agent_namespace,
+                    "agent_name": agent_name,
+                },
                 "user": {"email": user_email} if user_email else None,
             }
         )
 
     return {"messages": enriched_messages, "total": total, "limit": limit, "offset": offset}
+
+
+@router.get("/stats")
+async def get_message_stats(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Number of days to include"),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Dashboard statistics — message counts, activity by day, agent usage, role distribution.
+    Single query, no N+1.
+    """
+    user_id, permissions = current_user_data
+
+    has_all = check_permission(permissions, "sinas.executions.read:all")
+    has_own = check_permission(permissions, "sinas.executions.read:own")
+
+    if not has_all and not has_own:
+        set_permission_used(request, "sinas.executions.read:own", has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to view message stats")
+
+    set_permission_used(request, "sinas.executions.read:all" if has_all else "sinas.executions.read:own")
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    # Base filter
+    base_filter = Message.created_at >= since
+    if not has_all:
+        base_filter = and_(base_filter, Chat.user_id == user_id)
+
+    # Total messages
+    total_q = select(func.count()).select_from(Message).join(Chat, Message.chat_id == Chat.id).where(base_filter)
+    total = (await db.execute(total_q)).scalar() or 0
+
+    # Tool call count
+    tool_q = (
+        select(func.count())
+        .select_from(Message)
+        .join(Chat, Message.chat_id == Chat.id)
+        .where(and_(base_filter, Message.tool_calls.isnot(None)))
+    )
+    tool_calls = (await db.execute(tool_q)).scalar() or 0
+
+    # Activity by day
+    day_q = (
+        select(
+            cast(Message.created_at, Date).label("day"),
+            func.count().label("count"),
+        )
+        .join(Chat, Message.chat_id == Chat.id)
+        .where(base_filter)
+        .group_by(cast(Message.created_at, Date))
+        .order_by(cast(Message.created_at, Date))
+    )
+    day_rows = (await db.execute(day_q)).all()
+    activity_by_day = {str(row.day): row.count for row in day_rows}
+
+    # Agent usage
+    agent_q = (
+        select(
+            Chat.agent_namespace,
+            Chat.agent_name,
+            func.count().label("count"),
+        )
+        .select_from(Message)
+        .join(Chat, Message.chat_id == Chat.id)
+        .where(base_filter)
+        .group_by(Chat.agent_namespace, Chat.agent_name)
+        .order_by(func.count().desc())
+        .limit(10)
+    )
+    agent_rows = (await db.execute(agent_q)).all()
+    agent_usage = [
+        {"agent": f"{r.agent_namespace}/{r.agent_name}", "count": r.count}
+        for r in agent_rows
+    ]
+
+    # Role distribution
+    role_q = (
+        select(Message.role, func.count().label("count"))
+        .join(Chat, Message.chat_id == Chat.id)
+        .where(base_filter)
+        .group_by(Message.role)
+    )
+    role_rows = (await db.execute(role_q)).all()
+    role_distribution = {r.role: r.count for r in role_rows}
+
+    return {
+        "total_messages": total,
+        "tool_calls": tool_calls,
+        "activity_by_day": activity_by_day,
+        "agent_usage": agent_usage,
+        "role_distribution": role_distribution,
+        "days": days,
+    }

@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 import docker
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import require_permission
 from app.core.config import settings
@@ -65,7 +65,7 @@ def _parse_memory(stats: dict) -> dict:
         return {"used_mb": 0, "limit_mb": 0, "percent": 0}
 
 
-def _get_container_info(container) -> dict:
+def _get_container_info(container, include_stats: bool = False) -> dict:
     """Extract info from a Docker container object (blocking — run in thread)."""
     name = container.name
     attrs = container.attrs
@@ -96,8 +96,8 @@ def _get_container_info(container) -> dict:
         "uptime_seconds": uptime_seconds,
     }
 
-    # Get CPU/memory stats (only for running containers)
-    if status == "running":
+    # Get CPU/memory stats (expensive — ~1-2s per container)
+    if include_stats and status == "running":
         try:
             stats = container.stats(stream=False)
             result["cpu_percent"] = _parse_cpu_percent(stats)
@@ -105,9 +105,6 @@ def _get_container_info(container) -> dict:
         except Exception:
             result["cpu_percent"] = 0
             result["memory"] = {"used_mb": 0, "limit_mb": 0, "percent": 0}
-    else:
-        result["cpu_percent"] = 0
-        result["memory"] = {"used_mb": 0, "limit_mb": 0, "percent": 0}
 
     return result
 
@@ -263,6 +260,7 @@ def _generate_warnings(
 
 @router.get("/health")
 async def get_system_health(
+    include_stats: bool = Query(False, description="Include per-container CPU/memory stats (slow)"),
     user_id: str = Depends(require_permission("sinas.system.read:all")),
 ) -> HealthResponse:
     """Comprehensive system health check — queries Docker directly."""
@@ -294,7 +292,7 @@ async def get_system_health(
 
         # Get container info in parallel
         async def get_info(container, service_name):
-            info = await asyncio.to_thread(_get_container_info, container)
+            info = await asyncio.to_thread(_get_container_info, container, include_stats)
             info["service"] = service_name
             return info
 

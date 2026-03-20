@@ -600,6 +600,7 @@ async def get_current_user_optional(
     try:
         async with AsyncSessionLocal() as db:
             user_id, email, _ = await verify_jwt_or_api_key(credentials, db)
+            await db.commit()
             # Store user info in request state for logging
             request.state.user_id = user_id
             request.state.user_email = email
