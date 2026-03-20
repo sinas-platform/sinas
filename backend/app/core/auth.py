@@ -498,16 +498,12 @@ async def verify_jwt_or_api_key(
         # This ensures permissions are always current (no stale token permissions)
         permissions = await get_user_permissions(db, str(user_id))
 
-        # Verify user exists and update last_login
+        # Verify user exists
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-
-        # Update last login timestamp
-        user.last_login_at = datetime.now(UTC)
-        await db.flush()
 
         return str(user_id), email, permissions
 

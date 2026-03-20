@@ -18,7 +18,6 @@ async_engine = create_async_engine(
     echo=settings.debug,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
-    pool_pre_ping=True,  # Detect stale connections before use
     pool_recycle=300,  # Recycle connections every 5 min to avoid pgbouncer timeouts
 )
 AsyncSessionLocal = async_sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
