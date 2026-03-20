@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../lib/api';
-import { ArrowLeft, Save, Trash2, ChevronDown, ChevronRight, Filter, Upload, Info } from 'lucide-react';
+import { ArrowLeft, Save, Trash2, ChevronDown, ChevronRight, Filter, Upload, Info, Play, Loader2 } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
+import { SchemaFormField } from '../components/SchemaFormField';
 import { ApiUsage } from '../components/ApiUsage';
 
 const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }> = {
@@ -120,6 +121,10 @@ export function FunctionEditor() {
   const [iconCollectionNs, setIconCollectionNs] = useState('');
   const [iconCollectionName, setIconCollectionName] = useState('');
   const [iconCollectionFiles, setIconCollectionFiles] = useState<any[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [testInputParams, setTestInputParams] = useState<Record<string, any>>({});
+  const [testResult, setTestResult] = useState<any>(null);
+  const testResultRef = useRef<HTMLDivElement>(null);
 
   const { data: func, isLoading } = useQuery({
     queryKey: ['function', namespace, name],
@@ -169,19 +174,42 @@ export function FunctionEditor() {
 
   const saveMutation = useMutation({
     mutationFn: (data: any) => {
+      setSaveError(null);
       return isNew
         ? apiClient.createFunction(data)
         : apiClient.updateFunction(namespace!, name!, data);
     },
     onSuccess: (data) => {
+      setSaveError(null);
       queryClient.invalidateQueries({ queryKey: ['functions'] });
       queryClient.invalidateQueries({ queryKey: ['function', namespace, name] });
       if (isNew) {
         navigate(`/functions/${data.namespace}/${data.name}`);
       } else if (data.namespace !== namespace || data.name !== name) {
-        // Name or namespace changed, navigate to new URL
         navigate(`/functions/${data.namespace}/${data.name}`);
       }
+    },
+    onError: (error: any) => {
+      const detail = error?.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        const syntaxError = detail.find((d: any) => d.loc?.includes('code') && d.msg);
+        if (syntaxError) {
+          setSaveError(syntaxError.msg);
+          return;
+        }
+        setSaveError(detail.map((d: any) => d.msg).join('; '));
+      } else if (typeof detail === 'string') {
+        setSaveError(detail);
+      } else {
+        setSaveError('Failed to save function. Check your code and schemas.');
+      }
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async (input: any) => {
+      const resp = await apiClient.executeFunction(formData.namespace, formData.name, input);
+      return resp;
     },
   });
 
@@ -315,13 +343,13 @@ print(details["status"], details["output_data"])`,
       )}
 
       {/* Success/Error Messages */}
-      {saveMutation.isError && (
-        <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-          Failed to save function. Please check your code and JSON schemas.
+      {saveError && (
+        <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400 font-mono">
+          {saveError}
         </div>
       )}
 
-      {saveMutation.isSuccess && (
+      {saveMutation.isSuccess && !saveError && (
         <div className="p-4 bg-green-900/20 border border-green-800/30 rounded-lg text-sm text-green-400">
           Function saved successfully!
         </div>
@@ -525,26 +553,49 @@ print(details["status"], details["output_data"])`,
         {/* Code Editor */}
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Python Code *</h2>
-          <div className="border border-white/10 rounded-lg overflow-hidden" style={{ minHeight: '400px' }}>
-            <CodeEditor
-              value={formData.code}
-              language="python"
-              placeholder="Enter your Python code here..."
-              onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-              padding={15}
-              data-color-mode="dark"
+          <div className="border border-white/10 rounded-lg overflow-hidden flex" style={{ minHeight: '400px' }}>
+            {/* Line numbers */}
+            <div
+              className="select-none text-right pr-3 pt-[15px] text-gray-600 text-sm leading-[21px]"
               style={{
-                fontSize: 14,
-                backgroundColor: '#111111',
-                color: '#ededed',
+                backgroundColor: '#0d0d0d',
                 fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
-                minHeight: '400px',
+                fontSize: 14,
+                minWidth: '3rem',
+                paddingLeft: '0.5rem',
               }}
-            />
+            >
+              {formData.code.split('\n').map((_: string, i: number) => (
+                <div key={i}>{i + 1}</div>
+              ))}
+            </div>
+            <div className="flex-1">
+              <CodeEditor
+                value={formData.code}
+                language="python"
+                placeholder="Enter your Python code here..."
+                onChange={(e) => { setSaveError(null); setFormData({ ...formData, code: e.target.value }); }}
+                padding={15}
+                data-color-mode="dark"
+                style={{
+                  fontSize: 14,
+                  backgroundColor: '#111111',
+                  color: '#ededed',
+                  fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
+                  minHeight: '400px',
+                }}
+              />
+            </div>
           </div>
+          {/* Syntax error highlight */}
+          {saveError && saveError.includes('syntax') && (
+            <div className="mt-2 p-2 bg-red-900/20 border border-red-800/30 rounded text-xs text-red-400 font-mono">
+              {saveError}
+            </div>
+          )}
           <div className="flex items-center justify-between mt-2">
             <p className="text-xs text-gray-500">
-              Entry point must be <code className="font-mono bg-[#161616] px-1 rounded">def handler(input_data, context)</code>. Legacy: <code className="font-mono bg-[#161616] px-1 rounded">def {formData.name || 'function_name'}(input_data, context)</code> still works but is deprecated. Return value should match output_schema.
+              Entry point: <code className="font-mono bg-[#161616] px-1 rounded">def handler(input, context)</code>
             </p>
             {formData.name && (
               <div className="flex items-center ml-4">
@@ -566,6 +617,77 @@ print(details["status"], details["output_data"])`,
               </div>
             )}
           </div>
+
+          {/* Test Execution — always visible for saved functions */}
+          {!isNew && (
+            <div className="mt-4 pt-4 border-t border-white/[0.06]">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-300">Test Execution</h3>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-gray-600">Runs saved code</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTestResult(null);
+                      testMutation.mutate(testInputParams);
+                      setTimeout(() => testResultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+                    }}
+                    disabled={testMutation.isPending}
+                    className="btn btn-primary flex items-center text-sm py-1.5 px-3"
+                  >
+                    {testMutation.isPending ? (
+                      <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running...</>
+                    ) : (
+                      <><Play className="w-3.5 h-3.5 mr-1.5" /> Run</>
+                    )}
+                  </button>
+                </div>
+              </div>
+              {/* Schema-based input form */}
+              {(() => {
+                const properties = formData.input_schema?.properties || {};
+                const requiredFields = formData.input_schema?.required || [];
+                const hasProps = Object.keys(properties).length > 0;
+
+                return hasProps ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                    {Object.entries(properties).map(([key, prop]: [string, any]) => (
+                      <SchemaFormField
+                        key={key}
+                        name={key}
+                        schema={prop}
+                        value={testInputParams[key]}
+                        onChange={(value) => setTestInputParams({ ...testInputParams, [key]: value })}
+                        required={requiredFields.includes(key)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-600 mb-3">No input parameters defined.</p>
+                );
+              })()}
+              {/* Result */}
+              <div ref={testResultRef}>
+                {(testMutation.isPending || testMutation.data || testMutation.error || testResult) && (
+                  <pre className={`p-3 rounded-lg text-xs font-mono overflow-auto max-h-48 ${
+                    testMutation.error || testResult?.error
+                      ? 'bg-red-900/10 border border-red-800/30 text-red-400'
+                      : testMutation.isPending
+                      ? 'bg-[#0d0d0d] border border-white/10 text-gray-500'
+                      : 'bg-green-900/10 border border-green-800/30 text-gray-300'
+                  }`}>
+                    {testMutation.isPending
+                      ? 'Running...'
+                      : testMutation.error
+                      ? JSON.stringify((testMutation.error as any)?.response?.data || 'Execution failed', null, 2)
+                      : testResult?.error
+                      ? testResult.error
+                      : JSON.stringify(testMutation.data, null, 2)}
+                  </pre>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Function Reference */}
@@ -701,60 +823,60 @@ print(details["status"], details["output_data"])`,
           )}
         </div>
 
-        {/* Input Schema */}
-        <div className="card">
-          <JSONSchemaEditor
-            label="Input Schema (JSON Schema) *"
-            description="Define expected input parameters for this function"
-            value={formData.input_schema}
-            onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs text-gray-500">Load preset:</span>
-            <select
-              className="input text-xs py-1 w-auto"
-              value=""
-              onChange={(e) => {
-                const preset = SCHEMA_PRESETS[e.target.value];
-                if (preset) setFormData({ ...formData, input_schema: preset.input });
-              }}
-            >
-              <option value="">Select...</option>
-              {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
-                <option key={key} value={key}>{preset.label}</option>
-              ))}
-            </select>
+        {/* Schemas side by side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="card">
+            <JSONSchemaEditor
+              label="Input Schema *"
+              description="Expected input parameters"
+              value={formData.input_schema}
+              onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Preset:</span>
+              <select
+                className="input text-xs py-1 w-auto"
+                value=""
+                onChange={(e) => {
+                  const preset = SCHEMA_PRESETS[e.target.value];
+                  if (preset) setFormData({ ...formData, input_schema: preset.input });
+                }}
+              >
+                <option value="">Select...</option>
+                {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
+                  <option key={key} value={key}>{preset.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
 
-        {/* Output Schema */}
-        <div className="card">
-          <JSONSchemaEditor
-            label="Output Schema (JSON Schema) *"
-            description="Define expected output structure for this function"
-            value={formData.output_schema}
-            onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs text-gray-500">Load preset:</span>
-            <select
-              className="input text-xs py-1 w-auto"
-              value=""
-              onChange={(e) => {
-                const preset = SCHEMA_PRESETS[e.target.value];
-                if (preset) setFormData({ ...formData, output_schema: preset.output });
-              }}
-            >
-              <option value="">Select...</option>
-              {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
-                <option key={key} value={key}>{preset.label}</option>
-              ))}
-            </select>
+          <div className="card">
+            <JSONSchemaEditor
+              label="Output Schema *"
+              description="Expected output structure"
+              value={formData.output_schema}
+              onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Preset:</span>
+              <select
+                className="input text-xs py-1 w-auto"
+                value=""
+                onChange={(e) => {
+                  const preset = SCHEMA_PRESETS[e.target.value];
+                  if (preset) setFormData({ ...formData, output_schema: preset.output });
+                }}
+              >
+                <option value="">Select...</option>
+                {Object.entries(SCHEMA_PRESETS).map(([key, preset]) => (
+                  <option key={key} value={key}>{preset.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
       </form>
-
     </div>
   );
 }
