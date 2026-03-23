@@ -140,6 +140,7 @@ class ConnectorToolConverter:
         arguments: dict[str, Any],
         user_token: Optional[str] = None,
         locked_params: Optional[dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute a connector tool call."""
         # Parse tool name: connector__namespace__name__operation
@@ -163,6 +164,7 @@ class ConnectorToolConverter:
                 operation_name=operation_name,
                 parameters=merged_params,
                 user_token=user_token,
+                user_id=user_id,
             )
             return result
         except Exception as e:

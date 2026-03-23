@@ -603,18 +603,34 @@ class SharedWorkerManager:
                 "errors": errors if errors else None,
             }
 
-    async def _load_secrets(self, db) -> dict[str, str]:
-        """Load all secrets, decrypt, return as {name: value} dict."""
+    async def _load_secrets(self, db, user_id: str = None) -> dict[str, str]:
+        """Load secrets, decrypt, return as {name: value} dict.
+        Private secrets override shared for the given user.
+        """
+        from sqlalchemy import and_
         from app.core.encryption import encryption_service
         from app.models.secret import Secret
 
-        result = await db.execute(select(Secret))
+        # Load shared secrets first
+        result = await db.execute(select(Secret).where(Secret.visibility == "shared"))
         secrets = {}
         for secret in result.scalars().all():
             try:
                 secrets[secret.name] = encryption_service.decrypt(secret.encrypted_value)
             except Exception:
                 logger.warning(f"Failed to decrypt secret '{secret.name}', skipping")
+
+        # Override with private secrets for this user
+        if user_id:
+            result = await db.execute(
+                select(Secret).where(and_(Secret.user_id == user_id, Secret.visibility == "private"))
+            )
+            for secret in result.scalars().all():
+                try:
+                    secrets[secret.name] = encryption_service.decrypt(secret.encrypted_value)
+                except Exception:
+                    logger.warning(f"Failed to decrypt private secret '{secret.name}', skipping")
+
         return secrets
 
     async def execute_function(
@@ -703,7 +719,7 @@ class SharedWorkerManager:
                     "execution_id": execution_id,
                     "trigger_type": trigger_type,
                     "chat_id": chat_id,
-                    "secrets": await self._load_secrets(db),
+                    "secrets": await self._load_secrets(db, user_id),
                 },
             }
 

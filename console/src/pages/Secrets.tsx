@@ -7,6 +7,8 @@ interface Secret {
   id: string;
   name: string;
   description: string | null;
+  visibility: string;
+  user_id: string;
   created_at: string;
   updated_at: string;
 }
@@ -15,13 +17,14 @@ interface SecretFormData {
   name: string;
   value: string;
   description: string;
+  visibility: string;
 }
 
 export function Secrets() {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editingSecret, setEditingSecret] = useState<Secret | null>(null);
-  const [formData, setFormData] = useState<SecretFormData>({ name: '', value: '', description: '' });
+  const [formData, setFormData] = useState<SecretFormData>({ name: '', value: '', description: '', visibility: 'shared' });
   const [showValue, setShowValue] = useState(false);
 
   const { data: secrets, isLoading } = useQuery({
@@ -55,14 +58,14 @@ export function Secrets() {
 
   const openCreateModal = () => {
     setEditingSecret(null);
-    setFormData({ name: '', value: '', description: '' });
+    setFormData({ name: '', value: '', description: '', visibility: 'shared' });
     setShowValue(false);
     setShowModal(true);
   };
 
   const openEditModal = (secret: Secret) => {
     setEditingSecret(secret);
-    setFormData({ name: secret.name, value: '', description: secret.description || '' });
+    setFormData({ name: secret.name, value: '', description: secret.description || '', visibility: secret.visibility });
     setShowValue(false);
     setShowModal(true);
   };
@@ -70,7 +73,7 @@ export function Secrets() {
   const closeModal = () => {
     setShowModal(false);
     setEditingSecret(null);
-    setFormData({ name: '', value: '', description: '' });
+    setFormData({ name: '', value: '', description: '', visibility: 'shared' });
     setShowValue(false);
     saveMutation.reset();
   };
@@ -120,6 +123,13 @@ export function Secrets() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm text-gray-200">{secret.name}</span>
+                    <span className={`px-1.5 py-0.5 text-[10px] font-medium rounded ${
+                      secret.visibility === 'private'
+                        ? 'text-purple-400 bg-purple-900/20'
+                        : 'text-blue-400 bg-blue-900/20'
+                    }`}>
+                      {secret.visibility}
+                    </span>
                     <span className="text-xs text-gray-600 font-mono">••••••••</span>
                   </div>
                   {secret.description && (
@@ -214,6 +224,34 @@ export function Secrets() {
                   rows={2}
                 />
               </div>
+
+              {!editingSecret && (
+                <div>
+                  <label className="label">Visibility</label>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="visibility" value="shared"
+                        checked={formData.visibility === 'shared'}
+                        onChange={() => setFormData({ ...formData, visibility: 'shared' })}
+                        className="text-primary-600" />
+                      <div>
+                        <span className="text-sm text-gray-200">Shared</span>
+                        <p className="text-xs text-gray-500">Available to all users and connectors</p>
+                      </div>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="visibility" value="private"
+                        checked={formData.visibility === 'private'}
+                        onChange={() => setFormData({ ...formData, visibility: 'private' })}
+                        className="text-primary-600" />
+                      <div>
+                        <span className="text-sm text-gray-200">Private</span>
+                        <p className="text-xs text-gray-500">Only used when you trigger a connector</p>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              )}
 
               {saveMutation.isError && (
                 <div className="p-3 bg-red-900/20 border border-red-800 rounded-lg">

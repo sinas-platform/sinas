@@ -10,6 +10,7 @@ class SecretCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     value: str = Field(..., min_length=1)
     description: Optional[str] = None
+    visibility: str = Field(default="shared", pattern=r"^(shared|private)$")
 
 
 class SecretUpdate(BaseModel):
@@ -21,6 +22,8 @@ class SecretResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: Optional[str]
+    visibility: str
+    user_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
 

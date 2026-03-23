@@ -501,6 +501,7 @@ async def execute_single_tool(
                     arguments=arguments,
                     user_token=user_token,
                     locked_params=locked_params,
+                    user_id=user_id,
                 )
                 elapsed = time.time() - start_time
                 logger.debug(f"Connector tool completed in {elapsed:.3f}s: {tool_name}")

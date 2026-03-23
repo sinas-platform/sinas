@@ -492,7 +492,7 @@ class APIClient {
     return response.data;
   }
 
-  async createSecret(data: { name: string; value: string; description?: string }): Promise<any> {
+  async createSecret(data: { name: string; value: string; description?: string; visibility?: string }): Promise<any> {
     const response = await this.configClient.post('/secrets', data);
     return response.data;
   }

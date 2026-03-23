@@ -55,14 +55,15 @@ class ConnectorService:
         operation_name: str,
         parameters: dict[str, Any],
         user_token: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Execute a connector operation and return the response."""
         operation = connector.get_operation(operation_name)
         if not operation:
             raise ValueError(f"Operation '{operation_name}' not found on connector '{connector.namespace}/{connector.name}'")
 
-        # Resolve auth
-        auth_headers = await self._resolve_auth(db, connector.auth, user_token)
+        # Resolve auth (private secrets override shared for this user)
+        auth_headers = await self._resolve_auth(db, connector.auth, user_token, user_id)
 
         # Build request
         method = operation["method"]
@@ -138,9 +139,10 @@ class ConnectorService:
         raise last_error  # Should not reach here
 
     async def _resolve_auth(
-        self, db: AsyncSession, auth_config: dict[str, Any], user_token: Optional[str]
+        self, db: AsyncSession, auth_config: dict[str, Any], user_token: Optional[str],
+        user_id: Optional[str] = None,
     ) -> dict[str, str]:
-        """Resolve auth config to HTTP headers."""
+        """Resolve auth config to HTTP headers. Private secrets override shared."""
         auth_type = auth_config.get("type", "none")
 
         if auth_type == "none":
@@ -158,8 +160,25 @@ class ConnectorService:
             logger.warning(f"Auth type '{auth_type}' requires a secret but none configured")
             return {}
 
-        result = await db.execute(select(Secret).where(Secret.name == secret_name))
-        secret = result.scalar_one_or_none()
+        # Private secret overrides shared
+        secret = None
+        if user_id:
+            from sqlalchemy import and_
+            result = await db.execute(
+                select(Secret).where(
+                    and_(Secret.name == secret_name, Secret.user_id == user_id, Secret.visibility == "private")
+                )
+            )
+            secret = result.scalar_one_or_none()
+
+        if not secret:
+            result = await db.execute(
+                select(Secret).where(
+                    and_(Secret.name == secret_name, Secret.visibility == "shared")
+                )
+            )
+            secret = result.scalar_one_or_none()
+
         if not secret:
             logger.warning(f"Secret '{secret_name}' not found for connector auth")
             return {}
