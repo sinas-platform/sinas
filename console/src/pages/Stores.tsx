@@ -274,42 +274,40 @@ function StoreStatesPanel({
 
   return (
     <div className="mt-4 pt-4 border-t border-white/[0.06]">
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3 flex-1">
-          <h4 className="text-sm font-semibold text-gray-300">States</h4>
-          <select
-            value={ownerFilter}
-            onChange={e => setOwnerFilter(e.target.value)}
-            className="input text-xs py-1 w-auto"
-          >
-            <option value="me">My states</option>
-            <option value="all">All users</option>
-            {users && users.length > 0 && (
-              <>
-                <option disabled>───</option>
-                {users.map((u: any) => (
-                  <option key={u.id} value={u.id}>{u.email}</option>
-                ))}
-              </>
-            )}
-          </select>
-          <div className="relative max-w-xs flex-1">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Filter states..."
-              className="input !py-1 !pl-8 !text-xs"
-            />
-          </div>
+      <div className="flex items-center gap-3 mb-3">
+        <h4 className="text-sm font-semibold text-gray-300 shrink-0">States</h4>
+        <select
+          value={ownerFilter}
+          onChange={e => setOwnerFilter(e.target.value)}
+          className="input text-xs !py-1 !w-32 shrink-0"
+        >
+          <option value="me">My states</option>
+          <option value="all">All users</option>
+          {users && users.length > 0 && (
+            <>
+              <option disabled>───</option>
+              {users.map((u: any) => (
+                <option key={u.id} value={u.id}>{u.email}</option>
+              ))}
+            </>
+          )}
+        </select>
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Filter states..."
+            className="input w-full !py-1 !pl-8 !text-xs"
+          />
         </div>
         <button
           onClick={() => { setEditingState(null); setShowStateModal(true); }}
-          className="btn btn-sm btn-primary flex items-center gap-1"
+          className="btn btn-sm btn-primary flex items-center gap-1 shrink-0"
         >
           <Plus className="w-3.5 h-3.5" />
-          New State
+          New
         </button>
       </div>
 
