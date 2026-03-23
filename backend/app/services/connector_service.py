@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import httpx
 from jinja2 import Template
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import encryption_service
@@ -120,14 +120,21 @@ class ConnectorService:
                 else:
                     body = response.text
 
-                return {
+                result = {
                     "status_code": response.status_code,
                     "headers": dict(response.headers),
                     "body": body,
                     "elapsed_ms": round(elapsed_ms, 1),
                 }
+                logger.info(f"Connector {connector.namespace}/{connector.name}/{operation_name}: {response.status_code} in {elapsed_ms:.0f}ms")
+                return result
 
+            except httpx.TimeoutException as e:
+                # Timeouts are not retried — the API is too slow, retrying won't help
+                logger.error(f"Connector {connector.namespace}/{connector.name}/{operation_name} timed out after {timeout}s")
+                raise
             except Exception as e:
+                logger.error(f"Connector {connector.namespace}/{connector.name}/{operation_name} attempt {attempt+1} failed: {e}")
                 last_error = e
                 if attempt < max_attempts - 1:
                     delay = self._backoff_delay(attempt, backoff)
@@ -163,7 +170,6 @@ class ConnectorService:
         # Private secret overrides shared
         secret = None
         if user_id:
-            from sqlalchemy import and_
             result = await db.execute(
                 select(Secret).where(
                     and_(Secret.name == secret_name, Secret.user_id == user_id, Secret.visibility == "private")

@@ -18,6 +18,7 @@ from app.models.user import User
 from app.services.code_execution import execute as execute_code
 from app.services.collection_tools import CollectionToolConverter
 from app.services.component_tools import ComponentToolConverter
+from app.services.connector_tools import ConnectorToolConverter
 from app.services.execution_engine import executor as fn_executor
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
@@ -27,6 +28,7 @@ from app.services.queue_service import queue_service
 from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
 from app.services.tool_discovery import parse_function_name, resolve_agent_patterns
+from app.services.tool_result_store import get_tool_result, save_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -334,6 +336,7 @@ async def execute_single_tool(
         Tuple of (tool_call_id, tool_name, result_content)
     """
     tool_name = tool_call["function"]["name"]
+    print(f"🔧 execute_single_tool called: {tool_name}")
     arguments_str = tool_call["function"]["arguments"]
 
     # Handle arguments parsing
@@ -371,6 +374,18 @@ async def execute_single_tool(
                     chat_id=str(chat_id),
                     agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
                 )
+            elif tool_name == "retrieve_tool_result":
+                stored = await get_tool_result(
+                    db=db,
+                    tool_call_id=arguments.get("tool_call_id", ""),
+                    user_id=user_id,
+                    chat_id=chat_id,
+                )
+                if stored:
+                    result = stored
+                else:
+                    result = {"error": "Tool result not found or expired"}
+
             elif tool_name == "continue_execution":
                 # Resume directly in the container (bypasses queue)
                 result = await fn_executor.resume_execution(
@@ -493,7 +508,6 @@ async def execute_single_tool(
                         break
                 locked_params = tool_metadata.get("locked_params", {})
 
-                from app.services.connector_tools import ConnectorToolConverter
                 connector_tool_converter = ConnectorToolConverter()
                 result = await connector_tool_converter.execute_connector_tool(
                     db=db,
@@ -558,7 +572,14 @@ async def execute_single_tool(
 
             result_content = json.dumps(result) if not isinstance(result, str) else result
 
+            # Truncate oversized results to prevent LLM token overflow
+            max_result_size = 10000  # 10KB max per tool result for LLM context
+            if len(result_content) > max_result_size:
+                print(f"⚠️ Truncating tool result for {tool_name}: {len(result_content)} -> {max_result_size} bytes", flush=True)
+                result_content = result_content[:max_result_size] + '\n\n[... result truncated]'
+
     except Exception as e:
+        print(f"❌ Tool execution failed: {tool_name}: {e}", flush=True)
         logger.error(f"Tool execution failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         result_content = json.dumps({"error": str(e)})

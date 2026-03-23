@@ -251,6 +251,27 @@ async def main() -> None:
     )
     logger.info("Registered system job: cleanup_expired_chats (every 1h)")
 
+    # Ensure tool_call_results partitions exist
+    async def maintain_tool_result_partitions():
+        from app.services.tool_result_store import ensure_partitions, cleanup_expired_partitions
+        async with AsyncSessionLocal() as db:
+            await ensure_partitions(db)
+            dropped = await cleanup_expired_partitions(db)
+            if dropped:
+                logger.info(f"Dropped {dropped} expired tool_call_results partition(s)")
+
+    await maintain_tool_result_partitions()
+
+    scheduler.scheduler.add_job(
+        func=maintain_tool_result_partitions,
+        trigger="interval",
+        hours=24,
+        id="system:maintain_tool_result_partitions",
+        name="Maintain tool_call_results partitions",
+        replace_existing=True,
+    )
+    logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
+
     # --- Pub/sub listener for live job changes ---
     stop_event = asyncio.Event()
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))

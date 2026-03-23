@@ -158,6 +158,7 @@ class ConnectorToolConverter:
         merged_params = {**(locked_params or {}), **arguments}
 
         try:
+            print(f"🔌 Executing connector: {namespace}/{name}/{operation_name}")
             result = await connector_service.execute_operation(
                 db=db,
                 connector=connector,
@@ -166,9 +167,10 @@ class ConnectorToolConverter:
                 user_token=user_token,
                 user_id=user_id,
             )
+            logger.info(f"Connector tool result: {namespace}/{name}/{operation_name} -> status={result.get('status_code')}")
             return result
         except Exception as e:
-            logger.exception(f"Connector operation failed: {namespace}/{name}/{operation_name}")
+            logger.error(f"Connector operation failed: {namespace}/{name}/{operation_name}: {e}", exc_info=True)
             return {"error": str(e)}
 
 

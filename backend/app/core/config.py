@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     max_history_messages: int = 100  # Max messages to load for conversation history
     max_tool_iterations: int = 25  # Max consecutive tool-call rounds before stopping
 
+    # Tool result store
+    tool_result_retention_days: int = int(os.getenv("TOOL_RESULT_RETENTION_DAYS", "30"))
+    tool_result_max_inline: int = int(os.getenv("TOOL_RESULT_MAX_INLINE", "5"))  # Last N results kept inline
+    tool_result_max_size: int = int(os.getenv("TOOL_RESULT_MAX_SIZE", "102400"))  # 100KB truncation limit
+
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"
     queue_function_concurrency: int = 10

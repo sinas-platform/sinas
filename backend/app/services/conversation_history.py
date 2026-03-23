@@ -205,6 +205,18 @@ async def build_conversation_history(
         if not (msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in all_tool_call_ids)
     ]
 
+    # Compact older tool results: keep last N inline, replace older with references.
+    # Safe here because build_conversation_history only runs for the initial LLM call —
+    # the follow-up after tool execution rebuilds from raw DB messages, bypassing this.
+    max_inline = settings.tool_result_max_inline
+    tool_result_indices = [
+        idx for idx, msg in enumerate(chat_messages)
+        if msg.role == "tool" and msg.tool_call_id
+    ]
+    compact_indices = set(tool_result_indices[:-max_inline]) if len(tool_result_indices) > max_inline else set()
+    if compact_indices:
+        print(f"📦 Compacting {len(compact_indices)} of {len(tool_result_indices)} tool results (keeping last {max_inline} inline)", flush=True)
+
     for idx, msg in enumerate(chat_messages):
         message_dict: dict[str, Any] = {"role": msg.role}
 
@@ -216,6 +228,11 @@ async def build_conversation_history(
             and msg.role == "user"
         )
         content = current_user_content if is_last_user else msg.content
+
+        # Replace older tool results with compact references
+        if idx in compact_indices and msg.tool_call_id:
+            tool_name = msg.name or "unknown"
+            content = f'[Result from {tool_name} (tool_call_id: {msg.tool_call_id}). Use retrieve_tool_result("{msg.tool_call_id}") to access full data.]'
         if content and provider_type:
             # Try to parse JSON content (might be multimodal)
             try:
