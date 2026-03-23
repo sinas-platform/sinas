@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models import Agent, Chat, Message
 from app.services.content_converter import ContentConverter
-from app.services.content_tokens import refresh_sinas_image_urls
+from app.services.content_tokens import refresh_sinas_file_urls
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
 from app.services.template_renderer import render_template
@@ -189,6 +189,22 @@ async def build_conversation_history(
         for i, rm in enumerate(repair_msgs):
             chat_messages.insert(insert_idx + 1 + i, rm)
 
+    # Remove orphaned tool results: tool result messages whose tool_call_id
+    # doesn't match any tool_call in the conversation. This prevents LLM
+    # providers from rejecting the history with "unexpected tool call id".
+    all_tool_call_ids = set()
+    for msg in chat_messages:
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tc_id:
+                    all_tool_call_ids.add(tc_id)
+
+    chat_messages = [
+        msg for msg in chat_messages
+        if not (msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in all_tool_call_ids)
+    ]
+
     for idx, msg in enumerate(chat_messages):
         message_dict: dict[str, Any] = {"role": msg.role}
 
@@ -206,7 +222,7 @@ async def build_conversation_history(
                 parsed_content = json.loads(content)
                 # If it's a list, it might be multimodal content
                 if isinstance(parsed_content, list):
-                    parsed_content = refresh_sinas_image_urls(parsed_content)
+                    parsed_content = refresh_sinas_file_urls(parsed_content)
                     content = ContentConverter.convert_message_content(
                         parsed_content, provider_type
                     )

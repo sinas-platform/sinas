@@ -205,8 +205,8 @@ export function Stores() {
 /* Small badge showing state count for a store */
 function StoreStateCount({ namespace, name }: { namespace: string; name: string }) {
   const { data: states } = useQuery({
-    queryKey: ['store-states', namespace, name],
-    queryFn: () => apiClient.listStoreStates(namespace, name),
+    queryKey: ['store-states', namespace, name, 'me'],
+    queryFn: () => apiClient.listStoreStates(namespace, name, { owner: 'me' }),
     retry: false,
   });
 
@@ -232,13 +232,20 @@ function StoreStatesPanel({
 }) {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
+  const [ownerFilter, setOwnerFilter] = useState<string>('me');
   const [showStateModal, setShowStateModal] = useState(false);
   const [editingState, setEditingState] = useState<any>(null);
   const [revealedValues, setRevealedValues] = useState<Record<string, boolean>>({});
 
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: () => apiClient.listUsers(),
+    retry: false,
+  });
+
   const { data: states, isLoading } = useQuery({
-    queryKey: ['store-states', namespace, name],
-    queryFn: () => apiClient.listStoreStates(namespace, name),
+    queryKey: ['store-states', namespace, name, ownerFilter],
+    queryFn: () => apiClient.listStoreStates(namespace, name, { owner: ownerFilter }),
     retry: false,
   });
 
@@ -270,6 +277,22 @@ function StoreStatesPanel({
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-3 flex-1">
           <h4 className="text-sm font-semibold text-gray-300">States</h4>
+          <select
+            value={ownerFilter}
+            onChange={e => setOwnerFilter(e.target.value)}
+            className="input text-xs py-1 w-auto"
+          >
+            <option value="me">My states</option>
+            <option value="all">All users</option>
+            {users && users.length > 0 && (
+              <>
+                <option disabled>───</option>
+                {users.map((u: any) => (
+                  <option key={u.id} value={u.id}>{u.email}</option>
+                ))}
+              </>
+            )}
+          </select>
           <div className="relative max-w-xs flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500 pointer-events-none" />
             <input

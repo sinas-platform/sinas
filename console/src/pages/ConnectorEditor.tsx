@@ -8,6 +8,7 @@ import {
   Upload, AlertCircle, Globe, FileText,
 } from 'lucide-react';
 import CodeEditor from '@uiw/react-textarea-code-editor';
+import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const AUTH_TYPES = [
@@ -469,19 +470,12 @@ export function ConnectorEditor() {
                     </select>
                   </div>
                 </div>
-                <div>
-                  <label className="label">Parameters (JSON Schema)</label>
-                  <CodeEditor
-                    value={typeof op.parameters === 'string' ? op.parameters : JSON.stringify(op.parameters, null, 2)}
-                    language="json"
-                    onChange={e => {
-                      try { updateOperation(i, 'parameters', JSON.parse(e.target.value)); } catch {}
-                    }}
-                    padding={12}
-                    style={{ fontSize: 12, backgroundColor: '#0d0d0d', borderRadius: 8, fontFamily: 'monospace' }}
-                    minHeight={80}
-                  />
-                </div>
+                <JSONSchemaEditor
+                  label="Parameters"
+                  description="Input parameters for this operation"
+                  value={op.parameters || { type: 'object', properties: {} }}
+                  onChange={schema => updateOperation(i, 'parameters', schema)}
+                />
               </div>
             )}
           </div>
