@@ -704,8 +704,8 @@ class APIClient {
   }
 
   // Executions
-  async listExecutions(): Promise<any[]> {
-    const response = await this.runtimeClient.get('/executions');
+  async listExecutions(params?: { skip?: number; limit?: number; function_name?: string; status?: string; chat_id?: string; trigger_type?: string }): Promise<any[]> {
+    const response = await this.runtimeClient.get('/executions', { params });
     return response.data;
   }
 

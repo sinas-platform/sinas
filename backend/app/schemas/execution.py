@@ -14,6 +14,7 @@ class ExecutionResponse(BaseModel):
     function_name: str
     trigger_type: TriggerType
     trigger_id: str
+    chat_id: Optional[uuid.UUID] = None
     status: ExecutionStatus
     input_data: dict[str, Any]
     output_data: Optional[Any]
@@ -22,22 +23,7 @@ class ExecutionResponse(BaseModel):
     started_at: datetime
     completed_at: Optional[datetime]
     duration_ms: Optional[int]
-
-    class Config:
-        from_attributes = True
-
-
-class StepExecutionResponse(BaseModel):
-    id: uuid.UUID
-    execution_id: str
-    function_name: str
-    status: ExecutionStatus
-    input_data: dict[str, Any]
-    output_data: Optional[Any]
-    error: Optional[str]
-    duration_ms: Optional[int]
-    started_at: datetime
-    completed_at: Optional[datetime]
+    tool_call_id: Optional[str] = None
 
     class Config:
         from_attributes = True

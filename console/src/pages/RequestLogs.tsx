@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import {
@@ -14,13 +14,20 @@ import {
   XCircle,
   MessageSquare,
   Activity,
+  Workflow,
 } from 'lucide-react';
 import { Messages } from './Messages';
 
-type Tab = 'requests' | 'messages';
+type Tab = 'requests' | 'messages' | 'executions';
 
 export function RequestLogs() {
   const [activeTab, setActiveTab] = useState<Tab>('requests');
+  const [treeChatId, setTreeChatId] = useState<string | null>(null);
+
+  const viewTree = (chatId: string) => {
+    setTreeChatId(chatId);
+    setActiveTab('executions');
+  };
 
   return (
     <div className="space-y-6">
@@ -54,13 +61,25 @@ export function RequestLogs() {
             <MessageSquare className="w-5 h-5 inline mr-2" />
             Message Logs
           </button>
+          <button
+            onClick={() => setActiveTab('executions')}
+            className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+              activeTab === 'executions'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+            }`}
+          >
+            <Workflow className="w-5 h-5 inline mr-2" />
+            Executions
+          </button>
         </nav>
       </div>
 
       {/* Tab Content */}
       <div>
         {activeTab === 'requests' && <RequestLogsTab />}
-        {activeTab === 'messages' && <Messages />}
+        {activeTab === 'messages' && <Messages onViewTree={viewTree} />}
+        {activeTab === 'executions' && <ExecutionsTab initialTreeChatId={treeChatId} onClearTree={() => setTreeChatId(null)} />}
       </div>
     </div>
   );
@@ -455,6 +474,464 @@ function RequestLogsTab() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+const statusColors: Record<string, string> = {
+  COMPLETED: 'text-green-400 bg-green-900/20',
+  RUNNING: 'text-blue-400 bg-blue-900/20',
+  PENDING: 'text-yellow-400 bg-yellow-900/20',
+  FAILED: 'text-red-400 bg-red-900/20',
+  CANCELLED: 'text-gray-400 bg-gray-800',
+  AWAITING_INPUT: 'text-purple-400 bg-purple-900/20',
+};
+
+const triggerColors: Record<string, string> = {
+  AGENT: 'text-blue-400',
+  WEBHOOK: 'text-green-400',
+  SCHEDULE: 'text-yellow-400',
+  API: 'text-gray-400',
+  CDC: 'text-purple-400',
+  HOOK: 'text-orange-400',
+  MANUAL: 'text-gray-500',
+};
+
+function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?: string | null; onClearTree?: () => void }) {
+  const [triggerFilter, setTriggerFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [expandedExec, setExpandedExec] = useState<string | null>(null);
+  const [treeChatId, setTreeChatId] = useState<string | null>(initialTreeChatId || null);
+
+  useEffect(() => {
+    if (initialTreeChatId) setTreeChatId(initialTreeChatId);
+  }, [initialTreeChatId]);
+
+  const { data: executions, isLoading } = useQuery({
+    queryKey: ['executions', triggerFilter, statusFilter],
+    queryFn: () => {
+      const params: any = { limit: 100 };
+      if (triggerFilter) params.trigger_type = triggerFilter;
+      if (statusFilter) params.status = statusFilter;
+      return apiClient.listExecutions(params);
+    },
+    retry: false,
+    refetchInterval: 5000,
+  });
+
+  if (treeChatId) {
+    return <ExecutionTree chatId={treeChatId} onBack={() => { setTreeChatId(null); onClearTree?.(); }} />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <select
+          value={triggerFilter}
+          onChange={e => setTriggerFilter(e.target.value)}
+          className="input text-xs !py-1 !w-32"
+        >
+          <option value="">All triggers</option>
+          <option value="AGENT">Agent</option>
+          <option value="WEBHOOK">Webhook</option>
+          <option value="SCHEDULE">Schedule</option>
+          <option value="API">API</option>
+          <option value="CDC">CDC</option>
+          <option value="HOOK">Hook</option>
+          <option value="MANUAL">Manual</option>
+        </select>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="input text-xs !py-1 !w-32"
+        >
+          <option value="">All statuses</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="RUNNING">Running</option>
+          <option value="FAILED">Failed</option>
+          <option value="PENDING">Pending</option>
+        </select>
+      </div>
+
+      {isLoading ? (
+        <div className="text-gray-500 text-sm">Loading executions...</div>
+      ) : !executions?.length ? (
+        <div className="text-gray-500 text-sm py-8 text-center">No executions found</div>
+      ) : (
+        <div className="space-y-1">
+          {executions.map((exec: any) => {
+            const isExpanded = expandedExec === exec.execution_id;
+            const sc = statusColors[exec.status] || 'text-gray-400 bg-gray-800';
+            const tc = triggerColors[exec.trigger_type] || 'text-gray-400';
+
+            return (
+              <div key={exec.execution_id} className="border border-white/[0.06] rounded-lg">
+                <button
+                  onClick={() => setExpandedExec(isExpanded ? null : exec.execution_id)}
+                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors"
+                >
+                  {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-500 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-500 shrink-0" />}
+                  <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${sc}`}>
+                    {exec.status}
+                  </span>
+                  <span className={`text-[10px] font-medium uppercase ${tc}`}>
+                    {exec.trigger_type}
+                  </span>
+                  <span className="text-sm font-mono text-gray-200 truncate">{exec.function_name}</span>
+                  {exec.tool_call_id && (
+                    <span className="text-[10px] text-gray-600 font-mono" title={`tool_call: ${exec.tool_call_id}`}>
+                      tc:{exec.tool_call_id.slice(0, 8)}
+                    </span>
+                  )}
+                  <span className="ml-auto text-xs text-gray-600 shrink-0">
+                    {exec.duration_ms != null ? `${exec.duration_ms}ms` : '—'}
+                  </span>
+                  <span className="text-xs text-gray-600 shrink-0 w-36 text-right">
+                    {new Date(exec.started_at).toLocaleString()}
+                  </span>
+                </button>
+
+                {isExpanded && (
+                  <div className="border-t border-white/[0.06] p-4 space-y-3 text-xs">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-gray-500 block mb-1">Execution ID</span>
+                        <span className="font-mono text-gray-300">{exec.execution_id}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-500 block mb-1">Trigger</span>
+                        <span className="text-gray-300">{exec.trigger_type} — {exec.trigger_id}</span>
+                      </div>
+                      {exec.chat_id && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Chat</span>
+                          <button
+                            onClick={() => setTreeChatId(exec.chat_id)}
+                            className="font-mono text-primary-400 hover:text-primary-300"
+                          >
+                            {exec.chat_id} →
+                          </button>
+                        </div>
+                      )}
+                      {exec.tool_call_id && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Tool Call ID</span>
+                          <span className="font-mono text-gray-300">{exec.tool_call_id}</span>
+                        </div>
+                      )}
+                      {exec.completed_at && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Completed</span>
+                          <span className="text-gray-300">{new Date(exec.completed_at).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {exec.error && (
+                      <div>
+                        <span className="text-gray-500 block mb-1">Error</span>
+                        <div className="bg-red-900/10 border border-red-800/30 rounded p-2">
+                          <pre className="text-red-400 whitespace-pre-wrap">{exec.error}</pre>
+                        </div>
+                      </div>
+                    )}
+
+                    {exec.input_data && Object.keys(exec.input_data).length > 0 && (
+                      <div>
+                        <span className="text-gray-500 block mb-1">Input</span>
+                        <div className="bg-[#0d0d0d] rounded p-2 max-h-40 overflow-y-auto">
+                          <pre className="text-gray-300 font-mono whitespace-pre-wrap">{JSON.stringify(exec.input_data, null, 2)}</pre>
+                        </div>
+                      </div>
+                    )}
+
+                    {exec.output_data != null && (
+                      <div>
+                        <span className="text-gray-500 block mb-1">Output</span>
+                        <div className="bg-[#0d0d0d] rounded p-2 max-h-40 overflow-y-auto">
+                          <pre className="text-gray-300 font-mono whitespace-pre-wrap">{typeof exec.output_data === 'string' ? exec.output_data : JSON.stringify(exec.output_data, null, 2)}</pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void }) {
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+
+  const { data: chat } = useQuery({
+    queryKey: ['chat-tree', chatId],
+    queryFn: () => apiClient.getChat(chatId),
+    retry: false,
+  });
+
+  const { data: executions } = useQuery({
+    queryKey: ['executions-tree', chatId],
+    queryFn: () => apiClient.listExecutions({ chat_id: chatId, limit: 500 }),
+    retry: false,
+  });
+
+  const toggleNode = (id: string) => {
+    const next = new Set(expandedNodes);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setExpandedNodes(next);
+  };
+
+  // Build execution lookups
+  const execByToolCallId: Record<string, any> = {};
+  const execsByFunctionName: Record<string, any[]> = {};
+  const hookExecutions: any[] = [];
+  (executions || []).forEach((ex: any) => {
+    if (ex.tool_call_id) execByToolCallId[ex.tool_call_id] = ex;
+    // Also index by function name for fallback matching
+    const fname = ex.function_name || '';
+    if (!execsByFunctionName[fname]) execsByFunctionName[fname] = [];
+    execsByFunctionName[fname].push(ex);
+    // Collect hook executions separately
+    if (ex.trigger_type === 'HOOK') hookExecutions.push(ex);
+  });
+
+  // Fallback: find execution by function name closest in time to the tool call
+  const findExecFallback = (funcName: string, toolCallId: string, msgTime: string): any => {
+    // First try tool_call_id
+    if (execByToolCallId[toolCallId]) return execByToolCallId[toolCallId];
+    // Fallback: match by function name, pick the one closest to the message time
+    const cleanName = funcName.replace('__', '/');
+    const candidates = execsByFunctionName[cleanName] || [];
+    if (candidates.length === 0) return null;
+    const msgTs = new Date(msgTime).getTime();
+    let best = candidates[0];
+    let bestDelta = Math.abs(new Date(best.started_at).getTime() - msgTs);
+    for (const c of candidates) {
+      const delta = Math.abs(new Date(c.started_at).getTime() - msgTs);
+      if (delta < bestDelta) { best = c; bestDelta = delta; }
+    }
+    // Only match if within 60 seconds
+    return bestDelta < 60000 ? best : null;
+  };
+
+  const messages = chat?.messages || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button onClick={onBack} className="text-xs text-primary-400 hover:text-primary-300">
+          ← Back to executions
+        </button>
+        <h3 className="text-sm font-semibold text-gray-300">
+          Execution Tree — {chat?.agent_namespace}/{chat?.agent_name}
+        </h3>
+        <span className="text-xs text-gray-600 font-mono">{chatId.slice(0, 8)}</span>
+      </div>
+
+      {messages.length === 0 ? (
+        <div className="text-gray-500 text-sm py-8 text-center">No messages in this chat</div>
+      ) : (
+        <div className="space-y-0.5">
+          {/* Interleave hooks into the message timeline */}
+          {(() => {
+            // Build unified timeline: messages + hook executions, sorted by time
+            const timeline: { type: 'message' | 'hook'; data: any; time: number }[] = [];
+            messages.forEach((msg: any) => {
+              if (msg.role !== 'tool') {
+                timeline.push({ type: 'message', data: msg, time: new Date(msg.created_at).getTime() });
+              }
+            });
+            hookExecutions.forEach((ex: any) => {
+              timeline.push({ type: 'hook', data: ex, time: new Date(ex.started_at).getTime() });
+            });
+            timeline.sort((a, b) => a.time - b.time);
+            return timeline;
+          })().map((item) => {
+            if (item.type === 'hook') {
+              const exec = item.data;
+              const hookExpanded = expandedNodes.has(`hook-${exec.execution_id}`);
+              const sc = statusColors[exec.status] || 'text-gray-400 bg-gray-800';
+              return (
+                <div key={`hook-${exec.execution_id}`}>
+                  <button
+                    onClick={() => toggleNode(`hook-${exec.execution_id}`)}
+                    className="w-full flex items-center gap-2 p-2 rounded bg-orange-900/5 border-l-2 border-orange-600/30 text-left hover:bg-orange-900/10"
+                  >
+                    {hookExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-500" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-500" />}
+                    <span className="text-[10px] font-bold uppercase text-orange-400 w-14">HOOK</span>
+                    <span className="text-xs font-mono text-gray-200">{exec.function_name}</span>
+                    <span className={`px-1 py-0.5 text-[9px] font-bold uppercase rounded ${sc}`}>{exec.status}</span>
+                    {exec.duration_ms != null && <span className="text-[10px] text-gray-600">{exec.duration_ms}ms</span>}
+                    <span className="ml-auto text-[10px] text-gray-600">{new Date(exec.started_at).toLocaleTimeString()}</span>
+                  </button>
+                  {hookExpanded && (
+                    <div className="ml-8 p-2 space-y-2 text-xs">
+                      {exec.input_data && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Input</span>
+                          <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                            <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">{JSON.stringify(exec.input_data, null, 2)}</pre>
+                          </div>
+                        </div>
+                      )}
+                      {exec.output_data != null && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Output</span>
+                          <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                            <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">{typeof exec.output_data === 'string' ? exec.output_data : JSON.stringify(exec.output_data, null, 2)}</pre>
+                          </div>
+                        </div>
+                      )}
+                      {exec.error && (
+                        <div>
+                          <span className="text-gray-500 block mb-1">Error</span>
+                          <pre className="text-red-400 text-[11px]">{exec.error}</pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            const msg = item.data;
+            const isUser = msg.role === 'user';
+            const isAssistant = msg.role === 'assistant';
+            const toolCalls = msg.tool_calls || [];
+            const hasToolCalls = toolCalls.length > 0;
+            const nodeId = msg.id;
+            const isExpanded = expandedNodes.has(nodeId);
+
+            return (
+              <div key={msg.id}>
+                {/* Message row */}
+                <div
+                  className={`flex items-start gap-2 p-2 rounded ${
+                    isUser ? 'bg-blue-900/10 border-l-2 border-blue-600/40' :
+                    isAssistant && hasToolCalls ? 'bg-yellow-900/5 border-l-2 border-yellow-600/30' :
+                    isAssistant ? 'bg-green-900/5 border-l-2 border-green-600/30' :
+                    'border-l-2 border-white/[0.06]'
+                  }`}
+                >
+                  {hasToolCalls ? (
+                    <button onClick={() => toggleNode(nodeId)} className="mt-0.5 shrink-0">
+                      {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-500" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-500" />}
+                    </button>
+                  ) : (
+                    <span className="w-3.5 shrink-0" />
+                  )}
+
+                  <span className={`text-[10px] font-bold uppercase mt-0.5 shrink-0 w-14 ${
+                    isUser ? 'text-blue-400' : isAssistant ? 'text-green-400' : 'text-gray-500'
+                  }`}>
+                    {msg.role}
+                  </span>
+
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-300 whitespace-pre-wrap">
+                      {(typeof msg.content === 'string' ? msg.content : null) || (hasToolCalls ? `[${toolCalls.length} tool call${toolCalls.length > 1 ? 's' : ''}]` : '[empty]')}
+                    </p>
+                  </div>
+
+                  <span className="text-[10px] text-gray-600 shrink-0">
+                    {new Date(msg.created_at).toLocaleTimeString()}
+                  </span>
+                </div>
+
+                {/* Tool calls tree (nested) */}
+                {isExpanded && hasToolCalls && (
+                  <div className="ml-8 border-l border-white/[0.06] space-y-0.5 my-0.5">
+                    {toolCalls.map((tc: any) => {
+                      const tcId = tc.id;
+                      const funcName = tc.function?.name || 'unknown';
+                      const exec = findExecFallback(funcName, tcId, msg.created_at);
+                      const toolResult = messages.find((m: any) => m.role === 'tool' && m.tool_call_id === tcId);
+                      const tcExpanded = expandedNodes.has(tcId);
+                      const sc = exec ? (statusColors[exec.status] || 'text-gray-400 bg-gray-800') : 'text-gray-500 bg-gray-800/50';
+
+                      return (
+                        <div key={tcId} className="ml-3">
+                          <button
+                            onClick={() => toggleNode(tcId)}
+                            className="w-full flex items-center gap-2 p-1.5 text-left hover:bg-white/[0.02] rounded"
+                          >
+                            {tcExpanded ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />}
+                            <span className="text-[10px] text-yellow-500">TOOL</span>
+                            <span className="text-xs font-mono text-gray-200">{funcName}</span>
+                            {exec && (
+                              <>
+                                <span className={`px-1 py-0.5 text-[9px] font-bold uppercase rounded ${sc}`}>
+                                  {exec.status}
+                                </span>
+                                {exec.duration_ms != null && (
+                                  <span className="text-[10px] text-gray-600">{exec.duration_ms}ms</span>
+                                )}
+                              </>
+                            )}
+                          </button>
+
+                          {tcExpanded && (
+                            <div className="ml-6 space-y-2 p-2 text-xs">
+                              {/* Arguments */}
+                              <div>
+                                <span className="text-gray-500 block mb-1">Arguments</span>
+                                <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                                  <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">
+                                    {(() => { try { return JSON.stringify(JSON.parse(tc.function?.arguments || '{}'), null, 2); } catch { return tc.function?.arguments || '{}'; } })()}
+                                  </pre>
+                                </div>
+                              </div>
+
+                              {/* Tool result */}
+                              {toolResult && (
+                                <div>
+                                  <span className="text-gray-500 block mb-1">Result</span>
+                                  <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                                    <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">
+                                      {(() => { const c = typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content); try { return JSON.stringify(JSON.parse(c || ''), null, 2); } catch { return c || ''; } })()}
+                                    </pre>
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Execution details */}
+                              {exec && (
+                                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                  <div>
+                                    <span className="text-gray-500">Execution ID</span>
+                                    <p className="font-mono text-gray-400">{exec.execution_id.slice(0, 12)}...</p>
+                                  </div>
+                                  <div>
+                                    <span className="text-gray-500">Trigger</span>
+                                    <p className="text-gray-400">{exec.trigger_type}</p>
+                                  </div>
+                                  {exec.error && (
+                                    <div className="col-span-2">
+                                      <span className="text-gray-500">Error</span>
+                                      <p className="text-red-400">{exec.error}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {!exec && (
+                                <p className="text-gray-600 italic">No execution record (connector or inline tool)</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

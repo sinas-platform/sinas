@@ -7,7 +7,7 @@ from .component import Component
 from .component_share import ComponentShare
 from .database_connection import DatabaseConnection
 from .database_trigger import DatabaseTrigger
-from .execution import Execution, StepExecution
+from .execution import Execution
 from .file import Collection, ContentFilterEvaluation, File, FileVersion
 from .function import Function, FunctionVersion
 from .llm_provider import LLMProvider
@@ -33,7 +33,6 @@ __all__ = [
     "Webhook",
     "ScheduledJob",
     "Execution",
-    "StepExecution",
     "Dependency",
     "Package",
     "User",

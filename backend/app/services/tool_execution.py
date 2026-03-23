@@ -549,6 +549,7 @@ async def execute_single_tool(
                         locked_params=locked_params,
                         overridable_params=overridable_params,
                         enabled_functions=enabled_function_list,
+                        tool_call_id=tool_call.get("id"),
                     )
 
                 elapsed = time.time() - start_time
