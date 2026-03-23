@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class OperationConfig(BaseModel):
     """A single typed HTTP operation on a connector."""
 
-    name: str = Field(..., min_length=1, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    name: str = Field(..., min_length=1, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     method: str = Field(..., pattern=r"^(GET|POST|PUT|PATCH|DELETE)$")
     path: str = Field(..., min_length=1)
     description: Optional[str] = None
@@ -32,8 +32,8 @@ class ConnectorRetry(BaseModel):
 
 
 class ConnectorCreate(BaseModel):
-    namespace: str = Field(default="default", min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    namespace: str = Field(default="default", min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+    name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     description: Optional[str] = None
     base_url: str = Field(..., min_length=1)
     auth: ConnectorAuth = Field(default_factory=ConnectorAuth)
@@ -44,8 +44,8 @@ class ConnectorCreate(BaseModel):
 
 
 class ConnectorUpdate(BaseModel):
-    namespace: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-    name: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    namespace: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+    name: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     description: Optional[str] = None
     base_url: Optional[str] = None
     auth: Optional[ConnectorAuth] = None
@@ -97,3 +97,7 @@ class OpenAPIImportResponse(BaseModel):
     operations: list[OperationConfig]
     warnings: list[str] = Field(default_factory=list)
     applied: int = 0
+    # Spec metadata for auto-populating connector fields
+    spec_title: Optional[str] = None
+    spec_description: Optional[str] = None
+    spec_base_url: Optional[str] = None

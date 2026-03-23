@@ -73,6 +73,18 @@ async def parse_openapi_standalone(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Extract spec metadata
+    info = spec.get("info", {})
+    spec_title = info.get("title")
+    spec_description = info.get("description")
+    servers = spec.get("servers", [])
+    spec_base_url = servers[0].get("url") if servers else None
+
+    # Derive base_url from spec_url if not in spec
+    if not spec_base_url and import_data.spec_url:
+        parsed_url = urlparse(import_data.spec_url)
+        spec_base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
     if import_data.operations:
         raw_ops = [op for op in raw_ops if op["name"] in import_data.operations]
 
@@ -84,7 +96,13 @@ async def parse_openapi_standalone(
         except Exception as e:
             warnings.append(f"Skipped operation '{op.get('name', '?')}': {e}")
 
-    return OpenAPIImportResponse(operations=parsed_ops, warnings=warnings)
+    return OpenAPIImportResponse(
+        operations=parsed_ops,
+        warnings=warnings,
+        spec_title=spec_title,
+        spec_description=spec_description,
+        spec_base_url=spec_base_url,
+    )
 
 
 @router.post("", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)

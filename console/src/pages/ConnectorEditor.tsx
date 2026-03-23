@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
+import { useToast } from '../lib/toast-context';
 import {
   Save, ArrowLeft, Plus, Trash2, Play, X, ChevronDown, ChevronRight,
   Upload, AlertCircle, Globe, FileText,
@@ -45,6 +46,7 @@ export function ConnectorEditor() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isNew = namespace === 'new' && name === 'new';
+  const { showSuccess } = useToast();
 
   const [formData, setFormData] = useState({
     namespace: 'default', name: '', description: '', base_url: '',
@@ -111,8 +113,13 @@ export function ConnectorEditor() {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['connectors'] });
-      if (isNew) navigate(`/connectors/${data.namespace}/${data.name}`, { replace: true });
-      else queryClient.invalidateQueries({ queryKey: ['connector', namespace, name] });
+      if (isNew) {
+        showSuccess('Connector created');
+        navigate(`/connectors/${data.namespace}/${data.name}`, { replace: true });
+      } else {
+        showSuccess('Connector saved');
+        queryClient.invalidateQueries({ queryKey: ['connector', namespace, name] });
+      }
     },
   });
 
@@ -122,6 +129,17 @@ export function ConnectorEditor() {
       setImportPreview(data);
       const allNames = new Set<string>(data.operations?.map((op: any) => op.name as string) || []);
       setImportSelected(allNames);
+
+      // Auto-populate connector fields from spec metadata (only if empty)
+      const updates: any = {};
+      if (data.spec_base_url && !formData.base_url) updates.base_url = data.spec_base_url;
+      if (data.spec_title && !formData.name) {
+        // Slugify title to a valid connector name
+        const slug = data.spec_title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        if (slug) updates.name = slug;
+      }
+      if (data.spec_description && !formData.description) updates.description = data.spec_description;
+      if (Object.keys(updates).length > 0) setFormData(prev => ({ ...prev, ...updates }));
     },
   });
 
