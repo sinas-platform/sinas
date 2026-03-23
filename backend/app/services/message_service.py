@@ -19,8 +19,10 @@ from app.models.llm_provider import LLMProvider
 from app.providers import create_provider
 from app.services.collection_tools import CollectionToolConverter
 from app.services.component_tools import ComponentToolConverter
+from app.services.connector_tools import ConnectorToolConverter
 from app.utils.schema import validate_with_coercion
 from app.services.content_tokens import strip_base64_data, refresh_message_tokens  # noqa: F401 — re-exported
+from app.services.hook_service import run_hooks, HookResult
 from app.services.conversation_history import build_conversation_history
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
@@ -54,6 +56,7 @@ class MessageService:
         self.skill_converter = SkillToolConverter()
         self.component_converter = ComponentToolConverter()
         self.collection_converter = CollectionToolConverter()
+        self.connector_converter = ConnectorToolConverter()
         self.context_tools = StateTools()
 
     async def create_chat_with_agent(
@@ -225,6 +228,36 @@ class MessageService:
         await self.db.commit()
         await self.db.refresh(user_message)
 
+        # Run user message hooks (before LLM call)
+        hook_result = None
+        if agent and agent.hooks and agent.hooks.get("on_user_message"):
+            hook_result = await run_hooks(
+                hooks=agent.hooks["on_user_message"],
+                message_content=content,
+                message_role="user",
+                chat_id=chat_id,
+                agent_namespace=agent.namespace,
+                agent_name=agent.name,
+                user_id=user_id,
+                session_key=getattr(chat, "session_key", None),
+            )
+            if hook_result.blocked:
+                # Save the block reply as assistant message
+                block_message = Message(
+                    chat_id=chat_id, role="assistant",
+                    content=hook_result.reply or "Message blocked by hook",
+                )
+                self.db.add(block_message)
+                await self.db.commit()
+                await self.db.refresh(block_message)
+                return {"blocked": True, "block_message": block_message}
+
+            if hook_result.mutated_content:
+                content = hook_result.mutated_content
+                # Update the saved user message with mutated content
+                user_message.content = strip_base64_data(content)
+                await self.db.commit()
+
         # Extract template variables from chat metadata if not provided
         final_template_variables = template_variables
         if final_template_variables is None and chat.chat_metadata:
@@ -253,6 +286,7 @@ class MessageService:
             skill_converter=self.skill_converter,
             component_converter=self.component_converter,
             collection_converter=self.collection_converter,
+            connector_converter=self.connector_converter,
         )
 
         # Create LLM provider
@@ -322,6 +356,10 @@ class MessageService:
             template_variables=None,
         )
 
+        # User hook blocked the pipeline
+        if prep.get("blocked"):
+            return prep["block_message"]
+
         start_time = datetime.now(UTC)
 
         llm_kwargs = {}
@@ -385,8 +423,34 @@ class MessageService:
             )
             return result.scalar_one()
 
+        assistant_content = response.get("content", "")
+
+        # Run assistant message hooks
+        agent = prep["chat"].agent if hasattr(prep["chat"], "agent") else None
+        if not agent:
+            agent_result = await self.db.execute(
+                select(Agent).where(Agent.id == prep["chat"].agent_id)
+            )
+            agent = agent_result.scalar_one_or_none()
+
+        if agent and agent.hooks and agent.hooks.get("on_assistant_message"):
+            hook_result = await run_hooks(
+                hooks=agent.hooks["on_assistant_message"],
+                message_content=assistant_content,
+                message_role="assistant",
+                chat_id=chat_id,
+                agent_namespace=agent.namespace,
+                agent_name=agent.name,
+                user_id=user_id,
+                session_key=getattr(prep["chat"], "session_key", None),
+            )
+            if hook_result.blocked:
+                assistant_content = hook_result.reply or "Response blocked by hook"
+            elif hook_result.mutated_content:
+                assistant_content = hook_result.mutated_content
+
         assistant_message = Message(
-            chat_id=chat_id, role="assistant", content=response.get("content", "")
+            chat_id=chat_id, role="assistant", content=assistant_content
         )
         self.db.add(assistant_message)
         await self.db.commit()
@@ -413,6 +477,12 @@ class MessageService:
             context_limit=5,
             template_variables=None,
         )
+
+        # User hook blocked the pipeline
+        if prep.get("blocked"):
+            yield {"type": "message", "content": prep["block_message"].content}
+            yield {"type": "done", "status": "blocked"}
+            return
 
         async for chunk in self._stream_response(
             llm_provider=prep["llm_provider"],
@@ -504,10 +574,37 @@ class MessageService:
                 args = safe_parse_arguments(tc["function"].get("arguments", ""))
                 tc["description"] = build_tool_status(tc["function"]["name"], args, status_templates)
 
+        # Run assistant message hooks (post-stream, retroactive update)
+        final_content = full_content
+        if final_content and not tool_calls:
+            chat = await self.db.get(Chat, chat_id)
+            agent = None
+            if chat and chat.agent_id:
+                agent_result = await self.db.execute(
+                    select(Agent).where(Agent.id == chat.agent_id)
+                )
+                agent = agent_result.scalar_one_or_none()
+
+            if agent and agent.hooks and agent.hooks.get("on_assistant_message"):
+                hook_result = await run_hooks(
+                    hooks=agent.hooks["on_assistant_message"],
+                    message_content=final_content,
+                    message_role="assistant",
+                    chat_id=chat_id,
+                    agent_namespace=agent.namespace,
+                    agent_name=agent.name,
+                    user_id=user_id,
+                    session_key=getattr(chat, "session_key", None),
+                )
+                if hook_result.blocked:
+                    final_content = hook_result.reply or "Response blocked by hook"
+                elif hook_result.mutated_content:
+                    final_content = hook_result.mutated_content
+
         assistant_message = Message(
             chat_id=chat_id,
             role="assistant",
-            content=full_content if full_content else None,
+            content=final_content if final_content else None,
             tool_calls=tool_calls if tool_calls else None,
         )
         self.db.add(assistant_message)
@@ -841,8 +938,35 @@ class MessageService:
                 yield result_chunk
             return
 
+        # Run assistant hooks on the final response (after all tool calls complete)
+        final_content = full_content
+        if final_content:
+            chat = await self.db.get(Chat, chat_id)
+            agent = None
+            if chat and chat.agent_id:
+                agent_result = await self.db.execute(
+                    select(Agent).where(Agent.id == chat.agent_id)
+                )
+                agent = agent_result.scalar_one_or_none()
+
+            if agent and agent.hooks and agent.hooks.get("on_assistant_message"):
+                hook_result = await run_hooks(
+                    hooks=agent.hooks["on_assistant_message"],
+                    message_content=final_content,
+                    message_role="assistant",
+                    chat_id=chat_id,
+                    agent_namespace=agent.namespace,
+                    agent_name=agent.name,
+                    user_id=user_id,
+                    session_key=getattr(chat, "session_key", None),
+                )
+                if hook_result.blocked:
+                    final_content = hook_result.reply or "Response blocked by hook"
+                elif hook_result.mutated_content:
+                    final_content = hook_result.mutated_content
+
         final_message = Message(
-            chat_id=chat_id, role="assistant", content=full_content if full_content else None
+            chat_id=chat_id, role="assistant", content=final_content if final_content else None
         )
         self.db.add(final_message)
         await self.db.commit()

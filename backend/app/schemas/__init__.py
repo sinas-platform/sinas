@@ -2,6 +2,7 @@ from .agent import *
 from .api_key import *
 from .manifest import *
 from .component import *
+from .connector import *
 from .container import *
 from .database_trigger import *
 from .auth import *
@@ -14,6 +15,7 @@ from .job import *
 from .package import *
 from .role import *
 from .schedule import *
+from .secret import *
 from .skill import *
 from .state import *
 from .store import *

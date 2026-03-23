@@ -7,6 +7,7 @@ from .endpoints import (
     manifests,
     collections,
     components,
+    connectors,
     config,
     containers,
     database_connections,
@@ -24,6 +25,7 @@ from .endpoints import (
     system,
     roles,
     schedules,
+    secrets,
     skills,
     stores,
     templates,
@@ -41,6 +43,7 @@ router.include_router(skills.router)
 router.include_router(components.router)
 router.include_router(collections.router)
 router.include_router(stores.router)
+router.include_router(connectors.router)
 router.include_router(llm_providers.router, prefix="/llm-providers", tags=["llm-providers"])
 router.include_router(database_connections.router, prefix="/database-connections", tags=["database-connections"])
 router.include_router(database_schema.router, prefix="/database-connections", tags=["database-schema"])
@@ -56,6 +59,7 @@ router.include_router(functions.router)
 router.include_router(webhooks.router)
 router.include_router(dependencies.router)
 router.include_router(schedules.router)
+router.include_router(secrets.router)
 router.include_router(database_triggers.router)
 
 # Observability routes

@@ -80,6 +80,43 @@ const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }>
       properties: {},
     },
   },
+  'message-hook': {
+    label: 'Message Hook',
+    input: {
+      type: "object",
+      properties: {
+        message: {
+          type: "object",
+          properties: {
+            role: { type: "string", description: "Message role: 'user' or 'assistant'" },
+            content: { type: "string", description: "Message content" },
+          },
+          required: ["role", "content"],
+          description: "The message being processed",
+        },
+        chat_id: { type: "string", description: "Chat ID" },
+        agent: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+            name: { type: "string" },
+          },
+          description: "Agent that owns this chat",
+        },
+        session_key: { type: "string", description: "Session key (if present)" },
+        user_id: { type: "string", description: "User ID" },
+      },
+      required: ["message", "chat_id", "agent", "user_id"],
+    },
+    output: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "Mutated message content (optional)" },
+        block: { type: "boolean", description: "If true, block the pipeline" },
+        reply: { type: "string", description: "Reply to send when blocking (optional)" },
+      },
+    },
+  },
 };
 
 export function FunctionEditor() {
@@ -737,8 +774,9 @@ print(details["status"], details["output_data"])`,
     #     "user_email":     str,   # Email of the triggering user
     #     "access_token":   str,   # Short-lived JWT for calling the SINAS API
     #     "execution_id":   str,   # Unique execution ID
-    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "MANUAL"
+    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "HOOK" | "MANUAL"
     #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
+    #     "secrets":        dict,  # Decrypted secrets (shared pool only): {"NAME": "value"}
     # }
 
     return {"result": "..."}  # Must match Output Schema`}</pre>
@@ -817,6 +855,52 @@ print(details["status"], details["output_data"])`,
 # }
 # Return value is ignored (fire-and-forget).`}</pre>
                   </div>
+                </div>
+              </div>
+
+              {/* Message hooks */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-100 mb-2">Message hooks</h4>
+                <p className="text-xs text-gray-400 mb-2">
+                  Functions can be used as message lifecycle hooks on agents. Configure in the agent's Hooks tab.
+                </p>
+                <div className="space-y-3">
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <p className="text-xs text-blue-400 font-medium mb-1">Hook input</p>
+                    <pre className="text-xs text-gray-100 font-mono">{`# input_data = {
+#     "message":     {"role": "user"|"assistant", "content": "..."},
+#     "chat_id":     str,
+#     "agent":       {"namespace": "...", "name": "..."},
+#     "session_key": str | None,
+#     "user_id":     str,
+# }`}</pre>
+                  </div>
+                  <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                    <p className="text-xs text-blue-400 font-medium mb-1">Hook return values</p>
+                    <pre className="text-xs text-gray-100 font-mono">{`# Pass through (no change):
+return None
+
+# Mutate message content:
+return {"content": "modified content"}
+
+# Block the pipeline (sync hooks only):
+return {"block": True, "reply": "Sorry, that message was blocked"}
+
+# Async hooks: return value updates stored message retroactively`}</pre>
+                  </div>
+                </div>
+              </div>
+
+              {/* Secrets */}
+              <div>
+                <h4 className="text-sm font-semibold text-gray-100 mb-2">Secrets (shared pool only)</h4>
+                <p className="text-xs text-gray-400 mb-2">
+                  Functions running in the shared pool can access encrypted secrets via <code className="font-mono bg-[#161616] px-1 rounded">context['secrets']</code>.
+                </p>
+                <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
+                  <pre className="text-xs text-gray-100 font-mono">{`def handler(input_data, context):
+    token = context['secrets']['SLACK_BOT_TOKEN']
+    # Use token to call external API...`}</pre>
                 </div>
               </div>
             </div>

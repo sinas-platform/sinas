@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Index, JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, created_at, updated_at, uuid_pk
@@ -29,12 +29,25 @@ class Chat(Base):
     keep_alive: Mapped[Optional[bool]] = mapped_column(Boolean)
     active_channel_id: Mapped[Optional[str]] = mapped_column(String(255))
 
+    # Session key for conversation continuity (one chat per agent+session_key)
+    session_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True, index=True)
+
     # Chat metadata for creation context (agent input, resolved function params, etc.)
     chat_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)
     # Example: {"agent_input": {"my_city": "London"}, "resolved_function_params": {"check_weather": {"city": "London"}}}
 
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]
+
+    __table_args__ = (
+        Index(
+            "uq_chat_agent_session_key",
+            "agent_id",
+            "session_key",
+            unique=True,
+            postgresql_where=text("session_key IS NOT NULL AND archived = false"),
+        ),
+    )
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="chats")

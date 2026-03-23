@@ -16,6 +16,7 @@ class TriggerType(str, enum.Enum):
     MANUAL = "MANUAL"  # Triggered manually from UI
     API = "API"  # Triggered via runtime API
     CDC = "CDC"  # Triggered by CDC (Change Data Capture) polling
+    HOOK = "HOOK"  # Triggered by message lifecycle hook
 
 
 class ExecutionStatus(str, enum.Enum):

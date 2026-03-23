@@ -603,6 +603,20 @@ class SharedWorkerManager:
                 "errors": errors if errors else None,
             }
 
+    async def _load_secrets(self, db) -> dict[str, str]:
+        """Load all secrets, decrypt, return as {name: value} dict."""
+        from app.core.encryption import encryption_service
+        from app.models.secret import Secret
+
+        result = await db.execute(select(Secret))
+        secrets = {}
+        for secret in result.scalars().all():
+            try:
+                secrets[secret.name] = encryption_service.decrypt(secret.encrypted_value)
+            except Exception:
+                logger.warning(f"Failed to decrypt secret '{secret.name}', skipping")
+        return secrets
+
     async def execute_function(
         self,
         user_id: str,
@@ -689,6 +703,7 @@ class SharedWorkerManager:
                     "execution_id": execution_id,
                     "trigger_type": trigger_type,
                     "chat_id": chat_id,
+                    "secrets": await self._load_secrets(db),
                 },
             }
 

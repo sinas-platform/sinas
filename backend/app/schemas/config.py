@@ -182,6 +182,8 @@ class AgentConfig(BaseModel):
     )  # {"namespace/name": {"param": "value or {{template}}"}}
     enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
     enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
+    enabledConnectors: list[dict[str, Any]] = Field(default_factory=list)  # [{"connector": "ns/name", "operations": [...]}]
+    hooks: Optional[dict[str, Any]] = None  # {"onUserMessage": [...], "onAssistantMessage": [...]}
     icon: Optional[str] = None
     isDefault: bool = False
     defaultJobTimeout: Optional[int] = None
@@ -309,6 +311,57 @@ class DatabaseTriggerConfig(BaseModel):
         return v
 
 
+class SecretConfig(BaseModel):
+    """Secret configuration"""
+
+    name: str
+    value: Optional[str] = None  # Omit to skip value update on re-apply
+    description: Optional[str] = None
+
+
+class ConnectorOperationConfig(BaseModel):
+    """Connector operation configuration"""
+
+    name: str
+    method: str
+    path: str
+    description: Optional[str] = None
+    parameters: dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    requestBodyMapping: str = "json"
+    responseMapping: str = "json"
+
+
+class ConnectorAuthConfig(BaseModel):
+    """Connector auth configuration"""
+
+    type: str = "none"
+    secret: Optional[str] = None
+    header: Optional[str] = None
+    position: Optional[str] = None
+    paramName: Optional[str] = None
+
+
+class ConnectorRetryConfig(BaseModel):
+    """Connector retry configuration"""
+
+    maxAttempts: int = 1
+    backoff: str = "none"
+
+
+class ConnectorConfig(BaseModel):
+    """Connector configuration"""
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    baseUrl: str
+    auth: ConnectorAuthConfig = Field(default_factory=ConnectorAuthConfig)
+    headers: dict[str, str] = Field(default_factory=dict)
+    retry: ConnectorRetryConfig = Field(default_factory=ConnectorRetryConfig)
+    timeoutSeconds: int = 30
+    operations: list[ConnectorOperationConfig] = Field(default_factory=list)
+
+
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
@@ -316,6 +369,8 @@ class ConfigSpec(BaseModel):
     users: list[UserConfig] = Field(default_factory=list)
     llmProviders: list[LLMProviderConfig] = Field(default_factory=list)
     databaseConnections: list[DatabaseConnectionConfig] = Field(default_factory=list)
+    secrets: list[SecretConfig] = Field(default_factory=list)
+    connectors: list[ConnectorConfig] = Field(default_factory=list)
 
     skills: list[SkillConfig] = Field(default_factory=list)
     components: list[ComponentConfig] = Field(default_factory=list)

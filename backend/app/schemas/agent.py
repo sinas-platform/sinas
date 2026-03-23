@@ -24,6 +24,26 @@ class EnabledStoreConfig(BaseModel):
     )
 
 
+class HookConfig(BaseModel):
+    """Configuration for a single message hook."""
+
+    function: str = Field(..., description="Function reference in format 'namespace/name'")
+    async_: bool = Field(default=False, alias="async", description="If true, fire-and-forget")
+    on_timeout: str = Field(
+        default="passthrough", pattern=r"^(block|passthrough)$",
+        description="Behavior on timeout: 'block' stops the pipeline, 'passthrough' continues"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class AgentHooks(BaseModel):
+    """Message lifecycle hooks configuration."""
+
+    on_user_message: list[HookConfig] = Field(default_factory=list)
+    on_assistant_message: list[HookConfig] = Field(default_factory=list)
+
+
 class AgentCreate(BaseModel):
     namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -59,6 +79,8 @@ class AgentCreate(BaseModel):
     enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
+    enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_default: Optional[bool] = False
 
@@ -105,6 +127,8 @@ class AgentUpdate(BaseModel):
     enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
     enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
+    enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
@@ -139,6 +163,8 @@ class AgentResponse(BaseModel):
     enabled_stores: list[EnabledStoreConfig] = []
     enabled_collections: list[str] = []
     enabled_components: list[str] = []
+    enabled_connectors: list[dict[str, Any]] = []
+    hooks: Optional[dict[str, Any]] = None
     icon: Optional[str] = None
     icon_url: Optional[str] = None
     is_active: bool

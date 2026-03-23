@@ -8,18 +8,213 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.encryption import encryption_service
 from app.models.component import Component
 from app.models.database_connection import DatabaseConnection
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.manifest import Manifest
 from app.models.query import Query
+from app.models.connector import Connector
+from app.models.secret import Secret
 from app.models.skill import Skill
 from app.models.store import Store
 
 from app.services.config_apply.normalizers import normalize_store_references
 
 logger = logging.getLogger(__name__)
+
+
+async def apply_connectors(
+    db: AsyncSession,
+    connectors: list,
+    dry_run: bool,
+    managed_by: str,
+    config_name: str,
+    owner_user_id: str,
+    calculate_hash: Any,
+    track_change: Any,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Apply connector configurations."""
+    for conn_config in connectors:
+        resource_name = f"{conn_config.namespace}/{conn_config.name}"
+        try:
+            stmt = select(Connector).where(
+                Connector.namespace == conn_config.namespace,
+                Connector.name == conn_config.name,
+            )
+            result = await db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            # Convert operations to dicts
+            operations = []
+            for op in conn_config.operations:
+                operations.append({
+                    "name": op.name,
+                    "method": op.method,
+                    "path": op.path,
+                    "description": op.description,
+                    "parameters": op.parameters,
+                    "request_body_mapping": op.requestBodyMapping,
+                    "response_mapping": op.responseMapping,
+                })
+
+            auth = {
+                "type": conn_config.auth.type,
+                "secret": conn_config.auth.secret,
+                "header": conn_config.auth.header,
+                "position": conn_config.auth.position,
+                "param_name": conn_config.auth.paramName,
+            }
+            # Remove None values from auth
+            auth = {k: v for k, v in auth.items() if v is not None}
+
+            retry = {
+                "max_attempts": conn_config.retry.maxAttempts,
+                "backoff": conn_config.retry.backoff,
+            }
+
+            config_hash = calculate_hash({
+                "namespace": conn_config.namespace,
+                "name": conn_config.name,
+                "base_url": conn_config.baseUrl,
+                "auth": auth,
+                "headers": conn_config.headers,
+                "retry": retry,
+                "timeout_seconds": conn_config.timeoutSeconds,
+                "operations": operations,
+            })
+
+            if existing:
+                if existing.managed_by and existing.managed_by != managed_by:
+                    warnings.append(
+                        f"Connector '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
+                    )
+                    track_change("unchanged", "connectors", resource_name)
+                    continue
+
+                if existing.config_checksum == config_hash:
+                    track_change("unchanged", "connectors", resource_name)
+                    continue
+
+                if not dry_run:
+                    existing.base_url = conn_config.baseUrl
+                    existing.description = conn_config.description
+                    existing.auth = auth
+                    existing.headers = conn_config.headers
+                    existing.retry = retry
+                    existing.timeout_seconds = conn_config.timeoutSeconds
+                    existing.operations = operations
+                    existing.managed_by = managed_by
+                    existing.config_name = config_name
+                    existing.config_checksum = config_hash
+
+                track_change("update", "connectors", resource_name)
+            else:
+                if not dry_run:
+                    connector = Connector(
+                        user_id=owner_user_id,
+                        namespace=conn_config.namespace,
+                        name=conn_config.name,
+                        description=conn_config.description,
+                        base_url=conn_config.baseUrl,
+                        auth=auth,
+                        headers=conn_config.headers,
+                        retry=retry,
+                        timeout_seconds=conn_config.timeoutSeconds,
+                        operations=operations,
+                        managed_by=managed_by,
+                        config_name=config_name,
+                        config_checksum=config_hash,
+                    )
+                    db.add(connector)
+
+                track_change("create", "connectors", resource_name)
+
+        except Exception as e:
+            errors.append(f"Failed to apply connector '{resource_name}': {e}")
+            logger.exception(f"Error applying connector '{resource_name}'")
+
+
+async def apply_secrets(
+    db: AsyncSession,
+    secrets: list,
+    dry_run: bool,
+    managed_by: str,
+    config_name: str,
+    owner_user_id: str,
+    calculate_hash: Any,
+    track_change: Any,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Apply secret configurations."""
+    for secret_config in secrets:
+        resource_name = secret_config.name
+        try:
+            stmt = select(Secret).where(Secret.name == secret_config.name)
+            result = await db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            # Hash only includes name (not value) so re-apply without value doesn't trigger update
+            config_hash = calculate_hash(
+                {
+                    "name": secret_config.name,
+                    "description": secret_config.description,
+                }
+            )
+
+            if existing:
+                if existing.managed_by and existing.managed_by != managed_by:
+                    warnings.append(
+                        f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
+                    )
+                    track_change("unchanged", "secrets", resource_name)
+                    continue
+
+                # Always update value if provided, regardless of hash
+                needs_update = existing.config_checksum != config_hash or secret_config.value is not None
+
+                if not needs_update:
+                    track_change("unchanged", "secrets", resource_name)
+                    continue
+
+                if not dry_run:
+                    if secret_config.value is not None:
+                        existing.encrypted_value = encryption_service.encrypt(secret_config.value)
+                    if secret_config.description is not None:
+                        existing.description = secret_config.description
+                    existing.managed_by = managed_by
+                    existing.config_name = config_name
+                    existing.config_checksum = config_hash
+
+                track_change("update", "secrets", resource_name)
+            else:
+                if secret_config.value is None:
+                    errors.append(
+                        f"Secret '{resource_name}' does not exist and no value provided — cannot create."
+                    )
+                    continue
+
+                if not dry_run:
+                    secret = Secret(
+                        user_id=owner_user_id,
+                        name=secret_config.name,
+                        encrypted_value=encryption_service.encrypt(secret_config.value),
+                        description=secret_config.description,
+                        managed_by=managed_by,
+                        config_name=config_name,
+                        config_checksum=config_hash,
+                    )
+                    db.add(secret)
+
+                track_change("create", "secrets", resource_name)
+
+        except Exception as e:
+            errors.append(f"Failed to apply secret '{resource_name}': {e}")
+            logger.exception(f"Error applying secret '{resource_name}'")
 
 
 async def apply_queries(

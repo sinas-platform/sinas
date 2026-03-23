@@ -26,6 +26,8 @@ import {
   SearchCode,
   Package,
   HardDrive,
+  KeyRound,
+  Plug,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -52,6 +54,8 @@ const navigationSections = [
       { name: 'LLM Providers', href: '/llm-providers', icon: Brain },
       { name: 'Databases', href: '/database-connections', icon: Cable },
       { name: 'Templates', href: '/templates', icon: FileText },
+      { name: 'Connectors', href: '/connectors', icon: Plug },
+      { name: 'Secrets', href: '/secrets', icon: KeyRound },
     ],
   },
   {

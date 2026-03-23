@@ -51,36 +51,39 @@ async def _do_compile(component_id, namespace: str, name: str):
     Uses explicit commit() — this runs outside get_db so flush() would leave
     the transaction open indefinitely, blocking all other DB connections.
     """
+    # Set status to "compiling" in one short transaction
     async with AsyncSessionLocal() as db:
-        try:
-            component = await db.execute(
-                select(Component).where(Component.id == component_id)
-            )
-            component = component.scalar_one_or_none()
-            if not component:
-                return
+        result = await db.execute(select(Component).where(Component.id == component_id))
+        component = result.scalar_one_or_none()
+        if not component:
+            return
+        source_code = component.source_code
+        component.compile_status = "compiling"
+        await db.commit()
 
-            component.compile_status = "compiling"
-            await db.commit()
+    # Compile (no DB connection held during this potentially slow call)
+    builder = ComponentBuilderService()
+    compile_result = await builder.compile(source_code)
 
-            builder = ComponentBuilderService()
-            result = await builder.compile(component.source_code)
+    # Save result in a new short transaction
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Component).where(Component.id == component_id))
+        component = result.scalar_one_or_none()
+        if not component:
+            return
 
-            if result["success"]:
-                component.compiled_bundle = result["bundle"]
-                component.source_map = result.get("sourceMap")
-                component.compile_status = "success"
-                component.compile_errors = None
-            else:
-                component.compile_status = "error"
-                component.compile_errors = result.get("errors", [])
-                component.compiled_bundle = None
-                component.source_map = None
+        if compile_result["success"]:
+            component.compiled_bundle = compile_result["bundle"]
+            component.source_map = compile_result.get("sourceMap")
+            component.compile_status = "success"
+            component.compile_errors = None
+        else:
+            component.compile_status = "error"
+            component.compile_errors = compile_result.get("errors", [])
+            component.compiled_bundle = None
+            component.source_map = None
 
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+        await db.commit()
 
 
 @router.post("", response_model=ComponentResponse, status_code=status.HTTP_201_CREATED)

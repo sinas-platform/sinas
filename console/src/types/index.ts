@@ -68,6 +68,7 @@ export interface Chat {
   agent_name: string | null;
   title: string;
   archived: boolean;
+  session_key: string | null;
   expires_at: string | null;
   keep_alive: boolean | null;
   active_channel_id: string | null;
@@ -214,6 +215,8 @@ export interface Agent {
   enabled_stores: EnabledStoreConfig[];
   enabled_collections: string[];
   enabled_components: string[];
+  enabled_connectors: EnabledConnectorConfig[];
+  hooks: AgentHooks | null;
   status_templates: Record<string, string>;
   icon: string | null;
   icon_url: string | null;
@@ -246,6 +249,8 @@ export interface AgentCreate {
   query_parameters?: FunctionParameters;
   enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: string[];
+  enabled_connectors?: EnabledConnectorConfig[];
+  hooks?: AgentHooks;
   icon?: string;
   is_default?: boolean;
   default_job_timeout?: number;
@@ -274,6 +279,8 @@ export interface AgentUpdate {
   enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: string[];
   enabled_components?: string[];
+  enabled_connectors?: EnabledConnectorConfig[];
+  hooks?: AgentHooks;
   status_templates?: Record<string, string>;
   icon?: string;
   is_active?: boolean;
@@ -363,38 +370,88 @@ export interface FunctionUpdate {
   is_active?: boolean;
 }
 
-// OpenAPI Import
-export interface OpenAPIImportRequest {
-  spec?: string;
-  spec_url?: string;
-  namespace?: string;
-  base_url_override?: string;
-  auth_type: string;
-  auth_header: string;
-  auth_state_namespace?: string;
-  auth_state_key?: string;
-  operations?: string[];
-  dry_run: boolean;
-}
-
-export interface OpenAPIFunctionPreview {
+// Connectors
+export interface ConnectorOperation {
   name: string;
-  description: string | null;
   method: string;
   path: string;
-  operation_id: string | null;
-  input_schema: Record<string, any>;
-  output_schema: Record<string, any>;
-  code: string;
-  status: string;
+  description: string | null;
+  parameters: Record<string, any>;
+  request_body_mapping: string;
+  response_mapping: string;
 }
 
-export interface OpenAPIImportResponse {
+export interface ConnectorAuth {
+  type: string;
+  secret?: string;
+  header?: string;
+  position?: string;
+  param_name?: string;
+}
+
+export interface ConnectorRetry {
+  max_attempts: number;
+  backoff: string;
+}
+
+export interface Connector {
+  id: string;
   namespace: string;
-  functions: OpenAPIFunctionPreview[];
-  warnings: string[];
-  created: number;
-  skipped: number;
+  name: string;
+  description: string | null;
+  base_url: string;
+  auth: ConnectorAuth;
+  headers: Record<string, string>;
+  retry: ConnectorRetry;
+  timeout_seconds: number;
+  operations: ConnectorOperation[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConnectorCreate {
+  namespace?: string;
+  name: string;
+  description?: string;
+  base_url: string;
+  auth?: ConnectorAuth;
+  headers?: Record<string, string>;
+  retry?: ConnectorRetry;
+  timeout_seconds?: number;
+  operations?: ConnectorOperation[];
+}
+
+export interface ConnectorUpdate {
+  namespace?: string;
+  name?: string;
+  description?: string;
+  base_url?: string;
+  auth?: ConnectorAuth;
+  headers?: Record<string, string>;
+  retry?: ConnectorRetry;
+  timeout_seconds?: number;
+  operations?: ConnectorOperation[];
+  is_active?: boolean;
+}
+
+// Hook config for agents
+export interface HookConfig {
+  function: string;  // "namespace/name"
+  async: boolean;
+  on_timeout: 'block' | 'passthrough';
+}
+
+export interface AgentHooks {
+  on_user_message: HookConfig[];
+  on_assistant_message: HookConfig[];
+}
+
+// Enabled connector config for agents
+export interface EnabledConnectorConfig {
+  connector: string;  // "namespace/name"
+  operations: string[];
+  parameters?: Record<string, Record<string, string>>;
 }
 
 // Webhooks

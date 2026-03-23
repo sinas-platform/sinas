@@ -92,6 +92,17 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "actions": ["create", "read", "update", "delete", "write_state", "read_state"],
         "namespaced": True,
     },
+    {
+        "resource": "connectors",
+        "description": "HTTP connectors",
+        "actions": ["create", "read", "update", "delete"],
+        "namespaced": True,
+    },
+    {
+        "resource": "secrets",
+        "description": "Encrypted secrets",
+        "actions": ["create", "read", "update", "delete"],
+    },
     # --- User / auth resources ---
     {
         "resource": "users",
