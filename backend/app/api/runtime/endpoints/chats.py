@@ -54,14 +54,24 @@ async def with_heartbeat(aiter, interval: int = HEARTBEAT_INTERVAL):
 
     Prevents browser/proxy timeouts when no data is being sent (e.g., during
     long tool executions in inline streaming mode).
+
+    Uses asyncio.shield to prevent cancellation of the generator's __anext__
+    when sending heartbeat pings.
     """
     ait = aiter.__aiter__()
+    pending = None
     while True:
+        if pending is None:
+            pending = asyncio.ensure_future(ait.__anext__())
         try:
-            chunk = await asyncio.wait_for(ait.__anext__(), timeout=interval)
+            chunk = await asyncio.wait_for(asyncio.shield(pending), timeout=interval)
+            pending = None
             yield chunk
         except asyncio.TimeoutError:
+            # Ping without cancelling the pending __anext__
             yield {"event": "ping", "data": ""}
+        except StopAsyncIteration:
+            break
         except StopAsyncIteration:
             return
 
@@ -497,7 +507,7 @@ async def stream_message(
                 chat_id=str(chat.id), user_id=user_id, user_token=user_token, content=content_str
             ):
                 # Accumulate content BEFORE yielding
-                if chunk.get("content"):
+                if chunk.get("content") and isinstance(chunk["content"], str):
                     accumulated_content["content"] += chunk["content"]
 
                 try:

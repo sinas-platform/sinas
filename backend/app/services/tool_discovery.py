@@ -309,6 +309,25 @@ async def get_available_tools(
         )
         tools.extend(connector_tools)
 
+    # Add built-in retrieve_tool_result tool (always available)
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "retrieve_tool_result",
+            "description": "Retrieve the full result of a previous tool call by its ID. Use this when you need to access data from an earlier tool call that is no longer shown inline.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_call_id": {
+                        "type": "string",
+                        "description": "The tool_call_id to look up",
+                    }
+                },
+                "required": ["tool_call_id"],
+            },
+        },
+    })
+
     # Add code execution tool if enabled on the agent
     if agent.enable_code_execution:
         tools.append(await get_code_exec_tool_definition(db))

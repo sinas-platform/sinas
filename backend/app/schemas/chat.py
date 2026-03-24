@@ -77,10 +77,11 @@ class ImageContentPart(BaseModel):
 
 
 class AudioContentPart(BaseModel):
-    """Base64-encoded audio content."""
+    """Audio content via base64 data or URL."""
 
     type: Literal["audio"]
-    data: str = Field(description="Base64-encoded audio data")
+    data: Optional[str] = Field(None, description="Base64-encoded audio data")
+    url: Optional[str] = Field(None, description="URL pointing to the audio file (e.g., from a collection)")
     format: Literal["wav", "mp3", "m4a", "ogg"]
 
 

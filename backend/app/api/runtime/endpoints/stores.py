@@ -164,6 +164,7 @@ async def list_states(
     request: Request,
     search: Optional[str] = Query(None),
     tags: Optional[str] = Query(None),
+    owner: Optional[str] = Query(None, description="Filter by owner: 'me' (default), 'all', or a user ID"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
@@ -196,23 +197,35 @@ async def list_states(
         tag_list = [t.strip() for t in tags.split(",")]
         query = query.where(State.tags.contains(tag_list))
 
-    result = await db.execute(query.offset(skip).limit(limit))
-    all_states = result.scalars().all()
-
-    # Filter by visibility/ownership
+    # Owner filter
     perm_all = f"sinas.stores/{namespace}/{name}.read_state:all"
     has_all = check_permission(permissions, perm_all)
 
-    accessible = []
-    for state in all_states:
-        if state.user_id == user_uuid:
-            accessible.append(state)
-        elif has_all:
-            accessible.append(state)
-        elif state.visibility != "private":
-            accessible.append(state)
+    if owner == "all" and has_all:
+        pass  # No user filter — admin sees everything
+    elif owner and owner != "me" and has_all:
+        # Specific user ID filter
+        try:
+            query = query.where(State.user_id == uuid.UUID(owner))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid user ID")
+    else:
+        # Default: own states only (+ shared if no explicit filter)
+        if has_all and not owner:
+            # Admin without explicit filter: show own by default
+            query = query.where(State.user_id == user_uuid)
+        elif not has_all:
+            # Non-admin: own + shared/public
+            query = query.where(
+                or_(State.user_id == user_uuid, State.visibility != "private")
+            )
+        else:
+            query = query.where(State.user_id == user_uuid)
 
-    return [_state_to_response(s, store) for s in accessible]
+    result = await db.execute(query.offset(skip).limit(limit))
+    all_states = result.scalars().all()
+
+    return [_state_to_response(s, store) for s in all_states]
 
 
 @router.get("/{namespace}/{name}/states/{key}", response_model=StateResponse)

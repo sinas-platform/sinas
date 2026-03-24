@@ -10,7 +10,8 @@ from app.core.permissions import check_permission
 from app.models.function import Function
 from app.services.template_renderer import render_function_parameters
 
-from app.models.execution import TriggerType
+from app.models.execution import Execution, TriggerType
+from sqlalchemy import select
 from app.services.execution_engine import FunctionExecutionError, executor
 
 logger = logging.getLogger(__name__)
@@ -189,6 +190,7 @@ class FunctionToolConverter:
         locked_params: Optional[dict[str, Any]] = None,
         overridable_params: Optional[dict[str, Any]] = None,
         enabled_functions: Optional[list[str]] = None,
+        tool_call_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Execute a function as a tool call.
@@ -299,6 +301,21 @@ class FunctionToolConverter:
                 user_id=user_id,
                 chat_id=chat_id,
             )
+
+            # Link execution to the tool_call that triggered it
+            if tool_call_id:
+                try:
+                    from app.core.database import AsyncSessionLocal
+                    async with AsyncSessionLocal() as link_db:
+                        exec_result = await link_db.execute(
+                            select(Execution).where(Execution.execution_id == execution_id)
+                        )
+                        execution = exec_result.scalar_one_or_none()
+                        if execution:
+                            execution.tool_call_id = tool_call_id
+                            await link_db.commit()
+                except Exception:
+                    logger.debug(f"Failed to link tool_call_id to execution {execution_id}")
 
             # Return execution result (raw value on success)
             logger.debug(f"Function execution succeeded: {result}")

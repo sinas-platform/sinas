@@ -8,12 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
-from app.models.execution import Execution, ExecutionStatus, StepExecution
+from app.models.execution import Execution, ExecutionStatus
 from app.schemas import (
     ContinueExecutionRequest,
     ContinueExecutionResponse,
     ExecutionResponse,
-    StepExecutionResponse,
 )
 
 from app.services.execution_engine import executor
@@ -29,6 +28,8 @@ async def list_executions(
     limit: int = Query(100, ge=1, le=1000),
     function_name: Optional[str] = None,
     status: Optional[ExecutionStatus] = None,
+    chat_id: Optional[str] = None,
+    trigger_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
@@ -47,6 +48,10 @@ async def list_executions(
         query = query.where(Execution.function_name == function_name)
     if status:
         query = query.where(Execution.status == status)
+    if chat_id:
+        query = query.where(Execution.chat_id == chat_id)
+    if trigger_type:
+        query = query.where(Execution.trigger_type == trigger_type)
 
     query = query.order_by(Execution.started_at.desc()).offset(skip).limit(limit)
     result = await db.execute(query)
@@ -94,42 +99,6 @@ async def get_execution(
         }
 
     raise HTTPException(status_code=404, detail="Execution not found")
-
-
-@router.get("/{execution_id}/steps", response_model=list[StepExecutionResponse])
-async def get_execution_steps(
-    request: Request,
-    execution_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user_data=Depends(get_current_user_with_permissions),
-):
-    """Get all steps for an execution."""
-    user_id, permissions = current_user_data
-
-    # First check if execution exists and user has access
-    result = await db.execute(select(Execution).where(Execution.execution_id == execution_id))
-    execution = result.scalar_one_or_none()
-
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
-
-    if check_permission(permissions, "sinas.executions.read:all"):
-        set_permission_used(request, "sinas.executions.read:all")
-    else:
-        if execution.user_id != user_id:
-            set_permission_used(request, "sinas.executions.read:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to view this execution")
-        set_permission_used(request, "sinas.executions.read:own")
-
-    # Get steps
-    result = await db.execute(
-        select(StepExecution)
-        .where(StepExecution.execution_id == execution_id)
-        .order_by(StepExecution.started_at)
-    )
-    steps = result.scalars().all()
-
-    return steps
 
 
 @router.post("/{execution_id}/continue", response_model=ContinueExecutionResponse)

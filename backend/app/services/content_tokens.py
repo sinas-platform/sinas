@@ -27,54 +27,81 @@ def generate_component_render_token(
     return jose_jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
 
 
-def refresh_sinas_image_urls(content_parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _refresh_file_serve_url(url: str) -> str | None:
+    """Refresh a /files/serve/ URL if its token is near expiry.
+
+    Returns refreshed URL, or None if refresh fails.
+    """
+    token = url.rsplit("/files/serve/", 1)[-1]
+    try:
+        payload = jose_jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+            options={"verify_exp": False},
+        )
+        file_id = payload.get("file_id")
+        version = payload.get("version")
+        if file_id is None or version is None:
+            return None
+
+        # Keep existing URL if token still has > 10 min remaining
+        exp = payload.get("exp", 0)
+        if exp - time.time() > 600:
+            return url
+
+        return generate_file_url(str(file_id), version) or None
+    except Exception:
+        logger.debug("Failed to refresh file-serve URL", exc_info=True)
+        return None
+
+
+def refresh_sinas_file_urls(content_parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Refresh expired SINAS file-serve URLs in multimodal content.
 
-    Detects image parts whose URL points to /files/serve/{jwt}, decodes the
-    expired JWT to extract file_id + version, and regenerates a fresh signed
-    URL.  External URLs are left untouched.
+    Handles all content types that can reference /files/serve/ URLs:
+    image (image field), audio (data field if URL), file (file_url field).
+    External URLs are left untouched.
     """
     refreshed: list[dict[str, Any]] = []
     for part in content_parts:
-        if part.get("type") != "image":
-            refreshed.append(part)
-            continue
+        ptype = part.get("type")
 
-        url = part.get("image", "")
-        if "/files/serve/" not in url:
-            # External URL — pass through
-            refreshed.append(part)
-            continue
-
-        # Extract the JWT token (last path segment)
-        token = url.rsplit("/files/serve/", 1)[-1]
-        try:
-            payload = jose_jwt.decode(
-                token,
-                settings.secret_key,
-                algorithms=[settings.algorithm],
-                options={"verify_exp": False},
-            )
-            file_id = payload.get("file_id")
-            version = payload.get("version")
-            if file_id is None or version is None:
-                raise ValueError("Missing file_id or version in token")
-
-            # Keep existing URL if token still has > 10 min remaining
-            exp = payload.get("exp", 0)
-            if exp - time.time() > 600:
+        if ptype == "image":
+            url = part.get("image", "")
+            if "/files/serve/" not in url:
                 refreshed.append(part)
                 continue
-
-            new_url = generate_file_url(str(file_id), version)
+            new_url = _refresh_file_serve_url(url)
             if new_url:
                 refreshed.append({**part, "image": new_url})
             else:
-                # Domain not set / localhost — drop image, add placeholder
-                refreshed.append({"type": "text", "text": "[Image unavailable]"})
-        except Exception:
-            logger.debug("Failed to refresh SINAS image URL, replacing with placeholder", exc_info=True)
-            refreshed.append({"type": "text", "text": "[Image no longer available]"})
+                refreshed.append({"type": "text", "text": "[Image no longer available]"})
+
+        elif ptype == "audio":
+            url = part.get("url", "")
+            if "/files/serve/" in url:
+                new_url = _refresh_file_serve_url(url)
+                if new_url:
+                    refreshed.append({**part, "url": new_url})
+                else:
+                    refreshed.append({"type": "text", "text": "[Audio no longer available]"})
+            else:
+                refreshed.append(part)
+
+        elif ptype == "file":
+            url = part.get("file_url", "")
+            if "/files/serve/" in url:
+                new_url = _refresh_file_serve_url(url)
+                if new_url:
+                    refreshed.append({**part, "file_url": new_url})
+                else:
+                    refreshed.append({"type": "text", "text": f"[File '{part.get('filename', '')}' no longer available]"})
+            else:
+                refreshed.append(part)
+
+        else:
+            refreshed.append(part)
 
     return refreshed
 
@@ -152,16 +179,25 @@ def strip_base64_data(content: str | None) -> str | None:
             continue
 
         p = dict(part)
-        # Image: strip data URIs (data:image/...) but keep regular URLs
-        if p.get("type") == "image" and isinstance(p.get("image"), str):
+        ptype = p.get("type")
+
+        if ptype == "image" and isinstance(p.get("image"), str):
             if p["image"].startswith("data:"):
-                p["image"] = "data:stripped"
-        # Audio: always inline base64
-        if p.get("type") == "audio" and p.get("data"):
-            p["data"] = "stripped"
-        # File: strip inline base64 file data
-        if p.get("type") == "file" and p.get("file_data"):
-            p["file_data"] = "stripped"
+                # Inline data: URI — replace with text placeholder
+                stripped.append({"type": "text", "text": "[User sent an image (inline data, no longer available)]"})
+                continue
+
+        elif ptype == "audio" and p.get("data") and not p.get("url"):
+            # Inline base64 audio without a persistent URL — replace with text
+            fmt = p.get("format", "audio")
+            stripped.append({"type": "text", "text": f"[User sent {fmt} audio (inline data, no longer available — upload to a collection for persistence)]"})
+            continue
+
+        elif ptype == "file" and p.get("file_data") and not p.get("file_url"):
+            # Inline base64 file without a persistent URL — replace with text
+            fname = p.get("filename", "a file")
+            stripped.append({"type": "text", "text": f"[User sent '{fname}' (inline data, no longer available — upload to a collection for persistence)]"})
+            continue
 
         stripped.append(p)
 
@@ -179,7 +215,7 @@ def refresh_message_tokens(content: str | None, user_id: str) -> str | None:
         return content
 
     if isinstance(parsed, list):
-        parsed = refresh_sinas_image_urls(parsed)
+        parsed = refresh_sinas_file_urls(parsed)
         parsed = refresh_component_render_tokens(parsed, user_id)
         return json.dumps(parsed)
 

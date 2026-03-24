@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models import Agent, Chat, Message
 from app.services.content_converter import ContentConverter
-from app.services.content_tokens import refresh_sinas_image_urls
+from app.services.content_tokens import refresh_sinas_file_urls
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
 from app.services.template_renderer import render_template
@@ -189,6 +189,34 @@ async def build_conversation_history(
         for i, rm in enumerate(repair_msgs):
             chat_messages.insert(insert_idx + 1 + i, rm)
 
+    # Remove orphaned tool results: tool result messages whose tool_call_id
+    # doesn't match any tool_call in the conversation. This prevents LLM
+    # providers from rejecting the history with "unexpected tool call id".
+    all_tool_call_ids = set()
+    for msg in chat_messages:
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                if tc_id:
+                    all_tool_call_ids.add(tc_id)
+
+    chat_messages = [
+        msg for msg in chat_messages
+        if not (msg.role == "tool" and msg.tool_call_id and msg.tool_call_id not in all_tool_call_ids)
+    ]
+
+    # Compact older tool results: keep last N inline, replace older with references.
+    # Safe here because build_conversation_history only runs for the initial LLM call —
+    # the follow-up after tool execution rebuilds from raw DB messages, bypassing this.
+    max_inline = settings.tool_result_max_inline
+    tool_result_indices = [
+        idx for idx, msg in enumerate(chat_messages)
+        if msg.role == "tool" and msg.tool_call_id
+    ]
+    compact_indices = set(tool_result_indices[:-max_inline]) if len(tool_result_indices) > max_inline else set()
+    if compact_indices:
+        print(f"📦 Compacting {len(compact_indices)} of {len(tool_result_indices)} tool results (keeping last {max_inline} inline)", flush=True)
+
     for idx, msg in enumerate(chat_messages):
         message_dict: dict[str, Any] = {"role": msg.role}
 
@@ -200,13 +228,18 @@ async def build_conversation_history(
             and msg.role == "user"
         )
         content = current_user_content if is_last_user else msg.content
+
+        # Replace older tool results with compact references
+        if idx in compact_indices and msg.tool_call_id:
+            tool_name = msg.name or "unknown"
+            content = f'[Result from {tool_name} (tool_call_id: {msg.tool_call_id}). Use retrieve_tool_result("{msg.tool_call_id}") to access full data.]'
         if content and provider_type:
             # Try to parse JSON content (might be multimodal)
             try:
                 parsed_content = json.loads(content)
                 # If it's a list, it might be multimodal content
                 if isinstance(parsed_content, list):
-                    parsed_content = refresh_sinas_image_urls(parsed_content)
+                    parsed_content = refresh_sinas_file_urls(parsed_content)
                     content = ContentConverter.convert_message_content(
                         parsed_content, provider_type
                     )

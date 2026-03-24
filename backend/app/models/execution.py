@@ -56,30 +56,8 @@ class Execution(Base):
     input_schema: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     container_id: Mapped[Optional[str]] = mapped_column(String(255))
 
+    # Link to the tool_call that triggered this execution (for execution tree)
+    tool_call_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
     # Relationships
     user: Mapped["User"] = relationship("User")
-    steps: Mapped[list["StepExecution"]] = relationship(
-        "StepExecution", back_populates="execution", cascade="all, delete-orphan"
-    )
-
-
-class StepExecution(Base):
-    __tablename__ = "step_executions"
-
-    id: Mapped[uuid_pk]
-    execution_id: Mapped[str] = mapped_column(
-        String(255), ForeignKey("executions.execution_id"), nullable=False, index=True
-    )
-    function_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    status: Mapped[ExecutionStatus] = mapped_column(
-        Enum(ExecutionStatus), default=ExecutionStatus.RUNNING, nullable=False
-    )
-    input_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    output_data: Mapped[Optional[Any]] = mapped_column(JSON)
-    error: Mapped[Optional[str]] = mapped_column(Text)
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-
-    # Relationships
-    execution: Mapped["Execution"] = relationship("Execution", back_populates="steps")

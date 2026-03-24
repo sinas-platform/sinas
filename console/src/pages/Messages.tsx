@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { Filter, Search, MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
 
-export function Messages() {
+export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void } = {}) {
   const [agentFilter, setAgentFilter] = useState<string>('');
   const [roleFilter, setRoleFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -174,7 +174,16 @@ export function Messages() {
                           {formatDate(message.created_at)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-100">
-                          {message.chat?.agent_namespace}/{message.chat?.agent_name}
+                          <span>{message.chat?.agent_namespace}/{message.chat?.agent_name}</span>
+                          {onViewTree && message.chat_id && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onViewTree(message.chat_id); }}
+                              className="ml-2 text-[10px] text-primary-400 hover:text-primary-300"
+                              title="View execution tree"
+                            >
+                              tree →
+                            </button>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                           {message.user?.email || '-'}

@@ -13,6 +13,7 @@ from sqlalchemy.orm import joinedload
 
 from app.core.auth import get_user_permissions
 from app.core.config import settings
+from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
@@ -23,6 +24,7 @@ from app.services.connector_tools import ConnectorToolConverter
 from app.utils.schema import validate_with_coercion
 from app.services.content_tokens import strip_base64_data, refresh_message_tokens  # noqa: F401 — re-exported
 from app.services.hook_service import run_hooks, HookResult
+from app.services.tool_result_store import save_tool_result
 from app.services.conversation_history import build_conversation_history
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
@@ -683,6 +685,8 @@ class MessageService:
         depth: int = 0,
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute tool calls, stream LLM follow-up response, and save final message."""
+        import sys
+        print(f"🔧 _handle_tool_calls: {len(tool_calls)} calls: {[tc['function']['name'] for tc in tool_calls]}", flush=True, file=sys.stderr)
         if permissions is None:
             permissions = await get_user_permissions(self.db, user_id)
 
@@ -745,30 +749,56 @@ class MessageService:
                     "description": build_tool_status(tc["function"]["name"], args, status_templates),
                 }
 
-            parallel_tasks = [
-                execute_single_tool(
+            # Execute parallel tools and stream results as they complete
+            tool_timeout = settings.function_timeout
+            pending_tasks = {}
+            for tc in parallel_calls:
+                task = asyncio.create_task(execute_single_tool(
                     tc, chat_id, user_id, user_token, tools,
                     self.function_converter, self.query_converter,
                     self.skill_converter, self.component_converter,
                     self.collection_converter, self.create_chat_with_agent,
-                )
-                for tc in parallel_calls
-            ]
-            parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+                ))
+                pending_tasks[task] = tc
 
-            for i, res in enumerate(parallel_results):
-                tc = parallel_calls[i]
-                result_content = json.dumps({"error": str(res)}) if isinstance(res, Exception) else res[2]
-                yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": result_content}
-                if isinstance(res, Exception):
-                    logger.error(f"Parallel tool execution failed: {res}")
-                    tool_results[tc["id"]] = (
-                        tc["id"],
-                        tc["function"]["name"],
-                        json.dumps({"error": str(res)}),
-                    )
-                else:
-                    tool_results[tc["id"]] = res
+            deadline = asyncio.get_event_loop().time() + tool_timeout
+            while pending_tasks:
+                remaining = max(0.1, deadline - asyncio.get_event_loop().time())
+                done, _ = await asyncio.wait(
+                    pending_tasks.keys(),
+                    timeout=min(remaining, 5.0),  # Check every 5s for partial results
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for task in done:
+                    tc = pending_tasks.pop(task)
+                    try:
+                        res = task.result()
+                        tool_results[tc["id"]] = res
+                        # Save immediately before yielding
+                        self.db.add(Message(chat_id=chat_id, role="tool", content=res[2], tool_call_id=res[0], name=res[1]))
+                        await self.db.commit()
+                        yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": res[2]}
+                    except Exception as e:
+                        print(f"❌ Tool {tc['function']['name']} failed: {e}", flush=True)
+                        error_content = json.dumps({"error": str(e)})
+                        tool_results[tc["id"]] = (tc["id"], tc["function"]["name"], error_content)
+                        self.db.add(Message(chat_id=chat_id, role="tool", content=error_content, tool_call_id=tc["id"], name=tc["function"]["name"]))
+                        await self.db.commit()
+                        yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": error_content}
+
+                # Check if we've exceeded the deadline
+                if asyncio.get_event_loop().time() >= deadline and pending_tasks:
+                    for task, tc in pending_tasks.items():
+                        task.cancel()
+                        print(f"❌ Tool {tc['function']['name']} timed out", flush=True)
+                        error_content = json.dumps({"error": f"Tool timed out after {tool_timeout}s"})
+                        tool_results[tc["id"]] = (tc["id"], tc["function"]["name"], error_content)
+                        self.db.add(Message(chat_id=chat_id, role="tool", content=error_content, tool_call_id=tc["id"], name=tc["function"]["name"]))
+                    await self.db.commit()
+                    for task, tc in list(pending_tasks.items()):
+                        yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": json.dumps({"error": f"Tool timed out after {tool_timeout}s"})}
+                    break
 
         # Execute sequential tools one by one
         for tc in sequential_calls:
@@ -786,24 +816,31 @@ class MessageService:
                 self.skill_converter, self.component_converter,
                 self.collection_converter, self.create_chat_with_agent,
             )
+            # Save immediately before yielding
+            self.db.add(Message(chat_id=chat_id, role="tool", content=res[2], tool_call_id=res[0], name=res[1]))
+            await self.db.commit()
             yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": res[2]}
             tool_results[tc["id"]] = res
 
-        # Save all tool result messages in original order
-        for tc in valid_tool_calls:
-            tc_id, tc_name, tc_content = tool_results[tc["id"]]
-            tool_message = Message(
-                chat_id=chat_id,
-                role="tool",
-                content=tc_content,
-                tool_call_id=tc_id,
-                name=tc_name,
-            )
-            self.db.add(tool_message)
-
-        await self.db.commit()
-
         # Rebuild messages with tool results for LLM follow-up
+        # Persist tool results to tool_call_results store (background)
+        async def _persist_results():
+            try:
+                async with AsyncSessionLocal() as store_db:
+                    for tc_id, (res_id, res_name, res_content) in tool_results.items():
+                        try:
+                            result_parsed = json.loads(res_content) if isinstance(res_content, str) else res_content
+                        except (json.JSONDecodeError, TypeError):
+                            result_parsed = {"raw": res_content}
+                        await save_tool_result(
+                            db=store_db, tool_call_id=res_id, tool_name=res_name,
+                            arguments={}, result=result_parsed, user_id=user_id,
+                            chat_id=chat_id, source="agent",
+                        )
+            except Exception:
+                pass
+        asyncio.create_task(_persist_results())
+
         result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
         chat = result_chat.scalar_one_or_none()
 

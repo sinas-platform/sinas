@@ -535,7 +535,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `query_parameters` | Default query parameter values |
 | `enabled_collections` | File collections the agent can search |
 | `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
-| `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...]}` |
+| `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...], "parameters": {"op_name": {"param": "value"}}}`. Parameters support Jinja2 templates and are locked (hidden from LLM). |
 | `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
 | `icon` | Icon reference (see [Icons](#icons)) |
 
@@ -749,12 +749,19 @@ GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
 
 ### Secrets
 
-Write-only credential store. Values are encrypted at rest and never returned via the API. Secrets are available in function context as `context['secrets']` — only for shared pool (trusted) functions.
+Write-only credential store. Values are encrypted at rest and never returned via the API. Secrets are available in function context as `context['secrets']` — only for shared pool (trusted) functions. Connectors resolve auth from secrets automatically.
+
+**Visibility:**
+
+- `shared` (default) — global, available to all users and connectors
+- `private` — per-user, only used when that user triggers a connector or function
+
+Private secrets override shared secrets with the same name. This enables multi-tenant patterns: admin sets a shared `HUBSPOT_API_KEY`, individual users can override with their own private key.
 
 **Endpoints:**
 
 ```
-POST   /api/v1/secrets                  # Create or update (upsert by name)
+POST   /api/v1/secrets                  # Create or update (upsert by name+visibility)
 GET    /api/v1/secrets                  # List names and descriptions (no values)
 GET    /api/v1/secrets/{name}           # Get metadata (no value)
 PUT    /api/v1/secrets/{name}           # Update value or description
@@ -765,6 +772,7 @@ DELETE /api/v1/secrets/{name}           # Delete
 
 ```python
 def my_function(input, context):
+    # Private secrets override shared for the calling user
     token = context['secrets']['SLACK_BOT_TOKEN']
 ```
 
@@ -775,6 +783,7 @@ secrets:
   - name: SLACK_BOT_TOKEN
     value: xoxb-...          # omit to skip value update on re-apply
     description: Slack bot OAuth token
+    # visibility defaults to "shared" in YAML config
 ```
 
 ### Connectors
@@ -789,11 +798,14 @@ GET    /api/v1/connectors                                        # List connecto
 GET    /api/v1/connectors/{namespace}/{name}                     # Get connector
 PUT    /api/v1/connectors/{namespace}/{name}                     # Update connector
 DELETE /api/v1/connectors/{namespace}/{name}                     # Delete connector
-POST   /api/v1/connectors/{namespace}/{name}/import-openapi      # Import operations from OpenAPI spec
+POST   /api/v1/connectors/parse-openapi                          # Parse OpenAPI spec (no connector required)
+POST   /api/v1/connectors/{namespace}/{name}/import-openapi      # Import operations from OpenAPI spec into connector
 POST   /api/v1/connectors/{namespace}/{name}/test/{operation}    # Test an operation
 ```
 
 **Auth types:** `bearer`, `basic`, `api_key`, `sinas_token` (forwards caller's JWT), `none`
+
+Auth is resolved from the Secrets store. Private secrets override shared for the calling user — enabling multi-tenant patterns where each user can have their own API key for the same connector.
 
 **Agent configuration:**
 
@@ -833,11 +845,12 @@ connectors:
 **Execution history:**
 
 ```
-GET    /executions                               # List executions
-GET    /executions/{execution_id}                # Get execution details
-GET    /executions/{execution_id}/steps          # Get execution steps (nested calls)
+GET    /executions                               # List executions (filterable by chat_id, trigger_type, status)
+GET    /executions/{execution_id}                # Get execution details (includes tool_call_id link)
 POST   /executions/{execution_id}/continue       # Resume a paused execution with user input
 ```
+
+Executions include a `tool_call_id` field linking them to the tool call that triggered them, enabling execution tree visualization in the Logs page.
 
 **Input schema presets:** The function editor includes built-in presets for common input/output schemas. Use the "Load preset" dropdown when editing schemas:
 
@@ -846,6 +859,7 @@ POST   /executions/{execution_id}/continue       # Resume a paused execution wit
 | **Pre-upload filter** | Content filtering before file upload (receives file content, returns approved/rejected) |
 | **Post-upload** | Processing after successful file upload (receives file_id, metadata) |
 | **CDC (Change Data Capture)** | Processing database changes (receives table, rows, poll_column, count) |
+| **Message Hook** | Message lifecycle hook (receives message, chat_id, agent; returns content mutation or block) |
 
 ### Components
 

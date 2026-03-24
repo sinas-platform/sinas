@@ -75,6 +75,7 @@ export function AgentDetail() {
 
   const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'hooks' | 'status'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
+  const [expandedConnectorParams, setExpandedConnectorParams] = useState<Set<string>>(new Set());
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
   const [iconCollectionName, setIconCollectionName] = useState('');
@@ -1551,35 +1552,94 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                               </div>
                               {conn.operations.map((op: any) => {
                                 const isOpEnabled = enabledOps.includes(op.name);
+                                const opParams = op.parameters?.properties || {};
+                                const hasParams = Object.keys(opParams).length > 0;
+                                const connectorParams = entry?.parameters || {};
+                                const opParamValues = connectorParams[op.name] || {};
+                                const isParamsExpanded = expandedConnectorParams.has(`${connRef}/${op.name}`);
                                 const methodColors: Record<string, string> = {
                                   GET: 'text-green-400', POST: 'text-blue-400',
                                   PUT: 'text-yellow-400', PATCH: 'text-orange-400', DELETE: 'text-red-400',
                                 };
                                 return (
-                                  <label key={op.name} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={isOpEnabled}
-                                      onChange={(e) => {
-                                        const updated = enabledConnectors.map((ec: any) => {
-                                          if (ec.connector !== connRef) return ec;
-                                          const ops = e.target.checked
-                                            ? [...(ec.operations || []), op.name]
-                                            : (ec.operations || []).filter((o: string) => o !== op.name);
-                                          return { ...ec, operations: ops };
-                                        });
-                                        setFormData({ ...formData, enabled_connectors: updated });
-                                      }}
-                                      className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded focus:ring-primary-500"
-                                    />
-                                    <span className={`text-[10px] font-bold uppercase ${methodColors[op.method] || 'text-gray-400'}`}>
-                                      {op.method}
-                                    </span>
-                                    <span className="text-sm font-mono text-gray-300">{op.name}</span>
-                                    {op.description && (
-                                      <span className="text-xs text-gray-600 truncate">{op.description}</span>
+                                  <div key={op.name} className="border border-white/[0.04] rounded p-1.5">
+                                    <label className="flex items-center gap-2 hover:bg-white/5 rounded cursor-pointer p-0.5">
+                                      <input
+                                        type="checkbox"
+                                        checked={isOpEnabled}
+                                        onChange={(e) => {
+                                          const updated = enabledConnectors.map((ec: any) => {
+                                            if (ec.connector !== connRef) return ec;
+                                            const ops = e.target.checked
+                                              ? [...(ec.operations || []), op.name]
+                                              : (ec.operations || []).filter((o: string) => o !== op.name);
+                                            return { ...ec, operations: ops };
+                                          });
+                                          setFormData({ ...formData, enabled_connectors: updated });
+                                        }}
+                                        className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                                      />
+                                      <span className={`text-[10px] font-bold uppercase ${methodColors[op.method] || 'text-gray-400'}`}>
+                                        {op.method}
+                                      </span>
+                                      <span className="text-sm font-mono text-gray-300">{op.name}</span>
+                                      {op.description && (
+                                        <span className="text-xs text-gray-600 truncate">{op.description}</span>
+                                      )}
+                                    </label>
+                                    {isOpEnabled && hasParams && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const key = `${connRef}/${op.name}`;
+                                          const next = new Set(expandedConnectorParams);
+                                          next.has(key) ? next.delete(key) : next.add(key);
+                                          setExpandedConnectorParams(next);
+                                        }}
+                                        className="ml-7 mt-1 text-xs text-primary-600 hover:text-primary-400 font-medium"
+                                      >
+                                        {isParamsExpanded ? '▼ Hide' : '▶'} Default Parameters
+                                      </button>
                                     )}
-                                  </label>
+                                    {isOpEnabled && isParamsExpanded && hasParams && (
+                                      <div className="mt-2 ml-7 space-y-2 pl-3 border-l-2 border-primary-800/30">
+                                        <p className="text-xs text-gray-600 italic">
+                                          Set default values. Use {'{{'}variable{'}}'}  for agent input templates. Values are locked (hidden from LLM).
+                                        </p>
+                                        {Object.entries(opParams).map(([paramName, paramDef]: [string, any]) => (
+                                          <div key={paramName} className="space-y-1">
+                                            <label className="block text-xs font-medium text-gray-300">
+                                              {paramName}
+                                              {paramDef.type && <span className="ml-1 text-gray-500">({paramDef.type})</span>}
+                                            </label>
+                                            <input
+                                              type="text"
+                                              value={opParamValues[paramName] || ''}
+                                              onChange={(e) => {
+                                                const updated = enabledConnectors.map((ec: any) => {
+                                                  if (ec.connector !== connRef) return ec;
+                                                  const params = { ...(ec.parameters || {}) };
+                                                  if (!params[op.name]) params[op.name] = {};
+                                                  if (e.target.value) {
+                                                    params[op.name] = { ...params[op.name], [paramName]: e.target.value };
+                                                  } else {
+                                                    const opP = { ...params[op.name] };
+                                                    delete opP[paramName];
+                                                    if (Object.keys(opP).length === 0) delete params[op.name];
+                                                    else params[op.name] = opP;
+                                                  }
+                                                  return { ...ec, parameters: params };
+                                                });
+                                                setFormData({ ...formData, enabled_connectors: updated });
+                                              }}
+                                              placeholder={paramDef.description || `Default value for ${paramName}`}
+                                              className="input text-xs font-mono w-full"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
                                 );
                               })}
                             </div>

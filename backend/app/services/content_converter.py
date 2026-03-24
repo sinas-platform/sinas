@@ -88,12 +88,16 @@ class ContentConverter:
                     result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
-                result.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {"data": chunk["data"], "format": chunk["format"]},
-                    }
-                )
+                if chunk.get("url"):
+                    # URL-based audio — pass URL reference for the LLM
+                    result.append({"type": "text", "text": f"[User sent {chunk.get('format', 'audio')} audio — URL: {chunk['url']}]"})
+                elif chunk.get("data"):
+                    result.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {"data": chunk["data"], "format": chunk["format"]},
+                        }
+                    )
 
             elif chunk_type == "file":
                 if "file_url" in chunk:
@@ -137,7 +141,10 @@ class ContentConverter:
                     result.append(_upload_ref_text(chunk, kind="image"))
 
             elif chunk_type == "audio":
-                result.append({"type": "input_audio", "input_audio": chunk["data"]})
+                if chunk.get("url"):
+                    result.append({"type": "text", "text": f"[User sent {chunk.get('format', 'audio')} audio — URL: {chunk['url']}]"})
+                elif chunk.get("data"):
+                    result.append({"type": "input_audio", "input_audio": chunk["data"]})
 
             elif chunk_type == "file":
                 if "file_url" in chunk:

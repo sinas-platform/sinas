@@ -7,7 +7,7 @@ from .component import Component
 from .component_share import ComponentShare
 from .database_connection import DatabaseConnection
 from .database_trigger import DatabaseTrigger
-from .execution import Execution, StepExecution
+from .execution import Execution
 from .file import Collection, ContentFilterEvaluation, File, FileVersion
 from .function import Function, FunctionVersion
 from .llm_provider import LLMProvider
@@ -23,6 +23,7 @@ from .state import State
 from .store import Store
 from .table_annotation import TableAnnotation
 from .template import Template
+from .tool_call_result import ToolCallResult
 from .user import APIKey, OTPSession, RefreshToken, Role, RolePermission, User, UserRole
 from .webhook import Webhook
 
@@ -33,7 +34,6 @@ __all__ = [
     "Webhook",
     "ScheduledJob",
     "Execution",
-    "StepExecution",
     "Dependency",
     "Package",
     "User",
@@ -65,4 +65,5 @@ __all__ = [
     "FileVersion",
     "ContentFilterEvaluation",
     "TableAnnotation",
+    "ToolCallResult",
 ]
