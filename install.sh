@@ -8,7 +8,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-REPO="pulsr-one/SINAS"
+REPO="sinas-platform/sinas"
 BRANCH="main"
 RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
 INSTALL_DIR="${SINAS_DIR:-/opt/sinas}"
@@ -103,6 +103,9 @@ chmod +x backend/clickhouse/entrypoint-wrapper.sh
 echo -e "${GREEN}✓ Files downloaded${NC}"
 
 # Configuration
+# Reopen stdin from /dev/tty so interactive prompts work when piped (curl | bash)
+exec < /dev/tty || { echo -e "${RED}Cannot open terminal for interactive input. Run the script directly instead of piping.${NC}"; exit 1; }
+
 echo ""
 echo -e "${BLUE}═══════════════════════════════════════${NC}"
 echo -e "${BLUE}  Configuration${NC}"
