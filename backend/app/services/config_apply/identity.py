@@ -143,7 +143,6 @@ async def apply_users(
             config_hash = calculate_hash(
                 {
                     "email": user_config.email,
-                    "is_active": user_config.isActive,
                     "roles": sorted(user_config.roles),
                 }
             )
@@ -163,7 +162,6 @@ async def apply_users(
                     continue
 
                 if not dry_run:
-                    existing.is_active = user_config.isActive
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -174,7 +172,6 @@ async def apply_users(
                 if not dry_run:
                     new_user = User(
                         email=user_config.email,
-                        is_active=user_config.isActive,
                         managed_by=managed_by,
                         config_name=config_name,
                         config_checksum=config_hash,

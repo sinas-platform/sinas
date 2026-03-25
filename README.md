@@ -30,7 +30,7 @@ Sinas gives you a self-hosted backend for AI-powered applications: configure age
 Deploy Sinas on any VPS with a single command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh | sudo bash
+sudo curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh -o /tmp/sinas-install.sh && sudo bash /tmp/sinas-install.sh
 ```
 
 The installer will:

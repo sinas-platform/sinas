@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.dependency import Dependency
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
 from app.models.secret import Secret
@@ -59,6 +60,7 @@ class ConfigExportService:
         config_dict["spec"]["llmProviders"] = await self._export_llm_providers()
 
 
+        config_dict["spec"]["dependencies"] = await self._export_dependencies()
         config_dict["spec"]["secrets"] = await self._export_secrets()
         config_dict["spec"]["functions"] = await self._export_functions()
         config_dict["spec"]["templates"] = await self._export_templates()
@@ -136,7 +138,7 @@ class ConfigExportService:
 
     async def _export_llm_providers(self) -> list[dict]:
         """Export LLM providers"""
-        stmt = select(LLMProvider)
+        stmt = select(LLMProvider).where(LLMProvider.is_active == True)
         if self.managed_only:
             stmt = stmt.where(LLMProvider.managed_by == self.managed_by)
 
@@ -158,6 +160,21 @@ class ConfigExportService:
                 provider_dict["apiKey"] = EncryptionService.decrypt(provider.api_key)
 
             exported.append(provider_dict)
+
+        return exported
+
+    async def _export_dependencies(self) -> list[dict]:
+        """Export Python dependencies."""
+        result = await self.db.execute(select(Dependency))
+        dependencies = result.scalars().all()
+
+        exported = []
+        for dep in dependencies:
+            dep_dict = {
+                "packageName": dep.package_name,
+                "version": dep.version,
+            }
+            exported.append(_remove_none_values(dep_dict))
 
         return exported
 
@@ -183,7 +200,7 @@ class ConfigExportService:
 
     async def _export_functions(self) -> list[dict]:
         """Export functions"""
-        stmt = select(Function)
+        stmt = select(Function).where(Function.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Function.managed_by == self.managed_by)
 
@@ -208,7 +225,7 @@ class ConfigExportService:
 
     async def _export_agents(self) -> list[dict]:
         """Export agents"""
-        stmt = select(Agent)
+        stmt = select(Agent).where(Agent.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Agent.managed_by == self.managed_by)
 
@@ -279,7 +296,7 @@ class ConfigExportService:
 
     async def _export_webhooks(self) -> list[dict]:
         """Export webhooks"""
-        stmt = select(Webhook)
+        stmt = select(Webhook).where(Webhook.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Webhook.managed_by == self.managed_by)
 
@@ -303,7 +320,7 @@ class ConfigExportService:
 
     async def _export_templates(self) -> list[dict]:
         """Export templates"""
-        stmt = select(Template)
+        stmt = select(Template).where(Template.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Template.managed_by == self.managed_by)
 
@@ -327,7 +344,7 @@ class ConfigExportService:
 
     async def _export_schedules(self) -> list[dict]:
         """Export scheduled jobs"""
-        stmt = select(ScheduledJob)
+        stmt = select(ScheduledJob).where(ScheduledJob.is_active == True)
         if self.managed_only:
             stmt = stmt.where(ScheduledJob.managed_by == self.managed_by)
 
@@ -358,7 +375,7 @@ class ConfigExportService:
 
     async def _export_database_triggers(self) -> list[dict]:
         """Export database triggers"""
-        stmt = select(DatabaseTrigger)
+        stmt = select(DatabaseTrigger).where(DatabaseTrigger.is_active == True)
         if self.managed_only:
             stmt = stmt.where(DatabaseTrigger.managed_by == self.managed_by)
 

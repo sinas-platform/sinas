@@ -29,7 +29,7 @@ Sinas runs as a set of Docker services: the API server, queue workers (for funct
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh | sudo bash
+sudo curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh -o /tmp/sinas-install.sh && sudo bash /tmp/sinas-install.sh
 ```
 
 The installer will:
