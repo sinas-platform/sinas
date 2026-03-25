@@ -361,9 +361,9 @@ export function ConnectorEditor() {
         ))}
         <div className="flex gap-2">
           <input type="text" value={newHeaderKey} onChange={e => setNewHeaderKey(e.target.value)}
-            placeholder="Header name" className="input w-48" />
+            placeholder="Header name" className="input !w-48 shrink-0" />
           <input type="text" value={newHeaderValue} onChange={e => setNewHeaderValue(e.target.value)}
-            placeholder="Value" className="input flex-1" />
+            placeholder="Value" className="input !flex-1" />
           <button onClick={addHeader} disabled={!newHeaderKey.trim()} className="btn btn-secondary">Add</button>
         </div>
       </div>

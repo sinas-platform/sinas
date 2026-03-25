@@ -64,11 +64,20 @@ export function LLMProviders() {
     setCreateConfigText('{}');
   };
 
+  const [createError, setCreateError] = useState('');
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (createFormData.name.trim() && createFormData.provider_type.trim()) {
-      createMutation.mutate(createFormData);
+    setCreateError('');
+    if (!createFormData.name.trim()) {
+      setCreateError('Provider name is required');
+      return;
     }
+    if (!createFormData.provider_type.trim()) {
+      setCreateError('Provider type is required');
+      return;
+    }
+    createMutation.mutate(createFormData);
   };
 
   const handleEdit = (e: React.FormEvent) => {
@@ -339,6 +348,11 @@ export function LLMProviders() {
                 </div>
               </div>
 
+              {createError && (
+                <div className="p-3 bg-red-900/20 border border-red-800 rounded-lg">
+                  <p className="text-sm text-red-400">{createError}</p>
+                </div>
+              )}
               {createMutation.isError && (
                 <ErrorDisplay error={createMutation.error} title="Failed to add provider" />
               )}

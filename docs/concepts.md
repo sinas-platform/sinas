@@ -1,0 +1,35 @@
+## Concepts
+
+### Namespaces
+
+Most resources are organized by **namespace** and **name**. A namespace groups related resources (e.g., `support/ticket-agent`, `analytics/daily-report`). The default namespace is `default`. Resources are uniquely identified by their `namespace/name` pair.
+
+### Tools
+
+Agents interact with the outside world through **tools** — capabilities you enable per agent:
+
+| Tool type | What it does |
+|---|---|
+| **Functions** | Execute Python code in isolated containers |
+| **Agents** | Call other agents as sub-agents |
+| **Skills** | Retrieve instruction/knowledge documents |
+| **Queries** | Run SQL against external databases |
+| **Collections** | Search uploaded files |
+| **States** | Read and write persistent key-value data |
+
+### Trigger Types
+
+Functions and agents can be triggered in multiple ways:
+
+- **API** — Direct execution via the runtime API
+- **Manual** — Via the console UI
+- **Agent** — Called as a tool during a chat conversation
+- **Webhook** — Via an HTTP request to a configured endpoint
+- **Schedule** — Via a cron expression on a timer
+- **CDC** — Automatically when rows are inserted or updated in an external database table
+
+### Declarative Configuration
+
+All resources can be defined in a YAML file and applied idempotently via the API or on startup. Config-managed resources are tracked with checksums for change detection. See [Config Manager](#config-manager) for details.
+
+---

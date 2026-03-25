@@ -362,6 +362,13 @@ class ConnectorConfig(BaseModel):
     operations: list[ConnectorOperationConfig] = Field(default_factory=list)
 
 
+class DependencyConfig(BaseModel):
+    """Python dependency configuration"""
+
+    packageName: str
+    version: Optional[str] = None
+
+
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
@@ -369,6 +376,7 @@ class ConfigSpec(BaseModel):
     users: list[UserConfig] = Field(default_factory=list)
     llmProviders: list[LLMProviderConfig] = Field(default_factory=list)
     databaseConnections: list[DatabaseConnectionConfig] = Field(default_factory=list)
+    dependencies: list[DependencyConfig] = Field(default_factory=list)
     secrets: list[SecretConfig] = Field(default_factory=list)
     connectors: list[ConnectorConfig] = Field(default_factory=list)
 
