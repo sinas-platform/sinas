@@ -951,6 +951,23 @@ query_parameters:
 
 Locked parameters prevent the LLM from seeing or modifying security-sensitive values (like `user_id`).
 
+**Contextual parameters:** The following parameters are automatically injected into every query execution and can be referenced in SQL:
+
+| Parameter | Description |
+|---|---|
+| `:user_id` | UUID of the user who triggered the query |
+| `:user_email` | Email of the triggering user |
+
+These are always available regardless of the query's `input_schema`. Use them for row-level security:
+
+```sql
+-- Only return orders belonging to the calling user
+SELECT * FROM orders WHERE created_by = :user_id
+
+-- Audit trail
+INSERT INTO audit_log (action, performed_by) VALUES (:action, :user_email)
+```
+
 **Endpoints:**
 
 ```
@@ -1805,12 +1822,16 @@ spec:
   users:               # User provisioning
   llmProviders:        # LLM provider connections
   databaseConnections: # External database credentials
+  dependencies:        # Python packages (pip)
+  secrets:             # Encrypted credentials (values omitted on export)
+  connectors:          # HTTP connectors with typed operations
   skills:              # Instruction documents
   components:          # UI components
   functions:           # Python functions
   queries:             # Saved SQL templates
   collections:         # File storage collections
   templates:           # Jinja2 templates
+  stores:              # State store definitions
   manifests:           # Application manifests
   agents:              # AI agent configurations
   webhooks:            # HTTP triggers for functions

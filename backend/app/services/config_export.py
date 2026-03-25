@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.connector import Connector
 from app.models.dependency import Dependency
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
@@ -62,6 +63,7 @@ class ConfigExportService:
 
         config_dict["spec"]["dependencies"] = await self._export_dependencies()
         config_dict["spec"]["secrets"] = await self._export_secrets()
+        config_dict["spec"]["connectors"] = await self._export_connectors()
         config_dict["spec"]["functions"] = await self._export_functions()
         config_dict["spec"]["templates"] = await self._export_templates()
         config_dict["spec"]["stores"] = await self._export_stores()
@@ -195,6 +197,56 @@ class ConfigExportService:
                 # value intentionally omitted — secrets are write-only
             }
             exported.append(_remove_none_values(secret_dict))
+
+        return exported
+
+    async def _export_connectors(self) -> list[dict]:
+        """Export connectors."""
+        stmt = select(Connector).where(Connector.is_active == True)
+        if self.managed_only:
+            stmt = stmt.where(Connector.managed_by == self.managed_by)
+
+        result = await self.db.execute(stmt)
+        connectors = result.scalars().all()
+
+        exported = []
+        for conn in connectors:
+            auth = conn.auth or {}
+            retry = conn.retry or {}
+            operations = []
+            for op in (conn.operations or []):
+                op_dict = {
+                    "name": op.get("name"),
+                    "method": op.get("method"),
+                    "path": op.get("path"),
+                    "description": op.get("description"),
+                    "parameters": op.get("parameters"),
+                    "requestBodyMapping": op.get("request_body_mapping", "json"),
+                    "responseMapping": op.get("response_mapping", "json"),
+                }
+                operations.append(_remove_none_values(op_dict))
+
+            conn_dict = {
+                "name": conn.name,
+                "namespace": conn.namespace,
+                "description": conn.description,
+                "baseUrl": conn.base_url,
+                "auth": _remove_none_values({
+                    "type": auth.get("type", "none"),
+                    "secret": auth.get("secret"),
+                    "header": auth.get("header"),
+                    "position": auth.get("position"),
+                    "paramName": auth.get("param_name"),
+                }),
+                "headers": conn.headers if conn.headers else None,
+                "retry": _remove_none_values({
+                    "maxAttempts": retry.get("max_attempts", 1),
+                    "backoff": retry.get("backoff", "none"),
+                }),
+                "timeoutSeconds": conn.timeout_seconds,
+                "operations": operations,
+            }
+            exported.append(_remove_none_values(conn_dict))
 
         return exported
 

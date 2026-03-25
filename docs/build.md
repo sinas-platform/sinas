@@ -441,6 +441,23 @@ query_parameters:
 
 Locked parameters prevent the LLM from seeing or modifying security-sensitive values (like `user_id`).
 
+**Contextual parameters:** The following parameters are automatically injected into every query execution and can be referenced in SQL:
+
+| Parameter | Description |
+|---|---|
+| `:user_id` | UUID of the user who triggered the query |
+| `:user_email` | Email of the triggering user |
+
+These are always available regardless of the query's `input_schema`. Use them for row-level security:
+
+```sql
+-- Only return orders belonging to the calling user
+SELECT * FROM orders WHERE created_by = :user_id
+
+-- Audit trail
+INSERT INTO audit_log (action, performed_by) VALUES (:action, :user_email)
+```
+
 **Endpoints:**
 
 ```
