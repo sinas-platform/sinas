@@ -432,12 +432,16 @@ spec:
   users:               # User provisioning
   llmProviders:        # LLM provider connections
   databaseConnections: # External database credentials
+  dependencies:        # Python packages (pip)
+  secrets:             # Encrypted credentials (values omitted on export)
+  connectors:          # HTTP connectors with typed operations
   skills:              # Instruction documents
   components:          # UI components
   functions:           # Python functions
   queries:             # Saved SQL templates
   collections:         # File storage collections
   templates:           # Jinja2 templates
+  stores:              # State store definitions
   manifests:           # Application manifests
   agents:              # AI agent configurations
   webhooks:            # HTTP triggers for functions
