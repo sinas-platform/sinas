@@ -428,8 +428,8 @@ class MessageService:
         assistant_content = response.get("content", "")
 
         # Run assistant message hooks
-        agent = prep["chat"].agent if hasattr(prep["chat"], "agent") else None
-        if not agent:
+        agent = None
+        if prep["chat"].agent_id:
             agent_result = await self.db.execute(
                 select(Agent).where(Agent.id == prep["chat"].agent_id)
             )
@@ -486,20 +486,29 @@ class MessageService:
             yield {"type": "done", "status": "blocked"}
             return
 
-        async for chunk in self._stream_response(
-            llm_provider=prep["llm_provider"],
-            messages=prep["messages"],
-            final_model=prep["final_model"],
-            tools=prep["tools"],
-            final_temperature=prep["final_temperature"],
-            max_tokens=prep["final_max_tokens"],
-            chat_id=chat_id,
-            user_id=user_id,
-            user_token=user_token,
-            provider_name=prep["provider_name"],
-            status_templates=prep["status_templates"],
-        ):
-            yield chunk
+        try:
+            async for chunk in self._stream_response(
+                llm_provider=prep["llm_provider"],
+                messages=prep["messages"],
+                final_model=prep["final_model"],
+                tools=prep["tools"],
+                final_temperature=prep["final_temperature"],
+                max_tokens=prep["final_max_tokens"],
+                chat_id=chat_id,
+                user_id=user_id,
+                user_token=user_token,
+                provider_name=prep["provider_name"],
+                status_templates=prep["status_templates"],
+            ):
+                yield chunk
+        except Exception as e:
+            print(f"❌ Error during message streaming: {e}", flush=True)
+            error_content = f"An error occurred while processing your message. Please try again.\n\nError: {str(e)[:300]}"
+            # Save error as assistant message so chat history stays valid
+            error_message = Message(chat_id=chat_id, role="assistant", content=error_content)
+            self.db.add(error_message)
+            await self.db.commit()
+            yield {"content": error_content, "type": "error", "error": str(e)[:300]}
 
     async def _stream_response(
         self,

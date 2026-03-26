@@ -142,11 +142,18 @@ async def serve_file(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File content not found in storage")
 
+    # Build Content-Disposition with ASCII-safe filename + UTF-8 fallback
+    from urllib.parse import quote
+    ascii_name = file_record.name.encode("ascii", "replace").decode("ascii")
+    content_disposition = f'inline; filename="{ascii_name}"'
+    if ascii_name != file_record.name:
+        content_disposition += f"; filename*=UTF-8''{quote(file_record.name)}"
+
     return Response(
         content=content,
         media_type=file_record.content_type,
         headers={
-            "Content-Disposition": f'inline; filename="{file_record.name}"',
+            "Content-Disposition": content_disposition,
             **cache_headers,
         },
     )
