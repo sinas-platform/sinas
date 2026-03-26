@@ -61,7 +61,19 @@ export function CollectionDetail() {
     setUrlLoading(file.id);
     try {
       const result = await apiClient.generateFileUrl(namespace!, name!, file.name);
-      await navigator.clipboard.writeText(result.url);
+      try {
+        await navigator.clipboard.writeText(result.url);
+      } catch {
+        // Fallback for browsers that block clipboard after async
+        const textArea = document.createElement('textarea');
+        textArea.value = result.url;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
       setCopiedFileId(file.id);
       setTimeout(() => setCopiedFileId(null), 2000);
     } catch (err) {
