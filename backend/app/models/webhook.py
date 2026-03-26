@@ -33,6 +33,8 @@ class Webhook(Base):
     default_values: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     requires_auth: Mapped[bool] = mapped_column(Boolean, default=True)
+    response_mode: Mapped[str] = mapped_column(String(10), default="sync", server_default="sync", nullable=False)
+    dedup: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[created_at]
     updated_at: Mapped[updated_at]
     # Config tracking

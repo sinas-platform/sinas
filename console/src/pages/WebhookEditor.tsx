@@ -18,6 +18,10 @@ export function WebhookEditor() {
     description: '',
     default_values: {} as Record<string, any>,
     requires_auth: true,
+    response_mode: 'sync',
+    dedup_enabled: false,
+    dedup_key: '',
+    dedup_ttl: 300,
   });
 
   const [defaultKey, setDefaultKey] = useState('');
@@ -41,6 +45,10 @@ export function WebhookEditor() {
         description: webhook.description || '',
         default_values: webhook.default_values || {},
         requires_auth: webhook.requires_auth ?? true,
+        response_mode: webhook.response_mode || 'sync',
+        dedup_enabled: !!webhook.dedup,
+        dedup_key: webhook.dedup?.key || '',
+        dedup_ttl: webhook.dedup?.ttl_seconds || 300,
       });
     }
   }, [webhook, isNew]);
@@ -56,11 +64,16 @@ export function WebhookEditor() {
     mutationFn: (data: any) => {
       // Split function_name into namespace and name
       const [namespace, name] = data.function_name.split('/');
-      const payload = {
+      const payload: any = {
         ...data,
         function_namespace: namespace,
         function_name: name,
+        response_mode: data.response_mode,
+        dedup: data.dedup_enabled ? { key: data.dedup_key, ttl_seconds: data.dedup_ttl } : null,
       };
+      delete payload.dedup_enabled;
+      delete payload.dedup_key;
+      delete payload.dedup_ttl;
       return isNew
         ? apiClient.createWebhook(payload)
         : apiClient.updateWebhook(webhookPath!, payload);
@@ -296,6 +309,63 @@ print(result["execution_id"], result["result"])`,
               <label htmlFor="requires_auth" className="ml-2 text-sm text-gray-300">
                 Requires Authentication
               </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-2">Response Mode</label>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="response_mode" value="sync"
+                    checked={formData.response_mode === 'sync'}
+                    onChange={() => setFormData({ ...formData, response_mode: 'sync' })}
+                    className="text-primary-600" />
+                  <div>
+                    <span className="text-sm text-gray-200">Sync</span>
+                    <p className="text-xs text-gray-500">Wait for result, return in response</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="radio" name="response_mode" value="async"
+                    checked={formData.response_mode === 'async'}
+                    onChange={() => setFormData({ ...formData, response_mode: 'async' })}
+                    className="text-primary-600" />
+                  <div>
+                    <span className="text-sm text-gray-200">Async</span>
+                    <p className="text-xs text-gray-500">Return 202 immediately, run in background</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="border border-white/[0.06] rounded-lg p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-300">Deduplication</label>
+                <input type="checkbox"
+                  checked={formData.dedup_enabled}
+                  onChange={(e) => setFormData({ ...formData, dedup_enabled: e.target.checked })}
+                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500" />
+              </div>
+              {formData.dedup_enabled && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Key</label>
+                    <input type="text"
+                      value={formData.dedup_key}
+                      onChange={(e) => setFormData({ ...formData, dedup_key: e.target.value })}
+                      placeholder="$.event.client_msg_id or header:X-Idempotency-Key"
+                      className="input text-sm" />
+                    <p className="text-xs text-gray-600 mt-1">JSONPath expression (body) or header:Name</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">TTL (seconds)</label>
+                    <input type="number"
+                      value={formData.dedup_ttl}
+                      onChange={(e) => setFormData({ ...formData, dedup_ttl: parseInt(e.target.value) || 300 })}
+                      min={1} max={86400}
+                      className="input text-sm !w-32" />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

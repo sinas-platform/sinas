@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
 
 
+async def _maintain_tool_result_partitions() -> None:
+    """Create future partitions and drop expired ones for tool_call_results."""
+    from app.services.tool_result_store import ensure_partitions, cleanup_expired_partitions
+    async with AsyncSessionLocal() as db:
+        await ensure_partitions(db)
+        dropped = await cleanup_expired_partitions(db)
+        if dropped:
+            logger.info(f"Dropped {dropped} expired tool_call_results partition(s)")
+
+
 async def _initialize_builtin_database() -> None:
     """Ensure the sinas_data database and its Database Connection record exist."""
     direct_host = settings.database_direct_host or settings.database_host
@@ -252,18 +262,10 @@ async def main() -> None:
     logger.info("Registered system job: cleanup_expired_chats (every 1h)")
 
     # Ensure tool_call_results partitions exist
-    async def maintain_tool_result_partitions():
-        from app.services.tool_result_store import ensure_partitions, cleanup_expired_partitions
-        async with AsyncSessionLocal() as db:
-            await ensure_partitions(db)
-            dropped = await cleanup_expired_partitions(db)
-            if dropped:
-                logger.info(f"Dropped {dropped} expired tool_call_results partition(s)")
-
-    await maintain_tool_result_partitions()
+    await _maintain_tool_result_partitions()
 
     scheduler.scheduler.add_job(
-        func=maintain_tool_result_partitions,
+        func=_maintain_tool_result_partitions,
         trigger="interval",
         hours=24,
         id="system:maintain_tool_result_partitions",

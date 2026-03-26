@@ -1,11 +1,16 @@
 """Webhook schemas."""
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 from app.models.webhook import HTTPMethod
+
+
+class DedupConfig(BaseModel):
+    key: str = Field(..., description="JSONPath (e.g. '$.event.client_msg_id') or 'header:X-Header-Name'")
+    ttl_seconds: int = Field(default=300, ge=1, le=86400)
 
 
 class WebhookCreate(BaseModel):
@@ -18,6 +23,8 @@ class WebhookCreate(BaseModel):
     description: Optional[str] = None
     default_values: Optional[dict[str, Any]] = None
     requires_auth: bool = True
+    response_mode: Literal["sync", "async"] = "sync"
+    dedup: Optional[DedupConfig] = None
 
 
 class WebhookUpdate(BaseModel):
@@ -28,6 +35,8 @@ class WebhookUpdate(BaseModel):
     default_values: Optional[dict[str, Any]] = None
     is_active: Optional[bool] = None
     requires_auth: Optional[bool] = None
+    response_mode: Optional[Literal["sync", "async"]] = None
+    dedup: Optional[DedupConfig] = None
 
 
 class WebhookResponse(BaseModel):
@@ -40,6 +49,8 @@ class WebhookResponse(BaseModel):
     default_values: Optional[dict[str, Any]]
     is_active: bool
     requires_auth: bool
+    response_mode: str
+    dedup: Optional[dict[str, Any]]
     created_at: datetime
     updated_at: datetime
 
