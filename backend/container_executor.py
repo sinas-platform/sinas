@@ -56,9 +56,16 @@ def _atomic_write_json(path: str, data: Any) -> None:
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(data, f)
+            json.dump(data, f, default=str)
         os.rename(tmp_path, path)
-    except Exception:
+    except Exception as write_err:
+        print(f"[exec] Failed to write result JSON: {write_err}", file=sys.stderr)
+        # Write a minimal error result so the polling script finds something
+        try:
+            with open(path, "w") as f:
+                json.dump({"status": "failed", "error": f"Result serialization failed: {write_err}"}, f)
+        except Exception:
+            pass
         try:
             os.unlink(tmp_path)
         except OSError:

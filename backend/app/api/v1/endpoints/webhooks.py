@@ -60,6 +60,8 @@ async def create_webhook(
         description=webhook_data.description,
         default_values=webhook_data.default_values or {},
         requires_auth=webhook_data.requires_auth,
+        response_mode=webhook_data.response_mode,
+        dedup=webhook_data.dedup.model_dump() if webhook_data.dedup else None,
     )
 
     db.add(webhook)
@@ -195,6 +197,10 @@ async def update_webhook(
         webhook.is_active = webhook_data.is_active
     if webhook_data.requires_auth is not None:
         webhook.requires_auth = webhook_data.requires_auth
+    if webhook_data.response_mode is not None:
+        webhook.response_mode = webhook_data.response_mode
+    if webhook_data.dedup is not None:
+        webhook.dedup = webhook_data.dedup.model_dump()
     await db.flush()
     await db.refresh(webhook)
 

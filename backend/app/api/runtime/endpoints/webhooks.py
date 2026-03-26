@@ -1,8 +1,10 @@
 """Runtime webhook endpoints - execute functions via HTTP."""
+import json
 import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +13,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
 from app.models.webhook import Webhook
+from app.services.dedup_service import check_and_mark, store_result
 from app.services.queue_service import queue_service
 
 
@@ -115,9 +118,38 @@ async def execute_webhook(
         else:
             final_input = input_data
 
+        # Deduplication check
+        if webhook.dedup:
+            req_headers = dict(request.headers)
+            is_dup, cached = await check_and_mark(
+                webhook_id=str(webhook.id),
+                body=final_input if isinstance(final_input, dict) else {},
+                headers=req_headers,
+                dedup_config=webhook.dedup,
+            )
+            if is_dup:
+                if cached:
+                    return JSONResponse(json.loads(cached), status_code=200)
+                return JSONResponse({"deduplicated": True}, status_code=200)
+
         execution_id = str(uuid.uuid4())
         chat_id = request.headers.get("x-chat-id")
 
+        # Async mode: return immediately
+        if webhook.response_mode == "async":
+            await queue_service.enqueue_function(
+                function_namespace=webhook.function_namespace,
+                function_name=webhook.function_name,
+                input_data=final_input,
+                execution_id=execution_id,
+                trigger_type=TriggerType.WEBHOOK.value,
+                trigger_id=str(webhook.id),
+                user_id=user_id,
+                chat_id=chat_id,
+            )
+            return JSONResponse({"execution_id": execution_id}, status_code=202)
+
+        # Sync mode (default): wait for result
         result = await queue_service.enqueue_and_wait(
             function_namespace=webhook.function_namespace,
             function_name=webhook.function_name,
@@ -129,7 +161,23 @@ async def execute_webhook(
             chat_id=chat_id,
         )
 
-        return {"success": True, "execution_id": execution_id, "result": result}
+        response = {"success": True, "execution_id": execution_id, "result": result}
+
+        # Cache result for dedup
+        if webhook.dedup:
+            try:
+                req_headers = dict(request.headers)
+                await store_result(
+                    webhook_id=str(webhook.id),
+                    body=final_input if isinstance(final_input, dict) else {},
+                    headers=req_headers,
+                    dedup_config=webhook.dedup,
+                    result=json.dumps(response),
+                )
+            except Exception:
+                pass  # Non-critical
+
+        return response
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Function execution failed: {str(e)}")

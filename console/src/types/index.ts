@@ -465,6 +465,8 @@ export interface Webhook {
   default_values: Record<string, any> | null;
   is_active: boolean;
   requires_auth: boolean;
+  response_mode: string;
+  dedup: { key: string; ttl_seconds: number } | null;
   created_at: string;
   updated_at: string;
 }
@@ -477,6 +479,8 @@ export interface WebhookCreate {
   description?: string;
   default_values?: Record<string, any>;
   requires_auth?: boolean;
+  response_mode?: string;
+  dedup?: { key: string; ttl_seconds: number } | null;
 }
 
 export interface WebhookUpdate {
@@ -487,6 +491,8 @@ export interface WebhookUpdate {
   default_values?: Record<string, any>;
   is_active?: boolean;
   requires_auth?: boolean;
+  response_mode?: string;
+  dedup?: { key: string; ttl_seconds: number } | null;
 }
 
 // Schedules

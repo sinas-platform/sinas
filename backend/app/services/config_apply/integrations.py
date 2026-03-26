@@ -44,6 +44,8 @@ async def apply_webhooks(
                     "description": webhook_config.description,
                     "requires_auth": webhook_config.requiresAuth,
                     "default_values": webhook_config.defaultValues,
+                    "response_mode": webhook_config.responseMode,
+                    "dedup": webhook_config.dedup.model_dump() if webhook_config.dedup else None,
                 }
             )
 
@@ -73,6 +75,8 @@ async def apply_webhooks(
                     existing.description = webhook_config.description
                     existing.requires_auth = webhook_config.requiresAuth
                     existing.default_values = webhook_config.defaultValues
+                    existing.response_mode = webhook_config.responseMode
+                    existing.dedup = webhook_config.dedup.model_dump() if webhook_config.dedup else None
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -96,6 +100,8 @@ async def apply_webhooks(
                         description=webhook_config.description,
                         requires_auth=webhook_config.requiresAuth,
                         default_values=webhook_config.defaultValues,
+                        response_mode=webhook_config.responseMode,
+                        dedup=webhook_config.dedup.model_dump() if webhook_config.dedup else None,
                         is_active=True,
                         managed_by=managed_by,
                         config_name=config_name,

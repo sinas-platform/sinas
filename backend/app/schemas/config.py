@@ -191,6 +191,13 @@ class AgentConfig(BaseModel):
     enableCodeExecution: bool = False
 
 
+class WebhookDedupConfig(BaseModel):
+    """Webhook deduplication configuration"""
+
+    key: str
+    ttlSeconds: int = 300
+
+
 class WebhookConfig(BaseModel):
     """Webhook configuration"""
 
@@ -200,6 +207,8 @@ class WebhookConfig(BaseModel):
     description: Optional[str] = None
     requiresAuth: bool = True
     defaultValues: dict[str, Any] = Field(default_factory=dict)
+    responseMode: str = "sync"
+    dedup: Optional[WebhookDedupConfig] = None
 
 
 class ScheduleConfig(BaseModel):

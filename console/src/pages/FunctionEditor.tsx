@@ -129,8 +129,8 @@ export function FunctionEditor() {
     namespace: 'default',
     name: '',
     description: '',
-    code: `def handler(input, context):
-    # input: dict validated against input_schema
+    code: `def handler(input_data, context):
+    # input_data: dict validated against input_schema
     # context: {user_id, user_email, access_token, execution_id, trigger_type, chat_id}
 
     return {"result": "success"}`,
@@ -265,7 +265,7 @@ export function FunctionEditor() {
     const handlerRegex = /def\s+handler\s*\(/;
     const legacyRegex = new RegExp(`def\\s+${formData.name}\\s*\\(`);
     if (!handlerRegex.test(formData.code) && !legacyRegex.test(formData.code)) {
-      alert(`Code must contain a function definition: def handler(input, context)`);
+      alert(`Code must contain a function definition: def handler(input_data, context)`);
       return;
     }
 
@@ -632,7 +632,7 @@ print(details["status"], details["output_data"])`,
           )}
           <div className="flex items-center justify-between mt-2">
             <p className="text-xs text-gray-500">
-              Entry point: <code className="font-mono bg-[#161616] px-1 rounded">def handler(input, context)</code>
+              Entry point: <code className="font-mono bg-[#161616] px-1 rounded">def handler(input_data, context)</code>
             </p>
             {formData.name && (
               <div className="flex items-center ml-4">
