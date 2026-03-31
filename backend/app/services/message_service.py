@@ -955,6 +955,22 @@ class MessageService:
         final_tool_calls = tool_calls_list if tool_calls_list else None
 
         if final_tool_calls:
+            final_tool_calls = validate_tool_calls(final_tool_calls)
+            for tc in final_tool_calls:
+                args = safe_parse_arguments(tc["function"].get("arguments", ""))
+                tc["description"] = build_tool_status(tc["function"]["name"], args, status_templates)
+
+            # Persist intermediate assistant message (content + tool_calls) so
+            # reasoning tokens visible during streaming survive the server refresh.
+            intermediate_msg = Message(
+                chat_id=chat_id,
+                role="assistant",
+                content=full_content if full_content else None,
+                tool_calls=final_tool_calls,
+            )
+            self.db.add(intermediate_msg)
+            await self.db.commit()
+
             if depth >= settings.max_tool_iterations:
                 logger.warning(
                     "Tool iteration limit (%d) reached for chat %s — stopping",

@@ -70,7 +70,7 @@ def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def is_sequential_tool(tool_name: str) -> bool:
     """Check if a tool must be executed sequentially (not parallelizable)."""
-    return tool_name.startswith("call_agent_") or tool_name == "continue_execution" or tool_name == "execute_code"
+    return tool_name == "continue_execution" or tool_name == "execute_code"
 
 
 def safe_parse_arguments(arguments: Any) -> dict:
@@ -272,12 +272,19 @@ async def execute_agent_tool(
                 return {"error": f"Chat {resume_chat_id} not found or does not belong to this agent"}
             logger.info(f"Resuming sub-agent chat {sub_chat.id} with {agent.namespace}/{agent.name}")
         else:
-            sub_chat = await create_chat_with_agent_fn(
-                agent_id=str(agent.id),
+            # Create sub-chat using our own db session (not the parent's)
+            # to avoid cross-session issues with the parent MessageService.
+            sub_chat = Chat(
                 user_id=user_id,
-                input_data=input_data,
-                name=f"Sub-chat: {agent.name}",
+                agent_id=str(agent.id),
+                agent_namespace=agent.namespace,
+                agent_name=agent.name,
+                title=f"Sub-chat: {agent.name}",
+                chat_metadata={"agent_input": input_data} if input_data else None,
             )
+            db.add(sub_chat)
+            await db.commit()
+            await db.refresh(sub_chat)
 
         # Route agent-to-agent calls through the queue so each sub-agent
         # runs in its own worker — enables agent swarms without recursive blocking.
@@ -292,12 +299,17 @@ async def execute_agent_tool(
             agent=f"{agent.namespace}/{agent.name}",
         )
 
-        # Wait for the sub-agent to finish by reading the Redis stream
+        # Wait for the sub-agent to finish by reading the Redis stream.
+        # Use a longer timeout than the default SUBSCRIBE_WAIT_TIMEOUT since
+        # agent-to-agent calls can take minutes (the sub-agent may itself be
+        # making tool calls, calling other agents, etc.).
         final_content = ""
-        async for event in stream_relay.subscribe(channel_id):
+        got_terminal = False
+        async for event in stream_relay.subscribe(channel_id, timeout=600):
             if event.get("content"):
                 final_content += event["content"]
             if event.get("type") in ("done", "error"):
+                got_terminal = True
                 if event.get("type") == "error":
                     return {
                         "agent_name": agent.name,
@@ -305,6 +317,17 @@ async def execute_agent_tool(
                         "chat_id": str(sub_chat.id),
                     }
                 break
+
+        if not got_terminal:
+            logger.error(
+                f"Agent-to-agent stream timed out: {agent.namespace}/{agent.name} "
+                f"(channel={channel_id}, chat={sub_chat.id})"
+            )
+            return {
+                "agent_name": agent.name,
+                "error": "Sub-agent did not respond in time",
+                "chat_id": str(sub_chat.id),
+            }
 
         return {
             "agent_name": agent.name,

@@ -108,6 +108,8 @@ class FunctionConfig(BaseModel):
     outputSchema: Optional[dict[str, Any]] = None
     icon: Optional[str] = None
     timeout: Optional[int] = None
+    sharedPool: Optional[bool] = None
+    requiresApproval: Optional[bool] = None
 
 
 class SkillConfig(BaseModel):

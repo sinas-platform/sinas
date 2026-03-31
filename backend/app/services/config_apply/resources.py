@@ -359,6 +359,8 @@ async def apply_functions(
                     "output_schema": func_config.outputSchema or {},
                     "icon": func_config.icon,
                     "timeout": func_config.timeout,
+                    "shared_pool": func_config.sharedPool,
+                    "requires_approval": func_config.requiresApproval,
                 }
             )
 
@@ -384,6 +386,10 @@ async def apply_functions(
                     existing.output_schema = func_config.outputSchema or {}
                     existing.icon = func_config.icon
                     existing.timeout = func_config.timeout
+                    if func_config.sharedPool is not None:
+                        existing.shared_pool = func_config.sharedPool
+                    if func_config.requiresApproval is not None:
+                        existing.requires_approval = func_config.requiresApproval
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -418,6 +424,8 @@ async def apply_functions(
                         output_schema=func_config.outputSchema or {},
                         icon=func_config.icon,
                         timeout=func_config.timeout,
+                        shared_pool=func_config.sharedPool or False,
+                        requires_approval=func_config.requiresApproval or False,
                         user_id=owner_user_id,
                         is_active=True,
                         managed_by=managed_by,
