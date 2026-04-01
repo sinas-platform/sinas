@@ -228,9 +228,26 @@ async def delete_user(
         resource_id=user_id,
     )
 
+    # Prevent deleting the superadmin
+    import os
+    superadmin_email = os.environ.get("SUPERADMIN_EMAIL", "")
+    if user.email and user.email.lower() == superadmin_email.lower():
+        raise HTTPException(status_code=403, detail="Cannot delete the superadmin account")
+
     set_permission_used(request, "sinas.users.delete")
 
-    await db.delete(user)
+    # Soft delete: deactivate user and remove all role memberships
+    user.is_active = False
+    from app.models.user import UserRole
+    from datetime import datetime as dt
+    result = await db.execute(
+        select(UserRole).where(UserRole.user_id == user_id, UserRole.active == True)
+    )
+    for membership in result.scalars().all():
+        membership.active = False
+        membership.removed_at = dt.utcnow()
+        membership.removed_by = uuid.UUID(current_user_id)
+
     await db.flush()
 
     return None

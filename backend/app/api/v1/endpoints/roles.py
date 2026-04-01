@@ -349,8 +349,13 @@ async def remove_role_member(
     if not role:
         raise HTTPException(status_code=404, detail=f"Role '{name}' not found")
 
+    # Protect superadmin from being removed from Admins role
     if role.name == "Admins":
-        raise HTTPException(status_code=403, detail="Cannot remove members from Admins role")
+        import os
+        superadmin_email = os.environ.get("SUPERADMIN_EMAIL", "")
+        target_user = await db.get(User, user_id)
+        if target_user and target_user.email and target_user.email.lower() == superadmin_email.lower():
+            raise HTTPException(status_code=403, detail="Cannot remove the superadmin from the Admins role")
 
     result = await db.execute(
         select(UserRole).where(
