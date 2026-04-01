@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from app.core.config import settings
 from app.core.redis import get_arq_pool, get_redis
+from app.core.telemetry import inject_trace_context
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ class QueueService:
         await pool.enqueue_job(
             "execute_function_job",
             **job_kwargs,
+            trace_context=inject_trace_context(),
             **enqueue_kwargs,
         )
 
@@ -230,6 +232,7 @@ class QueueService:
             user_token=user_token,
             content=content,
             channel_id=channel_id,
+            trace_context=inject_trace_context(),
             **enqueue_kwargs,
         )
 
@@ -286,6 +289,7 @@ class QueueService:
             pending_approval_id=pending_approval_id,
             approved=approved,
             channel_id=channel_id,
+            trace_context=inject_trace_context(),
             **enqueue_kwargs,
         )
 

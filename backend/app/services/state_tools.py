@@ -161,7 +161,7 @@ class StateTools:
                                 },
                                 "key": {
                                     "type": "string",
-                                    "description": "Unique identifier within the store",
+                                    "description": "Unique identifier within the store. Creates new or updates existing.",
                                 },
                                 "value": {
                                     "description": "Data to store (any valid JSON value)",
@@ -183,46 +183,6 @@ class StateTools:
                                 },
                             },
                             "required": ["store", "key", "value"],
-                        },
-                    },
-                }
-            )
-
-            tools.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "update_state",
-                        "description": (
-                            "Update existing state entry. Use this to modify previously saved information "
-                            "when new details are learned or preferences change."
-                        ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "store": {
-                                    "type": "string",
-                                    "description": "Store containing the state",
-                                    "enum": readwrite_stores,
-                                },
-                                "key": {
-                                    "type": "string",
-                                    "description": "Key of the state to update",
-                                },
-                                "value": {
-                                    "description": "New value to store (replaces existing)",
-                                },
-                                "description": {
-                                    "type": "string",
-                                    "description": "Updated description",
-                                },
-                                "tags": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Updated tags",
-                                },
-                            },
-                            "required": ["store", "key"],
                         },
                     },
                 }
@@ -360,7 +320,8 @@ class StateTools:
         tool_map = {
             "retrieve_context": "retrieve_state",
             "save_context": "save_state",
-            "update_context": "update_state",
+            "update_context": "save_state",
+            "update_state": "save_state",
             "delete_context": "delete_state",
         }
         tool_name = tool_map.get(tool_name, tool_name)
@@ -369,8 +330,6 @@ class StateTools:
             return await StateTools._save_state(db, user_id, arguments)
         elif tool_name == "retrieve_state":
             return await StateTools._retrieve_state(db, user_id, arguments, allowed_stores=all_allowed_stores)
-        elif tool_name == "update_state":
-            return await StateTools._update_state(db, user_id, arguments)
         elif tool_name == "delete_state":
             return await StateTools._delete_state(db, user_id, arguments)
         else:
@@ -405,7 +364,7 @@ class StateTools:
                 except jsonschema.ValidationError as e:
                     return {"error": f"Value validation failed for key '{args['key']}': {e.message}"}
 
-        # Check if already exists
+        # Upsert: check if already exists
         result = await db.execute(
             select(State).where(
                 and_(
@@ -417,21 +376,38 @@ class StateTools:
         )
         existing = result.scalar_one_or_none()
 
-        if existing:
-            return {
-                "error": f"State already exists for store '{store_ref}' and key '{args['key']}'. Use update_state to modify it.",
-                "existing_value": _decrypt_state_value(existing),
-            }
-
-        visibility = args.get("visibility", store.default_visibility)
-
-        # Auto-encrypt if store requires it
         should_encrypt = store.encrypted
-        encrypted_value = None
         value = args["value"]
+        encrypted_value = None
         if should_encrypt:
             encrypted_value = encryption_service.encrypt(json.dumps(value))
             value = {}
+
+        if existing:
+            # Update existing state
+            if should_encrypt:
+                existing.encrypted_value = encrypted_value
+                existing.value = {}
+            else:
+                existing.value = value
+            if "description" in args:
+                existing.description = args["description"]
+            if "tags" in args:
+                existing.tags = args["tags"]
+            if "visibility" in args:
+                existing.visibility = args["visibility"]
+
+            await db.commit()
+            await db.refresh(existing)
+
+            return {
+                "success": True,
+                "message": f"Updated state: {store_ref}/{args['key']}",
+                "state_id": str(existing.id),
+                "value": _decrypt_state_value(existing),
+            }
+
+        visibility = args.get("visibility", store.default_visibility)
 
         state = State(
             user_id=user_uuid,

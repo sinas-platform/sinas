@@ -33,7 +33,6 @@ from app.services.state_tools import StateTools
 from app.services.template_renderer import render_template
 from app.services.tool_discovery import (
     get_available_tools,
-    parse_function_name,
     strip_tool_metadata,
 )
 from app.services.tool_execution import (
@@ -44,8 +43,11 @@ from app.services.tool_execution import (
     safe_parse_arguments,
     validate_tool_calls,
 )
+from opentelemetry import trace
+from app.core.telemetry import get_tracer, otel_attr
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer()
 
 
 class MessageService:
@@ -340,6 +342,7 @@ class MessageService:
             "final_max_tokens": final_max_tokens,
             "response_format": response_format,
             "status_templates": agent.status_templates if agent else {},
+            "agent_label": f"{agent.namespace}/{agent.name}" if agent else None,
         }
 
     async def send_message(
@@ -361,6 +364,18 @@ class MessageService:
         # User hook blocked the pipeline
         if prep.get("blocked"):
             return prep["block_message"]
+
+        agent_label = prep.get("agent_label")
+        _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
+        _llm_span = _tracer.start_span("llm.call", attributes={
+            "gen_ai.request.model": prep["final_model"] or "",
+            "gen_ai.system": prep["provider_name"] or "",
+            otel_attr("span_type"): "llm",
+            otel_attr("input"): content[:10000] if isinstance(content, str) else json.dumps(content, default=str)[:10000],
+            otel_attr("thread_id"): chat_id,
+            otel_attr("user_id"): user_id,
+            otel_attr("labels"): _labels,
+        })
 
         start_time = datetime.now(UTC)
 
@@ -392,12 +407,16 @@ class MessageService:
         )
 
         if response.get("tool_calls"):
+            # Build tool name → metadata lookup
+            _tool_meta = {t["function"]["name"]: t["function"].get("_metadata", {}) for t in prep["tools"]} if prep.get("tools") else {}
             for tool_call in response["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
-                namespace, name = parse_function_name(tool_name)
+                meta = _tool_meta.get(tool_name, {})
+                namespace, name = meta.get("namespace"), meta.get("name")
                 if namespace and name:
                     function = await Function.get_by_name(self.db, namespace, name)
                     if function and function.requires_approval:
+                        _llm_span.end()
                         raise ValueError(
                             f"Function {namespace}/{name} requires user approval. "
                             "Please use streaming mode to handle approval flow."
@@ -414,6 +433,7 @@ class MessageService:
                 temperature=prep["final_temperature"],
                 max_tokens=prep["final_max_tokens"],
                 tools=prep["tools"],
+                agent_label=agent_label,
             ):
                 pass
 
@@ -423,7 +443,10 @@ class MessageService:
                 .order_by(Message.created_at.desc())
                 .limit(1)
             )
-            return result.scalar_one()
+            final_msg = result.scalar_one()
+            _llm_span.set_attribute(otel_attr("output"), (final_msg.content or "")[:10000])
+            _llm_span.end()
+            return final_msg
 
         assistant_content = response.get("content", "")
 
@@ -458,6 +481,9 @@ class MessageService:
         await self.db.commit()
         await self.db.refresh(assistant_message)
 
+        _llm_span.set_attribute(otel_attr("output"), (assistant_content or "")[:10000])
+        _llm_span.end()
+
         return assistant_message
 
     async def send_message_stream(
@@ -486,6 +512,20 @@ class MessageService:
             yield {"type": "done", "status": "blocked"}
             return
 
+        agent_label = prep.get("agent_label")
+        _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
+
+        turn_span = _tracer.start_span("conversation.turn", attributes={
+            "chat.id": chat_id, "user.id": user_id,
+            otel_attr("span_type"): "chain",
+            otel_attr("input"): content if isinstance(content, str) else json.dumps(content, default=str),
+            otel_attr("thread_id"): chat_id,
+            otel_attr("user_id"): user_id,
+            otel_attr("labels"): _labels,
+        })
+        _turn_ctx = trace.set_span_in_context(turn_span)
+
+        _turn_output_parts: list[str] = []
         try:
             async for chunk in self._stream_response(
                 llm_provider=prep["llm_provider"],
@@ -499,16 +539,25 @@ class MessageService:
                 user_token=user_token,
                 provider_name=prep["provider_name"],
                 status_templates=prep["status_templates"],
+                agent_label=agent_label,
             ):
+                if chunk.get("content"):
+                    _turn_output_parts.append(chunk["content"])
                 yield chunk
         except Exception as e:
             print(f"❌ Error during message streaming: {e}", flush=True)
+            turn_span.set_status(trace.StatusCode.ERROR, str(e)[:200])
             error_content = f"An error occurred while processing your message. Please try again.\n\nError: {str(e)[:300]}"
             # Save error as assistant message so chat history stays valid
             error_message = Message(chat_id=chat_id, role="assistant", content=error_content)
             self.db.add(error_message)
             await self.db.commit()
             yield {"content": error_content, "type": "error", "error": str(e)[:300]}
+        finally:
+            _turn_output = "".join(_turn_output_parts)
+            if _turn_output:
+                turn_span.set_attribute(otel_attr("output"), _turn_output)
+            turn_span.end()
 
     async def _stream_response(
         self,
@@ -523,6 +572,7 @@ class MessageService:
         user_token: str,
         provider_name: Optional[str],
         status_templates: dict[str, str] = {},
+        agent_label: Optional[str] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream LLM response."""
         full_content = ""
@@ -538,7 +588,10 @@ class MessageService:
             max_tokens=max_tokens,
         ):
             if chunk.get("content"):
-                full_content += chunk["content"]
+                if isinstance(chunk["content"], str):
+                    full_content += chunk["content"]
+                else:
+                    chunk["content"] = None
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
@@ -576,6 +629,26 @@ class MessageService:
                         ]
 
             yield chunk
+
+        # Record LLM call as a span (after streaming completes, never affects the flow)
+        try:
+            # Capture input: last user message (up to 10k for NER/extraction use cases)
+            _last_user = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+            _input_summary = _last_user[:10000] if isinstance(_last_user, str) else json.dumps(_last_user, default=str)[:10000]
+            _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
+            _s = _tracer.start_span("llm.call", attributes={
+                "gen_ai.request.model": final_model or "",
+                "gen_ai.system": provider_name or "",
+                otel_attr("span_type"): "llm",
+                otel_attr("input"): _input_summary,
+                otel_attr("output"): full_content if full_content else "",
+                otel_attr("thread_id"): chat_id,
+                otel_attr("user_id"): user_id,
+                otel_attr("labels"): _labels,
+            })
+            _s.end()
+        except Exception:
+            pass
 
         tool_calls = tool_calls_list if tool_calls_list else []
 
@@ -638,11 +711,13 @@ class MessageService:
             )
 
             if approval_needed:
+                _tool_meta = {t["function"]["name"]: t["function"].get("_metadata", {}) for t in tools} if tools else {}
                 for tool_call in tool_calls:
                     tool_name = tool_call["function"]["name"]
                     arguments_str = tool_call["function"]["arguments"]
 
-                    namespace, name = parse_function_name(tool_name)
+                    meta = _tool_meta.get(tool_name, {})
+                    namespace, name = meta.get("namespace"), meta.get("name")
                     if not namespace or not name:
                         continue
 
@@ -674,6 +749,7 @@ class MessageService:
                 max_tokens=max_tokens,
                 tools=tools,
                 status_templates=status_templates,
+                agent_label=agent_label,
             ):
                 yield chunk
 
@@ -692,6 +768,7 @@ class MessageService:
         permissions: Optional[dict[str, bool]] = None,
         status_templates: dict[str, str] = {},
         depth: int = 0,
+        agent_label: Optional[str] = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Execute tool calls, stream LLM follow-up response, and save final message."""
         import sys
@@ -913,7 +990,10 @@ class MessageService:
             max_tokens=max_tokens,
         ):
             if chunk.get("content"):
-                full_content += chunk["content"]
+                if isinstance(chunk["content"], str):
+                    full_content += chunk["content"]
+                else:
+                    chunk["content"] = None
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
@@ -951,6 +1031,25 @@ class MessageService:
                         ]
 
             yield chunk
+
+        # Record follow-up LLM call as a span
+        try:
+            # Summarize: tool results that were fed back to the LLM
+            _tool_summary = ", ".join(f"{r[1]}" for r in tool_results.values())[:500] if tool_results else "tool results"
+            _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
+            _s2 = _tracer.start_span("llm.call", attributes={
+                "gen_ai.request.model": model or "",
+                "gen_ai.system": provider or "",
+                otel_attr("span_type"): "llm",
+                otel_attr("input"): f"Follow-up after tools: {_tool_summary}",
+                otel_attr("output"): full_content if full_content else "",
+                otel_attr("thread_id"): chat_id,
+                otel_attr("user_id"): user_id,
+                otel_attr("labels"): _labels,
+            })
+            _s2.end()
+        except Exception:
+            pass
 
         final_tool_calls = tool_calls_list if tool_calls_list else None
 
@@ -996,6 +1095,7 @@ class MessageService:
                 tools=tools,
                 status_templates=status_templates,
                 depth=depth + 1,
+                agent_label=agent_label,
             ):
                 yield result_chunk
             return
@@ -1027,12 +1127,14 @@ class MessageService:
                 elif hook_result.mutated_content:
                     final_content = hook_result.mutated_content
 
-        final_message = Message(
-            chat_id=chat_id, role="assistant", content=final_content if final_content else None
-        )
-        self.db.add(final_message)
-        await self.db.commit()
-        await self.db.refresh(final_message)
+        # Only save if there's actual content (avoid empty assistant messages)
+        if final_content:
+            final_message = Message(
+                chat_id=chat_id, role="assistant", content=final_content
+            )
+            self.db.add(final_message)
+            await self.db.commit()
+            await self.db.refresh(final_message)
 
     async def _log_request(
         self,

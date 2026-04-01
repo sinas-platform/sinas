@@ -91,25 +91,23 @@ async def get_agent_tools(agents: list[Agent]) -> list[dict[str, Any]]:
             continue
 
         # Build tool definition for this agent
-        # Use clean name, store ID as hidden parameter
         tool_def = {
             "type": "function",
             "function": {
-                "name": f"call_agent_{agent.name.lower().replace(' ', '_').replace('-', '_')}",
-                "description": f"{agent.name}: {agent.description}"
-                if agent.description
-                else f"Call the {agent.name} agent",
+                "name": f"call_agent_{agent.namespace.lower().replace(' ', '_').replace('-', '_')}__{agent.name.lower().replace(' ', '_').replace('-', '_')}",
+                "description": (
+                    f"{agent.name}: {agent.description}"
+                    if agent.description
+                    else f"Call the {agent.name} agent"
+                ),
+                "_metadata": {
+                    "agent_id": str(agent.id),
+                },
             },
         }
 
         # Hidden parameters included in all agent tools
         _hidden = {
-            "_agent_id": {
-                "type": "string",
-                "description": "Internal agent identifier",
-                "const": str(agent.id),
-                "default": str(agent.id),
-            },
             "_chat_id": {
                 "type": "string",
                 "description": "Optional chat ID to resume a previous conversation with this agent instead of starting a new one. Use a chat_id returned from a previous call to continue that conversation.",
@@ -132,9 +130,8 @@ async def get_agent_tools(agents: list[Agent]) -> list[dict[str, Any]]:
             params["properties"] = {**_prompt, **params["properties"], **_hidden}
             if "required" not in params:
                 params["required"] = []
-            for req in ["prompt", "_agent_id"]:
-                if req not in params["required"]:
-                    params["required"].append(req)
+            if "prompt" not in params["required"]:
+                params["required"].append("prompt")
             tool_def["function"]["parameters"] = params
         else:
             # Default: simple prompt + hidden params
@@ -144,43 +141,13 @@ async def get_agent_tools(agents: list[Agent]) -> list[dict[str, Any]]:
                     **_prompt,
                     **_hidden,
                 },
-                "required": ["prompt", "_agent_id"],
+                "required": ["prompt"],
             }
 
         tools.append(tool_def)
 
     return tools
 
-
-def parse_function_name(tool_name: str) -> tuple[Optional[str], Optional[str]]:
-    """Parse namespace and name from tool_name.
-
-    Handles both namespace__name (LLM format) and namespace/name formats.
-
-    Returns:
-        Tuple of (namespace, name) or (None, None) if not a function
-    """
-    # Skip non-function tools
-    if tool_name in [
-        "save_state",
-        "retrieve_state",
-        "update_state",
-        "delete_state",
-        "continue_execution",
-        "execute_code",
-    ] or tool_name.startswith("call_agent_") or tool_name.startswith("query_") or tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
-        return None, None
-
-    # Convert namespace__name to namespace/name if needed
-    if "__" in tool_name and "/" not in tool_name:
-        tool_name = tool_name.replace("__", "/", 1)
-
-    # Parse namespace/name
-    if "/" not in tool_name:
-        return None, None
-
-    namespace, name = tool_name.split("/", 1)
-    return namespace, name
 
 
 def strip_tool_metadata(

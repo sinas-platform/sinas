@@ -104,6 +104,9 @@ async def apply_agents(
                     "enabled_connectors": agent_config.enabledConnectors
                     if agent_config.enabledConnectors
                     else [],
+                    "input_schema": agent_config.inputSchema or {},
+                    "output_schema": agent_config.outputSchema or {},
+                    "initial_messages": agent_config.initialMessages or [],
                     "hooks": agent_config.hooks,
                     "icon": agent_config.icon,
                     "is_default": agent_config.isDefault,
@@ -152,6 +155,9 @@ async def apply_agents(
                     existing.enabled_collections = agent_config.enabledCollections
                     existing.enabled_components = agent_config.enabledComponents
                     existing.enabled_connectors = agent_config.enabledConnectors
+                    existing.input_schema = agent_config.inputSchema or {}
+                    existing.output_schema = agent_config.outputSchema or {}
+                    existing.initial_messages = agent_config.initialMessages
                     existing.hooks = agent_config.hooks
                     existing.icon = agent_config.icon
                     existing.default_job_timeout = agent_config.defaultJobTimeout
@@ -193,6 +199,9 @@ async def apply_agents(
                         temperature=agent_config.temperature,
                         max_tokens=agent_config.maxTokens,
                         system_prompt=agent_config.systemPrompt,
+                        input_schema=agent_config.inputSchema or {},
+                        output_schema=agent_config.outputSchema or {},
+                        initial_messages=agent_config.initialMessages,
                         enabled_functions=normalized_functions,
                         function_parameters=agent_config.functionParameters,
                         status_templates=agent_config.statusTemplates,

@@ -130,6 +130,13 @@ class Settings(BaseSettings):
     # Component builder
     builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service
 
+    # OpenTelemetry (opt-in observability — e.g. Langwatch)
+    otel_enabled: bool = False
+    otel_exporter_endpoint: Optional[str] = None  # e.g. https://app.langwatch.ai/api/otel/v1/traces
+    otel_exporter_headers: Optional[str] = None  # e.g. X-Auth-Token=lw_xxx
+    otel_service_name: str = "sinas"
+    otel_vendor: str = "langwatch"  # Vendor preset: "langwatch", "langfuse", "generic_otel"
+
     # Declarative Configuration
     config_file: Optional[str] = None  # Path to YAML config file
     auto_apply_config: bool = False  # Auto-apply config file on startup

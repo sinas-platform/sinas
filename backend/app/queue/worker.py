@@ -56,6 +56,11 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
 
     redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
 
+    # Restore trace context from the enqueue side
+    from app.core.telemetry import extract_trace_context, get_tracer, otel_attr
+    parent_ctx = extract_trace_context(kwargs.get("trace_context", {}))
+    _tracer = get_tracer()
+
     logger.info(
         f"Worker executing function {function_namespace}/{function_name} "
         f"(job={job_id}, execution={execution_id})"
@@ -91,6 +96,16 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
     )
 
     completed = False
+    _span_ctx = {"context": parent_ctx} if parent_ctx else {}
+    _fn_span = _tracer.start_span(
+        "function.job",
+        **_span_ctx,
+        attributes={
+            "function.name": f"{function_namespace}/{function_name}",
+            "job.id": job_id,
+            "job.queue": "functions",
+        },
+    )
     try:
         from app.services.execution_engine import executor
 
@@ -125,6 +140,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             json.dumps({"status": "completed", "result": result}, default=str),
         )
 
+        _fn_span.set_attribute("function.result", json.dumps(result, default=str) if result else "")
         completed = True
         logger.info(f"Function job {job_id} completed successfully")
         return result
@@ -190,6 +206,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
                 )
             except Exception:
                 logger.error(f"Failed to update status for cancelled job {job_id}")
+        _fn_span.end()
 
 
 async def function_worker_startup(ctx: dict) -> None:
@@ -199,6 +216,9 @@ async def function_worker_startup(ctx: dict) -> None:
     by the backend), and starts the per-user container cleanup task.
     """
     from redis.asyncio import Redis
+
+    from app.core.telemetry import init_telemetry
+    init_telemetry()
 
     ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
 
@@ -248,6 +268,9 @@ async def agent_worker_startup(ctx: dict) -> None:
     latency on the first job.
     """
     from redis.asyncio import Redis
+
+    from app.core.telemetry import init_telemetry
+    init_telemetry()
 
     ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
 
