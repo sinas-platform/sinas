@@ -108,7 +108,7 @@ class ContainerPool:
         if self._initialized:
             return
 
-        await self._discover_existing_containers(restart=True)
+        await self._discover_existing_containers(restart=True, db=db)
 
         # Scale up to min size — create containers in parallel
         current = len(self.idle) + len(self.in_use)
@@ -135,7 +135,9 @@ class ContainerPool:
             f"{len(self.in_use)} in-use"
         )
 
-    async def _discover_existing_containers(self, restart: bool = False):
+    async def _discover_existing_containers(
+        self, restart: bool = False, db: Optional[AsyncSession] = None
+    ):
         """
         Find running/stopped sinas-sandbox-* Docker containers.
 
@@ -144,6 +146,7 @@ class ContainerPool:
                 ensure a fresh executor process, clean tmpfs, and correct
                 network connectivity.  Queue workers pass False (default)
                 to avoid racing with the scheduler or each other.
+            db: Database session for reinstalling packages on discovered containers.
 
         Sets _next_id past the highest existing ID.
         """
@@ -213,6 +216,11 @@ class ContainerPool:
                             except Exception:
                                 pass
                             return None
+
+                # Reinstall packages to ensure discovered containers are up-to-date
+                if db:
+                    print(f"📦 Installing packages in discovered container: {name}")
+                    await self._install_packages(container, db)
 
                 print(f"🔍 Discovered sandbox container: {name} (status: {container.status})")
                 return PooledContainer(
@@ -582,7 +590,10 @@ sys.exit(1)
                 logger.info("Successfully installed packages in sandbox container")
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                logger.warning(f"Package installation had issues: {error_msg}")
+                logger.error(
+                    f"Package installation failed (exit code {exec_result.exit_code}): "
+                    f"{error_msg}"
+                )
 
         except Exception as e:
             logger.error(f"Error installing packages in sandbox container: {e}")

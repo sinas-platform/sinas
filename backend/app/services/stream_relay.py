@@ -57,23 +57,25 @@ class StreamRelay:
         await self.publish(channel_id, {"type": "error", "error": error})
 
     async def subscribe(
-        self, channel_id: str, last_id: str = "0"
+        self, channel_id: str, last_id: str = "0", timeout: Optional[int] = None
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Subscribe to a Redis Stream from a given position.
 
         Yields events until a "done" or "error" terminal event is received.
-        Waits up to SUBSCRIBE_WAIT_TIMEOUT seconds for the stream to appear
+        Waits up to `timeout` seconds for the stream to appear
         (the worker may not have started publishing yet).
 
         Args:
             channel_id: The stream channel to subscribe to
             last_id: The last received stream entry ID (for reconnection).
                      "0" reads from the beginning, "$" reads only new entries.
+            timeout: Max seconds to wait for data. Defaults to SUBSCRIBE_WAIT_TIMEOUT.
         """
         redis = await get_redis()
         stream_key = f"{STREAM_PREFIX}{channel_id}"
-        started_at = time.monotonic()
+        wait_timeout = timeout or SUBSCRIBE_WAIT_TIMEOUT
+        last_data_at = time.monotonic()
 
         while True:
             # XREAD blocks for up to 5 seconds waiting for new entries
@@ -84,14 +86,18 @@ class StreamRelay:
             )
 
             if not entries:
-                elapsed = time.monotonic() - started_at
-                if elapsed > SUBSCRIBE_WAIT_TIMEOUT:
+                idle_time = time.monotonic() - last_data_at
+                if idle_time > wait_timeout:
                     logger.error(
-                        f"Stream {stream_key} timed out after {SUBSCRIBE_WAIT_TIMEOUT}s"
+                        f"Stream {stream_key} timed out after {wait_timeout}s idle "
+                        f"(no data received)"
                     )
                     return
                 # Stream may not exist yet — worker is still starting up. Keep waiting.
                 continue
+
+            # Reset idle timer whenever we receive data
+            last_data_at = time.monotonic()
 
             for stream_name, messages in entries:
                 for entry_id, fields in messages:

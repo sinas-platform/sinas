@@ -5,7 +5,10 @@ import logging
 import traceback
 from typing import Any
 
+from opentelemetry import trace
+
 from app.core.config import settings
+from app.core.telemetry import otel_attr
 from app.services.queue_service import JOB_STATUS_PREFIX, JOB_TTL
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,8 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     from app.services.message_service import MessageService
     from app.services.stream_relay import stream_relay
 
+    from app.core.telemetry import extract_trace_context, get_tracer
+
     job_id = kwargs["job_id"]
     chat_id = kwargs["chat_id"]
     user_id = kwargs["user_id"]
@@ -48,6 +53,10 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
 
     logger.info(f"Agent worker processing message for chat {chat_id} (job={job_id})")
+
+    # Restore trace context from the enqueue side
+    parent_ctx = extract_trace_context(kwargs.get("trace_context", {}))
+    tracer = get_tracer()
 
     # Read existing status to preserve fields set at enqueue time (agent, enqueued_at)
     existing = {}
@@ -82,65 +91,90 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
 
     completed = False
-    try:
-        async with AsyncSessionLocal() as db:
-            message_service = MessageService(db)
+    span_ctx = {"context": parent_ctx} if parent_ctx else {}
+    with tracer.start_as_current_span(
+        "agent.job",
+        **span_ctx,
+        attributes={
+            "chat.id": chat_id,
+            "job.id": job_id,
+            "job.queue": "agents",
+            "agent.name": (existing.get("agent") or {}).get("name", "") if isinstance(existing.get("agent"), dict) else str(existing.get("agent", "")),
+            otel_attr("span_type"): "agent",
+            otel_attr("input"): content if isinstance(content, str) else json.dumps(content, default=str),
+            otel_attr("thread_id"): chat_id,
+            otel_attr("user_id"): user_id,
+            otel_attr("labels"): json.dumps([f"agent:{existing.get('agent', '')}"]) if existing.get("agent") else "[]",
+        },
+    ):
+        _agent_output_parts: list[str] = []
+        try:
+            async with AsyncSessionLocal() as db:
+                message_service = MessageService(db)
 
-            async for chunk in message_service.send_message_stream(
-                chat_id=chat_id,
-                user_id=user_id,
-                user_token=user_token,
-                content=content,
-            ):
-                # Ensure chunk is a dict
-                if not isinstance(chunk, dict):
-                    chunk = {"content": str(chunk)}
+                async for chunk in message_service.send_message_stream(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    user_token=user_token,
+                    content=content,
+                ):
+                    # Ensure chunk is a dict
+                    if not isinstance(chunk, dict):
+                        chunk = {"content": str(chunk)}
 
-                await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
+                    if chunk.get("content"):
+                        _agent_output_parts.append(chunk["content"])
+                    await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
 
-        # Signal completion
-        await stream_relay.publish_done(channel_id)
+            # Set agent output on the current span
+            _agent_output = "".join(_agent_output_parts)
+            _current_span = trace.get_current_span()
+            if _agent_output and _current_span:
+                _current_span.set_attribute(otel_attr("output"), _agent_output)
 
-        # Update status
-        await redis.set(
-            f"{JOB_STATUS_PREFIX}{job_id}",
-            json.dumps({**base_fields, "status": "completed"}),
-            ex=JOB_TTL,
-        )
+            # Signal completion
+            await stream_relay.publish_done(channel_id)
 
-        completed = True
-        logger.info(f"Agent message job {job_id} completed")
+            # Update status
+            await redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({**base_fields, "status": "completed"}),
+                ex=JOB_TTL,
+            )
 
-    except Exception as e:
-        logger.error(f"Agent message job {job_id} failed: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
+            completed = True
+            logger.info(f"Agent message job {job_id} completed")
 
-        # Publish error to stream
-        await stream_relay.publish_error(channel_id, str(e))
+        except Exception as e:
+            logger.error(f"Agent message job {job_id} failed: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
-        # Update status
-        await redis.set(
-            f"{JOB_STATUS_PREFIX}{job_id}",
-            json.dumps({**base_fields, "status": "failed", "error": str(e)}),
-            ex=JOB_TTL,
-        )
+            # Publish error to stream
+            await stream_relay.publish_error(channel_id, str(e))
 
-        completed = True
-        raise
+            # Update status
+            await redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({**base_fields, "status": "failed", "error": str(e)}),
+                ex=JOB_TTL,
+            )
 
-    finally:
-        ping_task.cancel()
-        if not completed:
-            logger.warning(f"Agent message job {job_id} cancelled/timed out")
-            try:
-                await stream_relay.publish_error(channel_id, "Job cancelled or timed out")
-                await redis.set(
-                    f"{JOB_STATUS_PREFIX}{job_id}",
-                    json.dumps({**base_fields, "status": "failed", "error": "Job cancelled or timed out"}),
-                    ex=JOB_TTL,
-                )
-            except Exception:
-                logger.error(f"Failed to update status for cancelled agent job {job_id}")
+            completed = True
+            raise
+
+        finally:
+            ping_task.cancel()
+            if not completed:
+                logger.warning(f"Agent message job {job_id} cancelled/timed out")
+                try:
+                    await stream_relay.publish_error(channel_id, "Job cancelled or timed out")
+                    await redis.set(
+                        f"{JOB_STATUS_PREFIX}{job_id}",
+                        json.dumps({**base_fields, "status": "failed", "error": "Job cancelled or timed out"}),
+                        ex=JOB_TTL,
+                    )
+                except Exception:
+                    logger.error(f"Failed to update status for cancelled agent job {job_id}")
 
 
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:

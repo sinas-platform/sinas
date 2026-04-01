@@ -100,8 +100,6 @@ class AnthropicProvider(BaseLLMProvider):
         # Track tool calls being built across chunks
         current_tool_calls = {}
         current_content = ""
-        # Track previous partial_json to compute deltas
-        previous_partial_json = {}
 
         async with self.client.messages.stream(**params) as stream:
             async for event in stream:
@@ -117,7 +115,6 @@ class AnthropicProvider(BaseLLMProvider):
                     elif event.content_block.type == "tool_use":
                         # Start tracking a new tool call
                         idx = event.index
-                        # Generate fallback ID if not provided
                         call_id = event.content_block.id if event.content_block.id else f"toolu_{idx}"
                         current_tool_calls[idx] = {
                             "id": call_id,
@@ -128,33 +125,19 @@ class AnthropicProvider(BaseLLMProvider):
                             },
                             "index": idx,
                         }
-                        previous_partial_json[idx] = ""
 
                 elif event.type == "content_block_delta":
                     if hasattr(event.delta, "text"):
-                        # Text content chunk
                         chunk_data["content"] = event.delta.text
                         current_content += event.delta.text
                     elif hasattr(event.delta, "partial_json"):
-                        # Tool call arguments chunk (partial_json is cumulative, not delta)
+                        # partial_json is an incremental delta, not cumulative
                         idx = event.index
                         if idx in current_tool_calls:
-                            # Compute delta by comparing with previous partial_json
-                            current_partial = event.delta.partial_json
-                            previous_partial = previous_partial_json.get(idx, "")
+                            delta = event.delta.partial_json
+                            # Accumulate for content_block_stop fallback
+                            current_tool_calls[idx]["function"]["arguments"] += delta
 
-                            # Only send the new part (delta)
-                            if current_partial.startswith(previous_partial):
-                                delta = current_partial[len(previous_partial):]
-                            else:
-                                # Fallback if not a simple append (shouldn't happen)
-                                delta = current_partial
-
-                            # Update tracking
-                            previous_partial_json[idx] = current_partial
-                            current_tool_calls[idx]["function"]["arguments"] = current_partial
-
-                            # Only yield if there's a delta to send
                             if delta:
                                 chunk_data["tool_calls"] = [{
                                     "id": current_tool_calls[idx]["id"],
@@ -166,8 +149,21 @@ class AnthropicProvider(BaseLLMProvider):
                                     "index": idx,
                                 }]
 
+                elif event.type == "content_block_stop":
+                    # Emit completed tool call ONLY for empty-input tools (no deltas sent).
+                    # Tools with arguments were already streamed via partial_json deltas.
+                    idx = event.index
+                    if idx in current_tool_calls:
+                        tc = current_tool_calls[idx]
+                        if not tc["function"]["arguments"]:
+                            chunk_data["tool_calls"] = [{**tc, "index": idx}]
+
+                elif event.type == "message_delta":
+                    if hasattr(event.delta, "stop_reason") and event.delta.stop_reason:
+                        chunk_data["finish_reason"] = event.delta.stop_reason
+
                 elif event.type == "message_stop":
-                    chunk_data["finish_reason"] = "stop"
+                    chunk_data["finish_reason"] = chunk_data["finish_reason"] or "stop"
 
                 yield chunk_data
 
@@ -292,6 +288,10 @@ class AnthropicProvider(BaseLLMProvider):
         # Ensure first message is user (Anthropic requirement)
         if merged_messages and merged_messages[0]["role"] != "user":
             merged_messages.insert(0, {"role": "user", "content": "Continue the conversation."})
+
+        # Ensure last message is user (required by models that don't support prefill)
+        if merged_messages and merged_messages[-1]["role"] != "user":
+            merged_messages.append({"role": "user", "content": "Continue."})
 
         return system_message, merged_messages
 

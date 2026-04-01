@@ -108,6 +108,8 @@ class FunctionConfig(BaseModel):
     outputSchema: Optional[dict[str, Any]] = None
     icon: Optional[str] = None
     timeout: Optional[int] = None
+    sharedPool: Optional[bool] = None
+    requiresApproval: Optional[bool] = None
 
 
 class SkillConfig(BaseModel):
@@ -183,6 +185,9 @@ class AgentConfig(BaseModel):
     enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
     enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
     enabledConnectors: list[dict[str, Any]] = Field(default_factory=list)  # [{"connector": "ns/name", "operations": [...]}]
+    inputSchema: Optional[dict[str, Any]] = None
+    outputSchema: Optional[dict[str, Any]] = None
+    initialMessages: Optional[list[dict[str, str]]] = None
     hooks: Optional[dict[str, Any]] = None  # {"onUserMessage": [...], "onAssistantMessage": [...]}
     icon: Optional[str] = None
     isDefault: bool = False

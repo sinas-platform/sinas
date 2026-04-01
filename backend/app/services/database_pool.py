@@ -149,17 +149,27 @@ class DatabasePoolManager:
                     "row_count": len(rows),
                 }
             else:
-                result = await conn.execute(converted_sql, *positional_params, timeout=timeout_s)
-                # asyncpg returns string like "UPDATE 5"
-                affected = 0
-                if result and " " in result:
-                    try:
-                        affected = int(result.split(" ")[-1])
-                    except ValueError:
-                        pass
-                return {
-                    "affected_rows": affected,
-                }
+                # Check if query has RETURNING clause
+                has_returning = "RETURNING" in converted_sql.upper()
+                if has_returning:
+                    rows = await conn.fetch(converted_sql, *positional_params, timeout=timeout_s)
+                    return {
+                        "affected_rows": len(rows),
+                        "rows": [self._serialize_row(row) for row in rows],
+                        "row_count": len(rows),
+                    }
+                else:
+                    result = await conn.execute(converted_sql, *positional_params, timeout=timeout_s)
+                    # asyncpg returns string like "UPDATE 5"
+                    affected = 0
+                    if result and " " in result:
+                        try:
+                            affected = int(result.split(" ")[-1])
+                        except ValueError:
+                            pass
+                    return {
+                        "affected_rows": affected,
+                    }
 
     @staticmethod
     def _serialize_value(val: Any) -> Any:

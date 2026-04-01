@@ -46,6 +46,10 @@ async def lifespan(app: FastAPI):
     await redis.ping()
     print("✅ Redis connection established")
 
+    # Initialize OpenTelemetry (no-op if disabled)
+    from app.core.telemetry import init_telemetry
+    init_telemetry()
+
     # --- Idempotent tasks: safe on all replicas ---
 
     # Initialize default roles

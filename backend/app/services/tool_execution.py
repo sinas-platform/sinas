@@ -6,6 +6,8 @@ import traceback
 import uuid
 from typing import Any, Optional
 
+from opentelemetry import trace
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +29,6 @@ from app.services.state_tools import StateTools
 from app.services.queue_service import queue_service
 from app.services.stream_relay import stream_relay
 from app.services.template_renderer import render_template
-from app.services.tool_discovery import parse_function_name, resolve_agent_patterns
 from app.services.tool_result_store import get_tool_result, save_tool_result
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def is_sequential_tool(tool_name: str) -> bool:
     """Check if a tool must be executed sequentially (not parallelizable)."""
-    return tool_name.startswith("call_agent_") or tool_name == "continue_execution" or tool_name == "execute_code"
+    return tool_name == "continue_execution" or tool_name == "execute_code"
 
 
 def safe_parse_arguments(arguments: Any) -> dict:
@@ -172,14 +173,24 @@ async def check_approval_requirements(
     """
     requires_approval = False
 
+    # Build tool name → metadata lookup from tools list
+    tool_meta_map = {}
+    if tools:
+        for t in tools:
+            fn = t.get("function", {})
+            if fn.get("name") and fn.get("_metadata"):
+                tool_meta_map[fn["name"]] = fn["_metadata"]
+
     for tool_call in tool_calls:
         tool_name = tool_call["function"]["name"]
         arguments_str = tool_call["function"]["arguments"]
 
-        # Parse namespace/name from tool_name
-        namespace, name = parse_function_name(tool_name)
+        # Get namespace/name from tool metadata
+        meta = tool_meta_map.get(tool_name, {})
+        namespace = meta.get("namespace")
+        name = meta.get("name")
         if not namespace or not name:
-            # Not a function tool, skip
+            # Not a function tool (agents, collections, etc.), skip
             continue
 
         # Load function to check requires_approval flag
@@ -211,7 +222,7 @@ async def check_approval_requirements(
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "messages": messages,
-                "tools": tools,  # Store tools list with metadata for resuming execution
+                "tools": tools,
             },
         )
         db.add(pending_approval)
@@ -227,22 +238,18 @@ async def execute_agent_tool(
     chat: Chat,
     user_id: str,
     user_token: str,
-    tool_name: str,
+    agent_id_str: str,
     arguments: dict[str, Any],
-    enabled_agent_ids: list[str],
     create_chat_with_agent_fn,
 ) -> dict[str, Any]:
     """Execute an agent tool call by creating or resuming a chat."""
-    # Extract agent ID from arguments (passed as _agent_id parameter)
-    agent_id_str = arguments.get("_agent_id")
     if not agent_id_str:
-        return {"error": "Missing _agent_id in agent tool call"}
-
-    # Verify this agent ID is in enabled list
-    if agent_id_str not in enabled_agent_ids:
-        return {"error": f"Agent {agent_id_str} not enabled for this agent"}
+        return {"error": "Agent ID not provided"}
 
     # Load agent
+    from app.core.telemetry import get_tracer, otel_attr
+    _agent_tracer = get_tracer()
+
     result = await db.execute(select(Agent).where(Agent.id == agent_id_str))
     agent = result.scalar_one_or_none()
 
@@ -272,16 +279,32 @@ async def execute_agent_tool(
                 return {"error": f"Chat {resume_chat_id} not found or does not belong to this agent"}
             logger.info(f"Resuming sub-agent chat {sub_chat.id} with {agent.namespace}/{agent.name}")
         else:
-            sub_chat = await create_chat_with_agent_fn(
-                agent_id=str(agent.id),
+            # Create sub-chat using our own db session (not the parent's)
+            # to avoid cross-session issues with the parent MessageService.
+            sub_chat = Chat(
                 user_id=user_id,
-                input_data=input_data,
-                name=f"Sub-chat: {agent.name}",
+                agent_id=str(agent.id),
+                agent_namespace=agent.namespace,
+                agent_name=agent.name,
+                title=f"Sub-chat: {agent.name}",
+                chat_metadata={"agent_input": input_data} if input_data else None,
             )
+            db.add(sub_chat)
+            await db.commit()
+            await db.refresh(sub_chat)
 
         # Route agent-to-agent calls through the queue so each sub-agent
         # runs in its own worker — enables agent swarms without recursive blocking.
         channel_id = str(uuid.uuid4())
+        _delegate_span = _agent_tracer.start_span("agent.delegate", attributes={
+            "agent.target": f"{agent.namespace}/{agent.name}",
+            "agent.chat_id": str(sub_chat.id),
+            otel_attr("span_type"): "tool",
+            otel_attr("input"): content if isinstance(content, str) else json.dumps(content, default=str),
+            otel_attr("thread_id"): str(chat.id),
+            otel_attr("user_id"): user_id,
+            otel_attr("labels"): json.dumps([f"agent:{agent.namespace}/{agent.name}"]),
+        })
 
         await queue_service.enqueue_agent_message(
             chat_id=str(sub_chat.id),
@@ -292,12 +315,17 @@ async def execute_agent_tool(
             agent=f"{agent.namespace}/{agent.name}",
         )
 
-        # Wait for the sub-agent to finish by reading the Redis stream
+        # Wait for the sub-agent to finish by reading the Redis stream.
+        # Use a longer timeout than the default SUBSCRIBE_WAIT_TIMEOUT since
+        # agent-to-agent calls can take minutes (the sub-agent may itself be
+        # making tool calls, calling other agents, etc.).
         final_content = ""
-        async for event in stream_relay.subscribe(channel_id):
+        got_terminal = False
+        async for event in stream_relay.subscribe(channel_id, timeout=600):
             if event.get("content"):
                 final_content += event["content"]
             if event.get("type") in ("done", "error"):
+                got_terminal = True
                 if event.get("type") == "error":
                     return {
                         "agent_name": agent.name,
@@ -306,6 +334,21 @@ async def execute_agent_tool(
                     }
                 break
 
+        if not got_terminal:
+            logger.error(
+                f"Agent-to-agent stream timed out: {agent.namespace}/{agent.name} "
+                f"(channel={channel_id}, chat={sub_chat.id})"
+            )
+            _delegate_span.set_status(trace.StatusCode.ERROR, "timeout")
+            _delegate_span.end()
+            return {
+                "agent_name": agent.name,
+                "error": "Sub-agent did not respond in time",
+                "chat_id": str(sub_chat.id),
+            }
+
+        _delegate_span.set_attribute(otel_attr("output"), final_content or "")
+        _delegate_span.end()
         return {
             "agent_name": agent.name,
             "response": final_content,
@@ -314,6 +357,11 @@ async def execute_agent_tool(
 
     except Exception as e:
         logger.error(f"Failed to execute agent tool {tool_name}: {e}")
+        try:
+            _delegate_span.set_status(trace.StatusCode.ERROR, str(e)[:200])
+            _delegate_span.end()
+        except (NameError, Exception):
+            pass
         return {"error": str(e)}
 
 
@@ -360,12 +408,17 @@ async def execute_single_tool(
             result_chat = await db.execute(select(Chat).where(Chat.id == chat_id))
             chat = result_chat.scalar_one_or_none()
 
-            if tool_name in [
-                "save_state",
-                "retrieve_state",
-                "update_state",
-                "delete_state",
-            ]:
+            # Look up tool metadata from the tools list (set during tool discovery)
+            tool_metadata = {}
+            tool_found_in_list = False
+            for tool in tools:
+                if tool.get("function", {}).get("name") == tool_name:
+                    tool_metadata = tool.get("function", {}).get("_metadata", {})
+                    tool_found_in_list = True
+                    break
+
+            # Built-in tools (no metadata needed)
+            if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
                 result = await StateTools.execute_tool(
                     db=db,
                     tool_name=tool_name,
@@ -381,41 +434,12 @@ async def execute_single_tool(
                     user_id=user_id,
                     chat_id=chat_id,
                 )
-                if stored:
-                    result = stored
-                else:
-                    result = {"error": "Tool result not found or expired"}
+                result = stored if stored else {"error": "Tool result not found or expired"}
 
             elif tool_name == "continue_execution":
-                # Resume directly in the container (bypasses queue)
                 result = await fn_executor.resume_execution(
                     execution_id=arguments["execution_id"],
                     resume_value=arguments["input"],
-                )
-            elif tool_name.startswith("call_agent_"):
-                # Resolve enabled agent patterns to actual agent IDs
-                enabled_agent_ids = []
-                if chat and chat.agent_id:
-                    result_agent = await db.execute(
-                        select(Agent).where(Agent.id == chat.agent_id)
-                    )
-                    chat_agent = result_agent.scalar_one_or_none()
-                    if chat_agent and chat_agent.enabled_agents:
-                        user_perms = await get_user_permissions(db, user_id)
-                        resolved = await resolve_agent_patterns(
-                            db, chat_agent.enabled_agents, user_id, user_perms
-                        )
-                        enabled_agent_ids = [str(a.id) for a in resolved]
-
-                result = await execute_agent_tool(
-                    db=db,
-                    chat=chat,
-                    user_id=user_id,
-                    user_token=user_token,
-                    tool_name=tool_name,
-                    arguments=arguments,
-                    enabled_agent_ids=enabled_agent_ids,
-                    create_chat_with_agent_fn=create_chat_with_agent_fn,
                 )
             elif tool_name == "execute_code":
                 start_time = time.time()
@@ -424,35 +448,59 @@ async def execute_single_tool(
                     user_id=user_id,
                     chat_id=str(chat_id),
                 )
-                elapsed = time.time() - start_time
-                logger.debug(f"Code execution completed in {elapsed:.3f}s")
+                logger.debug(f"Code execution completed in {time.time() - start_time:.3f}s")
+
+            # Metadata-driven tools — identity comes from _metadata, not tool name parsing
+            elif tool_metadata.get("agent_id"):
+                result = await execute_agent_tool(
+                    db=db,
+                    chat=chat,
+                    user_id=user_id,
+                    user_token=user_token,
+                    agent_id_str=tool_metadata["agent_id"],
+                    arguments=arguments,
+                    create_chat_with_agent_fn=create_chat_with_agent_fn,
+                )
+            elif tool_metadata.get("tool_type", "").startswith("collection_"):
+                start_time = time.time()
+                result = await collection_converter.execute_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    metadata=tool_metadata,
+                )
+                logger.debug(f"Collection tool completed in {time.time() - start_time:.3f}s: {tool_name}")
+            elif tool_metadata.get("type") == "connector":
+                start_time = time.time()
+                connector_tool_converter = ConnectorToolConverter()
+                result = await connector_tool_converter.execute_connector_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_token=user_token,
+                    locked_params=tool_metadata.get("locked_params", {}),
+                    user_id=user_id,
+                )
+                logger.debug(f"Connector tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_name.startswith("show_component_"):
                 start_time = time.time()
                 result = await component_converter.handle_component_tool_call(
                     db=db, tool_name=tool_name, arguments=arguments, user_id=user_id
                 )
-                elapsed = time.time() - start_time
-                logger.debug(f"Component tool completed in {elapsed:.3f}s: {tool_name}")
                 if result is None:
                     result = {"error": f"Component not found for tool: {tool_name}"}
+                logger.debug(f"Component tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_name.startswith("get_skill_"):
                 start_time = time.time()
                 result = await skill_converter.handle_skill_tool_call(
                     db=db, tool_name=tool_name, arguments=arguments
                 )
-                elapsed = time.time() - start_time
-                logger.debug(f"Skill retrieval completed in {elapsed:.3f}s: {tool_name}")
                 if result is None:
                     result = {"error": f"Skill not found for tool: {tool_name}"}
+                logger.debug(f"Skill retrieval completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_name.startswith("query_"):
                 start_time = time.time()
-                # Extract metadata for locked/overridable params
-                tool_metadata = {}
-                for tool in tools:
-                    if tool.get("function", {}).get("name") == tool_name:
-                        tool_metadata = tool.get("function", {}).get("_metadata", {})
-                        break
-
                 # Get enabled queries list from agent
                 enabled_query_list = []
                 if chat and chat.agent_id:
@@ -463,7 +511,6 @@ async def execute_single_tool(
                     if chat_agent:
                         enabled_query_list = chat_agent.enabled_queries or []
 
-                # Get user email for context injection
                 user_email = None
                 user_result = await db.execute(select(User).where(User.id == user_id))
                 user_obj = user_result.scalar_one_or_none()
@@ -480,95 +527,41 @@ async def execute_single_tool(
                     overridable_params=tool_metadata.get("overridable_params", {}),
                     enabled_queries=enabled_query_list,
                 )
-                elapsed = time.time() - start_time
-                logger.debug(f"Query execution completed in {elapsed:.3f}s: {tool_name}")
-            elif tool_name.startswith("search_collection_") or tool_name.startswith("get_file_"):
+                logger.debug(f"Query execution completed in {time.time() - start_time:.3f}s: {tool_name}")
+            elif tool_found_in_list:
+                # Function tool — metadata has namespace/name
                 start_time = time.time()
-                tool_metadata = {}
-                for tool in tools:
-                    if tool.get("function", {}).get("name") == tool_name:
-                        tool_metadata = tool.get("function", {}).get("_metadata", {})
-                        break
-                result = await collection_converter.execute_tool(
+                enabled_function_list = []
+                if chat and chat.agent_id:
+                    result_agent = await db.execute(
+                        select(Agent).where(Agent.id == chat.agent_id)
+                    )
+                    chat_agent = result_agent.scalar_one_or_none()
+                    if chat_agent:
+                        enabled_function_list = chat_agent.enabled_functions or []
+
+                result = await function_converter.execute_function_tool(
                     db=db,
                     tool_name=tool_name,
                     arguments=arguments,
                     user_id=user_id,
-                    metadata=tool_metadata,
-                )
-                elapsed = time.time() - start_time
-                logger.debug(f"Collection tool completed in {elapsed:.3f}s: {tool_name}")
-            elif tool_name.startswith("connector__"):
-                # Connector tool — execute in-process HTTP call
-                start_time = time.time()
-                tool_metadata = {}
-                for tool in tools:
-                    if tool.get("function", {}).get("name") == tool_name:
-                        tool_metadata = tool.get("function", {}).get("_metadata", {})
-                        break
-                locked_params = tool_metadata.get("locked_params", {})
-
-                connector_tool_converter = ConnectorToolConverter()
-                result = await connector_tool_converter.execute_connector_tool(
-                    db=db,
-                    tool_name=tool_name,
-                    arguments=arguments,
                     user_token=user_token,
-                    locked_params=locked_params,
-                    user_id=user_id,
+                    chat_id=str(chat_id),
+                    locked_params=tool_metadata.get("locked_params", {}),
+                    overridable_params=tool_metadata.get("overridable_params", {}),
+                    enabled_functions=enabled_function_list,
+                    tool_call_id=tool_call.get("id"),
                 )
-                elapsed = time.time() - start_time
-                logger.debug(f"Connector tool completed in {elapsed:.3f}s: {tool_name}")
+                logger.debug(f"Function execution completed in {time.time() - start_time:.3f}s: {tool_name}")
             else:
-                # Default: execute as function tool
-                start_time = time.time()
-
-                tool_found = False
-                locked_params = {}
-                overridable_params = {}
-
-                for tool in tools:
-                    if tool.get("function", {}).get("name") == tool_name:
-                        tool_found = True
-                        metadata = tool.get("function", {}).get("_metadata", {})
-                        locked_params = metadata.get("locked_params", {})
-                        overridable_params = metadata.get("overridable_params", {})
-                        break
-
-                if not tool_found:
-                    logger.warning(
-                        f"Security: Tool '{tool_name}' was not in approved tools list. "
-                        f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
-                    )
-                    result = {
-                        "error": "Unauthorized tool call",
-                        "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
-                    }
-                else:
-                    enabled_function_list = []
-                    if chat and chat.agent_id:
-                        result_agent = await db.execute(
-                            select(Agent).where(Agent.id == chat.agent_id)
-                        )
-                        chat_agent = result_agent.scalar_one_or_none()
-                        if chat_agent:
-                            enabled_function_list = chat_agent.enabled_functions or []
-
-                    result = await function_converter.execute_function_tool(
-                        db=db,
-                        tool_name=tool_name,
-                        arguments=arguments,
-                        user_id=user_id,
-                        user_token=user_token,
-                        chat_id=str(chat_id),
-                        locked_params=locked_params,
-                        overridable_params=overridable_params,
-                        enabled_functions=enabled_function_list,
-                        tool_call_id=tool_call.get("id"),
-                    )
-
-                elapsed = time.time() - start_time
-                logger.debug(f"Function execution completed in {elapsed:.3f}s: {tool_name}")
+                logger.warning(
+                    f"Security: Tool '{tool_name}' was not in approved tools list. "
+                    f"Available tools: {[t.get('function', {}).get('name') for t in tools]}"
+                )
+                result = {
+                    "error": "Unauthorized tool call",
+                    "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
+                }
 
             result_content = json.dumps(result) if not isinstance(result, str) else result
 

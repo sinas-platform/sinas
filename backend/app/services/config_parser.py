@@ -273,11 +273,13 @@ class ConfigParser:
             # Validate enabled skill references
             if "enabledSkills" in agent and agent["enabledSkills"]:
                 for skill_ref in agent["enabledSkills"]:
-                    if skill_ref not in all_skill_names:
+                    # Support both string format and dict format {"skill": "ns/name", "preload": bool}
+                    ref_name = skill_ref["skill"] if isinstance(skill_ref, dict) else skill_ref
+                    if ref_name not in all_skill_names:
                         errors.append(
                             ConfigValidationError(
                                 path=f"spec.agents[{i}].enabledSkills",
-                                message=f"Referenced skill '{skill_ref}' not defined",
+                                message=f"Referenced skill '{ref_name}' not defined",
                             )
                         )
 

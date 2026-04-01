@@ -287,6 +287,8 @@ async def execute_query(
             return QueryExecuteResponse(
                 success=True,
                 operation=query.operation,
+                data=result.get("rows"),
+                row_count=result.get("row_count"),
                 affected_rows=result.get("affected_rows", 0),
                 duration_ms=duration_ms,
             )

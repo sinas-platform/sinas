@@ -98,10 +98,11 @@ class SharedWorkerManager:
         # Re-discover any remaining valid worker containers.
         # restart=True ensures a fresh executor and correct network after
         # compose down/up.  Safe here because the scheduler is a single replica.
-        await self._discover_existing_workers(restart=True)
-
-        # Clean up executions stuck in "running" state from previous lifecycle
+        # Pass db so packages are reinstalled on discovered workers.
         async with AsyncSessionLocal() as db:
+            await self._discover_existing_workers(restart=True, db=db)
+
+            # Clean up executions stuck in "running" state from previous lifecycle
             await self._cleanup_stuck_executions(db)
 
         # Scale to default count if needed
@@ -114,7 +115,9 @@ class SharedWorkerManager:
         self._initialized = True
         print(f"✅ Worker manager initialized with {len(self.workers)} workers")
 
-    async def _discover_existing_workers(self, restart: bool = False):
+    async def _discover_existing_workers(
+        self, restart: bool = False, db: Optional[AsyncSession] = None
+    ):
         """Discover and re-register existing worker containers (including stopped ones).
 
         Args:
@@ -122,6 +125,7 @@ class SharedWorkerManager:
                 ensure a fresh executor process, clean tmpfs, and correct
                 network connectivity.  Queue workers pass False (default)
                 to avoid racing with the scheduler or each other.
+            db: Database session for reinstalling packages on discovered workers.
         """
         try:
             # List all containers (including stopped) with sinas-shared-* naming pattern
@@ -192,6 +196,11 @@ class SharedWorkerManager:
                             except Exception:
                                 pass
                             return None
+
+                # Reinstall packages to ensure discovered workers are up-to-date
+                if db:
+                    print(f"📦 Installing packages in discovered worker: {container_name}")
+                    await self._install_packages(container, db)
 
                 created_at = container.attrs.get("Created", datetime.utcnow().isoformat())
                 print(
@@ -533,8 +542,10 @@ class SharedWorkerManager:
                 print("✅ Successfully installed packages in worker")
             else:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                print(f"⚠️  Package installation had issues in worker: {error_msg}")
-                # Don't fail worker creation - log and continue
+                print(
+                    f"❌ Package installation failed in worker "
+                    f"(exit code {exec_result.exit_code}): {error_msg}"
+                )
 
         except Exception as e:
             print(f"❌ Error installing packages in worker: {e}")

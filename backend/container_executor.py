@@ -220,7 +220,7 @@ class ContainerExecutor:
 
         print(f"[exec] Starting {function_namespace}/{function_name} (shared, timeout={function_timeout}s)", file=sys.stderr)
 
-        socket.setdefaulttimeout(min(function_timeout, 30))
+        socket.setdefaulttimeout(function_timeout)
 
         # Build namespace with custom input()
         temp_namespace = {
@@ -337,7 +337,7 @@ class ContainerExecutor:
 
         print(f"[exec] Starting {function_namespace}/{function_name} (sandbox, timeout={function_timeout}s)", file=sys.stderr)
 
-        socket.setdefaulttimeout(min(function_timeout, 30))
+        socket.setdefaulttimeout(function_timeout)
 
         # Build namespace with blocking input()
         temp_namespace = {
