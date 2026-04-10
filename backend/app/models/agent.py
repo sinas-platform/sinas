@@ -88,9 +88,9 @@ class Agent(Base, PermissionMixin):
     )  # List of {"store": "namespace/name", "access": "readonly|readwrite"}
 
     # Collection access
-    enabled_collections: Mapped[list[str]] = mapped_column(
+    enabled_collections: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
-    )  # List of "namespace/name" collection references
+    )  # List of {"collection": "namespace/name", "access": "readonly|readwrite"}
 
     # Component access
     enabled_components: Mapped[list[str]] = mapped_column(
@@ -112,7 +112,10 @@ class Agent(Base, PermissionMixin):
     # Long-running workflow settings
     default_job_timeout: Mapped[Optional[int]] = mapped_column(Integer)
     default_keep_alive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
-    enable_code_execution: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
+    # Opt-in Sinas platform capabilities: ["codeExecution", "packageManagement", ...]
+    system_tools: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

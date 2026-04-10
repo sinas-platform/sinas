@@ -180,6 +180,12 @@ export interface EnabledStoreConfig {
   access: 'readonly' | 'readwrite';
 }
 
+// Collection access configuration for agents
+export interface EnabledCollectionConfig {
+  collection: string;  // "namespace/name"
+  access: 'readonly' | 'readwrite';
+}
+
 // Function parameter configuration (supports both legacy and new format)
 export type FunctionParameterValue =
   | string  // Legacy format: simple string value (treated as overridable)
@@ -213,7 +219,7 @@ export interface Agent {
   enabled_queries: string[];
   query_parameters: FunctionParameters;
   enabled_stores: EnabledStoreConfig[];
-  enabled_collections: string[];
+  enabled_collections: EnabledCollectionConfig[];
   enabled_components: string[];
   enabled_connectors: EnabledConnectorConfig[];
   hooks: AgentHooks | null;
@@ -224,7 +230,7 @@ export interface Agent {
   is_default: boolean;
   default_job_timeout: number | null;
   default_keep_alive: boolean;
-  enable_code_execution: boolean;
+  system_tools: string[];
   created_at: string;
   updated_at: string;
 }
@@ -248,14 +254,14 @@ export interface AgentCreate {
   enabled_queries?: string[];
   query_parameters?: FunctionParameters;
   enabled_stores?: EnabledStoreConfig[];
-  enabled_collections?: string[];
+  enabled_collections?: EnabledCollectionConfig[];
   enabled_connectors?: EnabledConnectorConfig[];
   hooks?: AgentHooks;
   icon?: string;
   is_default?: boolean;
   default_job_timeout?: number;
   default_keep_alive?: boolean;
-  enable_code_execution?: boolean;
+  system_tools?: string[];
 }
 
 export interface AgentUpdate {
@@ -277,7 +283,7 @@ export interface AgentUpdate {
   enabled_queries?: string[];
   query_parameters?: FunctionParameters;
   enabled_stores?: EnabledStoreConfig[];
-  enabled_collections?: string[];
+  enabled_collections?: EnabledCollectionConfig[];
   enabled_components?: string[];
   enabled_connectors?: EnabledConnectorConfig[];
   hooks?: AgentHooks;
@@ -287,7 +293,7 @@ export interface AgentUpdate {
   is_default?: boolean;
   default_job_timeout?: number;
   default_keep_alive?: boolean;
-  enable_code_execution?: boolean;
+  system_tools?: string[];
 }
 
 // Roles & Users

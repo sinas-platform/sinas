@@ -71,3 +71,20 @@ def normalize_store_references(store_refs: list) -> list[dict]:
         elif isinstance(ref, dict):
             normalized.append(ref)
     return normalized
+
+
+def normalize_collection_references(coll_refs: list) -> list[dict]:
+    """Normalize collection references to dict format with access mode.
+
+    Plain strings → {"collection": "ns/name", "access": "readonly"} (backward compat).
+    """
+    normalized = []
+    for ref in coll_refs:
+        if isinstance(ref, str):
+            coll = ref if "/" in ref else f"default/{ref}"
+            normalized.append({"collection": coll, "access": "readonly"})
+        elif hasattr(ref, "model_dump"):
+            normalized.append(ref.model_dump())
+        elif isinstance(ref, dict):
+            normalized.append(ref)
+    return normalized

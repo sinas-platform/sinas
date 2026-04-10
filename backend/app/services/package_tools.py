@@ -1,0 +1,357 @@
+"""Sinas package management tools for agents.
+
+Exposes the existing PackageService and ConfigParser as LLM tools for agents
+that have opted in via `system_tools: ["packageManagement"]`. Nothing here
+duplicates validation/apply logic — these are thin adapters.
+
+Permissions are still enforced: every tool checks the same permission that
+the corresponding HTTP endpoint checks, using the acting user's permissions.
+"""
+import logging
+from typing import Any, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.permissions import check_permission
+from app.services.config_parser import ConfigParser
+from app.services.package_service import PackageService
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────
+# Tool definitions (OpenAI function-calling format)
+#
+# Tool names are prefixed with "sinas_package_" so they don't collide
+# with regular user-defined functions (which use "namespace__name").
+# ─────────────────────────────────────────────────────────────
+
+_TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_validate",
+            "description": (
+                "Validate a Sinas package YAML without applying it. Checks "
+                "YAML syntax, schema conformance, and references. Returns "
+                "{valid, errors, warnings}. Use this during drafting to "
+                "catch mistakes early. Does NOT make any changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "yaml": {
+                        "type": "string",
+                        "description": "The full YAML content of the package.",
+                    },
+                },
+                "required": ["yaml"],
+            },
+            "_metadata": {"system_tool": "packageManagement"},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_preview",
+            "description": (
+                "Dry-run a package install. Shows what resources would be "
+                "created, updated, or skipped without making any changes. "
+                "Call this before sinas_package_install to let the user "
+                "see the planned changes. Returns a ConfigApplyResponse "
+                "with summary and changes."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "yaml": {
+                        "type": "string",
+                        "description": "The full YAML content of the package.",
+                    },
+                },
+                "required": ["yaml"],
+            },
+            "_metadata": {"system_tool": "packageManagement"},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_install",
+            "description": (
+                "Install a Sinas package. This WRITES to the database: "
+                "creates/updates resources and records a Package row. "
+                "The user will be asked to approve the install before it "
+                "runs. Always call sinas_package_preview first and share "
+                "the diff with the user."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "yaml": {
+                        "type": "string",
+                        "description": "The full YAML content of the package.",
+                    },
+                },
+                "required": ["yaml"],
+            },
+            "_metadata": {
+                "system_tool": "packageManagement",
+                "requires_approval": True,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_uninstall",
+            "description": (
+                "Uninstall a previously installed package by name. Deletes "
+                "all resources tagged with managed_by='pkg:<name>'. The "
+                "user will be asked to approve before it runs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_name": {
+                        "type": "string",
+                        "description": "The name of the package to uninstall.",
+                    },
+                },
+                "required": ["package_name"],
+            },
+            "_metadata": {
+                "system_tool": "packageManagement",
+                "requires_approval": True,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_list",
+            "description": (
+                "List all installed packages with their name, version, "
+                "description, author, and install date."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+            "_metadata": {"system_tool": "packageManagement"},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "sinas_package_export",
+            "description": (
+                "Export an installed package back to YAML. Useful for "
+                "reading the current state of a package or using it as "
+                "a reference/template for drafting a new one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package_name": {
+                        "type": "string",
+                        "description": "The name of the package to export.",
+                    },
+                },
+                "required": ["package_name"],
+            },
+            "_metadata": {"system_tool": "packageManagement"},
+        },
+    },
+]
+
+
+def get_package_tool_definitions() -> list[dict[str, Any]]:
+    """Return the list of package management tool definitions."""
+    return [t.copy() for t in _TOOL_DEFINITIONS]
+
+
+PACKAGE_TOOL_NAMES = {t["function"]["name"] for t in _TOOL_DEFINITIONS}
+
+
+def is_package_tool(tool_name: str) -> bool:
+    """Check if a tool name is a Sinas package management tool."""
+    return tool_name in PACKAGE_TOOL_NAMES
+
+
+# ─────────────────────────────────────────────────────────────
+# Dispatch
+# ─────────────────────────────────────────────────────────────
+
+async def execute_package_tool(
+    db: AsyncSession,
+    tool_name: str,
+    arguments: dict[str, Any],
+    user_id: str,
+    permissions: dict[str, bool],
+    agent_system_tools: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Dispatch a package management tool call.
+
+    Returns a JSON-serializable result dict. On error, returns
+    {"error": str, "detail": str} rather than raising, so the LLM can
+    reason about the failure.
+    """
+    # Gate 1: the agent must have packageManagement in its system_tools
+    if "packageManagement" not in (agent_system_tools or []):
+        return {
+            "error": "capability_not_enabled",
+            "detail": (
+                "This agent does not have 'packageManagement' in its "
+                "systemTools list. An admin must enable it on the agent."
+            ),
+        }
+
+    try:
+        if tool_name == "sinas_package_validate":
+            return await _validate(db, arguments, permissions)
+        if tool_name == "sinas_package_preview":
+            return await _preview(db, arguments, user_id, permissions)
+        if tool_name == "sinas_package_install":
+            return await _install(db, arguments, user_id, permissions)
+        if tool_name == "sinas_package_uninstall":
+            return await _uninstall(db, arguments, permissions)
+        if tool_name == "sinas_package_list":
+            return await _list(db, permissions)
+        if tool_name == "sinas_package_export":
+            return await _export(db, arguments, permissions)
+        return {"error": "unknown_tool", "detail": f"Unknown package tool: {tool_name}"}
+    except ValueError as e:
+        return {"error": "validation_error", "detail": str(e)}
+    except PermissionError as e:
+        return {"error": "permission_denied", "detail": str(e)}
+    except Exception as e:
+        logger.error(f"Package tool {tool_name} failed: {e}", exc_info=True)
+        return {"error": "internal_error", "detail": str(e)}
+
+
+# ── Individual tool implementations ──────────────────────────
+
+async def _validate(db, arguments, permissions):
+    if not check_permission(permissions, "sinas.config.validate:all"):
+        raise PermissionError("sinas.config.validate:all required")
+
+    yaml_content = arguments.get("yaml", "")
+    if not yaml_content:
+        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+
+    _config, validation = await ConfigParser.parse_and_validate(
+        yaml_content, db=db, strict=False
+    )
+    return {
+        "valid": validation.is_valid,
+        "errors": [{"path": e.path, "message": e.message} for e in validation.errors],
+        "warnings": list(validation.warnings),
+    }
+
+
+async def _preview(db, arguments, user_id, permissions):
+    if not check_permission(permissions, "sinas.packages.install:all"):
+        raise PermissionError("sinas.packages.install:all required")
+
+    yaml_content = arguments.get("yaml", "")
+    if not yaml_content:
+        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+
+    service = PackageService(db)
+    result = await service.preview(yaml_content, user_id)
+    return _apply_response_to_dict(result)
+
+
+async def _install(db, arguments, user_id, permissions):
+    if not check_permission(permissions, "sinas.packages.install:all"):
+        raise PermissionError("sinas.packages.install:all required")
+
+    yaml_content = arguments.get("yaml", "")
+    if not yaml_content:
+        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+
+    service = PackageService(db)
+    package, result = await service.install(yaml_content, user_id)
+    return {
+        "package": {
+            "name": package.name,
+            "version": package.version,
+            "description": package.description,
+            "author": package.author,
+            "installed_at": package.installed_at.isoformat() if package.installed_at else None,
+        },
+        "apply": _apply_response_to_dict(result),
+    }
+
+
+async def _uninstall(db, arguments, permissions):
+    if not check_permission(permissions, "sinas.packages.uninstall:all"):
+        raise PermissionError("sinas.packages.uninstall:all required")
+
+    package_name = arguments.get("package_name", "")
+    if not package_name:
+        return {"error": "missing_package_name", "detail": "'package_name' argument is required"}
+
+    service = PackageService(db)
+    deleted = await service.uninstall(package_name)
+    return {"package_name": package_name, "deleted": deleted}
+
+
+async def _list(db, permissions):
+    if not check_permission(permissions, "sinas.packages.read:own"):
+        raise PermissionError("sinas.packages.read:own required")
+
+    service = PackageService(db)
+    packages = await service.list_packages()
+    return {
+        "packages": [
+            {
+                "name": p.name,
+                "version": p.version,
+                "description": p.description,
+                "author": p.author,
+                "source_url": p.source_url,
+                "installed_at": p.installed_at.isoformat() if p.installed_at else None,
+            }
+            for p in packages
+        ]
+    }
+
+
+async def _export(db, arguments, permissions):
+    if not check_permission(permissions, "sinas.packages.read:own"):
+        raise PermissionError("sinas.packages.read:own required")
+
+    package_name = arguments.get("package_name", "")
+    if not package_name:
+        return {"error": "missing_package_name", "detail": "'package_name' argument is required"}
+
+    service = PackageService(db)
+    yaml_content = await service.export_package(package_name)
+    return {"package_name": package_name, "yaml": yaml_content}
+
+
+def _apply_response_to_dict(result) -> dict[str, Any]:
+    """Convert a ConfigApplyResponse to a plain dict for JSON serialization."""
+    summary = result.summary
+    return {
+        "success": result.success,
+        "summary": {
+            "created": summary.created,
+            "updated": summary.updated,
+            "unchanged": summary.unchanged,
+            "deleted": summary.deleted,
+        },
+        "changes": [
+            {
+                "action": c.action,
+                "resourceType": c.resourceType,
+                "resourceName": c.resourceName,
+                "details": c.details,
+            }
+            for c in (result.changes or [])
+        ],
+        "errors": list(result.errors or []),
+        "warnings": list(result.warnings or []),
+    }

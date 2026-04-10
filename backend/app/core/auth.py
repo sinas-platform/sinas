@@ -140,7 +140,7 @@ async def get_user_by_email(db: AsyncSession, email: str) -> User | None:
 
 async def get_user_permissions(db: AsyncSession, user_id: str) -> dict[str, bool]:
     """
-    Get all permissions for a user by aggregating from their active groups.
+    Get all permissions for a user by aggregating from their active roles.
 
     Args:
         db: Database session
@@ -149,7 +149,7 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> dict[str, bool
     Returns:
         Dictionary of permission_key: bool
     """
-    # Get all active group memberships
+    # Get all active role memberships
     result = await db.execute(
         select(UserRole).where(UserRole.user_id == user_id, UserRole.active == True)
     )
@@ -158,17 +158,17 @@ async def get_user_permissions(db: AsyncSession, user_id: str) -> dict[str, bool
     if not memberships:
         return {}
 
-    # Collect all permissions from all groups
+    # Collect all permissions from all roles
     all_permissions = {}
 
     for membership in memberships:
         result = await db.execute(
             select(RolePermission).where(RolePermission.role_id == membership.role_id)
         )
-        group_permissions = result.scalars().all()
+        role_permissions = result.scalars().all()
 
-        for perm in group_permissions:
-            # OR logic: if ANY group grants permission (true), user has it
+        for perm in role_permissions:
+            # OR logic: if ANY role grants permission (true), user has it
             # Don't let a false permission override an existing true permission
             if perm.permission_value or perm.permission_key not in all_permissions:
                 all_permissions[perm.permission_key] = perm.permission_value
@@ -368,7 +368,7 @@ async def create_api_key(
     Raises:
         HTTPException if permissions are not a subset of user's permissions
     """
-    # Get user's maximum permissions from groups
+    # Get user's maximum permissions from roles
     user_permissions = await get_user_permissions(db, str(user.id))
 
     # Validate that requested permissions are a subset of user permissions
@@ -377,7 +377,7 @@ async def create_api_key(
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"API key permissions exceed user's group permissions. Violations: {', '.join(violations)}",
+            detail=f"API key permissions exceed user's role permissions. Violations: {', '.join(violations)}",
         )
 
     # Generate key
@@ -656,21 +656,21 @@ def set_permission_used(request: Request, permission: str, has_perm: bool = True
 
 async def initialize_default_roles(db: AsyncSession):
     """
-    Initialize default groups (GuestUsers, Users, Admins) with permissions.
+    Initialize default roles (GuestUsers, Users, Admins) with permissions.
 
     Should be called during application startup or setup.
     """
-    for group_name, permissions in DEFAULT_ROLE_PERMISSIONS.items():
-        # Check if group exists
-        result = await db.execute(select(Role).where(Role.name == group_name))
-        group = result.scalar_one_or_none()
+    for role_name, permissions in DEFAULT_ROLE_PERMISSIONS.items():
+        # Check if role exists
+        result = await db.execute(select(Role).where(Role.name == role_name))
+        role = result.scalar_one_or_none()
 
-        if not group:
-            # Create group
-            group = Role(name=group_name, description=f"Default {group_name} group")
-            db.add(group)
+        if not role:
+            # Create role
+            role = Role(name=role_name, description=f"Default {role_name} role")
+            db.add(role)
             await db.commit()
-            await db.refresh(group)
+            await db.refresh(role)
 
         # Sync default permissions:
         # - Only ADD permissions that don't exist yet (preserves admin customizations)
@@ -678,18 +678,18 @@ async def initialize_default_roles(db: AsyncSession):
         for perm_key, perm_value in permissions.items():
             result = await db.execute(
                 select(RolePermission).where(
-                    RolePermission.role_id == group.id, RolePermission.permission_key == perm_key
+                    RolePermission.role_id == role.id, RolePermission.permission_key == perm_key
                 )
             )
             existing_perm = result.scalar_one_or_none()
 
             if existing_perm:
                 # Only force-overwrite the superadmin wildcard on Admins
-                if group_name == "Admins" and perm_key == "sinas.*:all":
+                if role_name == "Admins" and perm_key == "sinas.*:all":
                     existing_perm.permission_value = True
             else:
                 new_perm = RolePermission(
-                    role_id=group.id, permission_key=perm_key, permission_value=perm_value
+                    role_id=role.id, permission_key=perm_key, permission_value=perm_value
                 )
                 db.add(new_perm)
 
@@ -701,15 +701,15 @@ async def initialize_superadmin(db: AsyncSession):
     Initialize superadmin user if SUPERADMIN_EMAIL is set.
 
     Creates:
-    - Adds user to Admins group with full system access
-    - Only creates if Admins group is empty (prevents auto-creation after manual setup)
+    - Adds user to Admins role with full system access
+    - Only creates if Admins role is empty (prevents auto-creation after manual setup)
     """
     if not settings.superadmin_email:
         return  # No superadmin email configured
 
     email = normalize_email(settings.superadmin_email)
 
-    # Get Admins group (should already exist from initialize_default_groups)
+    # Get Admins role (should already exist from initialize_default_roles)
     result = await db.execute(select(Role).where(Role.name == "Admins"))
     admins_role = result.scalar_one_or_none()
 
@@ -717,10 +717,10 @@ async def initialize_superadmin(db: AsyncSession):
         import logging
 
         logger = logging.getLogger(__name__)
-        logger.error("Admins group not found. Run initialize_default_groups first.")
+        logger.error("Admins role not found. Run initialize_default_roles first.")
         return
 
-    # Check if any user is already in Admins group
+    # Check if any user is already in Admins role
     result = await db.execute(
         select(UserRole).where(UserRole.role_id == admins_role.id, UserRole.active == True)
     )
@@ -741,7 +741,7 @@ async def initialize_superadmin(db: AsyncSession):
         await db.commit()
         await db.refresh(user)
 
-    # Check if user is already in Admins group
+    # Check if user is already in Admins role
     result = await db.execute(
         select(UserRole).where(UserRole.role_id == admins_role.id, UserRole.user_id == user.id)
     )

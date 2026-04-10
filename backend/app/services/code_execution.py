@@ -1,7 +1,7 @@
 """Code execution service for agent sandbox code execution.
 
-Allows agents with enable_code_execution=True to generate and run Python
-code in pooled sandbox containers (untrusted execution).
+Allows agents with 'codeExecution' in their system_tools list to generate
+and run Python code in pooled sandbox containers (untrusted execution).
 """
 import asyncio
 import json

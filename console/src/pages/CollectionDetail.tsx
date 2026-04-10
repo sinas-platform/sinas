@@ -57,30 +57,28 @@ export function CollectionDetail() {
   const [copiedFileId, setCopiedFileId] = useState<string | null>(null);
   const [urlLoading, setUrlLoading] = useState<string | null>(null);
 
-  const handleCopyUrl = async (file: FileWithVersions) => {
+  const handleCopyUrl = (file: FileWithVersions) => {
     setUrlLoading(file.id);
-    try {
-      const result = await apiClient.generateFileUrl(namespace!, name!, file.name);
-      try {
-        await navigator.clipboard.writeText(result.url);
-      } catch {
-        // Fallback for browsers that block clipboard after async
-        const textArea = document.createElement('textarea');
-        textArea.value = result.url;
-        textArea.style.position = 'fixed';
-        textArea.style.opacity = '0';
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-      }
+    // Safari requires the ClipboardItem to be created synchronously in the
+    // click handler, with the content as a Promise that resolves later.
+    // This keeps the user-gesture context alive across the async fetch.
+    const urlPromise = apiClient.generateFileUrl(namespace!, name!, file.name)
+      .then((result) => new Blob([result.url], { type: 'text/plain' }));
+
+    navigator.clipboard.write([
+      new ClipboardItem({ 'text/plain': urlPromise }),
+    ]).then(() => {
       setCopiedFileId(file.id);
       setTimeout(() => setCopiedFileId(null), 2000);
-    } catch (err) {
-      console.error('Failed to generate URL:', err);
-    } finally {
+    }).catch((err) => {
+      // Fallback: resolve the promise and prompt
+      urlPromise.then((blob) => blob.text()).then((url) => {
+        window.prompt('Copy this URL:', url);
+      });
+      console.error('Clipboard write failed:', err);
+    }).finally(() => {
       setUrlLoading(null);
-    }
+    });
   };
 
   const { data: collection, isLoading: collectionLoading, error: collectionError } = useQuery({

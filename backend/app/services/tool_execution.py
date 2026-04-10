@@ -23,6 +23,8 @@ from app.services.component_tools import ComponentToolConverter
 from app.services.connector_tools import ConnectorToolConverter
 from app.services.execution_engine import executor as fn_executor
 from app.services.function_tools import FunctionToolConverter
+from app.services.config_tools import execute_config_tool, is_config_tool
+from app.services.package_tools import execute_package_tool, is_package_tool
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
 from app.services.state_tools import StateTools
@@ -71,7 +73,12 @@ def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def is_sequential_tool(tool_name: str) -> bool:
     """Check if a tool must be executed sequentially (not parallelizable)."""
-    return tool_name == "continue_execution" or tool_name == "execute_code"
+    if tool_name in ("continue_execution", "execute_code"):
+        return True
+    # Package management tools mutate global state — always sequential
+    if is_package_tool(tool_name):
+        return True
+    return False
 
 
 def safe_parse_arguments(arguments: Any) -> dict:
@@ -109,6 +116,12 @@ def tool_name_to_status_key(tool_name: str) -> str:
         return "collection:" + tool_name[len("search_collection_"):].replace("__", "/", 1)
     if tool_name.startswith("get_file_"):
         return "collection:" + tool_name[len("get_file_"):].replace("__", "/", 1)
+    if tool_name.startswith("write_file_"):
+        return "collection:" + tool_name[len("write_file_"):].replace("__", "/", 1)
+    if tool_name.startswith("edit_file_"):
+        return "collection:" + tool_name[len("edit_file_"):].replace("__", "/", 1)
+    if tool_name.startswith("delete_file_"):
+        return "collection:" + tool_name[len("delete_file_"):].replace("__", "/", 1)
     if tool_name.startswith("show_component_"):
         return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
     if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
@@ -185,20 +198,32 @@ async def check_approval_requirements(
         tool_name = tool_call["function"]["name"]
         arguments_str = tool_call["function"]["arguments"]
 
-        # Get namespace/name from tool metadata
         meta = tool_meta_map.get(tool_name, {})
-        namespace = meta.get("namespace")
-        name = meta.get("name")
-        if not namespace or not name:
-            # Not a function tool (agents, collections, etc.), skip
-            continue
+        namespace: Optional[str] = None
+        name: Optional[str] = None
 
-        # Load function to check requires_approval flag
-        function = await Function.get_by_name(db, namespace, name)
-        if not function or not function.requires_approval:
-            continue
+        if meta.get("system_tool"):
+            # Sinas built-in system tool (e.g. package management).
+            # Approval requirement comes directly from the tool definition's
+            # _metadata.requires_approval flag.
+            if not meta.get("requires_approval"):
+                continue
+            namespace = "sinas"
+            name = tool_name
+        else:
+            # Regular user-defined function tool
+            namespace = meta.get("namespace")
+            name = meta.get("name")
+            if not namespace or not name:
+                # Not a function tool (agents, collections, etc.), skip
+                continue
 
-        # This function requires approval
+            # Load function to check requires_approval flag
+            function = await Function.get_by_name(db, namespace, name)
+            if not function or not function.requires_approval:
+                continue
+
+        # This tool requires approval
         requires_approval = True
 
         # Parse arguments safely - handle empty strings
@@ -449,6 +474,50 @@ async def execute_single_tool(
                     chat_id=str(chat_id),
                 )
                 logger.debug(f"Code execution completed in {time.time() - start_time:.3f}s")
+
+            elif is_package_tool(tool_name):
+                start_time = time.time()
+                # Load the calling agent's system_tools and the user's permissions
+                agent_system_tools: list[str] = []
+                if chat and chat.agent_id:
+                    result_agent = await db.execute(
+                        select(Agent).where(Agent.id == chat.agent_id)
+                    )
+                    chat_agent = result_agent.scalar_one_or_none()
+                    if chat_agent:
+                        agent_system_tools = chat_agent.system_tools or []
+
+                from app.core.auth import get_user_permissions
+                user_permissions = await get_user_permissions(db, user_id)
+
+                result = await execute_package_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    permissions=user_permissions,
+                    agent_system_tools=agent_system_tools,
+                )
+                logger.debug(f"Package tool completed in {time.time() - start_time:.3f}s: {tool_name}")
+
+            elif is_config_tool(tool_name):
+                start_time = time.time()
+                agent_system_tools: list[str] = []
+                if chat and chat.agent_id:
+                    result_agent = await db.execute(
+                        select(Agent).where(Agent.id == chat.agent_id)
+                    )
+                    chat_agent = result_agent.scalar_one_or_none()
+                    if chat_agent:
+                        agent_system_tools = chat_agent.system_tools or []
+
+                result = await execute_config_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    agent_system_tools=agent_system_tools,
+                )
+                logger.debug(f"Config tool completed in {time.time() - start_time:.3f}s: {tool_name}")
 
             # Metadata-driven tools — identity comes from _metadata, not tool name parsing
             elif tool_metadata.get("agent_id"):

@@ -296,7 +296,14 @@ class ConfigParser:
 
             # Validate enabled collection references
             if "enabledCollections" in agent and agent["enabledCollections"]:
-                for coll_ref in agent["enabledCollections"]:
+                for coll_entry in agent["enabledCollections"]:
+                    # Support both string and dict format
+                    if isinstance(coll_entry, str):
+                        coll_ref = coll_entry
+                    elif isinstance(coll_entry, dict):
+                        coll_ref = coll_entry.get("collection", "")
+                    else:
+                        coll_ref = str(coll_entry)
                     if coll_ref not in all_collection_names:
                         errors.append(
                             ConfigValidationError(

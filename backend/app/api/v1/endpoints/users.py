@@ -12,7 +12,7 @@ from app.core.auth import get_current_user_with_permissions, normalize_email, se
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.user import Role, User, UserRole
-from app.schemas import UserResponse, UserUpdate, UserWithGroupsResponse
+from app.schemas import UserResponse, UserUpdate
 from app.schemas.auth import CreateUserRequest
 from app.schemas.user import UserWithRolesResponse
 
@@ -81,7 +81,7 @@ async def create_user(
     """
     Create a new user by email address.
 
-    Only admins can create users. New users are assigned to the GuestUsers group by default.
+    Only admins can create users. New users are assigned to the GuestUsers role by default.
     Requires permission: sinas.users.post:all
     """
     user_id, permissions = current_user_data
@@ -110,19 +110,19 @@ async def create_user(
     # Create new user
     user = User(email=normalized_email)
     db.add(user)
-    await db.flush()  # Get user ID before adding to group
+    await db.flush()
 
-    # Check if already has groups
+    # Check if already has roles
     memberships_result = await db.execute(select(UserRole).where(UserRole.user_id == user.id))
     existing_memberships = memberships_result.scalars().all()
 
-    # Only add to GuestUsers if no groups assigned yet
+    # Only add to GuestUsers if no roles assigned yet
     if not existing_memberships:
-        guest_group_result = await db.execute(select(Role).where(Role.name == "GuestUsers"))
-        guest_group = guest_group_result.scalar_one_or_none()
+        guest_role_result = await db.execute(select(Role).where(Role.name == "GuestUsers"))
+        guest_role = guest_role_result.scalar_one_or_none()
 
-        if guest_group:
-            membership = UserRole(role_id=guest_group.id, user_id=user.id, active=True)
+        if guest_role:
+            membership = UserRole(role_id=guest_role.id, user_id=user.id, active=True)
             db.add(membership)
             await db.flush()
             await db.refresh(user)
@@ -130,14 +130,14 @@ async def create_user(
     return UserResponse.model_validate(user)
 
 
-@router.get("/{user_id}", response_model=UserWithGroupsResponse)
+@router.get("/{user_id}", response_model=UserWithRolesResponse)
 async def get_user(
     request: Request,
     user_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Get a specific user with their groups."""
+    """Get a specific user with their roles."""
     current_user_id, permissions = current_user_data
 
     # Use mixin for permission-aware get
@@ -151,26 +151,25 @@ async def get_user(
 
     set_permission_used(request, "sinas.users.read")
 
-    # Get user's groups
+    # Get user's roles
     memberships_result = await db.execute(
         select(UserRole).where(UserRole.user_id == user_id, UserRole.active == True)
     )
     memberships = memberships_result.scalars().all()
 
-    # Get group names
-    group_names = []
+    role_names = []
     for membership in memberships:
-        group_result = await db.execute(select(Role).where(Role.id == membership.role_id))
-        group = group_result.scalar_one_or_none()
-        if group:
-            group_names.append(group.name)
+        role_result = await db.execute(select(Role).where(Role.id == membership.role_id))
+        role = role_result.scalar_one_or_none()
+        if role:
+            role_names.append(role.name)
 
-    return UserWithGroupsResponse(
+    return UserWithRolesResponse(
         id=user.id,
         email=user.email,
         last_login_at=user.last_login_at,
         created_at=user.created_at,
-        groups=group_names,
+        roles=role_names,
     )
 
 
