@@ -24,6 +24,15 @@ class EnabledStoreConfig(BaseModel):
     )
 
 
+class EnabledCollectionConfig(BaseModel):
+    """Configuration for an enabled collection."""
+
+    collection: str = Field(..., description="Collection identifier in format 'namespace/name'")
+    access: str = Field(
+        default="readonly", description="Access mode: 'readonly' or 'readwrite'", pattern=r"^(readonly|readwrite)$"
+    )
+
+
 class HookConfig(BaseModel):
     """Configuration for a single message hook."""
 
@@ -77,7 +86,7 @@ class AgentCreate(BaseModel):
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
     enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
-    enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
+    enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
     hooks: Optional[AgentHooks] = None
@@ -87,7 +96,13 @@ class AgentCreate(BaseModel):
     # Long-running workflow settings
     default_job_timeout: Optional[int] = Field(None, gt=0, description="Default job timeout in seconds for chats with this agent")
     default_keep_alive: Optional[bool] = Field(False, description="Default keep_alive for chats with this agent")
-    enable_code_execution: Optional[bool] = Field(False, description="Enable code execution tool for this agent")
+    system_tools: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "Opt-in Sinas platform tools. Supported values: "
+            "'codeExecution', 'packageManagement'."
+        ),
+    )
 
 
 class AgentUpdate(BaseModel):
@@ -125,7 +140,7 @@ class AgentUpdate(BaseModel):
     ] = None  # {"namespace/name": {"param": "value or {{template}}"}}
 
     enabled_stores: Optional[list[EnabledStoreConfig]] = None  # Store access configs
-    enabled_collections: Optional[list[str]] = None  # List of "namespace/name" collection references
+    enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
     hooks: Optional[AgentHooks] = None
@@ -136,7 +151,7 @@ class AgentUpdate(BaseModel):
     # Long-running workflow settings
     default_job_timeout: Optional[int] = Field(None, gt=0)
     default_keep_alive: Optional[bool] = None
-    enable_code_execution: Optional[bool] = None
+    system_tools: Optional[list[str]] = None
 
 
 class AgentResponse(BaseModel):
@@ -161,7 +176,7 @@ class AgentResponse(BaseModel):
     enabled_queries: list[str] = []
     query_parameters: dict[str, Any] = {}
     enabled_stores: list[EnabledStoreConfig] = []
-    enabled_collections: list[str] = []
+    enabled_collections: list[EnabledCollectionConfig] = []
     enabled_components: list[str] = []
     enabled_connectors: list[dict[str, Any]] = []
     hooks: Optional[dict[str, Any]] = None
@@ -171,7 +186,7 @@ class AgentResponse(BaseModel):
     is_default: bool
     default_job_timeout: Optional[int] = None
     default_keep_alive: bool = False
-    enable_code_execution: bool = False
+    system_tools: list[str] = []
     created_at: datetime
     updated_at: datetime
 
@@ -208,6 +223,24 @@ class AgentResponse(BaseModel):
                 result.append(item)
             else:
                 result.append(EnabledStoreConfig(store=str(item), access="readonly"))
+        return result
+
+    @field_validator("enabled_collections", mode="before")
+    @classmethod
+    def convert_enabled_collections(cls, v):
+        """Convert dicts/strings from database to EnabledCollectionConfig objects."""
+        if not v:
+            return []
+
+        result = []
+        for item in v:
+            if isinstance(item, dict):
+                result.append(EnabledCollectionConfig(**item))
+            elif isinstance(item, EnabledCollectionConfig):
+                result.append(item)
+            else:
+                # Backward compat: plain string = readonly
+                result.append(EnabledCollectionConfig(collection=str(item), access="readonly"))
         return result
 
     class Config:

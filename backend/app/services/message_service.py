@@ -412,6 +412,12 @@ class MessageService:
             for tool_call in response["tool_calls"]:
                 tool_name = tool_call["function"]["name"]
                 meta = _tool_meta.get(tool_name, {})
+                if meta.get("system_tool") and meta.get("requires_approval"):
+                    _llm_span.end()
+                    raise ValueError(
+                        f"System tool {tool_name} requires user approval. "
+                        "Please use streaming mode to handle approval flow."
+                    )
                 namespace, name = meta.get("namespace"), meta.get("name")
                 if namespace and name:
                     function = await Function.get_by_name(self.db, namespace, name)
@@ -717,6 +723,21 @@ class MessageService:
                     arguments_str = tool_call["function"]["arguments"]
 
                     meta = _tool_meta.get(tool_name, {})
+
+                    # System tool with approval (e.g. sinas_package_install)
+                    if meta.get("system_tool") and meta.get("requires_approval"):
+                        parsed_args = arguments_str
+                        if isinstance(arguments_str, str):
+                            parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
+                        yield {
+                            "type": "approval_required",
+                            "tool_call_id": tool_call["id"],
+                            "function_namespace": "sinas",
+                            "function_name": tool_name,
+                            "arguments": parsed_args,
+                        }
+                        continue
+
                     namespace, name = meta.get("namespace"), meta.get("name")
                     if not namespace or not name:
                         continue
@@ -1080,6 +1101,57 @@ class MessageService:
                     "type": "error",
                     "error": f"Tool iteration limit ({settings.max_tool_iterations}) reached. Stopping to prevent runaway loops.",
                 }
+                return
+
+            # Check approval requirements for recursive tool calls too
+            approval_needed = await check_approval_requirements(
+                db=self.db,
+                tool_calls=final_tool_calls,
+                chat_id=chat_id,
+                user_id=user_id,
+                message_id=str(intermediate_msg.id),
+                messages=updated_messages,
+                provider=provider,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+            )
+
+            if approval_needed:
+                _tool_meta = {t["function"]["name"]: t["function"].get("_metadata", {}) for t in tools} if tools else {}
+                for tool_call in final_tool_calls:
+                    tc_name = tool_call["function"]["name"]
+                    tc_args = tool_call["function"]["arguments"]
+                    meta = _tool_meta.get(tc_name, {})
+
+                    if meta.get("system_tool") and meta.get("requires_approval"):
+                        parsed_args = tc_args
+                        if isinstance(tc_args, str):
+                            parsed_args = json.loads(tc_args) if tc_args.strip() else {}
+                        yield {
+                            "type": "approval_required",
+                            "tool_call_id": tool_call["id"],
+                            "function_namespace": "sinas",
+                            "function_name": tc_name,
+                            "arguments": parsed_args,
+                        }
+                        continue
+
+                    ns, nm = meta.get("namespace"), meta.get("name")
+                    if ns and nm:
+                        function = await Function.get_by_name(self.db, ns, nm)
+                        if function and function.requires_approval:
+                            parsed_args = tc_args
+                            if isinstance(tc_args, str):
+                                parsed_args = json.loads(tc_args) if tc_args.strip() else {}
+                            yield {
+                                "type": "approval_required",
+                                "tool_call_id": tool_call["id"],
+                                "function_namespace": ns,
+                                "function_name": nm,
+                                "arguments": parsed_args,
+                            }
                 return
 
             async for result_chunk in self._handle_tool_calls(

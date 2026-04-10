@@ -76,9 +76,6 @@ class Role(Base):
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     config_checksum: Mapped[Optional[str]] = mapped_column(Text)
 
-    # External role mapping (1:1) - for SSO integration
-    external_group_id: Mapped[Optional[str]] = mapped_column(String(255), unique=True, index=True)
-
     # Relationships
     members: Mapped[list["UserRole"]] = relationship(
         "UserRole", back_populates="role", cascade="all, delete-orphan"

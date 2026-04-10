@@ -19,7 +19,7 @@ from app.services.package_service import PackageService
 router = APIRouter(prefix="/packages", tags=["packages"])
 
 
-@router.post("/install", response_model=dict)
+@router.post("/install", response_model=PackageInstallResponse)
 async def install_package(
     request: Request,
     body: PackageInstallRequest,

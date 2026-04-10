@@ -329,12 +329,15 @@ function ConfirmDeleteModal({
 /** Modal for editing a user's role assignments */
 function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: any[]; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const currentRoleNames = new Set((user.roles || []) as string[]);
+  const [roleNames, setRoleNames] = useState<Set<string>>(
+    new Set((user.roles || []) as string[])
+  );
 
   const addMutation = useMutation({
     mutationFn: ({ roleName, userId }: { roleName: string; userId: string }) =>
       apiClient.addRoleMember(roleName, { user_id: userId }),
-    onSuccess: () => {
+    onSuccess: (_data, { roleName }) => {
+      setRoleNames(prev => new Set([...prev, roleName]));
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
     },
@@ -343,14 +346,15 @@ function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: 
   const removeMutation = useMutation({
     mutationFn: ({ roleName, userId }: { roleName: string; userId: string }) =>
       apiClient.removeRoleMember(roleName, userId),
-    onSuccess: () => {
+    onSuccess: (_data, { roleName }) => {
+      setRoleNames(prev => { const next = new Set(prev); next.delete(roleName); return next; });
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['groupMembers'] });
     },
   });
 
   const toggleRole = (roleName: string) => {
-    if (currentRoleNames.has(roleName)) {
+    if (roleNames.has(roleName)) {
       removeMutation.mutate({ roleName, userId: user.id });
     } else {
       addMutation.mutate({ roleName, userId: user.id });
@@ -369,7 +373,7 @@ function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: 
 
           <div className="space-y-2">
             {allRoles.map((role: any) => {
-              const isAssigned = currentRoleNames.has(role.name);
+              const isAssigned = roleNames.has(role.name);
               return (
                 <label
                   key={role.id}

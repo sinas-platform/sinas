@@ -73,7 +73,7 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'hooks' | 'status'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'hooks' | 'status' | 'platform'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [expandedConnectorParams, setExpandedConnectorParams] = useState<Set<string>>(new Set());
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
@@ -113,7 +113,7 @@ export function AgentDetail() {
         icon: agent.icon || undefined,
         default_job_timeout: agent.default_job_timeout ?? undefined,
         default_keep_alive: agent.default_keep_alive,
-        enable_code_execution: agent.enable_code_execution,
+        system_tools: agent.system_tools || [],
       });
     }
   }, [agent]);
@@ -489,18 +489,6 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Keep alive (survives disconnect)
                 </label>
               </div>
-              <div className="flex items-center">
-                <input
-                  id="enable_code_execution"
-                  type="checkbox"
-                  checked={formData.enable_code_execution ?? agent.enable_code_execution}
-                  onChange={(e) => setFormData({ ...formData, enable_code_execution: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
-                />
-                <label htmlFor="enable_code_execution" className="ml-2 text-sm text-gray-300">
-                  Code execution
-                </label>
-              </div>
             </div>
             <div>
               <label htmlFor="default_job_timeout" className="block text-sm font-medium text-gray-300 mb-2">
@@ -779,6 +767,21 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" />
               </svg>
               Status
+            </button>
+            <button
+              type="button"
+              onClick={() => setToolsTab('platform')}
+              className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                toolsTab === 'platform'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+              title="Sinas platform capabilities"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" />
+              </svg>
+              Platform
             </button>
           </div>
 
@@ -1212,22 +1215,28 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 {store.encrypted && <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/30 text-purple-300 rounded">encrypted</span>}
                               </div>
                             </div>
-                            <select
-                              value={accessMode}
-                              onChange={(e) => {
-                                const newAccess = e.target.value as 'readonly' | 'readwrite';
-                                let updated = currentStores.filter((s: any) => s.store !== storeRef);
-                                if (e.target.value !== 'none') {
-                                  updated = [...updated, { store: storeRef, access: newAccess }];
-                                }
-                                setFormData({ ...formData, enabled_stores: updated });
-                              }}
-                              className="input text-xs w-32"
-                            >
-                              <option value="none">None</option>
-                              <option value="readonly">Read-only</option>
-                              <option value="readwrite">Read-write</option>
-                            </select>
+                            <div className="flex rounded-md overflow-hidden border border-white/10">
+                              {(['none', 'readonly', 'readwrite'] as const).map((mode) => (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => {
+                                    let updated = currentStores.filter((s: any) => s.store !== storeRef);
+                                    if (mode !== 'none') {
+                                      updated = [...updated, { store: storeRef, access: mode }];
+                                    }
+                                    setFormData({ ...formData, enabled_stores: updated });
+                                  }}
+                                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                                    accessMode === mode
+                                      ? 'bg-primary-600 text-white'
+                                      : 'bg-[#1a1a1a] text-gray-400 hover:text-gray-200'
+                                  }`}
+                                >
+                                  {mode === 'none' ? 'off' : mode === 'readonly' ? 'read' : 'read/write'}
+                                </button>
+                              ))}
+                            </div>
                           </div>
                         );
                       })}
@@ -1303,27 +1312,59 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
                     {collections.map((coll: any) => {
                       const collRef = `${coll.namespace}/${coll.name}`;
+                      const current = formData.enabled_collections || agent.enabled_collections || [];
+                      const entry = current.find((e: any) =>
+                        (typeof e === 'string' ? e : e.collection) === collRef
+                      );
+                      const isEnabled = !!entry;
+                      const access = entry && typeof entry === 'object' ? entry.access : 'readonly';
                       return (
-                        <label
+                        <div
                           key={collRef}
-                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
+                          className="flex items-center gap-3 p-2 hover:bg-white/5 rounded"
                         >
                           <input
                             type="checkbox"
-                            checked={(formData.enabled_collections || agent.enabled_collections || []).includes(collRef)}
+                            checked={isEnabled}
                             onChange={(e) => {
-                              const current = formData.enabled_collections || agent.enabled_collections || [];
                               const updated = e.target.checked
-                                ? [...current, collRef]
-                                : current.filter((ref: string) => ref !== collRef);
-                              setFormData({ ...formData, enabled_collections: updated });
+                                ? [...current, { collection: collRef, access: 'readonly' as const }]
+                                : current.filter((entry: any) =>
+                                    (typeof entry === 'string' ? entry : entry.collection) !== collRef
+                                  );
+                              setFormData({ ...formData, enabled_collections: updated as any });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
                           />
-                          <div className="ml-3 flex-1">
-                            <span className="text-sm font-medium text-gray-100 font-mono">{collRef}</span>
-                          </div>
-                        </label>
+                          <span className="text-sm font-medium text-gray-100 font-mono flex-1">{collRef}</span>
+                          {isEnabled && (
+                            <div className="flex rounded-md overflow-hidden border border-white/10">
+                              {(['readonly', 'readwrite'] as const).map((mode) => (
+                                <button
+                                  key={mode}
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = current.map((entry: any) => {
+                                      const ref = typeof entry === 'string' ? entry : entry.collection;
+                                      if (ref === collRef) {
+                                        return { collection: collRef, access: mode };
+                                      }
+                                      return typeof entry === 'string' ? { collection: entry, access: 'readonly' as const } : entry;
+                                    });
+                                    setFormData({ ...formData, enabled_collections: updated as any });
+                                  }}
+                                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                                    access === mode
+                                      ? 'bg-primary-600 text-white'
+                                      : 'bg-[#1a1a1a] text-gray-400 hover:text-gray-200'
+                                  }`}
+                                >
+                                  {mode === 'readonly' ? 'read' : 'read/write'}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -1681,8 +1722,10 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 enabledTools.push({ key: `query:${ref}`, label: ref, type: 'Query' });
               });
               // Collections
-              (formData.enabled_collections || agent.enabled_collections || []).forEach((ref: string) => {
-                enabledTools.push({ key: `collection:${ref}`, label: ref, type: 'Collection' });
+              (formData.enabled_collections || agent.enabled_collections || []).forEach((entry: any) => {
+                const ref = typeof entry === 'string' ? entry : entry.collection;
+                const access = typeof entry === 'object' ? entry.access : 'readonly';
+                enabledTools.push({ key: `collection:${ref}`, label: `${ref} (${access})`, type: 'Collection' });
               });
               // Components
               (formData.enabled_components || agent.enabled_components || []).forEach((ref: string) => {
@@ -1735,6 +1778,47 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 </div>
               );
             })()}
+
+            {/* Platform Tab (System Tools) */}
+            {toolsTab === 'platform' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Sinas platform capabilities. These are opt-in tools beyond the normal function/query toolkit.
+                </p>
+                <div className="space-y-2 border border-white/[0.06] rounded-lg p-3">
+                  {[
+                    { key: 'codeExecution', label: 'Code Execution', desc: 'Generate and run Python in sandboxed containers.' },
+                    { key: 'configIntrospection', label: 'Config Introspection', desc: 'Read-only access to inspect the current configuration: list resource types, browse agents/queries/functions, read full details.' },
+                    { key: 'packageManagement', label: 'Package Management', desc: 'Validate, preview, install/uninstall Sinas packages. Requires approval for writes.' },
+                  ].map((tool) => {
+                    const isEnabled = (formData.system_tools ?? agent.system_tools ?? []).includes(tool.key);
+                    return (
+                      <label
+                        key={tool.key}
+                        className="flex items-start gap-3 p-2.5 hover:bg-white/5 rounded cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isEnabled}
+                          onChange={(e) => {
+                            const current = [...(formData.system_tools ?? agent.system_tools ?? [])];
+                            const updated = e.target.checked
+                              ? [...current, tool.key]
+                              : current.filter((t: string) => t !== tool.key);
+                            setFormData({ ...formData, system_tools: updated });
+                          }}
+                          className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                        />
+                        <div>
+                          <span className="text-sm font-medium text-gray-100">{tool.label}</span>
+                          <p className="text-xs text-gray-500 mt-0.5">{tool.desc}</p>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

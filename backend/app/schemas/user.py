@@ -16,10 +16,6 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
-class UserWithGroupsResponse(UserResponse):
-    groups: list[str]  # List of group names
-
-
 class UserWithRolesResponse(BaseModel):
     id: uuid.UUID
     email: str

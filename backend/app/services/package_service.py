@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.connector import Connector
 from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
 
 # Models that support managed_by
-MANAGED_MODELS = [Agent, Manifest, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
+MANAGED_MODELS = [Agent, Connector, Manifest, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -82,12 +83,11 @@ class PackageService:
         pkg_name = config.package.name
         managed_by = f"pkg:{pkg_name}"
 
-        # Check if already installed
-        existing = await self.db.execute(
+        # Check if already installed — upgrade in place if so
+        existing_result = await self.db.execute(
             select(Package).where(Package.name == pkg_name)
         )
-        if existing.scalar_one_or_none():
-            raise ValueError(f"Package '{pkg_name}' is already installed. Uninstall it first to reinstall.")
+        existing_package = existing_result.scalar_one_or_none()
 
         # Apply config with package managed_by, skip environment-specific types, no auto-commit
         apply_service = ConfigApplyService(
@@ -107,17 +107,25 @@ class PackageService:
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
 
-        # Create package record
-        package = Package(
-            name=pkg_name,
-            version=config.package.version,
-            description=config.package.description,
-            author=config.package.author,
-            source_url=config.package.url,
-            source_yaml=yaml_content,
-            installed_by=user_id,
-        )
-        self.db.add(package)
+        # Create or update package record
+        if existing_package:
+            existing_package.version = config.package.version
+            existing_package.description = config.package.description
+            existing_package.author = config.package.author
+            existing_package.source_url = config.package.url
+            existing_package.source_yaml = yaml_content
+            package = existing_package
+        else:
+            package = Package(
+                name=pkg_name,
+                version=config.package.version,
+                description=config.package.description,
+                author=config.package.author,
+                source_url=config.package.url,
+                source_yaml=yaml_content,
+                installed_by=user_id,
+            )
+            self.db.add(package)
 
         # Single commit for everything
         await self.db.commit()
@@ -180,6 +188,7 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
+            Connector: "connectors",
             Manifest: "manifests",
             Component: "components",
             Collection: "collections",
@@ -254,6 +263,7 @@ class PackageService:
         # Type -> (model, export_fn)
         type_handlers = {
             "agent": (Agent, self._export_agent),
+            "connector": (Connector, self._export_connector),
             "function": (Function, self._export_function),
             "skill": (Skill, self._export_skill),
             "manifest": (Manifest, self._export_manifest),
@@ -306,6 +316,7 @@ class PackageService:
     def _type_to_spec_key(self, res_type: str) -> str:
         mapping = {
             "agent": "agents",
+            "connector": "connectors",
             "function": "functions",
             "skill": "skills",
             "manifest": "manifests",
@@ -527,4 +538,41 @@ class PackageService:
             "pollIntervalSeconds": trigger.poll_interval_seconds,
             "batchSize": trigger.batch_size,
             "isActive": trigger.is_active,
+        })
+
+    async def _export_connector(self, conn: Connector) -> dict:
+        auth = conn.auth or {}
+        retry = conn.retry or {}
+        operations = []
+        for op in (conn.operations or []):
+            op_dict = {
+                "name": op.get("name"),
+                "method": op.get("method"),
+                "path": op.get("path"),
+                "description": op.get("description"),
+                "parameters": op.get("parameters"),
+                "requestBodyMapping": op.get("request_body_mapping", "json"),
+                "responseMapping": op.get("response_mapping", "json"),
+            }
+            operations.append(_remove_none_values(op_dict))
+
+        return _remove_none_values({
+            "name": conn.name,
+            "namespace": conn.namespace,
+            "description": conn.description,
+            "baseUrl": conn.base_url,
+            "auth": _remove_none_values({
+                "type": auth.get("type", "none"),
+                "secret": auth.get("secret"),
+                "header": auth.get("header"),
+                "position": auth.get("position"),
+                "paramName": auth.get("param_name"),
+            }),
+            "headers": conn.headers if conn.headers else None,
+            "retry": _remove_none_values({
+                "maxAttempts": retry.get("max_attempts", 1),
+                "backoff": retry.get("backoff", "none"),
+            }),
+            "timeoutSeconds": conn.timeout_seconds,
+            "operations": operations,
         })

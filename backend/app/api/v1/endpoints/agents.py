@@ -91,7 +91,7 @@ async def create_agent(
         enabled_queries=agent_data.enabled_queries or [],
         query_parameters=agent_data.query_parameters or {},
         enabled_stores=[s.model_dump() for s in agent_data.enabled_stores] if agent_data.enabled_stores else [],
-        enabled_collections=agent_data.enabled_collections or [],
+        enabled_collections=[c.model_dump() for c in agent_data.enabled_collections] if agent_data.enabled_collections else [],
         enabled_components=agent_data.enabled_components or [],
         enabled_connectors=agent_data.enabled_connectors or [],
         hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
@@ -100,7 +100,7 @@ async def create_agent(
         is_default=agent_data.is_default or False,
         default_job_timeout=agent_data.default_job_timeout,
         default_keep_alive=agent_data.default_keep_alive or False,
-        enable_code_execution=agent_data.enable_code_execution or False,
+        system_tools=agent_data.system_tools or [],
     )
 
     db.add(agent)
@@ -241,7 +241,7 @@ async def update_agent(
     if agent_data.enabled_stores is not None:
         agent.enabled_stores = [s.model_dump() for s in agent_data.enabled_stores]
     if agent_data.enabled_collections is not None:
-        agent.enabled_collections = agent_data.enabled_collections
+        agent.enabled_collections = [c.model_dump() for c in agent_data.enabled_collections]
     if agent_data.enabled_components is not None:
         agent.enabled_components = agent_data.enabled_components
     if agent_data.enabled_connectors is not None:
@@ -262,8 +262,8 @@ async def update_agent(
         agent.default_job_timeout = agent_data.default_job_timeout
     if agent_data.default_keep_alive is not None:
         agent.default_keep_alive = agent_data.default_keep_alive
-    if agent_data.enable_code_execution is not None:
-        agent.enable_code_execution = agent_data.enable_code_execution
+    if agent_data.system_tools is not None:
+        agent.system_tools = agent_data.system_tools
     await db.flush()
     await db.refresh(agent)
 

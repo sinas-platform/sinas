@@ -128,6 +128,13 @@ class EnabledStoreConfigYaml(BaseModel):
     access: str = Field(default="readonly", description="Access mode: 'readonly' or 'readwrite'")
 
 
+class EnabledCollectionConfigYaml(BaseModel):
+    """Configuration for an enabled collection in agent/component config"""
+
+    collection: str = Field(..., description="Collection identifier in format 'namespace/name'")
+    access: str = Field(default="readonly", description="Access mode: 'readonly' or 'readwrite'")
+
+
 class ComponentConfig(BaseModel):
     """Component configuration"""
 
@@ -182,7 +189,7 @@ class AgentConfig(BaseModel):
     queryParameters: dict[str, Any] = Field(
         default_factory=dict
     )  # {"namespace/name": {"param": "value or {{template}}"}}
-    enabledCollections: list[str] = Field(default_factory=list)  # List of "namespace/name" collection refs
+    enabledCollections: list[Union[str, EnabledCollectionConfigYaml]] = Field(default_factory=list)
     enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
     enabledConnectors: list[dict[str, Any]] = Field(default_factory=list)  # [{"connector": "ns/name", "operations": [...]}]
     inputSchema: Optional[dict[str, Any]] = None
@@ -193,7 +200,15 @@ class AgentConfig(BaseModel):
     isDefault: bool = False
     defaultJobTimeout: Optional[int] = None
     defaultKeepAlive: bool = False
-    enableCodeExecution: bool = False
+    systemTools: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Opt-in Sinas platform tools this agent can use. "
+            "Supported values: 'codeExecution', 'packageManagement'. "
+            "Permissions still apply on top — the agent's role must grant the "
+            "underlying action for each tool to actually execute."
+        ),
+    )
 
 
 class WebhookDedupConfig(BaseModel):

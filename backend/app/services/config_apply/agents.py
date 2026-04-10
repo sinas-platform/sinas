@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.agent import Agent
 
 from app.services.config_apply.normalizers import (
+    normalize_collection_references,
     normalize_function_references,
     normalize_skill_references,
     normalize_store_references,
@@ -63,6 +64,13 @@ async def apply_agents(
                 else []
             )
 
+            # Normalize collection references to dict format
+            normalized_collections = (
+                normalize_collection_references(agent_config.enabledCollections)
+                if agent_config.enabledCollections
+                else []
+            )
+
             config_hash = calculate_hash(
                 {
                     "namespace": agent_config.namespace,
@@ -95,8 +103,8 @@ async def apply_agents(
                     "query_parameters": agent_config.queryParameters
                     if agent_config.queryParameters
                     else {},
-                    "enabled_collections": sorted(agent_config.enabledCollections)
-                    if agent_config.enabledCollections
+                    "enabled_collections": sorted(normalized_collections, key=lambda x: x["collection"])
+                    if normalized_collections
                     else [],
                     "enabled_components": sorted(agent_config.enabledComponents)
                     if agent_config.enabledComponents
@@ -112,7 +120,7 @@ async def apply_agents(
                     "is_default": agent_config.isDefault,
                     "default_job_timeout": agent_config.defaultJobTimeout,
                     "default_keep_alive": agent_config.defaultKeepAlive,
-                    "enable_code_execution": agent_config.enableCodeExecution,
+                    "system_tools": agent_config.systemTools,
                 }
             )
 
@@ -121,12 +129,12 @@ async def apply_agents(
                     warnings.append(
                         f"Agent '{agent_config.name}' exists but is not managed by '{managed_by}'. Skipping."
                     )
-                    track_change("unchanged", "agents", agent_config.name)
+                    track_change("unchanged", "agents", f"{agent_config.namespace}/{agent_config.name}")
                     agent_ids[agent_config.name] = str(existing.id)
                     continue
 
                 if existing.config_checksum == config_hash:
-                    track_change("unchanged", "agents", agent_config.name)
+                    track_change("unchanged", "agents", f"{agent_config.namespace}/{agent_config.name}")
                     agent_ids[agent_config.name] = str(existing.id)
                     continue
 
@@ -152,7 +160,7 @@ async def apply_agents(
                     existing.enabled_stores = normalized_stores
                     existing.enabled_queries = agent_config.enabledQueries
                     existing.query_parameters = agent_config.queryParameters
-                    existing.enabled_collections = agent_config.enabledCollections
+                    existing.enabled_collections = normalized_collections
                     existing.enabled_components = agent_config.enabledComponents
                     existing.enabled_connectors = agent_config.enabledConnectors
                     existing.input_schema = agent_config.inputSchema or {}
@@ -162,7 +170,7 @@ async def apply_agents(
                     existing.icon = agent_config.icon
                     existing.default_job_timeout = agent_config.defaultJobTimeout
                     existing.default_keep_alive = agent_config.defaultKeepAlive
-                    existing.enable_code_execution = agent_config.enableCodeExecution
+                    existing.system_tools = agent_config.systemTools
                     if agent_config.isDefault:
                         await db.execute(
                             Agent.__table__.update()
@@ -173,7 +181,7 @@ async def apply_agents(
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
-                track_change("update", "agents", agent_config.name)
+                track_change("update", "agents", f"{agent_config.namespace}/{agent_config.name}")
                 agent_ids[agent_config.name] = str(existing.id)
 
             else:
@@ -210,7 +218,7 @@ async def apply_agents(
                         enabled_stores=normalized_stores,
                         enabled_queries=agent_config.enabledQueries,
                         query_parameters=agent_config.queryParameters,
-                        enabled_collections=agent_config.enabledCollections,
+                        enabled_collections=normalized_collections,
                         enabled_components=agent_config.enabledComponents,
                         enabled_connectors=agent_config.enabledConnectors,
                         hooks=agent_config.hooks,
@@ -218,7 +226,7 @@ async def apply_agents(
                         is_default=agent_config.isDefault,
                         default_job_timeout=agent_config.defaultJobTimeout,
                         default_keep_alive=agent_config.defaultKeepAlive,
-                        enable_code_execution=agent_config.enableCodeExecution,
+                        system_tools=agent_config.systemTools,
                         user_id=owner_user_id,
                         is_active=True,
                         managed_by=managed_by,
@@ -231,7 +239,7 @@ async def apply_agents(
                 else:
                     agent_ids[agent_config.name] = "dry-run-id"
 
-                track_change("create", "agents", agent_config.name)
+                track_change("create", "agents", f"{agent_config.namespace}/{agent_config.name}")
 
         except Exception as e:
             errors.append(f"Error applying agent '{agent_config.name}': {str(e)}")

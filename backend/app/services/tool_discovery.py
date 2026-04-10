@@ -295,9 +295,16 @@ async def get_available_tools(
         },
     })
 
-    # Add code execution tool if enabled on the agent
-    if agent.enable_code_execution:
+    # Bind Sinas system tools (opt-in platform capabilities)
+    system_tools = agent.system_tools or []
+    if "codeExecution" in system_tools:
         tools.append(await get_code_exec_tool_definition(db))
+    if "packageManagement" in system_tools:
+        from app.services.package_tools import get_package_tool_definitions
+        tools.extend(get_package_tool_definitions())
+    if "configIntrospection" in system_tools:
+        from app.services.config_tools import get_config_tool_definitions
+        tools.extend(get_config_tool_definitions())
 
     # Check for paused executions belonging to this chat
     result = await db.execute(

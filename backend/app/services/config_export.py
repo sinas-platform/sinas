@@ -10,11 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import EncryptionService
 from app.models.agent import Agent
+from app.models.component import Component
 from app.models.connector import Connector
 from app.models.dependency import Dependency
+from app.models.file import Collection
 from app.models.function import Function
 from app.models.llm_provider import LLMProvider
+from app.models.manifest import Manifest
+from app.models.query import Query
 from app.models.secret import Secret
+from app.models.skill import Skill
 
 from app.models.database_connection import DatabaseConnection
 from app.models.database_trigger import DatabaseTrigger
@@ -64,9 +69,14 @@ class ConfigExportService:
         config_dict["spec"]["dependencies"] = await self._export_dependencies()
         config_dict["spec"]["secrets"] = await self._export_secrets()
         config_dict["spec"]["connectors"] = await self._export_connectors()
+        config_dict["spec"]["collections"] = await self._export_collections()
+        config_dict["spec"]["queries"] = await self._export_queries()
         config_dict["spec"]["functions"] = await self._export_functions()
+        config_dict["spec"]["skills"] = await self._export_skills()
         config_dict["spec"]["templates"] = await self._export_templates()
         config_dict["spec"]["stores"] = await self._export_stores()
+        config_dict["spec"]["components"] = await self._export_components()
+        config_dict["spec"]["manifests"] = await self._export_manifests()
         config_dict["spec"]["agents"] = await self._export_agents()
         config_dict["spec"]["webhooks"] = await self._export_webhooks()
         config_dict["spec"]["schedules"] = await self._export_schedules()
@@ -313,14 +323,134 @@ class ConfigExportService:
                 "enabledStores": agent.enabled_stores
                 if agent.enabled_stores
                 else None,
+                "enabledCollections": agent.enabled_collections
+                if agent.enabled_collections
+                else None,
                 "icon": agent.icon,
                 "defaultJobTimeout": agent.default_job_timeout,
                 "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
-                "enableCodeExecution": agent.enable_code_execution if agent.enable_code_execution else None,
+                "systemTools": agent.system_tools if agent.system_tools else None,
             }
 
             exported.append(_remove_none_values(agent_dict))
 
+        return exported
+
+    async def _export_collections(self) -> list[dict]:
+        """Export collections"""
+        stmt = select(Collection)
+        if self.managed_only:
+            stmt = stmt.where(Collection.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        collections = result.scalars().all()
+        exported = []
+        for coll in collections:
+            exported.append(_remove_none_values({
+                "namespace": coll.namespace,
+                "name": coll.name,
+                "metadataSchema": coll.metadata_schema or None,
+                "contentFilterFunction": coll.content_filter_function,
+                "postUploadFunction": coll.post_upload_function,
+                "maxFileSizeMb": coll.max_file_size_mb,
+                "maxTotalSizeGb": coll.max_total_size_gb,
+                "isPublic": coll.is_public if hasattr(coll, 'is_public') else None,
+                "allowSharedFiles": coll.allow_shared_files,
+                "allowPrivateFiles": coll.allow_private_files,
+            }))
+        return exported
+
+    async def _export_queries(self) -> list[dict]:
+        """Export queries"""
+        stmt = select(Query)
+        if self.managed_only:
+            stmt = stmt.where(Query.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        queries = result.scalars().all()
+        exported = []
+        for query in queries:
+            conn_name = None
+            if query.database_connection_id:
+                conn_result = await self.db.execute(
+                    select(DatabaseConnection).where(DatabaseConnection.id == query.database_connection_id)
+                )
+                conn = conn_result.scalar_one_or_none()
+                if conn:
+                    conn_name = conn.name
+            exported.append(_remove_none_values({
+                "namespace": query.namespace,
+                "name": query.name,
+                "description": query.description,
+                "connectionName": conn_name,
+                "operation": query.operation,
+                "sql": query.sql,
+                "inputSchema": query.input_schema,
+                "outputSchema": query.output_schema,
+                "timeoutMs": query.timeout_ms,
+                "maxRows": query.max_rows,
+            }))
+        return exported
+
+    async def _export_skills(self) -> list[dict]:
+        """Export skills"""
+        stmt = select(Skill)
+        if self.managed_only:
+            stmt = stmt.where(Skill.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        skills = result.scalars().all()
+        exported = []
+        for skill in skills:
+            exported.append(_remove_none_values({
+                "namespace": skill.namespace,
+                "name": skill.name,
+                "description": skill.description,
+                "content": skill.content,
+            }))
+        return exported
+
+    async def _export_components(self) -> list[dict]:
+        """Export components"""
+        stmt = select(Component)
+        if self.managed_only:
+            stmt = stmt.where(Component.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        components = result.scalars().all()
+        exported = []
+        for comp in components:
+            exported.append(_remove_none_values({
+                "namespace": comp.namespace,
+                "name": comp.name,
+                "title": comp.title,
+                "description": comp.description,
+                "sourceCode": comp.source_code,
+                "inputSchema": comp.input_schema,
+                "enabledAgents": comp.enabled_agents or None,
+                "enabledFunctions": comp.enabled_functions or None,
+                "enabledQueries": comp.enabled_queries or None,
+                "enabledComponents": comp.enabled_components or None,
+                "enabledStores": comp.enabled_stores or None,
+                "cssOverrides": comp.css_overrides,
+                "visibility": comp.visibility,
+            }))
+        return exported
+
+    async def _export_manifests(self) -> list[dict]:
+        """Export manifests"""
+        stmt = select(Manifest)
+        if self.managed_only:
+            stmt = stmt.where(Manifest.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        manifests = result.scalars().all()
+        exported = []
+        for manifest in manifests:
+            exported.append(_remove_none_values({
+                "namespace": manifest.namespace,
+                "name": manifest.name,
+                "description": manifest.description,
+                "requiredResources": manifest.required_resources or None,
+                "requiredPermissions": manifest.required_permissions or None,
+                "optionalPermissions": manifest.optional_permissions or None,
+                "exposedNamespaces": manifest.exposed_namespaces or None,
+            }))
         return exported
 
     async def _export_stores(self) -> list[dict]:

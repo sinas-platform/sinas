@@ -25,6 +25,7 @@ from app.services.config_apply.resources import (
     apply_collections,
     apply_components,
     apply_connectors,
+    apply_dependencies,
     apply_functions,
     apply_manifests,
     apply_queries,
@@ -171,6 +172,12 @@ class ConfigApplyService:
                 await apply_secrets(
                     **common_with_owner,
                     secrets=config.spec.secrets,
+                )
+
+            if "dependencies" not in self.skip_resource_types:
+                await apply_dependencies(
+                    **common_with_owner,
+                    dependencies=config.spec.dependencies,
                 )
 
             if "connectors" not in self.skip_resource_types:
