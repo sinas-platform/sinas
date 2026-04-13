@@ -26,13 +26,17 @@ spec:
   agents: [...]
   functions: [...]
   skills: [...]
+  connectors: [...]
   components: [...]
   templates: [...]
   queries: [...]
   collections: [...]
+  stores: [...]
   webhooks: [...]
   schedules: [...]
   manifests: [...]
+  databaseTriggers: [...]
+  dependencies: [...]
 ```
 
 **Key behaviors:**
@@ -40,7 +44,9 @@ spec:
 - Resources created by packages are tagged with `managed_by: "pkg:<name>"`
 - **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
 - **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
+- **Upgrade**: Re-installing an existing package updates its resources in place (idempotent apply)
 - **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
+- **Dependencies**: Packages can declare Python dependencies — these are recorded in the database and installed in containers on worker restart
 
 **Endpoints:**
 
@@ -73,7 +79,7 @@ curl -X POST https://yourdomain.com/api/v1/packages/create \
   }'
 ```
 
-Supported resource types: `agent`, `function`, `skill`, `manifest`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
+Supported resource types: `agent`, `function`, `skill`, `connector`, `manifest`, `component`, `query`, `collection`, `store`, `template`, `webhook`, `schedule`, `database_trigger`.
 
 ### Manifests
 

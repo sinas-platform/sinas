@@ -533,10 +533,11 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `enabled_skills` | Skills available to the agent |
 | `enabled_queries` | Database queries available as tools |
 | `query_parameters` | Default query parameter values |
-| `enabled_collections` | File collections the agent can search |
+| `enabled_collections` | File collections the agent can access. Plain string (readonly) or `{"collection": "namespace/name", "access": "readonly\|readwrite"}`. Readwrite enables write/edit/delete file tools. |
 | `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
 | `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...], "parameters": {"op_name": {"param": "value"}}}`. Parameters support Jinja2 templates and are locked (hidden from LLM). |
 | `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
+| `system_tools` | Platform capabilities. List of strings or config objects. See [System Tools](#system-tools). |
 | `icon` | Icon reference (see [Icons](#icons)) |
 
 **Message hooks:** Functions that run before/after agent messages. Each hook has:
@@ -643,6 +644,64 @@ curl -X POST https://yourdomain.com/agents/default/default/chats \
   }
 }
 ```
+
+### System Tools
+
+System tools are opt-in platform capabilities beyond the normal function/query toolkit. Enable them via the `system_tools` property on agents. Each tool is either a simple string (no config needed) or an object with a `name` and tool-specific configuration.
+
+```yaml
+agents:
+  - name: my-agent
+    systemTools:
+      - codeExecution
+      - packageManagement
+      - configIntrospection
+      - name: databaseIntrospection
+        connections:
+          - built-in
+          - analytics-db
+```
+
+**Available system tools:**
+
+| Tool | Type | Description |
+|---|---|---|
+| `codeExecution` | string | Generate and execute Python code in sandboxed containers |
+| `configIntrospection` | string | Read-only inspection of the current Sinas configuration: list resource types, browse resources by name/description, read full resource detail |
+| `packageManagement` | string | Validate, preview, install, and uninstall Sinas packages. Install and uninstall require user approval. |
+| `databaseIntrospection` | object | Read-only schema inspection of database connections. Requires `connections` list specifying which connections the agent can access. |
+
+**Config introspection tools:**
+
+- `sinas_config_inspect` — Resource type counts (overview)
+- `sinas_config_list(type, namespace?)` — Names + descriptions for a type
+- `sinas_config_get(type, namespace, name)` — Full detail of one resource
+
+**Package management tools:**
+
+- `sinas_package_validate(yaml)` — Validate package YAML (syntax + schema)
+- `sinas_package_preview(yaml)` — Dry-run install (shows what would change)
+- `sinas_package_install(yaml)` — Install package (requires approval)
+- `sinas_package_uninstall(name)` — Uninstall package (requires approval)
+- `sinas_package_list()` — List installed packages
+- `sinas_package_export(name)` — Export package as YAML
+
+**Database introspection tools:**
+
+- `sinas_db_list_tables(connectionName)` — List tables with schemas, types, row counts, and table annotations
+- `sinas_db_describe_table(table, connectionName, schema?)` — Columns, types, indexes, foreign keys, and column annotations
+
+The `databaseIntrospection` tool requires a `connections` list. The agent can only introspect connections listed in its config. This uses the same connection pool as regular queries and includes annotations from the semantic layer (table/column display names and descriptions).
+
+**Collection file tools (readwrite access):**
+
+When an agent has `access: readwrite` on an enabled collection, it gets additional tools:
+
+- `write_file_{ns}_{name}(filename, content)` — Write/overwrite a file (creates new version)
+- `edit_file_{ns}_{name}(filename, old_string, new_string)` — Surgical edit via exact string replacement
+- `delete_file_{ns}_{name}(filename)` — Delete a file
+
+These are in addition to the read tools (`search_collection_*`, `get_file_*`) that every enabled collection provides. `get_file` supports `offset` and `limit` parameters for reading specific line ranges of large files.
 
 ### Functions
 
@@ -1416,13 +1475,17 @@ spec:
   agents: [...]
   functions: [...]
   skills: [...]
+  connectors: [...]
   components: [...]
   templates: [...]
   queries: [...]
   collections: [...]
+  stores: [...]
   webhooks: [...]
   schedules: [...]
   manifests: [...]
+  databaseTriggers: [...]
+  dependencies: [...]
 ```
 
 **Key behaviors:**
@@ -1430,7 +1493,9 @@ spec:
 - Resources created by packages are tagged with `managed_by: "pkg:<name>"`
 - **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
 - **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
+- **Upgrade**: Re-installing an existing package updates its resources in place (idempotent apply)
 - **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
+- **Dependencies**: Packages can declare Python dependencies — these are recorded in the database and installed in containers on worker restart
 
 **Endpoints:**
 
@@ -1463,7 +1528,7 @@ curl -X POST https://yourdomain.com/api/v1/packages/create \
   }'
 ```
 
-Supported resource types: `agent`, `function`, `skill`, `manifest`, `component`, `query`, `collection`, `template`, `webhook`, `schedule`.
+Supported resource types: `agent`, `function`, `skill`, `connector`, `manifest`, `component`, `query`, `collection`, `store`, `template`, `webhook`, `schedule`, `database_trigger`.
 
 ### Manifests
 

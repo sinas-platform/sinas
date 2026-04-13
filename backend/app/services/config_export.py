@@ -20,6 +20,7 @@ from app.models.manifest import Manifest
 from app.models.query import Query
 from app.models.secret import Secret
 from app.models.skill import Skill
+from app.models.store import Store
 
 from app.models.database_connection import DatabaseConnection
 from app.models.database_trigger import DatabaseTrigger
@@ -28,18 +29,24 @@ from app.models.template import Template
 from app.models.user import Role, RolePermission, User
 from app.models.webhook import Webhook
 
+from app.services.resource_serializers import (
+    _remove_none_values,
+    serialize_agent,
+    serialize_collection,
+    serialize_component,
+    serialize_connector,
+    serialize_database_trigger,
+    serialize_function,
+    serialize_manifest,
+    serialize_query,
+    serialize_schedule,
+    serialize_skill,
+    serialize_store,
+    serialize_template,
+    serialize_webhook,
+)
+
 logger = logging.getLogger(__name__)
-
-
-def _remove_none_values(d: dict) -> dict:
-    """Remove None values from dictionary recursively"""
-    if not isinstance(d, dict):
-        return d
-    return {
-        k: _remove_none_values(v) if isinstance(v, dict) else v
-        for k, v in d.items()
-        if v is not None
-    }
 
 
 class ConfigExportService:
@@ -215,125 +222,36 @@ class ConfigExportService:
         stmt = select(Connector).where(Connector.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Connector.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
-        connectors = result.scalars().all()
-
-        exported = []
-        for conn in connectors:
-            auth = conn.auth or {}
-            retry = conn.retry or {}
-            operations = []
-            for op in (conn.operations or []):
-                op_dict = {
-                    "name": op.get("name"),
-                    "method": op.get("method"),
-                    "path": op.get("path"),
-                    "description": op.get("description"),
-                    "parameters": op.get("parameters"),
-                    "requestBodyMapping": op.get("request_body_mapping", "json"),
-                    "responseMapping": op.get("response_mapping", "json"),
-                }
-                operations.append(_remove_none_values(op_dict))
-
-            conn_dict = {
-                "name": conn.name,
-                "namespace": conn.namespace,
-                "description": conn.description,
-                "baseUrl": conn.base_url,
-                "auth": _remove_none_values({
-                    "type": auth.get("type", "none"),
-                    "secret": auth.get("secret"),
-                    "header": auth.get("header"),
-                    "position": auth.get("position"),
-                    "paramName": auth.get("param_name"),
-                }),
-                "headers": conn.headers if conn.headers else None,
-                "retry": _remove_none_values({
-                    "maxAttempts": retry.get("max_attempts", 1),
-                    "backoff": retry.get("backoff", "none"),
-                }),
-                "timeoutSeconds": conn.timeout_seconds,
-                "operations": operations,
-            }
-            exported.append(_remove_none_values(conn_dict))
-
-        return exported
+        return [serialize_connector(c) for c in result.scalars().all()]
 
     async def _export_functions(self) -> list[dict]:
         """Export functions"""
         stmt = select(Function).where(Function.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Function.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
-        functions = result.scalars().all()
-
-        exported = []
-        for func in functions:
-            func_dict = {
-                "name": func.name,
-                "namespace": func.namespace,
-                "description": func.description,
-                "code": func.code,
-                "inputSchema": func.input_schema,
-                "outputSchema": func.output_schema,
-                "icon": func.icon,
-            }
-
-            exported.append(_remove_none_values(func_dict))
-
-        return exported
+        return [serialize_function(f) for f in result.scalars().all()]
 
     async def _export_agents(self) -> list[dict]:
         """Export agents"""
         stmt = select(Agent).where(Agent.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Agent.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
         agents = result.scalars().all()
 
         exported = []
         for agent in agents:
-            # Get provider name
-            provider = None
+            provider_name = None
             if agent.llm_provider_id:
-                provider_stmt = select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
-                provider_result = await self.db.execute(provider_stmt)
+                provider_result = await self.db.execute(
+                    select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
+                )
                 provider = provider_result.scalar_one_or_none()
-
-            agent_dict = {
-                "name": agent.name,
-                "namespace": agent.namespace,
-                "description": agent.description,
-                "model": agent.model,
-                "llmProviderName": provider.name if provider else None,
-                "temperature": agent.temperature,
-                "maxTokens": agent.max_tokens,
-                "systemPrompt": agent.system_prompt,
-                "enabledFunctions": agent.enabled_functions if agent.enabled_functions else None,
-                "functionParameters": agent.function_parameters
-                if agent.function_parameters
-                else None,
-                "statusTemplates": agent.status_templates
-                if agent.status_templates
-                else None,
-                "enabledAgents": agent.enabled_agents if agent.enabled_agents else None,
-                "enabledStores": agent.enabled_stores
-                if agent.enabled_stores
-                else None,
-                "enabledCollections": agent.enabled_collections
-                if agent.enabled_collections
-                else None,
-                "icon": agent.icon,
-                "defaultJobTimeout": agent.default_job_timeout,
-                "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
-                "systemTools": agent.system_tools if agent.system_tools else None,
-            }
-
-            exported.append(_remove_none_values(agent_dict))
-
+                if provider:
+                    provider_name = provider.name
+            exported.append(serialize_agent(agent, provider_name))
         return exported
 
     async def _export_collections(self) -> list[dict]:
@@ -342,22 +260,7 @@ class ConfigExportService:
         if self.managed_only:
             stmt = stmt.where(Collection.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        collections = result.scalars().all()
-        exported = []
-        for coll in collections:
-            exported.append(_remove_none_values({
-                "namespace": coll.namespace,
-                "name": coll.name,
-                "metadataSchema": coll.metadata_schema or None,
-                "contentFilterFunction": coll.content_filter_function,
-                "postUploadFunction": coll.post_upload_function,
-                "maxFileSizeMb": coll.max_file_size_mb,
-                "maxTotalSizeGb": coll.max_total_size_gb,
-                "isPublic": coll.is_public if hasattr(coll, 'is_public') else None,
-                "allowSharedFiles": coll.allow_shared_files,
-                "allowPrivateFiles": coll.allow_private_files,
-            }))
-        return exported
+        return [serialize_collection(c) for c in result.scalars().all()]
 
     async def _export_queries(self) -> list[dict]:
         """Export queries"""
@@ -366,6 +269,7 @@ class ConfigExportService:
             stmt = stmt.where(Query.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         queries = result.scalars().all()
+
         exported = []
         for query in queries:
             conn_name = None
@@ -376,18 +280,7 @@ class ConfigExportService:
                 conn = conn_result.scalar_one_or_none()
                 if conn:
                     conn_name = conn.name
-            exported.append(_remove_none_values({
-                "namespace": query.namespace,
-                "name": query.name,
-                "description": query.description,
-                "connectionName": conn_name,
-                "operation": query.operation,
-                "sql": query.sql,
-                "inputSchema": query.input_schema,
-                "outputSchema": query.output_schema,
-                "timeoutMs": query.timeout_ms,
-                "maxRows": query.max_rows,
-            }))
+            exported.append(serialize_query(query, conn_name))
         return exported
 
     async def _export_skills(self) -> list[dict]:
@@ -396,16 +289,7 @@ class ConfigExportService:
         if self.managed_only:
             stmt = stmt.where(Skill.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        skills = result.scalars().all()
-        exported = []
-        for skill in skills:
-            exported.append(_remove_none_values({
-                "namespace": skill.namespace,
-                "name": skill.name,
-                "description": skill.description,
-                "content": skill.content,
-            }))
-        return exported
+        return [serialize_skill(s) for s in result.scalars().all()]
 
     async def _export_components(self) -> list[dict]:
         """Export components"""
@@ -413,25 +297,7 @@ class ConfigExportService:
         if self.managed_only:
             stmt = stmt.where(Component.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        components = result.scalars().all()
-        exported = []
-        for comp in components:
-            exported.append(_remove_none_values({
-                "namespace": comp.namespace,
-                "name": comp.name,
-                "title": comp.title,
-                "description": comp.description,
-                "sourceCode": comp.source_code,
-                "inputSchema": comp.input_schema,
-                "enabledAgents": comp.enabled_agents or None,
-                "enabledFunctions": comp.enabled_functions or None,
-                "enabledQueries": comp.enabled_queries or None,
-                "enabledComponents": comp.enabled_components or None,
-                "enabledStores": comp.enabled_stores or None,
-                "cssOverrides": comp.css_overrides,
-                "visibility": comp.visibility,
-            }))
-        return exported
+        return [serialize_component(c) for c in result.scalars().all()]
 
     async def _export_manifests(self) -> list[dict]:
         """Export manifests"""
@@ -439,134 +305,50 @@ class ConfigExportService:
         if self.managed_only:
             stmt = stmt.where(Manifest.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        manifests = result.scalars().all()
-        exported = []
-        for manifest in manifests:
-            exported.append(_remove_none_values({
-                "namespace": manifest.namespace,
-                "name": manifest.name,
-                "description": manifest.description,
-                "requiredResources": manifest.required_resources or None,
-                "requiredPermissions": manifest.required_permissions or None,
-                "optionalPermissions": manifest.optional_permissions or None,
-                "exposedNamespaces": manifest.exposed_namespaces or None,
-            }))
-        return exported
+        return [serialize_manifest(m) for m in result.scalars().all()]
 
     async def _export_stores(self) -> list[dict]:
         """Export stores"""
-        from app.models.store import Store
         stmt = select(Store)
         if self.managed_only:
             stmt = stmt.where(Store.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        stores = result.scalars().all()
-        exported = []
-        for store in stores:
-            store_dict = {
-                "namespace": store.namespace,
-                "name": store.name,
-                "description": store.description,
-                "strict": store.strict,
-                "defaultVisibility": store.default_visibility,
-                "encrypted": store.encrypted,
-            }
-            if store.schema:
-                store_dict["schema"] = store.schema
-            exported.append(_remove_none_values(store_dict))
-        return exported
+        return [serialize_store(s) for s in result.scalars().all()]
 
     async def _export_webhooks(self) -> list[dict]:
         """Export webhooks"""
         stmt = select(Webhook).where(Webhook.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Webhook.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
-        webhooks = result.scalars().all()
-
-        exported = []
-        for webhook in webhooks:
-            webhook_dict = {
-                "path": webhook.path,
-                "functionName": f"{webhook.function_namespace}/{webhook.function_name}",
-                "httpMethod": webhook.http_method,
-                "requiresAuth": webhook.requires_auth,
-                "description": webhook.description,
-                "defaultValues": webhook.default_values,
-            }
-
-            exported.append(_remove_none_values(webhook_dict))
-
-        return exported
+        return [serialize_webhook(w) for w in result.scalars().all()]
 
     async def _export_templates(self) -> list[dict]:
         """Export templates"""
         stmt = select(Template).where(Template.is_active == True)
         if self.managed_only:
             stmt = stmt.where(Template.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
-        templates = result.scalars().all()
-
-        exported = []
-        for tmpl in templates:
-            tmpl_dict = {
-                "namespace": tmpl.namespace,
-                "name": tmpl.name,
-                "description": tmpl.description,
-                "title": tmpl.title,
-                "htmlContent": tmpl.html_content,
-                "textContent": tmpl.text_content,
-                "variableSchema": tmpl.variable_schema if tmpl.variable_schema else None,
-            }
-            exported.append(_remove_none_values(tmpl_dict))
-
-        return exported
+        return [serialize_template(t) for t in result.scalars().all()]
 
     async def _export_schedules(self) -> list[dict]:
         """Export scheduled jobs"""
         stmt = select(ScheduledJob).where(ScheduledJob.is_active == True)
         if self.managed_only:
             stmt = stmt.where(ScheduledJob.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
-        schedules = result.scalars().all()
-
-        exported = []
-        for schedule in schedules:
-            schedule_dict = {
-                "name": schedule.name,
-                "scheduleType": schedule.schedule_type,
-                "functionName": f"{schedule.target_namespace}/{schedule.target_name}"
-                if schedule.schedule_type == "function"
-                else None,
-                "agentName": f"{schedule.target_namespace}/{schedule.target_name}"
-                if schedule.schedule_type == "agent"
-                else None,
-                "content": schedule.content,
-                "cronExpression": schedule.cron_expression,
-                "isActive": schedule.is_active,
-                "timezone": schedule.timezone,
-                "inputData": schedule.input_data,
-            }
-
-            exported.append(_remove_none_values(schedule_dict))
-
-        return exported
+        return [serialize_schedule(s) for s in result.scalars().all()]
 
     async def _export_database_triggers(self) -> list[dict]:
         """Export database triggers"""
         stmt = select(DatabaseTrigger).where(DatabaseTrigger.is_active == True)
         if self.managed_only:
             stmt = stmt.where(DatabaseTrigger.managed_by == self.managed_by)
-
         result = await self.db.execute(stmt)
         triggers = result.scalars().all()
 
         exported = []
         for trigger in triggers:
-            # Resolve connection id -> name
             conn_name = None
             if trigger.database_connection_id:
                 conn_result = await self.db.execute(
@@ -577,20 +359,5 @@ class ConfigExportService:
                 conn = conn_result.scalar_one_or_none()
                 if conn:
                     conn_name = conn.name
-
-            trigger_dict = {
-                "name": trigger.name,
-                "connectionName": conn_name,
-                "schemaName": trigger.schema_name,
-                "tableName": trigger.table_name,
-                "operations": trigger.operations,
-                "functionName": f"{trigger.function_namespace}/{trigger.function_name}",
-                "pollColumn": trigger.poll_column,
-                "pollIntervalSeconds": trigger.poll_interval_seconds,
-                "batchSize": trigger.batch_size,
-                "isActive": trigger.is_active,
-            }
-
-            exported.append(_remove_none_values(trigger_dict))
-
+            exported.append(serialize_database_trigger(trigger, conn_name))
         return exported

@@ -24,8 +24,24 @@ from app.models.template import Template
 from app.models.webhook import Webhook
 from app.schemas.config import ConfigApplyResponse, SinasConfig
 from app.services.config_apply import ConfigApplyService
-from app.services.config_export import ConfigExportService, _remove_none_values
+from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
+from app.services.resource_serializers import (
+    _remove_none_values,
+    serialize_agent,
+    serialize_collection,
+    serialize_component,
+    serialize_connector,
+    serialize_database_trigger,
+    serialize_function,
+    serialize_manifest,
+    serialize_query,
+    serialize_schedule,
+    serialize_skill,
+    serialize_store,
+    serialize_template,
+    serialize_webhook,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -349,85 +365,30 @@ class PackageService:
 
     async def _export_agent(self, agent: Agent) -> dict:
         from app.models.llm_provider import LLMProvider
-
-        provider = None
+        provider_name = None
         if agent.llm_provider_id:
             result = await self.db.execute(
                 select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
             )
             provider = result.scalar_one_or_none()
-
-        return _remove_none_values({
-            "namespace": agent.namespace,
-            "name": agent.name,
-            "description": agent.description,
-            "model": agent.model,
-            "llmProviderName": provider.name if provider else None,
-            "temperature": agent.temperature,
-            "maxTokens": agent.max_tokens,
-            "systemPrompt": agent.system_prompt,
-            "enabledFunctions": agent.enabled_functions or None,
-            "functionParameters": agent.function_parameters or None,
-            "enabledAgents": agent.enabled_agents or None,
-            "enabledSkills": agent.enabled_skills or None,
-            "enabledStores": agent.enabled_stores or None,
-            "enabledQueries": agent.enabled_queries or None,
-            "queryParameters": agent.query_parameters or None,
-            "enabledCollections": agent.enabled_collections or None,
-            "enabledComponents": agent.enabled_components or None,
-            "icon": agent.icon,
-        })
+            if provider:
+                provider_name = provider.name
+        return serialize_agent(agent, provider_name)
 
     async def _export_function(self, func: Function) -> dict:
-        return _remove_none_values({
-            "name": func.name,
-            "namespace": func.namespace,
-            "description": func.description,
-            "code": func.code,
-            "inputSchema": func.input_schema,
-            "outputSchema": func.output_schema,
-            "icon": func.icon,
-        })
+        return serialize_function(func)
 
     async def _export_skill(self, skill: Skill) -> dict:
-        return _remove_none_values({
-            "namespace": skill.namespace,
-            "name": skill.name,
-            "description": skill.description,
-            "content": skill.content,
-        })
+        return serialize_skill(skill)
 
     async def _export_manifest(self, manifest: Manifest) -> dict:
-        return _remove_none_values({
-            "namespace": manifest.namespace,
-            "name": manifest.name,
-            "description": manifest.description,
-            "requiredResources": manifest.required_resources or None,
-            "requiredPermissions": manifest.required_permissions or None,
-            "optionalPermissions": manifest.optional_permissions or None,
-            "exposedNamespaces": manifest.exposed_namespaces or None,
-        })
+        return serialize_manifest(manifest)
 
     async def _export_component(self, component: Component) -> dict:
-        return _remove_none_values({
-            "namespace": component.namespace,
-            "name": component.name,
-            "title": component.title,
-            "description": component.description,
-            "sourceCode": component.source_code,
-            "inputSchema": component.input_schema,
-            "enabledAgents": component.enabled_agents or None,
-            "enabledFunctions": component.enabled_functions or None,
-            "enabledQueries": component.enabled_queries or None,
-            "enabledComponents": component.enabled_components or None,
-            "enabledStores": component.enabled_stores or None,
-            "cssOverrides": component.css_overrides,
-            "visibility": component.visibility,
-        })
+        return serialize_component(component)
 
     async def _export_query(self, query: Query) -> dict:
         from app.models.database_connection import DatabaseConnection
-
         conn_name = None
         if query.database_connection_id:
             result = await self.db.execute(
@@ -436,86 +397,25 @@ class PackageService:
             conn = result.scalar_one_or_none()
             if conn:
                 conn_name = conn.name
-
-        return _remove_none_values({
-            "namespace": query.namespace,
-            "name": query.name,
-            "description": query.description,
-            "connectionName": conn_name,
-            "operation": query.operation,
-            "sql": query.sql,
-            "inputSchema": query.input_schema,
-            "outputSchema": query.output_schema,
-            "timeoutMs": query.timeout_ms,
-            "maxRows": query.max_rows,
-        })
+        return serialize_query(query, conn_name)
 
     async def _export_collection(self, collection: Collection) -> dict:
-        return _remove_none_values({
-            "namespace": collection.namespace,
-            "name": collection.name,
-            "metadataSchema": collection.metadata_schema or None,
-            "contentFilterFunction": collection.content_filter_function,
-            "postUploadFunction": collection.post_upload_function,
-            "maxFileSizeMb": collection.max_file_size_mb,
-            "maxTotalSizeGb": collection.max_total_size_gb,
-            "isPublic": collection.is_public,
-            "allowSharedFiles": collection.allow_shared_files,
-            "allowPrivateFiles": collection.allow_private_files,
-        })
+        return serialize_collection(collection)
 
     async def _export_store(self, store: Store) -> dict:
-        return _remove_none_values({
-            "namespace": store.namespace,
-            "name": store.name,
-            "description": store.description,
-            "schema": store.schema or None,
-            "strict": store.strict,
-            "defaultVisibility": store.default_visibility,
-            "encrypted": store.encrypted,
-        })
+        return serialize_store(store)
 
     async def _export_template(self, template: Template) -> dict:
-        return _remove_none_values({
-            "namespace": template.namespace,
-            "name": template.name,
-            "description": template.description,
-            "title": template.title,
-            "htmlContent": template.html_content,
-            "textContent": template.text_content,
-            "variableSchema": template.variable_schema if template.variable_schema else None,
-        })
+        return serialize_template(template)
 
     async def _export_webhook(self, webhook: Webhook) -> dict:
-        return _remove_none_values({
-            "path": webhook.path,
-            "functionName": f"{webhook.function_namespace}/{webhook.function_name}",
-            "httpMethod": webhook.http_method,
-            "requiresAuth": webhook.requires_auth,
-            "description": webhook.description,
-            "defaultValues": webhook.default_values or None,
-        })
+        return serialize_webhook(webhook)
 
     async def _export_schedule(self, schedule: ScheduledJob) -> dict:
-        return _remove_none_values({
-            "name": schedule.name,
-            "scheduleType": schedule.schedule_type,
-            "functionName": f"{schedule.target_namespace}/{schedule.target_name}"
-            if schedule.schedule_type == "function"
-            else None,
-            "agentName": f"{schedule.target_namespace}/{schedule.target_name}"
-            if schedule.schedule_type == "agent"
-            else None,
-            "content": schedule.content,
-            "cronExpression": schedule.cron_expression,
-            "isActive": schedule.is_active,
-            "timezone": schedule.timezone,
-            "inputData": schedule.input_data or None,
-        })
+        return serialize_schedule(schedule)
 
     async def _export_database_trigger(self, trigger: DatabaseTrigger) -> dict:
         from app.models.database_connection import DatabaseConnection
-
         conn_name = None
         if trigger.database_connection_id:
             result = await self.db.execute(
@@ -526,53 +426,7 @@ class PackageService:
             conn = result.scalar_one_or_none()
             if conn:
                 conn_name = conn.name
-
-        return _remove_none_values({
-            "name": trigger.name,
-            "connectionName": conn_name,
-            "schemaName": trigger.schema_name,
-            "tableName": trigger.table_name,
-            "operations": trigger.operations,
-            "functionName": f"{trigger.function_namespace}/{trigger.function_name}",
-            "pollColumn": trigger.poll_column,
-            "pollIntervalSeconds": trigger.poll_interval_seconds,
-            "batchSize": trigger.batch_size,
-            "isActive": trigger.is_active,
-        })
+        return serialize_database_trigger(trigger, conn_name)
 
     async def _export_connector(self, conn: Connector) -> dict:
-        auth = conn.auth or {}
-        retry = conn.retry or {}
-        operations = []
-        for op in (conn.operations or []):
-            op_dict = {
-                "name": op.get("name"),
-                "method": op.get("method"),
-                "path": op.get("path"),
-                "description": op.get("description"),
-                "parameters": op.get("parameters"),
-                "requestBodyMapping": op.get("request_body_mapping", "json"),
-                "responseMapping": op.get("response_mapping", "json"),
-            }
-            operations.append(_remove_none_values(op_dict))
-
-        return _remove_none_values({
-            "name": conn.name,
-            "namespace": conn.namespace,
-            "description": conn.description,
-            "baseUrl": conn.base_url,
-            "auth": _remove_none_values({
-                "type": auth.get("type", "none"),
-                "secret": auth.get("secret"),
-                "header": auth.get("header"),
-                "position": auth.get("position"),
-                "paramName": auth.get("param_name"),
-            }),
-            "headers": conn.headers if conn.headers else None,
-            "retry": _remove_none_values({
-                "maxAttempts": retry.get("max_attempts", 1),
-                "backoff": retry.get("backoff", "none"),
-            }),
-            "timeoutSeconds": conn.timeout_seconds,
-            "operations": operations,
-        })
+        return serialize_connector(conn)

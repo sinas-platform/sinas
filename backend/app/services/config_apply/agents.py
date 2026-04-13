@@ -15,6 +15,7 @@ from app.services.config_apply.normalizers import (
     normalize_function_references,
     normalize_skill_references,
     normalize_store_references,
+    should_skip_existing,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,15 +126,13 @@ async def apply_agents(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Agent '{agent_config.name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "agents", f"{agent_config.namespace}/{agent_config.name}")
+                if should_skip_existing(
+                    existing, managed_by, config_name, config_hash,
+                    "agents", f"{agent_config.namespace}/{agent_config.name}",
+                    track_change, warnings,
+                ):
                     agent_ids[agent_config.name] = str(existing.id)
                     continue
-
-                if existing.config_checksum == config_hash:
                     track_change("unchanged", "agents", f"{agent_config.namespace}/{agent_config.name}")
                     agent_ids[agent_config.name] = str(existing.id)
                     continue
@@ -178,6 +177,7 @@ async def apply_agents(
                             .values(is_default=False)
                         )
                     existing.is_default = agent_config.isDefault
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
