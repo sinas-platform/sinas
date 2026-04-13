@@ -230,7 +230,7 @@ export interface Agent {
   is_default: boolean;
   default_job_timeout: number | null;
   default_keep_alive: boolean;
-  system_tools: string[];
+  system_tools: Array<string | { name: string; connections?: string[] }>;
   created_at: string;
   updated_at: string;
 }
@@ -261,7 +261,7 @@ export interface AgentCreate {
   is_default?: boolean;
   default_job_timeout?: number;
   default_keep_alive?: boolean;
-  system_tools?: string[];
+  system_tools?: Array<string | { name: string; connections?: string[] }>;
 }
 
 export interface AgentUpdate {
@@ -293,7 +293,7 @@ export interface AgentUpdate {
   is_default?: boolean;
   default_job_timeout?: number;
   default_keep_alive?: boolean;
-  system_tools?: string[];
+  system_tools?: Array<string | { name: string; connections?: string[] }>;
 }
 
 // Roles & Users

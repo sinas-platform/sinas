@@ -1,7 +1,7 @@
 """Agent schemas."""
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -31,6 +31,17 @@ class EnabledCollectionConfig(BaseModel):
     access: str = Field(
         default="readonly", description="Access mode: 'readonly' or 'readwrite'", pattern=r"^(readonly|readwrite)$"
     )
+
+
+class SystemToolConfig(BaseModel):
+    """Configuration for a system tool that requires parameters."""
+
+    name: str = Field(..., description="System tool name (e.g. 'databaseIntrospection')")
+    connections: Optional[list[str]] = Field(
+        None, description="Allowed database connection names (for databaseIntrospection)"
+    )
+
+    # Extensible: add more optional config fields for future system tools here
 
 
 class HookConfig(BaseModel):
@@ -96,11 +107,13 @@ class AgentCreate(BaseModel):
     # Long-running workflow settings
     default_job_timeout: Optional[int] = Field(None, gt=0, description="Default job timeout in seconds for chats with this agent")
     default_keep_alive: Optional[bool] = Field(False, description="Default keep_alive for chats with this agent")
-    system_tools: Optional[list[str]] = Field(
+    system_tools: Optional[list[Union[str, SystemToolConfig]]] = Field(
         default=None,
         description=(
-            "Opt-in Sinas platform tools. Supported values: "
-            "'codeExecution', 'packageManagement'."
+            "Opt-in Sinas platform tools. Simple string for tools with no config, "
+            "or {name, ...config} for tools that need parameters. "
+            "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
+            "'databaseIntrospection' (requires connections list)."
         ),
     )
 
@@ -151,7 +164,7 @@ class AgentUpdate(BaseModel):
     # Long-running workflow settings
     default_job_timeout: Optional[int] = Field(None, gt=0)
     default_keep_alive: Optional[bool] = None
-    system_tools: Optional[list[str]] = None
+    system_tools: Optional[list[Union[str, SystemToolConfig]]] = None
 
 
 class AgentResponse(BaseModel):
@@ -186,7 +199,7 @@ class AgentResponse(BaseModel):
     is_default: bool
     default_job_timeout: Optional[int] = None
     default_keep_alive: bool = False
-    system_tools: list[str] = []
+    system_tools: list[Union[str, SystemToolConfig]] = []
     created_at: datetime
     updated_at: datetime
 
@@ -241,6 +254,23 @@ class AgentResponse(BaseModel):
             else:
                 # Backward compat: plain string = readonly
                 result.append(EnabledCollectionConfig(collection=str(item), access="readonly"))
+        return result
+
+    @field_validator("system_tools", mode="before")
+    @classmethod
+    def convert_system_tools(cls, v):
+        """Convert dicts from database to SystemToolConfig objects."""
+        if not v:
+            return []
+
+        result = []
+        for item in v:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, dict):
+                result.append(SystemToolConfig(**item))
+            elif isinstance(item, SystemToolConfig):
+                result.append(item)
         return result
 
     class Config:

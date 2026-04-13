@@ -296,15 +296,19 @@ async def get_available_tools(
     })
 
     # Bind Sinas system tools (opt-in platform capabilities)
+    from app.services.system_tool_helpers import has_system_tool
     system_tools = agent.system_tools or []
-    if "codeExecution" in system_tools:
+    if has_system_tool(system_tools, "codeExecution"):
         tools.append(await get_code_exec_tool_definition(db))
-    if "packageManagement" in system_tools:
+    if has_system_tool(system_tools, "packageManagement"):
         from app.services.package_tools import get_package_tool_definitions
         tools.extend(get_package_tool_definitions())
-    if "configIntrospection" in system_tools:
+    if has_system_tool(system_tools, "configIntrospection"):
         from app.services.config_tools import get_config_tool_definitions
         tools.extend(get_config_tool_definitions())
+    if has_system_tool(system_tools, "databaseIntrospection"):
+        from app.services.db_introspection_tools import get_db_introspection_tool_definitions
+        tools.extend(get_db_introspection_tool_definitions())
 
     # Check for paused executions belonging to this chat
     result = await db.execute(

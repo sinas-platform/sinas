@@ -66,6 +66,12 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: databaseConnections } = useQuery({
+    queryKey: ['databaseConnections'],
+    queryFn: () => apiClient.listDatabaseConnections(),
+    retry: false,
+  });
+
   const [formData, setFormData] = useState<AgentUpdate>({});
   const { data: components } = useQuery({
     queryKey: ['components'],
@@ -1786,36 +1792,125 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Sinas platform capabilities. These are opt-in tools beyond the normal function/query toolkit.
                 </p>
                 <div className="space-y-2 border border-white/[0.06] rounded-lg p-3">
-                  {[
-                    { key: 'codeExecution', label: 'Code Execution', desc: 'Generate and run Python in sandboxed containers.' },
-                    { key: 'configIntrospection', label: 'Config Introspection', desc: 'Read-only access to inspect the current configuration: list resource types, browse agents/queries/functions, read full details.' },
-                    { key: 'packageManagement', label: 'Package Management', desc: 'Validate, preview, install/uninstall Sinas packages. Requires approval for writes.' },
-                  ].map((tool) => {
-                    const isEnabled = (formData.system_tools ?? agent.system_tools ?? []).includes(tool.key);
+                  {(() => {
+                    const currentTools = formData.system_tools ?? agent.system_tools ?? [];
+                    const isToolEnabled = (name: string) =>
+                      currentTools.some((t: any) => (typeof t === 'string' ? t : t.name) === name);
+                    const getToolConfig = (name: string) =>
+                      currentTools.find((t: any) => typeof t === 'object' && t.name === name) as any;
+                    const toggleTool = (name: string, enabled: boolean, config?: any) => {
+                      let updated = currentTools.filter((t: any) => (typeof t === 'string' ? t : t.name) !== name);
+                      if (enabled) updated = [...updated, config || name];
+                      setFormData({ ...formData, system_tools: updated });
+                    };
+
+                    const simpleTools = [
+                      { key: 'codeExecution', label: 'Code Execution', desc: 'Generate and run Python in sandboxed containers.' },
+                      { key: 'configIntrospection', label: 'Config Introspection', desc: 'Read-only access to inspect the current configuration: list resource types, browse agents/queries/functions, read full details.' },
+                      { key: 'packageManagement', label: 'Package Management', desc: 'Validate, preview, install/uninstall Sinas packages. Requires approval for writes.' },
+                    ];
+
                     return (
-                      <label
-                        key={tool.key}
-                        className="flex items-start gap-3 p-2.5 hover:bg-white/5 rounded cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isEnabled}
-                          onChange={(e) => {
-                            const current = [...(formData.system_tools ?? agent.system_tools ?? [])];
-                            const updated = e.target.checked
-                              ? [...current, tool.key]
-                              : current.filter((t: string) => t !== tool.key);
-                            setFormData({ ...formData, system_tools: updated });
-                          }}
-                          className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
-                        />
-                        <div>
-                          <span className="text-sm font-medium text-gray-100">{tool.label}</span>
-                          <p className="text-xs text-gray-500 mt-0.5">{tool.desc}</p>
+                      <>
+                        {simpleTools.map((tool) => (
+                          <label
+                            key={tool.key}
+                            className="flex items-start gap-3 p-2.5 hover:bg-white/5 rounded cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isToolEnabled(tool.key)}
+                              onChange={(e) => toggleTool(tool.key, e.target.checked)}
+                              className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            />
+                            <div>
+                              <span className="text-sm font-medium text-gray-100">{tool.label}</span>
+                              <p className="text-xs text-gray-500 mt-0.5">{tool.desc}</p>
+                            </div>
+                          </label>
+                        ))}
+
+                        {/* Database Introspection — with connection picker */}
+                        <div className="p-2.5 hover:bg-white/5 rounded">
+                          <label className="flex items-start gap-3 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isToolEnabled('databaseIntrospection')}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  toggleTool('databaseIntrospection', true, { name: 'databaseIntrospection', connections: [] });
+                                } else {
+                                  toggleTool('databaseIntrospection', false);
+                                }
+                              }}
+                              className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            />
+                            <div className="flex-1">
+                              <span className="text-sm font-medium text-gray-100">Database Introspection</span>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                Read-only schema inspection: list tables, describe columns/indexes/foreign keys. Includes table annotations. No data access.
+                              </p>
+                            </div>
+                          </label>
+                          {isToolEnabled('databaseIntrospection') && (() => {
+                            const config = getToolConfig('databaseIntrospection') || { name: 'databaseIntrospection', connections: [] };
+                            const connections: string[] = config.connections || [];
+                            const availableConnections = (databaseConnections || [])
+                              .filter((dc: any) => dc.is_active)
+                              .map((dc: any) => dc.name);
+                            const unselected = availableConnections.filter((name: string) => !connections.includes(name));
+                            return (
+                              <div className="ml-7 mt-2 space-y-2">
+                                <p className="text-xs text-gray-500">Allowed connections:</p>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {connections.map((conn: string, idx: number) => (
+                                    <span
+                                      key={idx}
+                                      className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono bg-primary-600/15 text-primary-300 border border-primary-600/30 rounded-md"
+                                    >
+                                      {conn}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = connections.filter((_: string, i: number) => i !== idx);
+                                          toggleTool('databaseIntrospection', true, { ...config, connections: updated });
+                                        }}
+                                        className="text-primary-400 hover:text-red-300 -mr-0.5"
+                                      >
+                                        ✕
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                                {unselected.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {unselected.map((name: string) => (
+                                      <button
+                                        key={name}
+                                        type="button"
+                                        onClick={() => {
+                                          toggleTool('databaseIntrospection', true, {
+                                            ...config,
+                                            connections: [...connections, name],
+                                          });
+                                        }}
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-mono text-gray-500 border border-white/[0.06] rounded-md hover:border-primary-600/30 hover:text-primary-300 transition-colors"
+                                      >
+                                        <span className="text-[10px]">+</span> {name}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {availableConnections.length === 0 && (
+                                  <p className="text-xs text-gray-600">No database connections available.</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
-                      </label>
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
               </div>
             )}

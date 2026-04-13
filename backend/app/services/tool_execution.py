@@ -24,6 +24,7 @@ from app.services.connector_tools import ConnectorToolConverter
 from app.services.execution_engine import executor as fn_executor
 from app.services.function_tools import FunctionToolConverter
 from app.services.config_tools import execute_config_tool, is_config_tool
+from app.services.db_introspection_tools import execute_db_introspection_tool, is_db_introspection_tool
 from app.services.package_tools import execute_package_tool, is_package_tool
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -518,6 +519,25 @@ async def execute_single_tool(
                     agent_system_tools=agent_system_tools,
                 )
                 logger.debug(f"Config tool completed in {time.time() - start_time:.3f}s: {tool_name}")
+
+            elif is_db_introspection_tool(tool_name):
+                start_time = time.time()
+                agent_system_tools: list = []
+                if chat and chat.agent_id:
+                    result_agent = await db.execute(
+                        select(Agent).where(Agent.id == chat.agent_id)
+                    )
+                    chat_agent = result_agent.scalar_one_or_none()
+                    if chat_agent:
+                        agent_system_tools = chat_agent.system_tools or []
+
+                result = await execute_db_introspection_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    agent_system_tools=agent_system_tools,
+                )
+                logger.debug(f"DB introspection tool completed in {time.time() - start_time:.3f}s: {tool_name}")
 
             # Metadata-driven tools — identity comes from _metadata, not tool name parsing
             elif tool_metadata.get("agent_id"):

@@ -112,8 +112,8 @@ class Agent(Base, PermissionMixin):
     # Long-running workflow settings
     default_job_timeout: Mapped[Optional[int]] = mapped_column(Integer)
     default_keep_alive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="false")
-    # Opt-in Sinas platform capabilities: ["codeExecution", "packageManagement", ...]
-    system_tools: Mapped[list[str]] = mapped_column(
+    # Opt-in Sinas platform capabilities: ["codeExecution", {"name": "databaseIntrospection", "connections": [...]}]
+    system_tools: Mapped[list] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )
 
