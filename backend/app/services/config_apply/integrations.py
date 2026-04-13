@@ -14,6 +14,8 @@ from app.models.schedule import ScheduledJob
 from app.models.template import Template
 from app.models.webhook import Webhook
 
+from app.services.config_apply.normalizers import should_skip_existing
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,15 +52,7 @@ async def apply_webhooks(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Webhook '{webhook_config.path}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "webhooks", webhook_config.path)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "webhooks", webhook_config.path)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "webhooks", webhook_config.path, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -77,6 +71,7 @@ async def apply_webhooks(
                     existing.default_values = webhook_config.defaultValues
                     existing.response_mode = webhook_config.responseMode
                     existing.dedup = webhook_config.dedup.model_dump() if webhook_config.dedup else None
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -151,15 +146,7 @@ async def apply_templates(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Template '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "templates", resource_name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "templates", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "templates", resource_name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -168,6 +155,7 @@ async def apply_templates(
                     existing.html_content = tmpl_config.htmlContent
                     existing.text_content = tmpl_config.textContent
                     existing.variable_schema = tmpl_config.variableSchema or {}
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -248,15 +236,7 @@ async def apply_schedules(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Schedule '{schedule_config.name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "schedules", schedule_config.name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "schedules", schedule_config.name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "schedules", schedule_config.name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -355,16 +335,7 @@ async def apply_database_triggers(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Database trigger '{trigger_config.name}' exists but is not managed by "
-                        f"'{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "databaseTriggers", trigger_config.name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "databaseTriggers", trigger_config.name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "databaseTriggers", trigger_config.name, track_change, warnings):
                     continue
 
                 if not dry_run:

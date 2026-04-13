@@ -24,7 +24,7 @@ from app.models.secret import Secret
 from app.models.skill import Skill
 from app.models.store import Store
 
-from app.services.config_apply.normalizers import normalize_store_references
+from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
 
 logger = logging.getLogger(__name__)
 
@@ -92,15 +92,7 @@ async def apply_connectors(
             })
 
             if existing:
-                if existing.managed_by and existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Connector '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "connectors", resource_name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "connectors", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "connectors", resource_name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -111,6 +103,7 @@ async def apply_connectors(
                     existing.retry = retry
                     existing.timeout_seconds = conn_config.timeoutSeconds
                     existing.operations = operations
+                    existing.is_active = True
                     existing.managed_by = managed_by
                     existing.config_name = config_name
                     existing.config_checksum = config_hash
@@ -178,7 +171,7 @@ async def apply_secrets(
                     track_change("unchanged", "secrets", resource_name)
                     continue
 
-                # Always update value if provided, regardless of hash
+                # Always update value if provided, regardless of hash (secrets don't have is_active)
                 needs_update = existing.config_checksum != config_hash or secret_config.value is not None
 
                 if not needs_update:
@@ -276,15 +269,7 @@ async def apply_queries(
                     continue
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Query '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "queries", resource_name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "queries", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "queries", resource_name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -296,6 +281,7 @@ async def apply_queries(
                     existing.output_schema = query_config.outputSchema or {}
                     existing.timeout_ms = query_config.timeoutMs
                     existing.max_rows = query_config.maxRows
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -369,21 +355,11 @@ async def apply_functions(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Function '{func_config.name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "functions", f"{func_config.namespace}/{func_config.name}")
-                    function_ids[func_config.name] = str(existing.id)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "functions", f"{func_config.namespace}/{func_config.name}")
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "functions", f"{func_config.namespace}/{func_config.name}", track_change, warnings):
                     function_ids[func_config.name] = str(existing.id)
                     continue
 
                 if not dry_run:
-                    # Update function
                     existing.description = func_config.description
                     existing.code = func_config.code
                     existing.input_schema = func_config.inputSchema or {}
@@ -394,6 +370,7 @@ async def apply_functions(
                         existing.shared_pool = func_config.sharedPool
                     if func_config.requiresApproval is not None:
                         existing.requires_approval = func_config.requiresApproval
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -490,25 +467,14 @@ async def apply_skills(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Skill '{skill_config.namespace}/{skill_config.name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change(
-                        "unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                    )
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change(
-                        "unchanged", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                    )
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "skills", f"{skill_config.namespace}/{skill_config.name}", track_change, warnings):
                     continue
 
                 if not dry_run:
                     # Update skill
                     existing.description = skill_config.description
                     existing.content = skill_config.content
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -583,15 +549,7 @@ async def apply_components(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Component '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "components", resource_name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "components", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "components", resource_name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -607,6 +565,7 @@ async def apply_components(
                     existing.enabled_stores = normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else []
                     existing.css_overrides = comp_config.cssOverrides
                     existing.visibility = comp_config.visibility
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
                     if source_changed:
@@ -689,16 +648,7 @@ async def apply_collections(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Collection '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "collections", resource_name)
-                    collection_ids[resource_name] = str(existing.id)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "collections", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "collections", resource_name, track_change, warnings):
                     collection_ids[resource_name] = str(existing.id)
                     continue
 
@@ -784,16 +734,7 @@ async def apply_stores(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Store '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "stores", resource_name)
-                    store_ids[resource_name] = str(existing.id)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "stores", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "stores", resource_name, track_change, warnings):
                     store_ids[resource_name] = str(existing.id)
                     continue
 
@@ -877,15 +818,7 @@ async def apply_manifests(
             )
 
             if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        f"Manifest '{resource_name}' exists but is not managed by '{managed_by}'. Skipping."
-                    )
-                    track_change("unchanged", "manifests", resource_name)
-                    continue
-
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "manifests", resource_name)
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "manifests", resource_name, track_change, warnings):
                     continue
 
                 if not dry_run:
@@ -897,6 +830,7 @@ async def apply_manifests(
                     existing.required_permissions = manifest_config.requiredPermissions
                     existing.optional_permissions = manifest_config.optionalPermissions
                     existing.exposed_namespaces = manifest_config.exposedNamespaces
+                    existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
