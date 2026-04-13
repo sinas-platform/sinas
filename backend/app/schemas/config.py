@@ -200,13 +200,12 @@ class AgentConfig(BaseModel):
     isDefault: bool = False
     defaultJobTimeout: Optional[int] = None
     defaultKeepAlive: bool = False
-    systemTools: list[str] = Field(
+    systemTools: list[Any] = Field(
         default_factory=list,
         description=(
-            "Opt-in Sinas platform tools this agent can use. "
-            "Supported values: 'codeExecution', 'packageManagement'. "
-            "Permissions still apply on top — the agent's role must grant the "
-            "underlying action for each tool to actually execute."
+            "Opt-in Sinas platform tools. Simple string or {name, ...config}. "
+            "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
+            "'databaseIntrospection' (requires connections list)."
         ),
     )
 
