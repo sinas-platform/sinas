@@ -251,11 +251,14 @@ async def build_conversation_history(
         message_dict["content"] = content
 
         if msg.tool_calls:
-            # Strip UI-only fields (e.g. description) before sending to LLM
-            message_dict["tool_calls"] = [
+            # Strip UI-only fields and filter out invalid tool calls (no id or no name)
+            valid_tool_calls = [
                 {k: v for k, v in tc.items() if k != "description"}
                 for tc in msg.tool_calls
+                if tc.get("id") and tc.get("function", {}).get("name")
             ]
+            if valid_tool_calls:
+                message_dict["tool_calls"] = valid_tool_calls
 
         if msg.tool_call_id:
             message_dict["tool_call_id"] = msg.tool_call_id

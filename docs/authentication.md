@@ -1,3 +1,7 @@
+---
+title: "Authentication"
+---
+
 ## Authentication
 
 Sinas uses email-based OTP authentication, with API keys available for programmatic access.

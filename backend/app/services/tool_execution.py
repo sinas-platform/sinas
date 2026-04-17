@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_user_permissions
+from app.core.permissions import check_permission
 from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
 from app.models.function import Function
@@ -125,7 +126,7 @@ def tool_name_to_status_key(tool_name: str) -> str:
         return "collection:" + tool_name[len("delete_file_"):].replace("__", "/", 1)
     if tool_name.startswith("show_component_"):
         return "component:" + tool_name[len("show_component_"):].replace("__", "/", 1)
-    if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
+    if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state", "list_state_keys"):
         return f"state:{tool_name}"
     # Default: function
     return "function:" + tool_name.replace("__", "/", 1)
@@ -154,6 +155,14 @@ def build_tool_status(tool_name: str, arguments: dict, status_templates: dict[st
         ref = key[6:]
         return f"Running query {ref.split('/')[-1].replace('_', ' ')}"
     if key.startswith("collection:"):
+        if tool_name.startswith("write_file_"):
+            return "Writing file"
+        if tool_name.startswith("edit_file_"):
+            return "Editing file"
+        if tool_name.startswith("delete_file_"):
+            return "Deleting file"
+        if tool_name.startswith("get_file_"):
+            return "Reading file"
         return "Searching files"
     if key.startswith("component:"):
         return f"Rendering {key[10:]}"
@@ -281,6 +290,15 @@ async def execute_agent_tool(
 
     if not agent:
         return {"error": f"Agent not found: {agent_id_str}"}
+
+    # Check user has permission to use this sub-agent
+    user_permissions = await get_user_permissions(db, user_id)
+    agent_perm = f"sinas.agents/{agent.namespace}/{agent.name}.chat:all"
+    if not check_permission(user_permissions, agent_perm):
+        return {
+            "error": "Permission denied",
+            "message": f"You don't have permission to use agent '{agent.namespace}/{agent.name}'.",
+        }
 
     # Prepare input data for the agent
     # Filter out internal _* parameters and extract prompt
@@ -444,7 +462,7 @@ async def execute_single_tool(
                     break
 
             # Built-in tools (no metadata needed)
-            if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state"):
+            if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state", "list_state_keys"):
                 result = await StateTools.execute_tool(
                     db=db,
                     tool_name=tool_name,
@@ -488,7 +506,6 @@ async def execute_single_tool(
                     if chat_agent:
                         agent_system_tools = chat_agent.system_tools or []
 
-                from app.core.auth import get_user_permissions
                 user_permissions = await get_user_permissions(db, user_id)
 
                 result = await execute_package_tool(

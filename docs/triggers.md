@@ -1,3 +1,7 @@
+---
+title: "Triggers"
+---
+
 ## Triggers
 
 ### Webhooks

@@ -1,3 +1,7 @@
+---
+title: "Admin"
+---
+
 ## Admin
 
 ### Integration Packages

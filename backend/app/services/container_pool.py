@@ -44,7 +44,7 @@ class ContainerPool:
         self.client = docker.from_env()
         self.idle: deque[PooledContainer] = deque()
         self.in_use: dict[str, PooledContainer] = {}
-        self._next_id: int = 1
+        self._creating_names: set[str] = set()  # names currently being created (race guard)
         self._condition = asyncio.Condition()
         self._initialized = False
         self._replenish_task: Optional[asyncio.Task] = None
@@ -148,7 +148,6 @@ class ContainerPool:
                 to avoid racing with the scheduler or each other.
             db: Database session for reinstalling packages on discovered containers.
 
-        Sets _next_id past the highest existing ID.
         """
         try:
             containers = await asyncio.to_thread(
@@ -238,8 +237,6 @@ class ContainerPool:
                 if isinstance(r, PooledContainer):
                     self.idle.append(r)
 
-            self._next_id = max_id + 1
-
         except Exception as e:
             print(f"❌ Failed to discover existing sandbox containers: {e}")
 
@@ -277,7 +274,40 @@ class ContainerPool:
                         f"(idle=0, in_use={len(self.in_use)})"
                     )
 
-            pc = self.idle.popleft()
+            # Pop idle containers, skipping any that no longer exist in Docker
+            pc = None
+            while self.idle:
+                candidate = self.idle.popleft()
+                try:
+                    self.client.containers.get(candidate.name)
+                    pc = candidate
+                    break
+                except Exception:
+                    logger.warning(f"Sandbox container {candidate.name} no longer exists, skipping")
+                    continue
+
+            if pc is None:
+                # All idle containers were dead — trigger replenish and retry
+                self._replenish_event.set()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"No sandbox container available within {timeout}s "
+                        f"(all idle containers were dead)"
+                    )
+                try:
+                    await asyncio.wait_for(self._condition.wait(), timeout=remaining)
+                except asyncio.TimeoutError:
+                    raise TimeoutError(
+                        f"No sandbox container available within {timeout}s "
+                        f"(idle=0 after cleanup, in_use={len(self.in_use)})"
+                    )
+                # Retry after replenish
+                if self.idle:
+                    pc = self.idle.popleft()
+                else:
+                    raise TimeoutError("No sandbox container available after replenish")
+
             self.in_use[pc.name] = pc
 
             # Trigger replenish if idle is getting low
@@ -490,11 +520,30 @@ sys.exit(1)
     # Container lifecycle
     # ------------------------------------------------------------------
 
+    def _next_available_name(self) -> str:
+        """Find the lowest unused sandbox container name.
+
+        Checks idle, in_use, AND names currently being created to avoid races.
+        """
+        used = {pc.name for pc in self.idle} | set(self.in_use.keys()) | self._creating_names
+        i = 1
+        while f"sinas-sandbox-{i}" in used:
+            i += 1
+        name = f"sinas-sandbox-{i}"
+        self._creating_names.add(name)
+        return name
+
     async def _create_container(self, db: AsyncSession) -> PooledContainer:
         """Create a new sandbox container with all approved packages installed."""
-        name = f"sinas-sandbox-{self._next_id}"
-        self._next_id += 1
+        name = self._next_available_name()
 
+        try:
+            return await self._do_create_container(name, db)
+        finally:
+            self._creating_names.discard(name)
+
+    async def _do_create_container(self, name: str, db: AsyncSession) -> PooledContainer:
+        """Internal: actually create and configure the container."""
         logger.info(f"Creating sandbox container: {name}")
 
         container_config = {
@@ -772,28 +821,50 @@ sys.exit(1)
         }
 
     def get_stats(self) -> dict[str, Any]:
-        """Return pool statistics."""
-        idle_list = [
-            {
-                "name": pc.name,
-                "executions": pc.executions,
-                "age_seconds": int(time.time() - pc.created_at),
+        """Return pool statistics, verified against Docker.
+
+        Queries Docker for actual container state rather than trusting
+        the in-memory pool, which can drift.
+        """
+        in_use_names = set(self.in_use.keys())
+
+        # Query Docker for all sandbox containers
+        try:
+            containers = self.client.containers.list(
+                all=True,
+                filters={"label": "sinas.pool=true"},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to query Docker for stats: {e}")
+            containers = []
+
+        idle_list = []
+        in_use_list = []
+        for c in containers:
+            status = c.status  # running, exited, created, etc.
+            name = c.name
+            # Look up execution count from in-memory state if available
+            pc = self.in_use.get(name)
+            if not pc:
+                for ipc in self.idle:
+                    if ipc.name == name:
+                        pc = ipc
+                        break
+            info = {
+                "name": name,
+                "status": status,
+                "executions": pc.executions if pc else 0,
+                "age_seconds": int(time.time() - pc.created_at) if pc else None,
             }
-            for pc in self.idle
-        ]
-        in_use_list = [
-            {
-                "name": pc.name,
-                "executions": pc.executions,
-                "age_seconds": int(time.time() - pc.created_at),
-            }
-            for pc in self.in_use.values()
-        ]
+            if name in in_use_names:
+                in_use_list.append(info)
+            else:
+                idle_list.append(info)
 
         return {
-            "idle": len(self.idle),
-            "in_use": len(self.in_use),
-            "total": len(self.idle) + len(self.in_use),
+            "idle": len(idle_list),
+            "in_use": len(in_use_list),
+            "total": len(containers),
             "max_size": settings.sandbox_max_size,
             "min_idle": settings.sandbox_min_idle,
             "max_executions": settings.sandbox_max_executions,

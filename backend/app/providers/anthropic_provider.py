@@ -285,6 +285,54 @@ class AnthropicProvider(BaseLLMProvider):
             else:
                 merged_messages.append(msg)
 
+        # Safety net: ensure every tool_use has a matching tool_result immediately after.
+        # Anthropic requires tool_result in the user message right after the assistant
+        # message containing tool_use. If missing, inject a synthetic error result.
+        repaired = []
+        for i, msg in enumerate(merged_messages):
+            repaired.append(msg)
+            if msg["role"] == "assistant":
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    tool_use_ids = [
+                        block["id"] for block in content
+                        if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id")
+                    ]
+                    if tool_use_ids:
+                        # Check if next message has matching tool_results
+                        next_msg = merged_messages[i + 1] if i + 1 < len(merged_messages) else None
+                        existing_result_ids = set()
+                        if next_msg and next_msg.get("role") == "user":
+                            next_content = next_msg.get("content", [])
+                            if isinstance(next_content, list):
+                                existing_result_ids = {
+                                    block.get("tool_use_id") for block in next_content
+                                    if isinstance(block, dict) and block.get("type") == "tool_result"
+                                }
+
+                        missing_ids = [tid for tid in tool_use_ids if tid not in existing_result_ids]
+                        if missing_ids:
+                            # Inject synthetic tool_result in a user message
+                            synthetic_results = [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tid,
+                                    "content": "[Error: tool call was interrupted]",
+                                }
+                                for tid in missing_ids
+                            ]
+                            if next_msg and next_msg.get("role") == "user":
+                                # Prepend to existing user message content
+                                next_content = next_msg.get("content", [])
+                                if isinstance(next_content, str):
+                                    next_content = [{"type": "text", "text": next_content}]
+                                next_msg["content"] = synthetic_results + next_content
+                            else:
+                                # Insert a new user message with just the tool_results
+                                repaired.append({"role": "user", "content": synthetic_results})
+
+        merged_messages = repaired
+
         # Ensure first message is user (Anthropic requirement)
         if merged_messages and merged_messages[0]["role"] != "user":
             merged_messages.insert(0, {"role": "user", "content": "Continue the conversation."})

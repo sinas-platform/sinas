@@ -299,6 +299,9 @@ class CollectionToolConverter:
             user_id: Current user ID
             metadata: Tool metadata containing collection_ref and tool_type
         """
+        from app.core.auth import get_user_permissions
+        from app.core.permissions import check_permission
+
         coll_ref = metadata.get("collection_ref", "")
         tool_type = metadata.get("tool_type", "")
 
@@ -309,6 +312,19 @@ class CollectionToolConverter:
         collection = await Collection.get_by_name(db, namespace, name)
         if not collection:
             return {"error": f"Collection '{coll_ref}' not found"}
+
+        # Permission check: read operations need download, write operations need upload
+        user_permissions = await get_user_permissions(db, user_id)
+        is_write = tool_type in ("collection_write_file", "collection_edit_file", "collection_delete_file")
+        if is_write:
+            perm = f"sinas.collections/{namespace}/{name}.upload:own"
+        else:
+            perm = f"sinas.collections/{namespace}/{name}.download:own"
+        if not check_permission(user_permissions, perm):
+            return {
+                "error": "Permission denied",
+                "message": f"You don't have permission to {'write to' if is_write else 'read from'} collection '{coll_ref}'.",
+            }
 
         if tool_type == "collection_search":
             return await self._search_collection(db, collection, namespace, user_id, arguments)

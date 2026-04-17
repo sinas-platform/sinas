@@ -1,3 +1,7 @@
+---
+title: "Sinas Documentation"
+---
+
 # Sinas Documentation
 ## Introduction — What is Sinas?
 
