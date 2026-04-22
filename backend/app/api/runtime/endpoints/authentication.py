@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.core.rate_limit import rate_limit_by_ip, rate_limit_by_value
 from app.models import User
+from app.models.user import Role, UserRole
 from app.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -33,7 +34,7 @@ from app.schemas.auth import (
     PermissionCheckResult,
     RefreshRequest,
     RefreshResponse,
-    UserResponse,
+    AuthUserResponse,
 )
 
 router = APIRouter()
@@ -102,12 +103,23 @@ async def verify_otp(request: OTPVerifyRequest, http_request: Request, db: Async
     # Create refresh token (long-lived, stored in DB)
     refresh_token_plain, _ = await create_refresh_token(db, str(user.id))
 
+    # Get user's roles
+    roles_result = await db.execute(
+        select(Role.name)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user.id, UserRole.active == True)
+    )
+    role_names = [r[0] for r in roles_result.all()]
+
+    user_resp = AuthUserResponse.model_validate(user)
+    user_resp.roles = role_names
+
     return OTPVerifyResponse(
         access_token=access_token,
         refresh_token=refresh_token_plain,
         token_type="bearer",
-        expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
-        user=UserResponse.model_validate(user),
+        expires_in=settings.access_token_expire_minutes * 60,
+        user=user_resp,
     )
 
 
@@ -155,11 +167,11 @@ async def logout(request: LogoutRequest, db: AsyncSession = Depends(get_db)):
     return None
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=AuthUserResponse)
 async def get_current_user_info(
     request: Request, user_id: str = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
-    """Get current authenticated user info."""
+    """Get current authenticated user info with roles."""
     set_permission_used(request, "sinas.users.read:own")
 
     result = await db.execute(select(User).where(User.id == user_id))
@@ -168,7 +180,17 @@ async def get_current_user_info(
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    return UserResponse.model_validate(user)
+    # Get user's roles (single query with join)
+    roles_result = await db.execute(
+        select(Role.name)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user.id, UserRole.active == True)
+    )
+    role_names = [r[0] for r in roles_result.all()]
+
+    resp = AuthUserResponse.model_validate(user)
+    resp.roles = role_names
+    return resp
 
 
 @router.post("/check-permissions", response_model=PermissionCheckResponse)

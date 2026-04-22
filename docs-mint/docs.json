@@ -7,7 +7,7 @@
     "light": "#818CF8",
     "dark": "#4F46E5"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/favicon.png",
   "navigation": {
     "tabs": [
       {
@@ -98,13 +98,14 @@
   },
   "logo": {
     "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "dark": "/logo/dark.svg",
+    "href": "https://sinas.co"
   },
   "navbar": {
     "links": [
       {
-        "label": "Console",
-        "href": "https://wab.sinas.cloud"
+        "label": "Website",
+        "href": "https://sinas.co"
       }
     ]
   },

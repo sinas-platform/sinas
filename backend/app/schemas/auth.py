@@ -25,14 +25,15 @@ class OTPVerifyResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int  # Access token expiry in seconds
-    user: "UserResponse"
+    user: "AuthUserResponse"
 
 
-class UserResponse(BaseModel):
+class AuthUserResponse(BaseModel):
     id: uuid.UUID
     email: str
     last_login_at: Optional[datetime]
     created_at: datetime
+    roles: list[str] = []
 
     class Config:
         from_attributes = True
