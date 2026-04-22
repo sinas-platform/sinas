@@ -1,3 +1,7 @@
+---
+title: "Storage"
+---
+
 ## Storage
 
 ### Collections & Files

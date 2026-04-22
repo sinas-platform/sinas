@@ -100,7 +100,7 @@ async def create_agent(
         is_default=agent_data.is_default or False,
         default_job_timeout=agent_data.default_job_timeout,
         default_keep_alive=agent_data.default_keep_alive or False,
-        system_tools=agent_data.system_tools or [],
+        system_tools=[t.model_dump() if hasattr(t, 'model_dump') else t for t in (agent_data.system_tools or [])],
     )
 
     db.add(agent)
@@ -263,7 +263,10 @@ async def update_agent(
     if agent_data.default_keep_alive is not None:
         agent.default_keep_alive = agent_data.default_keep_alive
     if agent_data.system_tools is not None:
-        agent.system_tools = agent_data.system_tools
+        agent.system_tools = [
+            t.model_dump() if hasattr(t, 'model_dump') else t
+            for t in agent_data.system_tools
+        ]
     await db.flush()
     await db.refresh(agent)
 

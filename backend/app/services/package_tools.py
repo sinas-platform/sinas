@@ -34,18 +34,22 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": (
                 "Validate a Sinas package YAML without applying it. Checks "
                 "YAML syntax, schema conformance, and references. Returns "
-                "{valid, errors, warnings}. Use this during drafting to "
-                "catch mistakes early. Does NOT make any changes."
+                "{valid, errors, warnings}. Preferred: pass file_path to "
+                "read from a collection file (avoids large inline YAML). "
+                "Does NOT make any changes."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to YAML file in a collection: 'namespace/collection/filename'. Preferred over inline yaml.",
+                    },
                     "yaml": {
                         "type": "string",
-                        "description": "The full YAML content of the package.",
+                        "description": "Inline YAML content. Use file_path instead when the file is already saved.",
                     },
                 },
-                "required": ["yaml"],
             },
             "_metadata": {"system_tool": "packageManagement"},
         },
@@ -58,18 +62,20 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Dry-run a package install. Shows what resources would be "
                 "created, updated, or skipped without making any changes. "
                 "Call this before sinas_package_install to let the user "
-                "see the planned changes. Returns a ConfigApplyResponse "
-                "with summary and changes."
+                "see the planned changes."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to YAML file in a collection: 'namespace/collection/filename'. Preferred over inline yaml.",
+                    },
                     "yaml": {
                         "type": "string",
-                        "description": "The full YAML content of the package.",
+                        "description": "Inline YAML content. Use file_path instead when the file is already saved.",
                     },
                 },
-                "required": ["yaml"],
             },
             "_metadata": {"system_tool": "packageManagement"},
         },
@@ -82,18 +88,20 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Install a Sinas package. This WRITES to the database: "
                 "creates/updates resources and records a Package row. "
                 "The user will be asked to approve the install before it "
-                "runs. Always call sinas_package_preview first and share "
-                "the diff with the user."
+                "runs. Always call sinas_package_preview first."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to YAML file in a collection: 'namespace/collection/filename'. Preferred over inline yaml.",
+                    },
                     "yaml": {
                         "type": "string",
-                        "description": "The full YAML content of the package.",
+                        "description": "Inline YAML content. Use file_path instead when the file is already saved.",
                     },
                 },
-                "required": ["yaml"],
             },
             "_metadata": {
                 "system_tool": "packageManagement",
@@ -230,15 +238,68 @@ async def execute_package_tool(
         return {"error": "internal_error", "detail": str(e)}
 
 
+# ── File path resolver ──────────────────────────────────────
+
+async def _resolve_yaml_content(db, arguments) -> str:
+    """Resolve YAML content from either file_path or inline yaml argument.
+
+    file_path format: 'namespace/collection/filename'
+    """
+    file_path = arguments.get("file_path")
+    yaml_content = arguments.get("yaml", "")
+
+    if file_path:
+        from app.models.file import Collection, File, FileVersion
+        from app.services.file_storage import get_storage
+        from sqlalchemy import and_, select
+
+        parts = file_path.split("/", 2)
+        if len(parts) != 3:
+            raise ValueError(f"file_path must be 'namespace/collection/filename', got: {file_path}")
+
+        namespace, collection_name, filename = parts
+        coll = await Collection.get_by_name(db, namespace, collection_name)
+        if not coll:
+            raise ValueError(f"Collection '{namespace}/{collection_name}' not found")
+
+        result = await db.execute(
+            select(File).where(
+                and_(File.collection_id == coll.id, File.name == filename)
+            ).limit(1)
+        )
+        file_record = result.scalar_one_or_none()
+        if not file_record:
+            raise ValueError(f"File '{filename}' not found in {namespace}/{collection_name}")
+
+        ver_result = await db.execute(
+            select(FileVersion).where(
+                and_(
+                    FileVersion.file_id == file_record.id,
+                    FileVersion.version_number == file_record.current_version,
+                )
+            )
+        )
+        file_version = ver_result.scalar_one_or_none()
+        if not file_version:
+            raise ValueError(f"Version not found for file '{filename}'")
+
+        storage = get_storage()
+        raw = await storage.read(file_version.storage_path)
+        yaml_content = raw.decode("utf-8")
+
+    if not yaml_content:
+        raise ValueError("Either 'file_path' or 'yaml' is required")
+
+    return yaml_content
+
+
 # ── Individual tool implementations ──────────────────────────
 
 async def _validate(db, arguments, permissions):
     if not check_permission(permissions, "sinas.config.validate:all"):
         raise PermissionError("sinas.config.validate:all required")
 
-    yaml_content = arguments.get("yaml", "")
-    if not yaml_content:
-        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+    yaml_content = await _resolve_yaml_content(db, arguments)
 
     _config, validation = await ConfigParser.parse_and_validate(
         yaml_content, db=db, strict=False
@@ -254,9 +315,7 @@ async def _preview(db, arguments, user_id, permissions):
     if not check_permission(permissions, "sinas.packages.install:all"):
         raise PermissionError("sinas.packages.install:all required")
 
-    yaml_content = arguments.get("yaml", "")
-    if not yaml_content:
-        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+    yaml_content = await _resolve_yaml_content(db, arguments)
 
     service = PackageService(db)
     result = await service.preview(yaml_content, user_id)
@@ -267,9 +326,7 @@ async def _install(db, arguments, user_id, permissions):
     if not check_permission(permissions, "sinas.packages.install:all"):
         raise PermissionError("sinas.packages.install:all required")
 
-    yaml_content = arguments.get("yaml", "")
-    if not yaml_content:
-        return {"error": "missing_yaml", "detail": "'yaml' argument is required"}
+    yaml_content = await _resolve_yaml_content(db, arguments)
 
     service = PackageService(db)
     package, result = await service.install(yaml_content, user_id)

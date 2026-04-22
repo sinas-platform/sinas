@@ -97,15 +97,56 @@ class StateTools:
             save_description += store_info
 
         retrieve_description = (
-            "Retrieve saved state by store and/or key. Use this to recall "
-            "previously saved information, preferences, or facts about the user or project."
+            "Retrieve saved state by store and key. Use this to recall "
+            "previously saved information, preferences, or facts. "
+            "Use list_state_keys first to discover what's available."
         )
-        if available_keys_info:
-            retrieve_description += f"\n\n{available_keys_info}"
+        if store_info:
+            retrieve_description += store_info
 
         tools = []
 
-        # retrieve_state for all stores
+        # list_state_keys — introspection tool
+        tools.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_state_keys",
+                    "description": (
+                        "Discover what's stored in state stores. Without parameters, "
+                        "returns a summary: key count and tag distribution per store. "
+                        "With a store specified, lists keys (with descriptions and tags). "
+                        "Filter by tags to narrow results. Always call this before "
+                        "retrieve_state to know what keys exist."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "store": {
+                                "type": "string",
+                                "description": "Store to list keys from. Omit for an overview of all stores.",
+                                "enum": all_stores,
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Filter keys by tags (all must match).",
+                            },
+                            "search": {
+                                "type": "string",
+                                "description": "Search term to match in key names and descriptions.",
+                            },
+                            "limit": {
+                                "type": "integer",
+                                "description": "Max keys to return (default 50).",
+                            },
+                        },
+                    },
+                },
+            }
+        )
+
+        # retrieve_state for getting actual values
         tools.append(
             {
                 "type": "function",
@@ -122,19 +163,20 @@ class StateTools:
                             },
                             "key": {
                                 "type": "string",
-                                "description": "Specific key to retrieve (optional, omit to get all in store)",
+                                "description": "Specific key to retrieve.",
+                            },
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Filter by tags (returns all matching keys).",
                             },
                             "search": {
                                 "type": "string",
-                                "description": "Search term to find in keys and descriptions",
-                            },
-                            "tags": {
-                                "type": "string",
-                                "description": "Comma-separated tags to filter by",
+                                "description": "Search term to find in keys and descriptions.",
                             },
                             "limit": {
                                 "type": "integer",
-                                "description": "Maximum number of results to return",
+                                "description": "Maximum number of results to return.",
                                 "default": 10,
                             },
                         },
@@ -294,7 +336,15 @@ class StateTools:
         chat_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Execute a state tool."""
+        """Execute a state tool.
+
+        Access control is layered:
+        1. Agent's enabled_stores gates which stores are available as tools
+        2. User's RBAC permissions gate actual access at execution time
+        """
+        from app.core.auth import get_user_permissions
+        from app.core.permissions import check_permission
+
         # Get agent's enabled_stores for validation
         write_stores = None
         all_allowed_stores = None
@@ -307,13 +357,26 @@ class StateTools:
                 write_stores = [s["store"] for s in agent.enabled_stores if s.get("access") == "readwrite"]
                 all_allowed_stores = [s["store"] for s in agent.enabled_stores]
 
-        # Check store access for write operations
-        if tool_name in ["save_state", "update_state", "delete_state"] and write_stores is not None:
+        # Check agent's enabled_stores for write operations
+        if tool_name in ("save_state", "update_state", "delete_state") and write_stores is not None:
             requested_store = arguments.get("store")
             if not requested_store or requested_store not in write_stores:
                 return {
                     "error": f"Agent not authorized to write to store '{requested_store}'",
                     "allowed_stores": write_stores,
+                }
+
+        # Check user's RBAC permissions for store access
+        requested_store = arguments.get("store")
+        if requested_store and "/" in requested_store:
+            ns, name = requested_store.split("/", 1)
+            user_permissions = await get_user_permissions(db, user_id)
+            is_write = tool_name in ("save_state", "update_state", "delete_state")
+            perm = f"sinas.stores/{ns}/{name}.write_state:own" if is_write else f"sinas.stores/{ns}/{name}.read_state:own"
+            if not check_permission(user_permissions, perm):
+                return {
+                    "error": "Permission denied",
+                    "message": f"You don't have permission to {'write to' if is_write else 'read from'} store '{requested_store}'.",
                 }
 
         # Map old tool names for backward compatibility
@@ -326,7 +389,9 @@ class StateTools:
         }
         tool_name = tool_map.get(tool_name, tool_name)
 
-        if tool_name == "save_state":
+        if tool_name == "list_state_keys":
+            return await StateTools._list_state_keys(db, user_id, arguments, allowed_stores=all_allowed_stores)
+        elif tool_name == "save_state":
             return await StateTools._save_state(db, user_id, arguments)
         elif tool_name == "retrieve_state":
             return await StateTools._retrieve_state(db, user_id, arguments, allowed_stores=all_allowed_stores)
@@ -334,6 +399,134 @@ class StateTools:
             return await StateTools._delete_state(db, user_id, arguments)
         else:
             return {"error": f"Unknown state tool: {tool_name}"}
+
+    @staticmethod
+    async def _list_state_keys(
+        db: AsyncSession,
+        user_id: str,
+        arguments: dict[str, Any],
+        allowed_stores: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        """List state keys with tag distribution. Two modes:
+
+        1. No store specified → overview: per-store key count + top tags
+        2. Store specified → list keys with descriptions, tags. Filterable.
+        """
+        from sqlalchemy import func as sqlfunc
+
+        user_uuid = uuid_lib.UUID(user_id)
+        store_filter = arguments.get("store")
+        tag_filter = arguments.get("tags", [])
+        search = arguments.get("search")
+        limit = min(int(arguments.get("limit", 50)), 200)
+
+        if not allowed_stores:
+            return {"error": "No stores enabled for this agent"}
+
+        # Resolve store refs to IDs
+        store_ids: dict[Any, str] = {}
+        for store_ref in allowed_stores:
+            store = await StateTools._resolve_store(db, store_ref)
+            if store:
+                store_ids[store.id] = store_ref
+
+        if not store_ids:
+            return {"stores": [], "total_keys": 0}
+
+        # Base filter: user's own + shared, not expired, in allowed stores
+        base_filter = and_(
+            State.store_id.in_(store_ids.keys()),
+            or_(State.expires_at == None, State.expires_at > datetime.utcnow()),
+            or_(
+                State.user_id == user_uuid,
+                and_(State.visibility == "shared", State.store_id.in_(store_ids.keys())),
+            ),
+        )
+
+        if not store_filter:
+            # Overview mode: count keys and aggregate tags per store
+            query = (
+                select(
+                    State.store_id,
+                    sqlfunc.count(State.id).label("key_count"),
+                )
+                .where(base_filter)
+                .group_by(State.store_id)
+            )
+            result = await db.execute(query)
+            counts = result.all()
+
+            stores = []
+            total = 0
+            for store_id, key_count in counts:
+                store_ref = store_ids.get(store_id, str(store_id))
+                total += key_count
+
+                # Get tag counts for this store
+                tag_query = (
+                    select(State.tags)
+                    .where(and_(base_filter, State.store_id == store_id))
+                )
+                tag_result = await db.execute(tag_query)
+                tag_counts: dict[str, int] = {}
+                for (tags,) in tag_result.all():
+                    for tag in (tags or []):
+                        tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+                store_info: dict[str, Any] = {
+                    "store": store_ref,
+                    "key_count": key_count,
+                }
+                if tag_counts:
+                    store_info["tags"] = dict(sorted(tag_counts.items(), key=lambda x: -x[1]))
+                stores.append(store_info)
+
+            return {"stores": stores, "total_keys": total}
+
+        # Detail mode: list keys for a specific store
+        if store_filter not in allowed_stores:
+            return {"error": f"Store '{store_filter}' not in allowed stores"}
+
+        store = await StateTools._resolve_store(db, store_filter)
+        if not store:
+            return {"error": f"Store '{store_filter}' not found"}
+
+        query = (
+            select(State.key, State.description, State.tags, State.updated_at)
+            .where(and_(base_filter, State.store_id == store.id))
+        )
+
+        # Tag filter: all specified tags must be present
+        if tag_filter:
+            for tag in tag_filter:
+                query = query.where(State.tags.op("@>")(json.dumps([tag])))
+
+        # Search filter
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.where(
+                or_(
+                    State.key.ilike(search_pattern),
+                    State.description.ilike(search_pattern),
+                )
+            )
+
+        query = query.order_by(State.key).limit(limit)
+        result = await db.execute(query)
+        rows = result.all()
+
+        keys = []
+        for key, description, tags, updated_at in rows:
+            entry: dict[str, Any] = {"key": key}
+            if description:
+                entry["description"] = description
+            if tags:
+                entry["tags"] = tags
+            if updated_at:
+                entry["updated_at"] = updated_at.isoformat()
+            keys.append(entry)
+
+        return {"store": store_filter, "keys": keys, "count": len(keys)}
 
     @staticmethod
     async def _save_state(

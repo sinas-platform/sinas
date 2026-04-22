@@ -418,6 +418,28 @@ DELETE /api/v1/roles/{name}/permissions     # Remove permission
 GET    /api/v1/permissions/reference        # List all known permissions
 ```
 
+### Agent Execution & Permissions
+
+Agents define which tools are available (via `enabled_*` fields), but the user's role permissions are checked at execution time. Both conditions must be met:
+
+1. **Agent declares the tool** — the resource is in the agent's `enabledFunctions`, `enabledQueries`, `enabledStores`, `enabledCollections`, or `enabledAgents`
+2. **User has the permission** — checked when the tool is actually called
+
+If the user lacks permission, the tool call returns an error that the LLM can explain to the user. Tools are still visible to the LLM regardless — the check happens at execution, not discovery.
+
+| Resource | Agent config | Permission checked at execution |
+|---|---|---|
+| Functions | `enabledFunctions` | `sinas.functions/{ns}/{name}.execute:own` |
+| Queries | `enabledQueries` | `sinas.queries/{ns}/{name}.execute:own` |
+| Collections | `enabledCollections` | `sinas.collections/{ns}/{name}.download:own` (read) / `.upload:own` (write) |
+| Stores | `enabledStores` | `sinas.stores/{ns}/{name}.read_state:own` / `.write_state:own` |
+| Sub-agents | `enabledAgents` | `sinas.agents/{ns}/{name}.chat:all` |
+| Connectors | `enabledConnectors` | Agent-gated only (no standalone execution path) |
+
+**Connectors** are the exception — they have no independent API and can only be accessed through an agent, so the agent's `enabledConnectors` (with per-operation filtering) is the sole access control.
+
+**Namespace wildcards** make this manageable. Grant `sinas.functions/sales/*.execute:own` once on a role, and all functions in the `sales/` namespace are accessible.
+
 ---
 
 ## Runtime API vs Management API

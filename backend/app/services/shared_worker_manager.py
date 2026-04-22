@@ -820,7 +820,17 @@ sys.exit(1)
 
                 return result
             else:
-                error_msg = stderr.decode() if stderr else "Unknown error"
+                # Include both stdout and stderr for debugging
+                stderr_str = stderr.decode() if stderr else ""
+                # stdout may contain a JSON error from the poller script
+                if stdout_str.strip():
+                    try:
+                        stdout_result = json.loads(stdout_str)
+                        if isinstance(stdout_result, dict) and stdout_result.get("error"):
+                            return {"status": "failed", "error": stdout_result["error"]}
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                error_msg = stderr_str or stdout_str or f"Function execution failed with exit code {exec_result.exit_code}"
                 return {"status": "failed", "error": error_msg}
 
         except Exception as e:

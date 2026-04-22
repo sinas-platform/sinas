@@ -1,3 +1,7 @@
+---
+title: "Configure"
+---
+
 ## Configure
 
 ### Skills

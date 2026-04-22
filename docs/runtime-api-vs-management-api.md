@@ -1,3 +1,7 @@
+---
+title: "Runtime API vs Management API"
+---
+
 ## Runtime API vs Management API
 
 Sinas has two API layers:

@@ -400,6 +400,8 @@ class DependencyConfig(BaseModel):
 class ConfigSpec(BaseModel):
     """Configuration specification"""
 
+    model_config = {"extra": "forbid"}
+
     roles: list[RoleConfig] = Field(default_factory=list)
     users: list[UserConfig] = Field(default_factory=list)
     llmProviders: list[LLMProviderConfig] = Field(default_factory=list)
