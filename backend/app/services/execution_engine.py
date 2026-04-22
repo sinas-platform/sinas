@@ -400,7 +400,8 @@ sys.exit(1)
             stdout_str = stdout.decode() if stdout else ""
 
             if exec_result.exit_code != 0:
-                error_msg = stderr.decode() if stderr else "Unknown error"
+                stderr_str = stderr.decode() if stderr else ""
+                error_msg = stderr_str or stdout_str or f"Exit code {exec_result.exit_code}"
                 execution.status = ExecutionStatus.FAILED
                 execution.error = error_msg
                 execution.completed_at = datetime.utcnow()

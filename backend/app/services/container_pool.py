@@ -498,7 +498,9 @@ sys.exit(1)
             stdout, stderr = exec_result.output
 
             if exec_result.exit_code != 0:
-                error_msg = stderr.decode() if stderr else "Unknown error"
+                stderr_str = stderr.decode() if stderr else ""
+                stdout_str_err = stdout.decode() if stdout else ""
+                error_msg = stderr_str or stdout_str_err or f"Exit code {exec_result.exit_code}"
                 raise Exception(f"Execution failed: {error_msg}")
 
             stdout_str = stdout.decode() if stdout else ""
