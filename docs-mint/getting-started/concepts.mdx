@@ -3,13 +3,12 @@ title: "Concepts"
 description: "Namespaces, tools, triggers, and declarative configuration"
 ---
 
-## Concepts
 
-### Namespaces
+## Namespaces
 
 Most resources are organized by **namespace** and **name**. A namespace groups related resources (e.g., `support/ticket-agent`, `analytics/daily-report`). The default namespace is `default`. Resources are uniquely identified by their `namespace/name` pair.
 
-### Tools
+## Tools
 
 Agents interact with the outside world through **tools** — capabilities you enable per agent:
 
@@ -22,7 +21,7 @@ Agents interact with the outside world through **tools** — capabilities you en
 | **Collections** | Search uploaded files |
 | **States** | Read and write persistent key-value data |
 
-### Trigger Types
+## Trigger Types
 
 Functions and agents can be triggered in multiple ways:
 
@@ -33,7 +32,7 @@ Functions and agents can be triggered in multiple ways:
 - **Schedule** — Via a cron expression on a timer
 - **CDC** — Automatically when rows are inserted or updated in an external database table
 
-### Declarative Configuration
+## Declarative Configuration
 
 All resources can be defined in a YAML file and applied idempotently via the API or on startup. Config-managed resources are tracked with checksums for change detection. See [Config Manager](#config-manager) for details.
 
