@@ -3,13 +3,12 @@ title: "Role-Based Access Control"
 description: "Roles, permissions, and agent execution"
 ---
 
-## Role-Based Access Control (RBAC)
 
-### Overview
+## Overview
 
 Users are assigned to **roles**, and roles define **permissions**. A user's effective permissions are the union of all permissions from all their roles (OR logic). Permissions are loaded from the database on every request — changes take effect immediately.
 
-### Default Roles
+## Default Roles
 
 | Role | Description |
 |---|---|
@@ -17,7 +16,7 @@ Users are assigned to **roles**, and roles define **permissions**. A user's effe
 | **Users** | Create and manage own resources, chat with any agent, execute own functions |
 | **GuestUsers** | Read and update own profile only |
 
-### Permission Format
+## Permission Format
 
 ```
 <service>.<resource>[/<path>].<action>:<scope>
@@ -33,7 +32,7 @@ Users are assigned to **roles**, and roles define **permissions**. A user's effe
 | **Action** | What operation is allowed | `create`, `read`, `update`, `delete`, `execute`, `chat` |
 | **Scope** | Ownership scope | `:own` (user's resources), `:all` (all resources) |
 
-### Permission Matching Rules
+## Permission Matching Rules
 
 **Scope hierarchy:** `:all` automatically grants `:own`. A user with `sinas.agents.read:all` passes any check for `sinas.agents.read:own`.
 
@@ -63,7 +62,7 @@ sinas.schedules.read:own                         # Read own schedules
 sinas.users.update:own                           # Update own profile
 ```
 
-### Custom Permissions
+## Custom Permissions
 
 The permission system is not limited to `sinas.*`. You can define permissions with any service prefix for your own applications:
 
@@ -76,7 +75,7 @@ myapp.*:all
 
 These work identically to built-in permissions — same wildcard matching, same scope hierarchy. This lets you use Sinas as the authorization backend for external applications.
 
-### Checking Permissions from External Services
+## Checking Permissions from External Services
 
 Use the `POST /auth/check-permissions` endpoint to verify whether the current user (identified by their Bearer token or API key) has specific permissions:
 
@@ -108,7 +107,7 @@ Response:
 
 This makes Sinas usable as a centralized authorization service for any number of external applications.
 
-### Managing Roles
+## Managing Roles
 
 ```
 POST   /api/v1/roles                        # Create role
@@ -123,7 +122,7 @@ DELETE /api/v1/roles/{name}/permissions     # Remove permission
 GET    /api/v1/permissions/reference        # List all known permissions
 ```
 
-### Agent Execution & Permissions
+## Agent Execution & Permissions
 
 Agents define which tools are available (via `enabled_*` fields), but the user's role permissions are checked at execution time. Both conditions must be met:
 

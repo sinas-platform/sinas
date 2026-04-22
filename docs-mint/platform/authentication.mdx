@@ -3,11 +3,10 @@ title: "Authentication"
 description: "OTP login and API keys"
 ---
 
-## Authentication
 
 Sinas uses email-based OTP authentication, with API keys available for programmatic access.
 
-### OTP Authentication
+## OTP Authentication
 
 1. Client sends email to `POST /auth/login`
 2. Sinas sends a 6-digit code to that email (valid for 10 minutes by default)
@@ -26,7 +25,7 @@ POST   /auth/logout               # Revoke refresh token
 GET    /auth/me                   # Get current user info
 ```
 
-### API Keys
+## API Keys
 
 For programmatic access (scripts, CI/CD, integrations), create API keys instead of using short-lived JWT tokens. Each key has its own set of permissions (a subset of the creating user's permissions).
 

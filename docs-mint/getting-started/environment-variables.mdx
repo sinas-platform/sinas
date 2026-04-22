@@ -3,9 +3,8 @@ title: "Environment Variables"
 description: "All configuration options"
 ---
 
-## Environment Variables
 
-### Required
+## Required
 
 | Variable | Description |
 |---|---|
@@ -20,7 +19,7 @@ description: "All configuration options"
 | `SUPERADMIN_EMAIL` | Admin user created on first startup |
 | `DOMAIN` | Your domain for Caddy auto-HTTPS (e.g., `sinas.example.com`) |
 
-### Application
+## Application
 
 | Variable | Default | Description |
 |---|---|---|
@@ -31,7 +30,7 @@ description: "All configuration options"
 | `OTP_EXPIRE_MINUTES` | `10` | OTP code validity |
 | `OTP_MAX_ATTEMPTS` | `2` | Wrong OTP guesses before invalidation |
 
-### Rate Limiting
+## Rate Limiting
 
 | Variable | Default | Description |
 |---|---|---|
@@ -40,7 +39,7 @@ description: "All configuration options"
 | `RATE_LIMIT_OTP_IP_MAX` | `10` | Max OTP verify requests per IP per window |
 | `RATE_LIMIT_WINDOW_SECONDS` | `900` | Rate limit window (15 minutes) |
 
-### Function Execution
+## Function Execution
 
 | Variable | Default | Description |
 |---|---|---|
@@ -52,7 +51,7 @@ description: "All configuration options"
 | `ALLOW_PACKAGE_INSTALLATION` | `true` | Allow `pip install` in functions |
 | `ALLOWED_PACKAGES` | _(all)_ | Comma-separated package whitelist |
 
-### Sandbox Containers
+## Sandbox Containers
 
 | Variable | Default | Description |
 |---|---|---|
@@ -61,7 +60,7 @@ description: "All configuration options"
 | `SANDBOX_MIN_IDLE` | `2` | Replenish when idle drops below this |
 | `SANDBOX_MAX_EXECUTIONS` | `100` | Recycle after N executions |
 
-### Agent Processing
+## Agent Processing
 
 | Variable | Default | Description |
 |---|---|---|
@@ -70,7 +69,7 @@ description: "All configuration options"
 | `AGENT_JOB_TIMEOUT` | `600` | Agent job timeout (seconds) |
 | `CODE_EXECUTION_TIMEOUT` | `120` | Code execution timeout (seconds) |
 
-### Scaling
+## Scaling
 
 | Variable | Default | Description |
 |---|---|---|
@@ -81,7 +80,7 @@ description: "All configuration options"
 | `QUEUE_FUNCTION_CONCURRENCY` | `10` | Concurrent functions per worker |
 | `QUEUE_AGENT_CONCURRENCY` | `5` | Concurrent agent jobs per worker |
 
-### Resource Limits (Docker)
+## Resource Limits (Docker)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -90,7 +89,7 @@ description: "All configuration options"
 | `APP_CPU_RESERVATION` | `0.5` | Guaranteed CPU cores |
 | `APP_MEMORY_RESERVATION` | `512M` | Guaranteed RAM |
 
-### Database
+## Database
 
 | Variable | Default | Description |
 |---|---|---|
@@ -101,7 +100,7 @@ description: "All configuration options"
 | `DATABASE_URL` | _(built from above)_ | Full connection string (overrides individual vars) |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection string |
 
-### ClickHouse (Optional)
+## ClickHouse (Optional)
 
 | Variable | Default | Description |
 |---|---|---|
@@ -118,7 +117,7 @@ description: "All configuration options"
 | `CLICKHOUSE_S3_SECRET_ACCESS_KEY` | _(none)_ | S3 secret key |
 | `CLICKHOUSE_S3_REGION` | `us-east-1` | S3 region |
 
-### Declarative Config
+## Declarative Config
 
 | Variable | Default | Description |
 |---|---|---|

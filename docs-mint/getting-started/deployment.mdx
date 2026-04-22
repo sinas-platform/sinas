@@ -3,15 +3,13 @@ title: "Deployment"
 description: "Install, update, and configure Sinas"
 ---
 
-## Deployment
-
-### Prerequisites
+## Prerequisites
 
 - A VPS or server with 2+ CPU cores, 4GB+ RAM, 50GB+ storage
 - A domain name pointed at the server (A record)
 - An SMTP service for login emails (SendGrid, Mailgun, AWS SES, etc.)
 
-### Install
+## Install
 
 ```bash
 sudo curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh -o /tmp/sinas-install.sh && sudo bash /tmp/sinas-install.sh
@@ -27,7 +25,7 @@ The installer will:
 
 All services start automatically: PostgreSQL, PgBouncer, Redis, ClickHouse, the backend API (port 8000), queue workers, the scheduler, and the web console (port 51245). Migrations run automatically on startup.
 
-### Update
+## Update
 
 ```bash
 cd /opt/sinas
@@ -35,18 +33,18 @@ docker compose pull
 docker compose up -d
 ```
 
-### Manual development installation
+## Manual development installation
 
 For local development, see [INSTALL.md](https://github.com/sinas-platform/sinas/blob/main/INSTALL.md).
 
-### 3. Log in
+## Log in
 
 1. Open the console at `https://yourdomain.com:51245`
 2. Enter your `SUPERADMIN_EMAIL` address
 3. Check your inbox for the 6-digit OTP code
 4. Enter the code to receive your access token
 
-### 4. Configure an LLM provider
+## Configure an LLM provider
 
 Before agents can work, you need at least one LLM provider:
 
@@ -63,7 +61,7 @@ curl -X POST https://yourdomain.com/api/v1/llm-providers \
   }'
 ```
 
-### 5. Start chatting
+## Start chatting
 
 A default agent is created on startup. Create a chat and send a message:
 

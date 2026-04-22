@@ -3,11 +3,10 @@ title: "API Overview"
 description: "Runtime, management, and adapter APIs"
 ---
 
-## Runtime API vs Management API
 
 Sinas has two API layers:
 
-### Runtime API (`/`)
+## Runtime API (`/`)
 
 The runtime API is mounted at the root. It handles authentication, chat, execution, state, file operations, and discovery. These are the endpoints your applications and end users interact with.
 
@@ -28,7 +27,7 @@ The runtime API is mounted at the root. It handles authentication, chat, executi
 /discovery/...         # List resources visible to the current user
 ```
 
-### Management API (`/api/v1/`)
+## Management API (`/api/v1/`)
 
 The management API handles CRUD operations on all resources. These are typically used by admins, the console UI, and configuration tools.
 
@@ -57,7 +56,7 @@ The management API handles CRUD operations on all resources. These are typically
 /api/v1/request-logs/...          # Request log search (admin)
 ```
 
-### OpenAI SDK Adapter (`/adapters/openai`)
+## OpenAI SDK Adapter (`/adapters/openai`)
 
 An OpenAI SDK-compatible API that maps to Sinas agents and LLM providers. Point any OpenAI SDK client at this endpoint to use Sinas agents.
 
@@ -69,11 +68,11 @@ GET    /adapters/openai/v1/models/{model_id}    # Get model info
 
 Agents are listed as models with names like `agent:namespace/name`. Provider models are listed with their provider prefix.
 
-### Interactive API Docs
+## Interactive API Docs
 
 Swagger UI is available at `/docs` (runtime API), `/api/v1/docs` (management API), and `/adapters/openai/docs` (OpenAI adapter) for exploring all endpoints and schemas interactively.
 
-### Discovery Endpoints
+## Discovery Endpoints
 
 The discovery API returns resources visible to the current user, optionally filtered by app context:
 
