@@ -1,0 +1,85 @@
+---
+title: "Packages"
+description: "Install, create, and manage integration packages"
+---
+
+### Integration Packages
+
+Integration packages bundle agents, functions, skills, components, templates, and other resources into a shareable YAML file that can be installed with one click.
+
+**How packages work:**
+
+1. **Create**: Select resources from your Sinas instance → export as `SinasPackage` YAML
+2. **Share**: Distribute the YAML file (GitHub, email, package registry)
+3. **Install**: Paste/upload the YAML → preview changes → confirm install
+4. **Uninstall**: Removes all resources created by the package in one operation
+
+**Package YAML format:**
+
+```yaml
+apiVersion: sinas.co/v1
+kind: SinasPackage
+package:
+  name: crm-integration
+  version: "1.0.0"
+  description: "CRM support agents and functions"
+  author: "team@company.com"
+  url: "https://github.com/company/sinas-crm"
+spec:
+  agents: [...]
+  functions: [...]
+  skills: [...]
+  connectors: [...]
+  components: [...]
+  templates: [...]
+  queries: [...]
+  collections: [...]
+  stores: [...]
+  webhooks: [...]
+  schedules: [...]
+  manifests: [...]
+  databaseTriggers: [...]
+  dependencies: [...]
+```
+
+**Key behaviors:**
+
+- Resources created by packages are tagged with `managed_by: "pkg:<name>"`
+- **Detach-on-edit**: Editing a package-managed resource clears `managed_by` — the resource survives uninstall
+- **Uninstall**: Deletes all resources where `managed_by = "pkg:<name>"` + the package record
+- **Upgrade**: Re-installing an existing package updates its resources in place (idempotent apply)
+- **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
+- **Dependencies**: Packages can declare Python dependencies — these are recorded in the database and installed in containers on worker restart
+
+**Endpoints:**
+
+```
+POST   /api/v1/packages/install       # Install package from YAML
+POST   /api/v1/packages/preview       # Preview install (dry run)
+POST   /api/v1/packages/create        # Create package YAML from selected resources
+GET    /api/v1/packages               # List installed packages
+GET    /api/v1/packages/{name}        # Get package details
+DELETE /api/v1/packages/{name}        # Uninstall package
+GET    /api/v1/packages/{name}/export # Export original YAML
+```
+
+**Creating a package from existing resources:**
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/packages/create \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-package",
+    "version": "1.0.0",
+    "description": "My integration package",
+    "resources": [
+      {"type": "agent", "namespace": "support", "name": "ticket-bot"},
+      {"type": "function", "namespace": "support", "name": "lookup-customer"},
+      {"type": "template", "namespace": "support", "name": "ticket-reply"},
+      {"type": "schedule", "namespace": "default", "name": "daily-digest"}
+    ]
+  }'
+```
+
+Supported resource types: `agent`, `function`, `skill`, `connector`, `manifest`, `component`, `query`, `collection`, `store`, `template`, `webhook`, `schedule`, `database_trigger`.

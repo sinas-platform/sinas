@@ -1,0 +1,58 @@
+---
+title: "Webhooks"
+description: "Inbound HTTP webhook handlers"
+---
+
+### Webhooks
+
+Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, Sinas executes the linked function with the request data.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `path` | URL path (e.g., `stripe/payment-webhook`) |
+| `http_method` | GET, POST, PUT, DELETE, or PATCH |
+| `function_namespace` / `function_name` | Target function |
+| `requires_auth` | Whether the caller must provide a Bearer token |
+| `default_values` | Default parameters merged with request data (request takes priority) |
+
+**How input is extracted:**
+
+- `POST`/`PUT`/`PATCH` with JSON body → body becomes the input
+- `GET` → query parameters become the input
+- Default values are merged underneath (request data overrides)
+
+**Example:**
+
+```bash
+# Create a webhook
+curl -X POST https://yourdomain.com/api/v1/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path": "stripe/payment",
+    "function_namespace": "payments",
+    "function_name": "process_webhook",
+    "http_method": "POST",
+    "requires_auth": false,
+    "default_values": {"source": "stripe"}
+  }'
+
+# Trigger it
+curl -X POST https://yourdomain.com/webhooks/stripe/payment \
+  -H "Content-Type: application/json" \
+  -d '{"event": "charge.succeeded", "amount": 1000}'
+
+# Function receives: {"source": "stripe", "event": "charge.succeeded", "amount": 1000}
+```
+
+**Endpoints:**
+
+```
+POST   /api/v1/webhooks              # Create webhook
+GET    /api/v1/webhooks              # List webhooks
+GET    /api/v1/webhooks/{path}       # Get webhook
+PATCH  /api/v1/webhooks/{path}       # Update webhook
+DELETE /api/v1/webhooks/{path}       # Delete webhook
+```

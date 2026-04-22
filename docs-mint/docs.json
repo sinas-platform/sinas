@@ -1,0 +1,124 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "sequoia",
+  "name": "Sinas",
+  "colors": {
+    "primary": "#6366F1",
+    "light": "#818CF8",
+    "dark": "#4F46E5"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "index",
+              "getting-started/deployment",
+              "getting-started/concepts",
+              "getting-started/environment-variables"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "platform/authentication",
+              "platform/rbac",
+              "platform/api-overview"
+            ]
+          },
+          {
+            "group": "Build",
+            "pages": [
+              "build/agents",
+              "build/system-tools",
+              "build/functions",
+              "build/queries",
+              "build/connectors",
+              "build/skills",
+              "build/components",
+              "build/secrets"
+            ]
+          },
+          {
+            "group": "Storage",
+            "pages": [
+              "storage/collections",
+              "storage/states"
+            ]
+          },
+          {
+            "group": "Triggers",
+            "pages": [
+              "triggers/webhooks",
+              "triggers/schedules",
+              "triggers/database-triggers"
+            ]
+          },
+          {
+            "group": "Configure",
+            "pages": [
+              "configure/llm-providers",
+              "configure/database-connections",
+              "configure/templates"
+            ]
+          },
+          {
+            "group": "Admin",
+            "pages": [
+              "admin/packages",
+              "admin/manifests",
+              "admin/users-roles",
+              "admin/permissions",
+              "admin/system",
+              "admin/config-manager",
+              "admin/icons"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "href": "https://github.com/sinas-platform",
+          "icon": "github"
+        },
+        {
+          "anchor": "Packages",
+          "href": "https://github.com/sinas-platform/packages",
+          "icon": "box"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Console",
+        "href": "https://wab.sinas.cloud"
+      }
+    ]
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "claude",
+      "cursor"
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/sinas-platform"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+---
+title: "Manifests"
+description: "Application declarations and dependencies"
+---
+
+### Manifests
+
+Manifests are application declarations that describe what resources, permissions, and stores an application built on Sinas requires. They enable a single API call to validate whether a user has everything needed to run the application.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `description` | What this manifest declares |
+| `required_resources` | Resource references: `[{"type": "agent", "namespace": "...", "name": "..."}]` |
+| `required_permissions` | Permissions the application needs |
+| `optional_permissions` | Optional permissions for extended features |
+| `exposed_namespaces` | Namespace filter per resource type (e.g., `{"agents": ["support"]}`) |
+| `store_dependencies` | Stores the application expects: `[{"store": "ns/name", "key": "optional_key"}]` |
+
+**Endpoints:**
+
+```
+POST   /api/v1/manifests                              # Create manifest
+GET    /api/v1/manifests                              # List manifests
+GET    /api/v1/manifests/{namespace}/{name}           # Get manifest
+PUT    /api/v1/manifests/{namespace}/{name}           # Update
+DELETE /api/v1/manifests/{namespace}/{name}           # Delete
+```
+
+**Runtime status validation:**
+
+```
+GET    /api/runtime/manifests/{namespace}/{name}/status   # Validate dependencies
+```
+
+Returns `ready: true/false` with details on satisfied/missing resources, granted/missing permissions, and existing/missing store dependencies.

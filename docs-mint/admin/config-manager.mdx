@@ -1,0 +1,73 @@
+---
+title: "Config Manager"
+description: "YAML configuration import and export"
+---
+
+### Config Manager
+
+The config manager supports GitOps-style declarative configuration. Define all your resources in a YAML file and apply it idempotently.
+
+**YAML structure:**
+
+```yaml
+apiVersion: sinas.co/v1
+kind: SinasConfig
+metadata:
+  name: my-config
+  description: Production configuration
+spec:
+  roles:               # Roles and permissions
+  users:               # User provisioning
+  llmProviders:        # LLM provider connections
+  databaseConnections: # External database credentials
+  dependencies:        # Python packages (pip)
+  secrets:             # Encrypted credentials (values omitted on export)
+  connectors:          # HTTP connectors with typed operations
+  skills:              # Instruction documents
+  components:          # UI components
+  functions:           # Python functions
+  queries:             # Saved SQL templates
+  collections:         # File storage collections
+  templates:           # Jinja2 templates
+  stores:              # State store definitions
+  manifests:           # Application manifests
+  agents:              # AI agent configurations
+  webhooks:            # HTTP triggers for functions
+  schedules:           # Cron-based triggers
+  databaseTriggers:    # CDC polling triggers
+```
+
+All sections are optional — include only what you need.
+
+**Key behaviors:**
+
+- **Idempotent** — Applying the same config twice does nothing. Unchanged resources are skipped (SHA256 checksum comparison).
+- **Config-managed tracking** — Resources created via config are tagged with `managed_by: "config"`. The system won't overwrite resources that were created manually (it warns instead).
+- **Environment variable interpolation** — Use `${VAR_NAME}` in values (e.g., `apiKey: "${OPENAI_API_KEY}"`).
+- **Reference validation** — Cross-references (e.g., an agent referencing a function) are validated before applying.
+- **Dry run** — Set `dryRun: true` to preview changes without applying.
+
+**Endpoints (admin only):**
+
+```
+POST   /api/v1/config/validate       # Validate YAML syntax and references
+POST   /api/v1/config/apply          # Apply config (supports dryRun and force flags)
+GET    /api/v1/config/export         # Export current configuration as YAML
+```
+
+**Auto-apply on startup:**
+
+```bash
+# In .env
+CONFIG_FILE=config/production.yaml
+AUTO_APPLY_CONFIG=true
+```
+
+**Apply via API:**
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/config/apply \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"config\": \"$(cat config.yaml)\", \"dryRun\": false}"
+```

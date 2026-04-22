@@ -1,0 +1,40 @@
+---
+title: "Templates"
+description: "Reusable email and document templates"
+---
+
+### Templates
+
+Templates are Jinja2-based documents for emails, notifications, and dynamic content.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `title` | Optional title template (e.g., email subject) |
+| `html_content` | Jinja2 HTML template |
+| `text_content` | Optional plain-text fallback |
+| `variable_schema` | JSON Schema for validating template variables |
+
+HTML output is auto-escaped to prevent XSS. Missing variables cause errors (strict mode).
+
+**Management endpoints:**
+
+```
+POST   /api/v1/templates                                   # Create template
+GET    /api/v1/templates                                   # List templates
+GET    /api/v1/templates/{id}                              # Get by ID
+GET    /api/v1/templates/by-name/{namespace}/{name}        # Get by name
+PATCH  /api/v1/templates/{id}                              # Update
+DELETE /api/v1/templates/{id}                              # Delete
+```
+
+**Runtime endpoints:**
+
+```
+POST   /templates/{id}/render        # Render template with variables
+POST   /templates/{id}/send          # Render and send as email
+```
+
+---

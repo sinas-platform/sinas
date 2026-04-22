@@ -1,0 +1,45 @@
+---
+title: "LLM Providers"
+description: "API keys and model configuration"
+---
+
+### LLM Providers
+
+LLM providers connect Sinas to language model APIs.
+
+**Supported providers:**
+
+| Type | Description |
+|---|---|
+| `openai` | OpenAI API (GPT-4, GPT-4o, o1, etc.) and OpenAI-compatible endpoints |
+| `anthropic` | Anthropic API (Claude 3, Claude 4, etc.) |
+| `mistral` | Mistral AI (Mistral Large, Pixtral, etc.) |
+| `ollama` | Local models via Ollama |
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `name` | Unique provider name |
+| `provider_type` | `openai`, `anthropic`, `mistral`, or `ollama` |
+| `api_key` | API key (encrypted at rest, never returned in API responses) |
+| `api_endpoint` | Custom endpoint URL (required for Ollama, useful for proxies) |
+| `default_model` | Model used when agents don't specify one |
+| `config` | Additional settings (e.g., `max_tokens`, `organization_id`) |
+| `is_default` | Whether this is the system-wide default provider |
+
+**Provider resolution for agents:**
+1. Agent's explicit `llm_provider_id` if set
+2. Agent's `model` field with the resolved provider
+3. Provider's `default_model`
+4. System default provider as final fallback
+
+**Endpoints (admin only):**
+
+```
+POST   /api/v1/llm-providers             # Create provider
+GET    /api/v1/llm-providers             # List providers
+GET    /api/v1/llm-providers/{name}      # Get provider
+PATCH  /api/v1/llm-providers/{id}        # Update provider
+DELETE /api/v1/llm-providers/{id}        # Delete provider
+```
