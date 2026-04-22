@@ -1,0 +1,22 @@
+---
+title: "Users & Roles"
+description: "User management and role assignments"
+---
+
+### Users & Roles
+
+**Users** are identified by email. They can be created automatically on first login (OTP or OIDC) or provisioned via the management API or declarative config.
+
+**Roles** group permissions together. Users can belong to multiple roles. All permissions across all of a user's roles are combined.
+
+**User endpoints:**
+
+```
+GET    /api/v1/users                    # List users (admin)
+POST   /api/v1/users                    # Create user (admin)
+GET    /api/v1/users/{id}              # Get user
+PATCH  /api/v1/users/{id}              # Update user
+DELETE /api/v1/users/{id}              # Delete user (admin)
+```
+
+**Role endpoints:** See [Managing Roles](#managing-roles).

@@ -1,0 +1,32 @@
+---
+title: "Schedules"
+description: "Cron-based scheduled jobs"
+---
+
+### Schedules
+
+Schedules trigger functions or agents on a cron timer.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `name` | Unique name (per user) |
+| `schedule_type` | `function` or `agent` |
+| `target_namespace` / `target_name` | Function or agent to trigger |
+| `cron_expression` | Standard cron expression (e.g., `0 9 * * MON-FRI`) |
+| `timezone` | Schedule timezone (default: `UTC`) |
+| `input_data` | Input passed to the function or agent |
+| `content` | Message content (agent schedules only) |
+
+For agent schedules, a new chat is created for each run with the schedule name and timestamp as the title.
+
+**Endpoints:**
+
+```
+POST   /api/v1/schedules              # Create schedule
+GET    /api/v1/schedules              # List schedules
+GET    /api/v1/schedules/{name}       # Get schedule
+PATCH  /api/v1/schedules/{name}       # Update schedule
+DELETE /api/v1/schedules/{name}       # Delete schedule
+```

@@ -1,0 +1,15 @@
+---
+title: "Icons"
+description: "Icon references for agents and resources"
+---
+
+### Icons
+
+Agents and functions support configurable icons via the `icon` field. Two formats are supported:
+
+| Format | Example | Description |
+|---|---|---|
+| `url:<url>` | `url:https://example.com/icon.png` | Direct URL to an image |
+| `collection:<ns>/<coll>/<file>` | `collection:assets/icons/bot.png` | File stored in a Sinas collection |
+
+Collection-based icons generate signed JWT URLs for private files and direct URLs for public collection files. Icons are resolved at read time via the icon resolver service.

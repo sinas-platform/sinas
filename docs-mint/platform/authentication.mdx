@@ -1,0 +1,42 @@
+---
+title: "Authentication"
+description: "OTP login and API keys"
+---
+
+## Authentication
+
+Sinas uses email-based OTP authentication, with API keys available for programmatic access.
+
+### OTP Authentication
+
+1. Client sends email to `POST /auth/login`
+2. Sinas sends a 6-digit code to that email (valid for 10 minutes by default)
+3. Client submits code to `POST /auth/verify-otp`
+4. Sinas returns an **access token** (short-lived JWT, default 15 min) and a **refresh token** (long-lived, default 30 days)
+5. Use the access token in the `Authorization: Bearer <token>` header
+6. When the access token expires, use `POST /auth/refresh` to get a new one
+
+**Endpoints:**
+
+```
+POST   /auth/login                # Send OTP to email
+POST   /auth/verify-otp           # Verify OTP, receive tokens
+POST   /auth/refresh              # Get new access token using refresh token
+POST   /auth/logout               # Revoke refresh token
+GET    /auth/me                   # Get current user info
+```
+
+### API Keys
+
+For programmatic access (scripts, CI/CD, integrations), create API keys instead of using short-lived JWT tokens. Each key has its own set of permissions (a subset of the creating user's permissions).
+
+```
+POST   /api/v1/api-keys           # Create key (plaintext returned once)
+GET    /api/v1/api-keys           # List keys
+GET    /api/v1/api-keys/{id}      # Get key details
+DELETE /api/v1/api-keys/{id}      # Revoke key
+```
+
+API keys can be used via `Authorization: Bearer <key>` or `X-API-Key: <key>` headers. Keys can have optional expiration dates.
+
+---
