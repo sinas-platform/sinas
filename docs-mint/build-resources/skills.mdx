@@ -1,0 +1,42 @@
+---
+title: "Skills"
+description: "Knowledge resources for agents"
+---
+
+
+Skills are reusable instruction documents that give agents specialized knowledge or guidelines.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `description` | What the skill helps with (shown to the LLM as the tool description) |
+| `content` | Markdown instructions |
+
+**Two modes:**
+
+| Mode | Behavior | Best for |
+|---|---|---|
+| **Preloaded** (`preload: true`) | Injected into the system prompt | Tone guidelines, safety rules, persona traits |
+| **Progressive** (`preload: false`) | Exposed as a tool the LLM calls when needed | Research methods, domain expertise, task-specific instructions |
+
+Example agent configuration:
+
+```yaml
+enabled_skills:
+  - skill: "default/tone_guidelines"
+    preload: true       # Always present in system prompt
+  - skill: "default/web_research"
+    preload: false      # LLM decides when to retrieve it
+```
+
+**Endpoints:**
+
+```
+POST   /api/v1/skills                       # Create skill
+GET    /api/v1/skills                       # List skills
+GET    /api/v1/skills/{namespace}/{name}    # Get skill
+PUT    /api/v1/skills/{namespace}/{name}    # Update skill
+DELETE /api/v1/skills/{namespace}/{name}    # Delete skill
+```

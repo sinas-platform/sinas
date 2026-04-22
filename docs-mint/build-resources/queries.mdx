@@ -1,0 +1,67 @@
+---
+title: "Queries"
+description: "Parameterized SQL against database connections"
+---
+
+
+Queries are saved SQL templates that can be executed directly or used as agent tools.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `database_connection_id` | Which database connection to use |
+| `description` | Shown to the LLM as the tool description |
+| `operation` | `read` or `write` |
+| `sql` | SQL with `:param_name` placeholders |
+| `input_schema` | JSON Schema for parameter validation |
+| `output_schema` | JSON Schema for output validation |
+| `timeout_ms` | Query timeout (default: 5000ms) |
+| `max_rows` | Max rows returned for read operations (default: 1000) |
+
+**Agent query parameters** support defaults and locking:
+
+```yaml
+query_parameters:
+  "analytics/user_orders":
+    "user_id":
+      value: "{{user_id}}"    # Jinja2 template from agent input
+      locked: true             # Hidden from LLM, always injected
+    "status":
+      value: "pending"
+      locked: false            # Shown to LLM with default, LLM can override
+```
+
+Locked parameters prevent the LLM from seeing or modifying security-sensitive values (like `user_id`).
+
+**Contextual parameters:** The following parameters are automatically injected into every query execution and can be referenced in SQL:
+
+| Parameter | Description |
+|---|---|
+| `:user_id` | UUID of the user who triggered the query |
+| `:user_email` | Email of the triggering user |
+
+These are always available regardless of the query's `input_schema`. Use them for row-level security:
+
+```sql
+-- Only return orders belonging to the calling user
+SELECT * FROM orders WHERE created_by = :user_id
+
+-- Audit trail
+INSERT INTO audit_log (action, performed_by) VALUES (:action, :user_email)
+```
+
+**Endpoints:**
+
+```
+POST   /queries/{namespace}/{name}/execute            # Execute with parameters (runtime)
+
+POST   /api/v1/queries                              # Create query
+GET    /api/v1/queries                              # List queries
+GET    /api/v1/queries/{namespace}/{name}           # Get query
+PUT    /api/v1/queries/{namespace}/{name}           # Update query
+DELETE /api/v1/queries/{namespace}/{name}           # Delete query
+```
+
+---

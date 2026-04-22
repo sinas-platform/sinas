@@ -1,0 +1,60 @@
+---
+title: "Components"
+description: "Renderable UI components"
+---
+
+
+Components are embeddable UI widgets built with JSX/HTML/JS and compiled by Sinas into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `title` | Display title |
+| `source_code` | JSX/HTML/JS source |
+| `compiled_bundle` | Auto-generated browser-ready JS |
+| `input_schema` | JSON Schema for component configuration |
+| `enabled_agents` | Agents the component can call |
+| `enabled_functions` | Functions the component can call |
+| `enabled_queries` | Queries the component can execute |
+| `enabled_components` | Other components it can embed |
+| `enabled_stores` | Stores the component can access (`{"store": "ns/name", "access": "readonly\|readwrite"}`) |
+| `css_overrides` | Custom CSS |
+| `visibility` | `private`, `shared`, or `public` |
+
+Components use the `sinas-ui` library (loaded from npm/unpkg) for a consistent look and feel.
+
+**Management endpoints:**
+
+```
+POST   /api/v1/components                                  # Create component
+GET    /api/v1/components                                  # List components
+GET    /api/v1/components/{namespace}/{name}               # Get component
+PUT    /api/v1/components/{namespace}/{name}               # Update component
+DELETE /api/v1/components/{namespace}/{name}               # Delete component
+POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
+```
+
+**Share links** allow embedding components outside Sinas with optional expiration and view limits:
+
+```
+POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
+GET    /api/v1/components/{namespace}/{name}/shares        # List share links
+DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
+```
+
+**Runtime rendering:**
+
+```
+GET    /components/{namespace}/{name}/render               # Render as full HTML page
+GET    /components/shared/{token}                          # Render via share token
+```
+
+**Proxy endpoints** allow components to call backend resources from the browser securely — the proxy enforces the component's `enabled_*` permissions:
+
+```
+POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
+POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
+POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
+```

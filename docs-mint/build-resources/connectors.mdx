@@ -1,0 +1,78 @@
+---
+title: "Connectors"
+description: "HTTP API integrations with operations and auth"
+---
+
+
+Named HTTP client configurations with typed operations. Executed in-process in the backend (no container overhead). Operations are exposed as agent tools. Auth resolved from the Secrets store at call time.
+
+**Endpoints:**
+
+```
+POST   /api/v1/connectors                                        # Create connector
+GET    /api/v1/connectors                                        # List connectors
+GET    /api/v1/connectors/{namespace}/{name}                     # Get connector
+PUT    /api/v1/connectors/{namespace}/{name}                     # Update connector
+DELETE /api/v1/connectors/{namespace}/{name}                     # Delete connector
+POST   /api/v1/connectors/parse-openapi                          # Parse OpenAPI spec (no connector required)
+POST   /api/v1/connectors/{namespace}/{name}/import-openapi      # Import operations from OpenAPI spec into connector
+POST   /api/v1/connectors/{namespace}/{name}/test/{operation}    # Test an operation
+```
+
+**Auth types:** `bearer`, `basic`, `api_key`, `sinas_token` (forwards caller's JWT), `none`
+
+Auth is resolved from the Secrets store. Private secrets override shared for the calling user — enabling multi-tenant patterns where each user can have their own API key for the same connector.
+
+**Agent configuration:**
+
+```yaml
+agents:
+  - name: slack-bot
+    enabledConnectors:
+      - connector: default/slack-api
+        operations: [post_message, get_channel_info]
+        parameters:
+          post_message:
+            channel: "{{ default_channel }}"
+```
+
+**YAML config:**
+
+```yaml
+connectors:
+  - name: slack-api
+    namespace: default
+    baseUrl: https://slack.com/api
+    auth:
+      type: bearer
+      secret: SLACK_BOT_TOKEN
+    operations:
+      - name: post_message
+        method: POST
+        path: /chat.postMessage
+        parameters:
+          type: object
+          properties:
+            channel: { type: string }
+            text: { type: string }
+          required: [channel, text]
+```
+
+**Execution history:**
+
+```
+GET    /executions                               # List executions (filterable by chat_id, trigger_type, status)
+GET    /executions/{execution_id}                # Get execution details (includes tool_call_id link)
+POST   /executions/{execution_id}/continue       # Resume a paused execution with user input
+```
+
+Executions include a `tool_call_id` field linking them to the tool call that triggered them, enabling execution tree visualization in the Logs page.
+
+**Input schema presets:** The function editor includes built-in presets for common input/output schemas. Use the "Load preset" dropdown when editing schemas:
+
+| Preset | Use case |
+|---|---|
+| **Pre-upload filter** | Content filtering before file upload (receives file content, returns approved/rejected) |
+| **Post-upload** | Processing after successful file upload (receives file_id, metadata) |
+| **CDC (Change Data Capture)** | Processing database changes (receives table, rows, poll_column, count) |
+| **Message Hook** | Message lifecycle hook (receives message, chat_id, agent; returns content mutation or block) |
