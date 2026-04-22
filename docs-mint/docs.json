@@ -33,14 +33,14 @@
           {
             "group": "Build",
             "pages": [
-              "build/agents",
-              "build/system-tools",
-              "build/functions",
-              "build/queries",
-              "build/connectors",
-              "build/skills",
-              "build/components",
-              "build/secrets"
+              "build-resources/agents",
+              "build-resources/system-tools",
+              "build-resources/functions",
+              "build-resources/queries",
+              "build-resources/connectors",
+              "build-resources/skills",
+              "build-resources/components",
+              "build-resources/secrets"
             ]
           },
           {

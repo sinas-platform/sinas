@@ -1,0 +1,106 @@
+---
+title: "Functions"
+description: "Python code in sandboxed containers"
+---
+
+
+Functions are Python code that runs in isolated Docker containers. They can be used as agent tools, triggered by webhooks or schedules, or executed directly.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier |
+| `code` | Python source code |
+| `description` | Shown to the LLM when used as an agent tool |
+| `input_schema` | JSON Schema for input validation |
+| `output_schema` | JSON Schema for output validation |
+| `shared_pool` | Run in shared container instead of sandbox container (admin-only) |
+| `requires_approval` | Require user approval when called by an agent |
+| `timeout` | Per-function timeout in seconds (overrides global `FUNCTION_TIMEOUT`, default: null) |
+
+## Function signature
+
+The entry point must be named `handler`. It receives two arguments — `input_data` (validated against input_schema) and `context` (execution metadata):
+
+```python
+def handler(input_data, context):
+    # input_data: dict validated against input_schema
+    #
+    # context dict — always present:
+    # {
+    #     "user_id":        str,   # ID of the user who triggered execution
+    #     "user_email":     str,   # Email of the triggering user
+    #     "access_token":   str,   # Short-lived JWT for calling the Sinas API
+    #     "execution_id":   str,   # Unique execution ID
+    #     "trigger_type":   str,   # "AGENT" | "API" | "WEBHOOK" | "SCHEDULE" | "CDC" | "HOOK" | "MANUAL"
+    #     "chat_id":        str,   # Chat ID (when triggered by an agent, empty otherwise)
+    #     "secrets":        dict,  # Decrypted secrets (shared pool only): {"NAME": "value"}
+    # }
+
+    return {"result": "value"}  # Must match output_schema
+```
+
+> **Legacy:** Functions named after the resource name (e.g. `def send_email(input_data, context)`) still work but log a deprecation warning. Migrate to `def handler(...)`.
+
+The `access_token` lets functions call back into the Sinas API with the triggering user's identity — useful for reading state, triggering other functions, or accessing any other endpoint.
+
+## Trigger-specific input_data
+
+Depending on how the function is invoked, `input_data` is populated differently:
+
+| Trigger | input_data contents |
+|---|---|
+| **AGENT / API / MANUAL / SCHEDULE** | Values matching your input schema, provided by the caller |
+| **WEBHOOK** | Webhook `default_values` merged with request body/query params |
+| **CDC** | `{"table": "schema.table", "operation": "CHANGE", "rows": [...], "poll_column": str, "count": int, "timestamp": str}` |
+| **HOOK** | `{"message": {"role": "user"\|"assistant", "content": "..."}, "chat_id": str, "agent": {"namespace": str, "name": str}, "session_key": str\|null, "user_id": str}` |
+| **Collection content filter** | `{"content_base64": str, "namespace": str, "collection": str, "filename": str, "content_type": str, "size_bytes": int, "user_metadata": dict, "user_id": str}` |
+| **Collection post-upload** | `{"file_id": str, "namespace": str, "collection": str, "filename": str, "version": int, "file_path": str, "user_id": str, "metadata": dict}` |
+
+## Hook function return values
+
+Functions used as message hooks (configured in agent's `hooks` field) can return:
+
+| Return value | Effect |
+|---|---|
+| `None` or `{}` | Pass through unchanged |
+| `{"content": "..."}` | Mutate the message content |
+| `{"block": true, "reply": "..."}` | Block the pipeline, return reply to client (sync hooks only) |
+
+Async hooks run fire-and-forget. For `on_assistant_message` async hooks, the return value retroactively updates the stored message (not the already-streamed response).
+
+## Interactive input (shared containers only)
+
+Functions running in shared containers (`shared_pool=true`) can call `input()` to pause and wait for user input:
+
+```python
+def handler(input_data, context):
+    name = input("What is your name?")    # Pauses execution
+    confirm = input(f"Confirm {name}?")   # Can call multiple times
+    return {"name": name, "confirmed": confirm}
+```
+
+When `input()` is called:
+1. The execution status changes to `AWAITING_INPUT` with the prompt string
+2. The function thread blocks until a resume value is provided
+3. The calling agent or API client resumes execution with the user's response
+4. Multiple `input()` calls are supported (each triggers a new pause/resume cycle)
+
+In sandbox containers (`shared_pool=false`), calling `input()` raises a `RuntimeError`.
+
+**Execution:** Functions run in pre-warmed Docker containers from a managed pool. Input is validated before execution, output is validated after. All executions are logged with status, duration, input/output, and any errors.
+
+**Endpoints:**
+
+```
+POST   /functions/{namespace}/{name}/execute               # Execute (sync, waits for result)
+POST   /functions/{namespace}/{name}/execute/async         # Execute (async, returns execution_id)
+
+POST   /api/v1/functions                                   # Create function
+GET    /api/v1/functions                                   # List functions
+GET    /api/v1/functions/{namespace}/{name}                # Get function
+PUT    /api/v1/functions/{namespace}/{name}                # Update function
+DELETE /api/v1/functions/{namespace}/{name}                # Delete function
+GET    /api/v1/functions/{namespace}/{name}/versions       # List code versions
+```

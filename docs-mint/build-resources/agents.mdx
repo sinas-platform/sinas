@@ -1,0 +1,138 @@
+---
+title: "Agents"
+description: "Configurable AI assistants with tools, prompts, and hooks"
+---
+
+
+Agents are configurable AI assistants. Each agent has an LLM provider, a system prompt, and a set of enabled tools.
+
+**Key properties:**
+
+| Property | Description |
+|---|---|
+| `namespace` / `name` | Unique identifier (e.g., `support/ticket-agent`) |
+| `llm_provider_id` | LLM provider to use (null = system default) |
+| `model` | Model override (null = provider's default) |
+| `system_prompt` | Jinja2 template for the system message |
+| `temperature` | Sampling temperature (default: 0.7) |
+| `max_tokens` | Max token limit for responses |
+| `input_schema` | JSON Schema for validating chat input variables |
+| `output_schema` | JSON Schema for validating agent output |
+| `initial_messages` | Few-shot example messages |
+| `enabled_functions` | Functions available as tools (list of `namespace/name`) |
+| `function_parameters` | Default parameter values per function (supports Jinja2) |
+| `enabled_agents` | Other agents callable as sub-agents |
+| `enabled_skills` | Skills available to the agent |
+| `enabled_queries` | Database queries available as tools |
+| `query_parameters` | Default query parameter values |
+| `enabled_collections` | File collections the agent can access. Plain string (readonly) or `{"collection": "namespace/name", "access": "readonly\|readwrite"}`. Readwrite enables write/edit/delete file tools. |
+| `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
+| `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...], "parameters": {"op_name": {"param": "value"}}}`. Parameters support Jinja2 templates and are locked (hidden from LLM). |
+| `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
+| `system_tools` | Platform capabilities. List of strings or config objects. See [System Tools](#system-tools). |
+| `icon` | Icon reference (see [Icons](#icons)) |
+
+**Message hooks:** Functions that run before/after agent messages. Each hook has:
+- `function`: reference to a function (`namespace/name`)
+- `async`: if true, fire-and-forget (no impact on latency)
+- `on_timeout`: `block` (stop pipeline) or `passthrough` (continue) — sync hooks only
+
+Hook functions receive `{"message": {"role": "...", "content": "..."}, "chat_id": "...", "agent": {"namespace": "...", "name": "..."}, "user_id": "..."}` and can return:
+- `{"content": "..."}` to mutate the message
+- `{"block": true, "reply": "..."}` to stop the pipeline
+- `null` to pass through unchanged
+
+```yaml
+agents:
+  - name: my-agent
+    hooks:
+      onUserMessage:
+        - function: default/guardrail
+          async: false
+          onTimeout: block
+      onAssistantMessage:
+        - function: default/pii-filter
+          async: false
+          onTimeout: passthrough
+```
+
+**Management endpoints:**
+
+```
+POST   /api/v1/agents                       # Create agent
+GET    /api/v1/agents                       # List agents
+GET    /api/v1/agents/{namespace}/{name}    # Get agent
+PUT    /api/v1/agents/{namespace}/{name}    # Update agent
+DELETE /api/v1/agents/{namespace}/{name}    # Delete agent
+```
+
+**Runtime endpoints (chats):**
+
+```
+POST   /agents/{namespace}/{name}/invoke             # Invoke (sync request/response)
+POST   /agents/{namespace}/{name}/chats              # Create chat
+GET    /chats                                        # List user's chats
+GET    /chats/{id}                                   # Get chat with messages
+PUT    /chats/{id}                                   # Update chat
+DELETE /chats/{id}                                   # Delete chat
+POST   /chats/{id}/messages                          # Send message
+POST   /chats/{id}/messages/stream                   # Send message (SSE streaming)
+GET    /chats/{id}/stream/{channel_id}               # Reconnect to active stream
+POST   /chats/{id}/approve-tool/{tool_call_id}       # Approve/reject a tool call
+```
+
+**Invoke endpoint:** A synchronous request/response alternative to the two-step chat flow. Intended for integrations (Slack, Telegram, webhooks) that need a simple call-and-response.
+
+```bash
+# Simple invoke
+curl -X POST https://yourdomain.com/agents/support/helper/invoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is the status of order #123?"}'
+# → {"reply": "Your order is on its way...", "chat_id": "c_abc123"}
+
+# With session key (conversation continuity)
+curl -X POST https://yourdomain.com/agents/support/helper/invoke \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Follow up on that", "session_key": "slack:U09ABC123"}'
+# → Same chat_id as previous call with this session_key
+```
+
+- `session_key`: Maps an external identifier (Slack channel, Telegram chat, WhatsApp number) to a persistent Sinas chat. One chat per `(agent_id, session_key)` pair.
+- `reset: true`: Archives the existing session and starts a new conversation.
+- `input`: Agent input variables, only used when creating a new chat.
+- Streams internally, returns assembled reply as a single JSON payload.
+
+**How chat works:**
+
+1. Create a chat linked to an agent (optionally with input variables validated against `input_schema`)
+2. Send a message — Sinas builds the conversation context with the system prompt, preloaded skills, message history, and available tools
+3. The LLM generates a response, possibly calling tools
+4. If tools are called, Sinas executes them (in parallel where possible) and sends results back to the LLM for a follow-up response
+5. The final response is streamed to the client via Server-Sent Events
+
+**Ephemeral chats** can be created with a TTL by passing `expires_in` (seconds) when creating the chat. Expired chats are automatically hard-deleted (with all messages) by a scheduled cleanup job:
+
+```bash
+# Create an ephemeral chat that expires in 1 hour
+curl -X POST https://yourdomain.com/agents/default/default/chats \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expires_in": 3600}'
+```
+
+**Chat archiving** — Chats can be archived via `PUT /chats/{id}` with `{"archived": true}`. Archived chats are hidden from the default list but can be included with `?include_archived=true`.
+
+**Agent-to-agent calls** go through the Redis queue so sub-agents run in separate workers, avoiding recursive blocking. Results stream back via Redis Streams.
+
+**Function parameter defaults** pre-fill values when an agent calls a function. Supports Jinja2 templates referencing the agent's input variables:
+
+```json
+{
+  "email/send_email": {
+    "sender": "{{company_email}}",
+    "priority": "high"
+  }
+}
+```
