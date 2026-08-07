@@ -55,7 +55,8 @@ jobs:
             context: ./backend
             dockerfile: ./backend/Dockerfile.executor
           - name: console
-            context: ./console
+            # Repo-root context: the console image bundles studio/app at /studio/
+            context: .
             dockerfile: ./console/Dockerfile
 
     steps:

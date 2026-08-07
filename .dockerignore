@@ -1,0 +1,11 @@
+# Applies to builds whose context is the repo root (console/Dockerfile).
+# Backend images build from ./backend and use backend/.dockerignore instead.
+# Allowlist: only what console/Dockerfile actually copies.
+*
+!console
+!studio/app
+!studio/packages
+console/node_modules
+console/dist
+studio/app/node_modules
+studio/app/dist

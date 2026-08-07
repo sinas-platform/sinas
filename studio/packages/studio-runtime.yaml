@@ -1,0 +1,149 @@
+# Studio companion package — see studio/README.md §6.
+# Installed once per workspace by an admin ("connect Studio" setup step).
+# Contents: the studio/copilot agent (AI assist, explain-error) and the
+# generic webhook->assistant adapter (studio/ask-agent).
+apiVersion: sinas.co/v1
+kind: SinasPackage
+package:
+  name: studio-runtime
+  version: "0.1.0"
+  description: "Runtime resources for Sinas Studio: the copilot agent and the generic trigger adapter"
+  url: "https://github.com/sinas-platform/sinas/tree/main/studio"
+spec:
+  variables:
+    - name: WORKSPACE_URL
+      type: text
+      description: >-
+        The public URL of this workspace's API, reachable from function
+        sandboxes (they run on an isolated network). For local development
+        use http://host.docker.internal:8000
+      required: true
+      example: "https://sinas.yourcompany.com"
+
+  agents:
+    - namespace: studio
+      name: copilot
+      description: "Sinas Studio's built-in assistant: improves instructions, explains errors, and answers questions about what an assistant is set up to do"
+      temperature: 0.2
+      systemPrompt: |
+        You are the Sinas Studio copilot. Studio is a visual editor used by
+        business analysts — people who do not read code. Every request you
+        receive starts with a "Mode:" line; follow the matching contract
+        exactly, because Studio inserts your reply directly into the UI.
+
+        Mode: improve-instructions
+          You receive assistant instructions written by a business user.
+          Rewrite them to be clearer, better structured, and more complete
+          without changing their intent or inventing new behavior. Reply with
+          ONLY the improved instructions text — no preamble, no commentary,
+          no markdown fences.
+
+        Mode: draft-instructions
+          You receive a plain-language description of what an assistant
+          should do. Write first-draft instructions for it: role, how to
+          behave, when to use its tools, tone. Reply with ONLY the
+          instructions text.
+
+        Mode: explain-error
+          You receive a technical error message and traceback from a failed
+          run. Explain in two or three plain sentences what went wrong and
+          what the user could check or change. Never invent details that are
+          not supported by the error text. No markdown, no code blocks.
+
+        Mode: explain-setup
+          You receive an assistant's configuration summary. Read it back in
+          plain language: what it can do, what it reads, when it runs.
+
+        For any request without a Mode line, answer briefly and honestly; if
+        you are unsure, say so.
+
+  functions:
+    - namespace: studio
+      name: ask-agent
+      description: "Generic trigger adapter: forwards a webhook payload to an assistant. Configure via default_values on the webhook (studio_agent, studio_message_template, studio_input_map)."
+      # Trusted, admin-installed code -> shared pool: pre-warmed workers (low
+      # webhook latency) and context['secrets'] for future signature checks.
+      # Note: shared workers still run on the isolated sandbox network, so the
+      # callback must use WORKSPACE_URL, not internal service names.
+      sharedPool: true
+      timeout: 115
+      code: |
+        def handler(input_data, context):
+            """Forward a trigger payload to an assistant.
+
+            Reserved parameters (set as webhook default_values, merged into
+            input_data by the platform):
+              studio_agent            "namespace/name" of the assistant to run
+              studio_message_template message text; @field inserts payload fields
+              studio_input_map        optional {payload_field: assistant_input}
+            Everything else in input_data is the trigger payload.
+            """
+            import json
+            import urllib.request
+
+            agent = input_data.get("studio_agent") or ""
+            if "/" not in agent:
+                raise ValueError(
+                    "studio_agent must be configured on the trigger as 'namespace/name'"
+                )
+            template = input_data.get("studio_message_template") or ""
+            input_map = input_data.get("studio_input_map") or {}
+
+            payload = {
+                k: v for k, v in input_data.items() if not k.startswith("studio_")
+            }
+
+            message = template
+            for key, value in sorted(payload.items(), key=lambda kv: -len(kv[0])):
+                message = message.replace("@" + key, str(value))
+            if not message.strip():
+                message = json.dumps(payload)
+
+            agent_input = {
+                str(target): payload[source]
+                for source, target in input_map.items()
+                if source in payload
+            }
+
+            namespace, name = agent.split("/", 1)
+            body = {"message": message}
+            if agent_input:
+                body["input"] = agent_input
+
+            request = urllib.request.Request(
+                "${{ vars.WORKSPACE_URL }}" + f"/agents/{namespace}/{name}/invoke",
+                data=json.dumps(body).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer " + context["access_token"],
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=110) as response:
+                result = json.loads(response.read().decode())
+
+            return {
+                "status": "ok",
+                "chat_id": result.get("chat_id"),
+                "reply": result.get("reply"),
+            }
+      inputSchema:
+        type: object
+        properties:
+          studio_agent:
+            type: string
+            description: "Assistant to run, as namespace/name"
+          studio_message_template:
+            type: string
+            description: "Message sent to the assistant; @field inserts payload fields"
+          studio_input_map:
+            type: object
+            description: "Optional map of payload field -> assistant input name"
+        required: [studio_agent]
+        additionalProperties: true
+      outputSchema:
+        type: object
+        properties:
+          status: { type: string }
+          chat_id: { type: string }
+          reply: { type: string }

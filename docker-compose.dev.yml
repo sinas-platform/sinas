@@ -89,7 +89,9 @@ services:
 
   console:
     build:
-      context: ./console
+      # Repo-root context so the image can bundle studio/app (see console/Dockerfile)
+      context: .
+      dockerfile: console/Dockerfile
       args:
         USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
     ports:

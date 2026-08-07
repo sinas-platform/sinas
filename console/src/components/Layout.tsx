@@ -29,6 +29,8 @@ import {
   HardDrive,
   KeyRound,
   Plug,
+  Sparkles,
+  ExternalLink,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -164,8 +166,8 @@ export function Layout() {
             ))}
           </nav>
 
-          {/* Chat History link */}
-          <div className="px-4 pb-2">
+          {/* Chat History + Studio links */}
+          <div className="px-4 pb-2 space-y-1">
             <Link
               to="/chats"
               onClick={() => setSidebarOpen(false)}
@@ -174,6 +176,17 @@ export function Layout() {
               <MessageSquare className="w-4 h-4 mr-2" />
               Chat History
             </Link>
+            {/* Studio is bundled with the console and served same-origin at /studio/ */}
+            <a
+              href="/studio/"
+              target="_blank"
+              rel="noopener"
+              className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-md transition-colors"
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              Open Studio
+              <ExternalLink className="w-3 h-3 ml-auto" />
+            </a>
           </div>
 
           {/* User menu */}

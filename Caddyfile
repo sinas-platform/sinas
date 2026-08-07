@@ -1,9 +1,18 @@
 {$DOMAIN} {
-    reverse_proxy backend:8000 {
-        lb_policy round_robin
-        health_uri /health
-        health_interval 10s
-        health_timeout 5s
+    # Studio is bundled into the console image and served same-origin with
+    # the API so it can detect the workspace via GET /info (studio/README.md §8)
+    @studio path /studio /studio/*
+    handle @studio {
+        reverse_proxy console:80
+    }
+
+    handle {
+        reverse_proxy backend:8000 {
+            lb_policy round_robin
+            health_uri /health
+            health_interval 10s
+            health_timeout 5s
+        }
     }
 
     @notComponents not path /components/*
