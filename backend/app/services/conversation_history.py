@@ -18,6 +18,44 @@ from app.services.template_renderer import render_template
 logger = logging.getLogger(__name__)
 
 
+async def build_agent_system_content(
+    db: AsyncSession,
+    agent: Agent,
+    skill_converter: SkillToolConverter,
+    template_variables: Optional[dict[str, Any]] = None,
+) -> str:
+    """Render the agent's full system content: Jinja2-templated system
+    prompt + preloaded skills + output-schema instruction.
+
+    Shared by the initial LLM call (build_conversation_history) and the
+    tool-loop follow-up (message_service) so the system prompt can't
+    diverge mid-turn.
+    """
+    system_content = ""
+    if agent.system_prompt:
+        if template_variables:
+            try:
+                system_content = render_template(agent.system_prompt, template_variables)
+            except Exception as e:
+                logger.error(f"Failed to render system prompt template: {e}")
+                system_content = agent.system_prompt
+        else:
+            system_content = agent.system_prompt
+
+    if agent.enabled_skills:
+        preloaded_content = await skill_converter.get_preloaded_skills_content(
+            db=db, enabled_skills=agent.enabled_skills
+        )
+        if preloaded_content:
+            system_content += f"\n\n# Preloaded Skills\n\n{preloaded_content}"
+
+    if agent.output_schema and agent.output_schema.get("properties"):
+        schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
+        system_content += schema_instruction
+
+    return system_content
+
+
 async def build_conversation_history(
     db: AsyncSession,
     chat: Chat,
@@ -52,29 +90,10 @@ async def build_conversation_history(
     if chat.agent_id:
         result = await db.execute(select(Agent).where(Agent.id == chat.agent_id))
         agent = result.scalar_one_or_none()
-        if agent and agent.system_prompt:
-            # Render system prompt with Jinja2 if template_variables provided
-            if template_variables:
-                try:
-                    system_content = render_template(agent.system_prompt, template_variables)
-                except Exception as e:
-                    logger.error(f"Failed to render system prompt template: {e}")
-                    system_content = agent.system_prompt
-            else:
-                system_content = agent.system_prompt
-
-        # Inject preloaded skills content into system prompt
-        if agent and agent.enabled_skills:
-            preloaded_content = await skill_converter.get_preloaded_skills_content(
-                db=db, enabled_skills=agent.enabled_skills
+        if agent:
+            system_content = await build_agent_system_content(
+                db, agent, skill_converter, template_variables
             )
-            if preloaded_content:
-                system_content += f"\n\n# Preloaded Skills\n\n{preloaded_content}"
-
-        # Add output schema instruction if agent has one
-        if agent and agent.output_schema and agent.output_schema.get("properties"):
-            schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
-            system_content += schema_instruction
 
     # Inject relevant context if enabled
     # No agent = no context injection

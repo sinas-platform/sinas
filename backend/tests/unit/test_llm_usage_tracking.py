@@ -198,7 +198,13 @@ async def test_openai_stream_requests_and_emits_usage():
     assert captured["stream_options"] == {"include_usage": True}
     assert out[0]["content"] == "hi"
     assert "usage" not in out[0]
-    assert out[-1]["usage"] == {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10}
+    assert out[-1]["usage"] == {
+        "prompt_tokens": 7,
+        "completion_tokens": 3,
+        "total_tokens": 10,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+    }
 
 
 async def test_azure_drop_params_strips_stream_options():

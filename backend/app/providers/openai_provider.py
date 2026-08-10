@@ -167,12 +167,29 @@ class OpenAIProvider(BaseLLMProvider):
         return formatted
 
     def extract_usage(self, response: Any) -> dict[str, int]:
-        """Extract token usage from OpenAI response."""
-        if not response.usage:
-            return {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        """Extract token usage from OpenAI response.
 
+        OpenAI's automatic prompt caching reports the cached portion in
+        prompt_tokens_details.cached_tokens (already included in
+        prompt_tokens). Also covers OpenAI-compatible endpoints (Azure
+        inherits this; Gemini's compat layer may report it too).
+        cache_write_tokens stays 0: OpenAI has no write premium.
+        """
+        if not response.usage:
+            return {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+
+        details = getattr(response.usage, "prompt_tokens_details", None)
+        cache_read = (getattr(details, "cached_tokens", 0) or 0) if details else 0
         return {
             "prompt_tokens": response.usage.prompt_tokens,
             "completion_tokens": response.usage.completion_tokens,
             "total_tokens": response.usage.total_tokens,
+            "cache_read_tokens": cache_read,
+            "cache_write_tokens": 0,
         }

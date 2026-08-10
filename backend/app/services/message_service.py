@@ -25,7 +25,10 @@ from app.utils.schema import validate_with_coercion
 from app.services.content_tokens import strip_base64_data, refresh_message_tokens  # noqa: F401 — re-exported
 from app.services.hook_service import run_hooks, HookResult
 from app.services.tool_result_store import save_tool_result
-from app.services.conversation_history import build_conversation_history
+from app.services.conversation_history import (
+    build_agent_system_content,
+    build_conversation_history,
+)
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -1154,21 +1157,15 @@ class MessageService:
         if chat and chat.agent_id:
             result_agent = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
             agent = result_agent.scalar_one_or_none()
-            if agent and agent.system_prompt:
-                system_content = agent.system_prompt
+            if agent:
+                template_vars = None
                 if chat.chat_metadata and "agent_input" in chat.chat_metadata:
-                    try:
-                        system_content = render_template(
-                            agent.system_prompt, chat.chat_metadata["agent_input"]
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to render system prompt template: {e}")
-
-                if agent.output_schema and agent.output_schema.get("properties"):
-                    schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
-                    system_content += schema_instruction
-
-                updated_messages.append({"role": "system", "content": system_content})
+                    template_vars = chat.chat_metadata["agent_input"]
+                system_content = await build_agent_system_content(
+                    self.db, agent, self.skill_converter, template_vars
+                )
+                if system_content:
+                    updated_messages.append({"role": "system", "content": system_content})
 
         result = await self.db.execute(
             select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
