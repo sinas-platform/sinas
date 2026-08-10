@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import get_db
 from app.core.email import send_otp_email_async
 from app.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
@@ -724,32 +724,6 @@ async def get_current_user(
     request.state.user_email = email
 
     return user_id
-
-
-async def get_current_user_optional(
-    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
-) -> Optional[str]:
-    """
-    Get current authenticated user ID if auth header provided, otherwise return None.
-    Used for optional authentication on runtime endpoints.
-
-    Returns:
-        user_id or None
-    """
-    if not credentials:
-        return None
-
-    try:
-        async with AsyncSessionLocal() as db:
-            user_id, email, _ = await verify_jwt_or_api_key(credentials, db)
-            await db.commit()
-            # Store user info in request state for logging
-            request.state.user_id = user_id
-            request.state.user_email = email
-            return user_id
-    except Exception:
-        # Return None on auth failure for optional auth
-        return None
 
 
 async def get_current_user_with_permissions(
