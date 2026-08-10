@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../lib/api';
 import { ArrowLeft, Loader2, Bot } from 'lucide-react';
-import { Chat } from '@sinas/ui';
+import { Chat } from '../components/chat/Chat';
 
 export function ChatDetail() {
   const { chatId } = useParams<{ chatId: string }>();

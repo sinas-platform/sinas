@@ -186,7 +186,6 @@ export function Layout() {
                 <p className="text-sm font-medium text-gray-100 truncate">
                   {user?.email}
                 </p>
-                <p className="text-xs text-gray-500">Administrator</p>
               </div>
               <ThemeToggle />
               {passwordEnabled && (

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { Mail, Lock, Loader2, KeyRound } from 'lucide-react';
+import ThemeToggle from '../components/ThemeToggle';
 
 export function Login() {
   const { authMode, login, verifyOTP } = useAuth();
@@ -69,6 +70,9 @@ export function Login() {
 
   return (
     <div className="min-h-screen bg-surface-page flex items-center justify-center p-4">
+      <div className="absolute top-4 right-4">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-md">
         {/* Logo and title */}
         <div className="text-center mb-8">
