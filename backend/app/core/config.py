@@ -114,7 +114,12 @@ class Settings(BaseSettings):
     #     "disabled"         — sandbox features rejected; deploy is trusted-only
     # - trusted_executor: backend for admin-approved code (Function.shared_pool=True).
     #     "docker_shared" — dedicated long-lived Docker workers (current default)
-    #     "inprocess"     — run inside the calling process; no Docker socket needed
+    #     "k8s_shared"    — dedicated long-lived k8s pods (for k8s deploys;
+    #                       credential-free, meter-integrity safe)
+    #     "inprocess"     — run inside the calling process; no Docker socket
+    #                       needed. NOT meter-integrity safe: trusted code runs
+    #                       in a credential-bearing process.
+    #     "disabled"      — shared_pool executions rejected with a clear error
     sandbox_executor: str = "docker_pool"
     trusted_executor: str = "docker_shared"
 
@@ -147,6 +152,8 @@ class Settings(BaseSettings):
     # All empty/no-op by default — matches today's behavior on generic
     # clusters with no per-client scheduling policy.
     k8s_release_name: str = ""
+    # k8s_shared trusted executor: number of warm trusted worker pods.
+    k8s_trusted_workers: int = 2
     k8s_sandbox_node_selector: str = "{}"  # JSON object, e.g. {"role": "shared"}
     k8s_sandbox_tolerations: str = "[]"  # JSON list of Toleration dicts
     k8s_sandbox_affinity: str = "{}"  # JSON k8s Affinity object (podAffinity/podAntiAffinity/nodeAffinity)

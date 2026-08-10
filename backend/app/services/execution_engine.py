@@ -111,12 +111,13 @@ class FunctionExecutor:
         # Executor selection is delegated to `app.services.executor.factory`,
         # which resolves the configured impls from settings. We cache the
         # resolved handles per-instance to avoid the factory call per
-        # execution. The sandbox handle is `None` when sandbox execution is
-        # disabled in this deployment; trusted is always required (it backs
-        # the admin-approved Function.shared_pool path).
+        # execution. Either handle is `None` when that execution class is
+        # disabled in this deployment (sandbox_executor / trusted_executor
+        # = "disabled").
         self._sandbox_executor = None
         self._sandbox_executor_resolved = False
         self._trusted_executor = None
+        self._trusted_executor_resolved = False
 
     @property
     def sandbox_executor(self):
@@ -135,11 +136,13 @@ class FunctionExecutor:
 
     @property
     def trusted_executor(self):
-        """Resolved TrustedExecutor for admin-approved `Function.shared_pool` code."""
-        if self._trusted_executor is None:
+        """Resolved TrustedExecutor for admin-approved `Function.shared_pool`
+        code (or None if disabled — callers must surface a clear error)."""
+        if not self._trusted_executor_resolved:
             from app.services.executor import get_trusted_executor
 
             self._trusted_executor = get_trusted_executor()
+            self._trusted_executor_resolved = True
         return self._trusted_executor
 
     async def validate_schema(self, data: Any, schema: dict[str, Any]) -> Any:
@@ -177,6 +180,13 @@ class FunctionExecutor:
         Workers are separate containers from backend but shared across users.
         No per-user isolation - functions must be trusted.
         """
+        if self.trusted_executor is None:
+            raise FunctionExecutionError(
+                f"Trusted (shared-pool) execution is disabled on this deployment "
+                f"(trusted_executor='disabled'); cannot run "
+                f"{function.namespace}/{function.name}. Either enable a trusted "
+                f"executor or clear the function's shared_pool flag."
+            )
         exec_result = await self.trusted_executor.execute(
             user_id=user_id,
             user_email=user_email,
@@ -542,7 +552,10 @@ class FunctionExecutor:
             executor = self.sandbox_executor if role == "sandbox" else self.trusted_executor
             if executor is None:
                 execution.status = ExecutionStatus.FAILED
-                execution.error = "Sandbox execution is disabled; cannot resume this execution."
+                execution.error = (
+                    f"{role.capitalize()} execution is disabled; "
+                    f"cannot resume this execution."
+                )
                 execution.completed_at = datetime.utcnow()
                 await db.commit()
                 raise FunctionExecutionError(execution.error)

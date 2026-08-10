@@ -16,7 +16,7 @@ spec:
     matchExpressions:
       - key: sinas.type
         operator: NotIn
-        values: ["sandbox-executor"]
+        values: ["sandbox-executor", "trusted-executor"]
   policyTypes:
     - Ingress
     - Egress
@@ -102,6 +102,53 @@ spec:
         - port: 53
           protocol: TCP
     ## Internet only — no RFC1918, so no cluster-internal services.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+---
+## Trusted worker pods (executor.trusted="k8s_shared"): admin-approved code.
+## Wider than sandbox — may call the Sinas API and the internet — but still
+## no direct line to postgres/redis/clickhouse: the pods carry no credentials
+## (meter integrity), and since in-cluster redis is unauthenticated this
+## policy is what makes that stick at the network level too.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-trusted-isolation
+  labels:
+    {{- include "sinas.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      sinas.type: trusted-executor
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    ## kube-dns
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    ## Sinas backend API only (functions call back with their access token)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: backend
+      ports:
+        - port: 8000
+          protocol: TCP
+    ## Internet — no RFC1918, so no other cluster-internal services.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

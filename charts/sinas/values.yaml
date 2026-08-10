@@ -31,12 +31,18 @@ superadminEmail: ""
 ##   "k8s_pod"  — one ephemeral hardened Pod per execution (default).
 ##   "disabled" — reject sandbox executions (trusted-only deployment).
 ## trusted: admin-approved code (Function.shared_pool=true).
-##   "inprocess" — runs inside the queue-worker process (default).
-##                 Note: shares the worker's credentials; approve shared_pool
-##                 functions accordingly.
+##   "k8s_shared" — warm long-lived credential-free pods (default). Trusted
+##                  code cannot reach platform credentials or the usage
+##                  meter; paired with the trusted-isolation NetworkPolicy.
+##   "inprocess"  — runs inside the queue-worker process. Smallest footprint
+##                  (no warm pods), but trusted code shares the worker's
+##                  credentials — do not use on metered/billable instances.
+##   "disabled"   — reject shared_pool executions with a clear error.
 executor:
   sandbox: "k8s_pod"
-  trusted: "inprocess"
+  trusted: "k8s_shared"
+  ## Number of warm trusted worker pods (k8s_shared only).
+  trustedWorkers: 2
   ## Image for sandbox pods. Must be pullable by the cluster. Extra packages
   ## (Dependency table) are pip-installed into each pod at create time; bake
   ## them into a custom image and set installDependencies: false to skip that

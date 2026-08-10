@@ -96,6 +96,10 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ include "sinas.sandboxSA" . | quote }}
 - name: K8S_SANDBOX_INSTALL_DEPENDENCIES
   value: {{ .Values.executor.installDependencies | quote }}
+- name: K8S_RELEASE_NAME
+  value: {{ .Release.Name | quote }}
+- name: K8S_TRUSTED_WORKERS
+  value: {{ .Values.executor.trustedWorkers | default 2 | quote }}
 - name: K8S_SANDBOX_POD_READY_TIMEOUT
   value: {{ .Values.executor.podReadyTimeout | quote }}
 - name: POD_NAMESPACE

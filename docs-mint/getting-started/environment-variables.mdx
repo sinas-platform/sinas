@@ -97,7 +97,7 @@ Default off. When enabled, every operation (function execution, code execution, 
 | `METERING_SNAPSHOT_MINUTES` | `5` | Cadence of the durable Redis → Postgres snapshot. |
 | `METERING_PUSH_MINUTES` | `15` | Heartbeat cadence (jittered per instance so fleets don't push in sync). |
 
-Meter integrity: sandbox and shared executor containers receive no Redis/database credentials, so code they run cannot alter the count. `TRUSTED_EXECUTOR=inprocess` breaks that guarantee (client code runs inside a credential-bearing process) — enabling metering in that mode logs a warning; use `docker_shared` on billable instances.
+Meter integrity: sandbox and shared executor containers/pods receive no Redis/database credentials, so code they run cannot alter the count. `TRUSTED_EXECUTOR=inprocess` breaks that guarantee (client code runs inside a credential-bearing process) — enabling metering in that mode logs a warning. Metered instances should use `docker_shared` (Docker) or `k8s_shared` (Kubernetes), or `disabled` if shared-pool functions aren't needed.
 
 ## Executors
 
@@ -109,12 +109,16 @@ execution; `TRUSTED_EXECUTOR` handles admin-approved functions
 | Variable | Default | Description |
 |---|---|---|
 | `SANDBOX_EXECUTOR` | `docker_pool` | `docker_pool` (warm container pool), `docker_ephemeral` (single-use container per execution, baked package image), `k8s_pod` (single-use Kubernetes pod per execution), or `disabled` (reject sandbox executions) |
-| `TRUSTED_EXECUTOR` | `docker_shared` | `docker_shared` (long-lived shared worker containers) or `inprocess` (run inside the queue-worker process — no Docker socket needed, but no `input()`/pause support) |
+| `TRUSTED_EXECUTOR` | `docker_shared` | `docker_shared` (long-lived shared worker containers), `k8s_shared` (long-lived credential-free Kubernetes pods), `inprocess` (run inside the queue-worker process — no Docker socket needed, but no `input()`/pause support), or `disabled` (reject shared-pool executions) |
+| `K8S_TRUSTED_WORKERS` | `2` | Number of warm trusted worker pods (`k8s_shared` only). |
 
-With `SANDBOX_EXECUTOR=k8s_pod` and `TRUSTED_EXECUTOR=inprocess`, no process
-needs a Docker socket — this is the configuration the Helm chart uses.
-`inprocess` runs trusted code with the worker's own environment and
-credentials, so only enable `shared_pool` on functions you'd trust with them.
+On Kubernetes, `SANDBOX_EXECUTOR=k8s_pod` with `TRUSTED_EXECUTOR=k8s_shared`
+is the Helm chart's default: no process needs a Docker socket, and trusted
+code runs in warm pods that carry no platform credentials (dispatch latency
+is an exec round-trip, not a pod cold-start). `inprocess` remains the
+smallest-footprint option, but it runs trusted code with the worker's own
+environment and credentials — only enable `shared_pool` on functions you'd
+trust with them, and don't combine it with usage metering.
 
 ### Kubernetes executor (`SANDBOX_EXECUTOR=k8s_pod`)
 

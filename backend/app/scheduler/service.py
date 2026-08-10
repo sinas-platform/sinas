@@ -284,6 +284,14 @@ async def main() -> None:
         # --- Shared containers ---
         if settings.trusted_executor == "docker_shared":
             await shared_worker_manager.initialize()
+        elif settings.trusted_executor == "k8s_shared":
+            # Pre-warm the trusted worker pods so the first shared-pool
+            # execution doesn't pay a pod cold-start (dispatch self-heals
+            # missing pods, so this is latency, not correctness).
+            from app.services.executor.k8s_shared_trusted import ensure_trusted_pool
+
+            async with AsyncSessionLocal() as db:
+                await ensure_trusted_pool(db)
 
     # --- APScheduler ---
     await scheduler.start()
