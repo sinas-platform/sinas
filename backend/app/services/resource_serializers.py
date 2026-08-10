@@ -5,7 +5,21 @@ Used by both config_export.py (full config export) and package_service.py
 """
 from typing import Any, Optional
 
-from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP
+from app.schemas.config import (
+    CONNECTOR_AUTH_FIELD_MAP,
+    TOKEN_RESPONSE_PATH_FIELD_MAP,
+)
+
+
+def _camelize_token_response_paths(paths: Any) -> Optional[dict]:
+    """snake_case stored token-response paths → camelCase config keys."""
+    if not isinstance(paths, dict):
+        return None
+    return {
+        camel: paths.get(snake)
+        for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
+        if paths.get(snake) is not None
+    } or None
 
 
 def _remove_none_values(d: dict) -> dict:
@@ -209,6 +223,10 @@ def serialize_connector(conn) -> dict:
         "auth": _remove_none_values({
             **{camel: auth.get(snake) for camel, snake in CONNECTOR_AUTH_FIELD_MAP},
             "type": auth.get("type", "none"),  # type always present in export
+            # Nested object: its inner keys need their own camelization.
+            "tokenResponsePaths": _camelize_token_response_paths(
+                auth.get("token_response_paths")
+            ),
         }),
         "headers": conn.headers if conn.headers else None,
         "retry": _remove_none_values({

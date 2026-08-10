@@ -67,6 +67,26 @@ Register this **redirect URI** with the provider (must match exactly): `https://
 
 If a user has not connected (or their authorization expired with no refresh token), operations fail with an explicit "reconnect" error rather than sending an unauthenticated request. The flow is bound to the initiating browser via an HttpOnly cookie; set `OAUTH_BIND_BROWSER_SESSION=false` only in split-origin local dev (console and API on different ports).
 
+**Nonstandard token responses** (`tokenResponsePaths`) — some providers deviate from the standard OAuth token response. Slack nests the user token under `authed_user` and reports errors on HTTP 200 via `ok: false`. Optional dot-paths tell Sinas where to look; all fields are optional and defaults reproduce standard OAuth exactly, applied identically to the initial exchange and every refresh:
+
+```yaml
+    auth:
+      type: oauth2_authorization_code
+      authorizeUrl: https://slack.com/oauth/v2/authorize
+      tokenUrl: https://slack.com/api/oauth.v2.access
+      clientId: my-client-id
+      secret: SLACK_CLIENT_SECRET
+      scopes: [search:read]
+      tokenResponsePaths:
+        accessToken: "authed_user.access_token"   # the xoxp- user token, not the top-level bot token
+        scope: "authed_user.scope"
+        successFlag: "ok"          # this path must be truthy, or the exchange failed
+        error: "error"             # provider's error code, surfaced in logs
+        # also available: refreshToken, expiresIn, errorDescription
+```
+
+Slack user tokens carry no expiry and no refresh token — Sinas stores them as valid until revoked, exactly as Slack intends.
+
 **Agent configuration:**
 
 ```yaml

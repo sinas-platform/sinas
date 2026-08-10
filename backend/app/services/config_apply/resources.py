@@ -24,7 +24,7 @@ from app.models.secret import Secret
 from app.models.skill import Skill
 from app.models.store import Store
 
-from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP
+from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP, TOKEN_RESPONSE_PATH_FIELD_MAP
 from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,15 @@ async def apply_connectors(
                 snake: getattr(conn_config.auth, camel)
                 for camel, snake in CONNECTOR_AUTH_FIELD_MAP
             }
+            # Nested paths object: camelize-in-reverse its inner keys too, so
+            # the stored shape matches what the REST path stores.
+            if auth.get("token_response_paths") is not None:
+                trp = auth["token_response_paths"]
+                auth["token_response_paths"] = {
+                    snake: getattr(trp, camel)
+                    for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
+                    if getattr(trp, camel) is not None
+                } or None
             # Remove None values from auth
             auth = {k: v for k, v in auth.items() if v is not None}
 

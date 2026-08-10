@@ -425,6 +425,32 @@ class ConnectorOperationConfig(BaseModel):
     responseMapping: str = "json"
 
 
+class TokenResponsePathsConfig(BaseModel):
+    """Dot-paths into a nonstandard OAuth token response (issue #109)."""
+
+    accessToken: Optional[str] = None
+    refreshToken: Optional[str] = None
+    expiresIn: Optional[str] = None
+    scope: Optional[str] = None
+    successFlag: Optional[str] = None
+    error: Optional[str] = None
+    errorDescription: Optional[str] = None
+
+
+# camelCase config key ↔ snake_case stored key for the nested paths object.
+# The outer CONNECTOR_AUTH_FIELD_MAP only renames top-level fields; this one
+# handles the object's inner keys in both directions.
+TOKEN_RESPONSE_PATH_FIELD_MAP: list[tuple[str, str]] = [
+    ("accessToken", "access_token"),
+    ("refreshToken", "refresh_token"),
+    ("expiresIn", "expires_in"),
+    ("scope", "scope"),
+    ("successFlag", "success_flag"),
+    ("error", "error"),
+    ("errorDescription", "error_description"),
+]
+
+
 class ConnectorAuthConfig(BaseModel):
     """Connector auth configuration"""
 
@@ -440,6 +466,7 @@ class ConnectorAuthConfig(BaseModel):
     clientAuthMethod: Optional[str] = None
     authorizeUrl: Optional[str] = None
     tokenParams: Optional[dict[str, str]] = None
+    tokenResponsePaths: Optional[TokenResponsePathsConfig] = None
 
 
 # Single source of truth for connector auth field names across the config round-trip:
@@ -458,6 +485,7 @@ CONNECTOR_AUTH_FIELD_MAP: list[tuple[str, str]] = [
     ("clientAuthMethod", "client_auth_method"),
     ("authorizeUrl", "authorize_url"),
     ("tokenParams", "token_params"),
+    ("tokenResponsePaths", "token_response_paths"),
 ]
 
 

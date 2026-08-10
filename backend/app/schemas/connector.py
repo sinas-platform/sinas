@@ -18,6 +18,25 @@ class OperationConfig(BaseModel):
     response_mapping: str = Field(default="json", pattern=r"^(json|text)$")
 
 
+class TokenResponsePaths(BaseModel):
+    """Dot-paths into a nonstandard OAuth token response (issue #109).
+
+    All optional; defaults reproduce standard RFC 6749 behavior exactly.
+    Example (Slack user tokens): access_token="authed_user.access_token",
+    success_flag="ok", error="error".
+    """
+
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    expires_in: Optional[str] = None
+    scope: Optional[str] = None
+    # If set, this path must be truthy or the exchange is treated as failed
+    # (covers providers that signal errors on HTTP 200).
+    success_flag: Optional[str] = None
+    error: Optional[str] = None
+    error_description: Optional[str] = None
+
+
 class ConnectorAuth(BaseModel):
     type: str = Field(
         default="none",
@@ -42,6 +61,8 @@ class ConnectorAuth(BaseModel):
     client_auth_method: Optional[str] = Field(default=None, pattern=r"^(basic|body)$")
     # Extra params sent with the token request (e.g. {"audience": "..."}).
     token_params: Optional[dict[str, str]] = None
+    # Where to find token fields / success in a nonstandard token response.
+    token_response_paths: Optional[TokenResponsePaths] = None
 
 
 class ConnectorRetry(BaseModel):
