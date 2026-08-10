@@ -256,6 +256,10 @@ class FunctionExecutor:
                 "Function execution is disabled on this deployment "
                 "(CODE_EXECUTION_ENABLED=false)."
             )
+        # Metering leaf: one op per function execution, whatever triggered it
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.FUNCTION)
         async with AsyncSessionLocal() as db:
             # Get user info for context
             from app.core.auth import create_access_token

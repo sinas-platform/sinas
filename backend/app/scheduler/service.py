@@ -312,6 +312,65 @@ async def main() -> None:
     )
     logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
 
+    # --- Operations metering (managed SaaS, default-off) ---
+    if settings.metering_enabled:
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+
+        from app.services import metering
+        from app.services.metering import (
+            push_jitter_seconds,
+            run_push_cycle,
+            run_snapshot_cycle,
+            seed_redis_from_db,
+        )
+
+        if settings.trusted_executor == "inprocess":
+            # §6 invariant: no process that runs client code may hold meter
+            # write access. inprocess runs trusted functions inside THIS
+            # credential-bearing process, so the count is forgeable. Managed
+            # instances must use docker_shared.
+            logger.warning(
+                "METERING_ENABLED with TRUSTED_EXECUTOR=inprocess: trusted "
+                "functions run inside a credential-bearing process, so the "
+                "meter is NOT tamper-resistant. Use docker_shared for "
+                "billable instances."
+            )
+
+        # Restore the live counter after a Redis restart (max of both sides)
+        async with AsyncSessionLocal() as db:
+            await seed_redis_from_db(db)
+
+        snap_min = max(1, settings.metering_snapshot_minutes)
+        scheduler.scheduler.add_job(
+            func=run_snapshot_cycle,
+            trigger="interval",
+            minutes=snap_min,
+            id="system:metering_snapshot",
+            name="Snapshot usage counters",
+            replace_existing=True,
+        )
+
+        # Per-instance start offset + trigger jitter so a fleet of instances
+        # never pushes in sync (design doc §5a).
+        push_min = max(1, settings.metering_push_minutes)
+        offset = push_jitter_seconds(push_min)
+        scheduler.scheduler.add_job(
+            func=run_push_cycle,
+            trigger="interval",
+            minutes=push_min,
+            jitter=30,
+            start_date=_dt.now(_UTC) + _td(seconds=offset),
+            id="system:metering_push",
+            name="Push usage heartbeat",
+            replace_existing=True,
+        )
+        logger.info(
+            f"Registered metering jobs: snapshot every {snap_min}m, push every "
+            f"{push_min}m (start offset {offset}s, instance={metering.instance_id()})"
+        )
+
     # --- Pub/sub listener for live job changes ---
     stop_event = asyncio.Event()
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))

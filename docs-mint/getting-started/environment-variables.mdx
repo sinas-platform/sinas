@@ -84,6 +84,21 @@ reject explicitly rather than half-working.
 | `CODE_EXECUTION_ENABLED` | `true` | `false` disables **all** execution of user-supplied code: Functions and the agent `codeExecution` tool. The tool is not advertised to the model, function execution is refused at every trigger (API, webhook, schedule, agent, CDC), and sandbox/shared-worker startup is skipped entirely — no pool, no per-execution pods, no executor image. The single biggest footprint reduction available. |
 | `BUILTIN_DATABASE_ENABLED` | `true` | `false` skips creating the `sinas_data` database and its default Database Connection at startup, for deployments that only use their own connections. Does **not** affect the platform's own PostgreSQL, and an already-created database and record are left untouched (so the toggle is reversible and non-destructive). |
 
+## Usage Metering (Optional)
+
+Default off. When enabled, every operation (function execution, code execution, query, agent invocation, file upload, other tool calls) increments a live counter; the scheduler snapshots it durably and pushes the **cumulative** period-to-date total to an external collector. Pure emission — nothing is enforced on the instance, no limits are pulled down, and an unreachable collector or Redis blip never affects platform behavior (the next heartbeat self-heals). Intended for managed/multi-instance operators.
+
+| Variable | Default | Description |
+|---|---|---|
+| `METERING_ENABLED` | `false` | Master switch. |
+| `METERING_ENDPOINT` | _(none)_ | Endpoint receiving heartbeat JSON (`sinas.metering/v1`), cumulative totals + `by_kind`, `Idempotency-Key` per push. |
+| `METERING_API_KEY` | _(none)_ | Sent as `Authorization: Bearer <key>`. |
+| `METERING_INSTANCE_ID` | `DOMAIN` | Identifier for this instance in reports. |
+| `METERING_SNAPSHOT_MINUTES` | `5` | Cadence of the durable Redis → Postgres snapshot. |
+| `METERING_PUSH_MINUTES` | `15` | Heartbeat cadence (jittered per instance so fleets don't push in sync). |
+
+Meter integrity: sandbox and shared executor containers receive no Redis/database credentials, so code they run cannot alter the count. `TRUSTED_EXECUTOR=inprocess` breaks that guarantee (client code runs inside a credential-bearing process) — enabling metering in that mode logs a warning; use `docker_shared` on billable instances.
+
 ## Executors
 
 How Sinas runs user code. `SANDBOX_EXECUTOR` handles untrusted code

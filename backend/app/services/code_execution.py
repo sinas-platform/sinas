@@ -99,6 +99,11 @@ async def execute(
     effective_timeout = timeout or settings.code_execution_timeout
     execution_id = str(uuid.uuid4())
 
+    # Metering leaf: one op per codeExecution tool call
+    from app.services import metering
+
+    await metering.record(metering.OperationKind.CODE)
+
     if not settings.code_execution_enabled:
         # Belt and braces: the tool isn't advertised when disabled, but a model
         # can still emit a call for a tool it saw earlier in the conversation.

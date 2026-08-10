@@ -384,6 +384,11 @@ class MessageService:
         if prep.get("blocked"):
             return prep["block_message"]
 
+        # Metering leaf: one agent invocation per (unblocked) user message
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.AGENT)
+
         agent_label = prep.get("agent_label")
         _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
         _llm_span = _tracer.start_span("llm.call", attributes={
@@ -541,6 +546,11 @@ class MessageService:
             yield {"type": "message", "content": prep["block_message"].content}
             yield {"type": "done", "status": "blocked"}
             return
+
+        # Metering leaf: one agent invocation per (unblocked) user message
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.AGENT)
 
         agent_label = prep.get("agent_label")
         _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"

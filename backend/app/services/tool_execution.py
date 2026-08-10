@@ -640,6 +640,13 @@ async def execute_single_tool(
                     tool_found_in_list = True
                     break
 
+            # Metering (§2a leaf-only rule): branches that recurse into a leaf
+            # chokepoint — code-exec, sub-agent, pipeline, query, function —
+            # are counted there; every other branch counts as one TOOL op
+            # after dispatch. This keeps "agent turn calling 3 functions" =
+            # 1 agent + 3 function, never double-counted.
+            counted_at_leaf = False
+
             # Built-in tools (no metadata needed)
             if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state", "list_state_keys"):
                 result = await StateTools.execute_tool(
@@ -691,6 +698,7 @@ async def execute_single_tool(
                     resume_value=arguments["input"],
                 )
             elif tool_name == "execute_code":
+                counted_at_leaf = True  # metered in code_execution.execute()
                 start_time = time.time()
                 result = await execute_code(
                     code=arguments.get("code", ""),
@@ -763,6 +771,7 @@ async def execute_single_tool(
 
             # Metadata-driven tools — identity comes from _metadata, not tool name parsing
             elif tool_metadata.get("agent_id"):
+                counted_at_leaf = True  # sub-agent metered in message_service
                 result = await execute_agent_tool(
                     db=db,
                     chat=chat,
@@ -783,6 +792,7 @@ async def execute_single_tool(
                 )
                 logger.debug(f"Collection tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("type") == "pipeline":
+                counted_at_leaf = True  # pipeline steps meter at their leaves
                 start_time = time.time()
                 from app.services.pipeline_tools import PipelineToolConverter
 
@@ -833,6 +843,7 @@ async def execute_single_tool(
                     result = {"error": f"Skill not found for tool: {tool_name}"}
                 logger.debug(f"Skill retrieval completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_name.startswith("query_"):
+                counted_at_leaf = True  # metered in DatabasePoolManager.execute_query
                 start_time = time.time()
                 # Get enabled queries list from agent
                 enabled_query_list = []
@@ -863,6 +874,7 @@ async def execute_single_tool(
                 logger.debug(f"Query execution completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_found_in_list:
                 # Function tool — metadata has namespace/name
+                counted_at_leaf = True  # metered in execute_function
                 start_time = time.time()
                 enabled_function_list = []
                 if chat and chat.agent_id:
@@ -895,6 +907,12 @@ async def execute_single_tool(
                     "error": "Unauthorized tool call",
                     "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
                 }
+                counted_at_leaf = True  # rejected — no work done, not billable
+
+            if not counted_at_leaf:
+                from app.services import metering
+
+                await metering.record(metering.OperationKind.TOOL)
 
             result_content = json.dumps(result) if not isinstance(result, str) else result
 

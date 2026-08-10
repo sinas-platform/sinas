@@ -357,6 +357,19 @@ class Settings(BaseSettings):
         """`iss` claim on RS256 access tokens; what verifiers configure as issuer."""
         return self.jwt_issuer.strip() or self.public_base_url
 
+    # Operations metering (managed SaaS). Default-off; when enabled, every
+    # operation (function/code/query/agent/upload/tool) increments a Redis
+    # counter, the scheduler snapshots it to usage_periods, and a heartbeat
+    # pushes the CUMULATIVE period total to metering_endpoint. Pure emission:
+    # nothing is enforced on the instance and nothing is pulled down. A dead
+    # endpoint or Redis blip never affects platform behavior.
+    metering_enabled: bool = False
+    metering_endpoint: str = ""  # e.g. https://ops.example.com/v1/usage
+    metering_api_key: str = ""  # sent as Authorization: Bearer <key>
+    metering_instance_id: str = ""  # defaults to `domain`; set explicitly in SaaS
+    metering_snapshot_minutes: int = 5  # Redis -> usage_periods cadence
+    metering_push_minutes: int = 15  # heartbeat cadence (jittered per instance)
+
     # Component builder
     builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service
 
