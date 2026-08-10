@@ -381,6 +381,17 @@ async def apply_functions(
                     continue
 
                 if not dry_run:
+                    # Decide BEFORE overwriting: a version snapshot is only
+                    # warranted when the executable surface (code/schemas)
+                    # changes. Description/icon/timeout tweaks previously
+                    # minted a new FunctionVersion on every apply — churn
+                    # that made version history useless.
+                    code_changed = (
+                        existing.code != func_config.code
+                        or (existing.input_schema or {}) != (func_config.inputSchema or {})
+                        or (existing.output_schema or {}) != (func_config.outputSchema or {})
+                    )
+
                     existing.description = func_config.description
                     existing.code = func_config.code
                     existing.input_schema = func_config.inputSchema or {}
@@ -395,22 +406,22 @@ async def apply_functions(
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
-                    # Create new version if code changed
-                    from sqlalchemy import func
-                    max_ver_result = await db.execute(
-                        select(func.coalesce(func.max(FunctionVersion.version), 0))
-                        .where(FunctionVersion.function_id == existing.id)
-                    )
-                    max_ver = max_ver_result.scalar() or 0
-                    version = FunctionVersion(
-                        function_id=existing.id,
-                        version=max_ver + 1,
-                        code=func_config.code,
-                        input_schema=func_config.inputSchema or {},
-                        output_schema=func_config.outputSchema or {},
-                        created_by=existing.user_id,
-                    )
-                    db.add(version)
+                    if code_changed:
+                        from sqlalchemy import func
+                        max_ver_result = await db.execute(
+                            select(func.coalesce(func.max(FunctionVersion.version), 0))
+                            .where(FunctionVersion.function_id == existing.id)
+                        )
+                        max_ver = max_ver_result.scalar() or 0
+                        version = FunctionVersion(
+                            function_id=existing.id,
+                            version=max_ver + 1,
+                            code=func_config.code,
+                            input_schema=func_config.inputSchema or {},
+                            output_schema=func_config.outputSchema or {},
+                            created_by=existing.user_id,
+                        )
+                        db.add(version)
 
                 track_change("update", "functions", f"{func_config.namespace}/{func_config.name}")
                 function_ids[func_config.name] = str(existing.id)
@@ -539,8 +550,15 @@ async def apply_components(
     track_change: Any,
     errors: list[str],
     warnings: list[str],
+    notify_compile: Any = None,
 ) -> None:
-    """Apply component configurations"""
+    """Apply component configurations.
+
+    `notify_compile(component_id)` is called for every component whose source
+    was created/changed, so the caller can trigger compilation post-commit —
+    without it, config-applied components sat at compile_status="pending"
+    forever (only the REST path ever compiled).
+    """
     for comp_config in components:
         resource_name = f"{comp_config.namespace}/{comp_config.name}"
         try:
@@ -595,6 +613,8 @@ async def apply_components(
                         existing.source_map = None
                         existing.compile_errors = None
                         existing.version += 1
+                        if notify_compile:
+                            notify_compile(existing.id)
 
                 track_change("update", "components", resource_name)
 
@@ -622,6 +642,9 @@ async def apply_components(
                         compile_status="pending",
                     )
                     db.add(new_component)
+                    if notify_compile:
+                        await db.flush()  # assign the id for the compile queue
+                        notify_compile(new_component.id)
 
                 track_change("create", "components", resource_name)
 

@@ -42,8 +42,8 @@ All sections are optional — include only what you need.
 
 - **Idempotent** — Applying the same config twice does nothing. Unchanged resources are skipped (SHA256 checksum comparison).
 - **Config-managed tracking** — Resources created via config are tagged with `managed_by: "config"`. The system won't overwrite resources that were created manually (it warns instead).
-- **Environment variable interpolation** — Use `${VAR_NAME}` in values (e.g., `apiKey: "${OPENAI_API_KEY}"`).
 - **Reference validation** — Cross-references (e.g., an agent referencing a function) are validated before applying.
+- **Sensitive values** — Don't put credentials in config files. Declare them as [Secrets](/build-resources/secrets) and reference them by name (e.g. a connector's `auth.secret`); values are stored encrypted and resolved at runtime.
 - **Dry run** — Set `dryRun: true` to preview changes without applying.
 
 **Endpoints (admin only):**

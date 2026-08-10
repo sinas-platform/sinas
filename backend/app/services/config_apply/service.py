@@ -71,6 +71,7 @@ class ConfigApplyService:
         # owns the commit and must call flush_notifications() itself.
         self._pending_scheduler: list[tuple[str, str]] = []
         self._pending_cdc_reload = False
+        self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
@@ -139,20 +140,43 @@ class ConfigApplyService:
 
         pending_jobs, self._pending_scheduler = self._pending_scheduler, []
         cdc_reload, self._pending_cdc_reload = self._pending_cdc_reload, False
-        if not pending_jobs and not cdc_reload:
+        pending_compiles, self._pending_component_compiles = (
+            self._pending_component_compiles, []
+        )
+        if not pending_jobs and not cdc_reload and not pending_compiles:
             return
         try:
-            redis = await get_redis()
-            for action, job_id in pending_jobs:
-                await redis.publish(
-                    "sinas:scheduler:jobs", json.dumps({"action": action, "job_id": job_id})
-                )
-            if cdc_reload:
-                await redis.publish(
-                    "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
-                )
+            if pending_jobs or cdc_reload:
+                redis = await get_redis()
+                for action, job_id in pending_jobs:
+                    await redis.publish(
+                        "sinas:scheduler:jobs", json.dumps({"action": action, "job_id": job_id})
+                    )
+                if cdc_reload:
+                    await redis.publish(
+                        "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
+                    )
         except Exception as e:
             logger.warning(f"Failed to publish config-apply notifications: {e}")
+
+        # Compile config-applied components in the background — the same
+        # builder path the REST endpoint uses. Without this, components from
+        # config apply / package install sat at compile_status="pending"
+        # forever. Fire-and-forget: _do_compile owns its own sessions and
+        # records compile errors on the row. (Helper lives in the endpoint
+        # module today; the config/CRUD unification relocates it.)
+        if pending_compiles:
+            import asyncio
+
+            from app.api.v1.endpoints.components import _do_compile
+
+            for component_id in pending_compiles:
+                try:
+                    asyncio.create_task(_do_compile(component_id, "", ""))
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to schedule compile for component {component_id}: {e}"
+                    )
 
     async def apply_config(self, config: SinasConfig, dry_run: bool = False) -> ConfigApplyResponse:
         """
@@ -239,6 +263,7 @@ class ConfigApplyService:
                 await apply_components(
                     **common_with_owner,
                     components=config.spec.components,
+                    notify_compile=self._pending_component_compiles.append,
                 )
             if "queries" not in self.skip_resource_types:
                 await apply_queries(

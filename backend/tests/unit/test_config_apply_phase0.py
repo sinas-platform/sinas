@@ -189,3 +189,165 @@ class TestApplyNotifications:
         svc = ConfigApplyService(db, "c", owner_user_id=None, auto_commit=False)
         svc._pending_cdc_reload = True
         await svc.flush_notifications()  # must not raise
+
+
+# --------------------------------------------------------------------------
+# 6. Config-applied components must reach the compiler
+# --------------------------------------------------------------------------
+
+class TestComponentCompileNotification:
+    async def _apply(self, db, owner_id, comp_config, notify):
+        from app.services.config_apply.resources import apply_components
+
+        await apply_components(
+            db=db,
+            components=[comp_config],
+            dry_run=False,
+            managed_by="config",
+            config_name="test",
+            owner_user_id=owner_id,
+            calculate_hash=lambda d: "hash-" + str(sorted(str(d))),
+            track_change=lambda *a: None,
+            errors=[],
+            warnings=[],
+            notify_compile=notify,
+        )
+
+    def _config(self, name, source="export default () => null"):
+        from app.schemas.config import ComponentConfig
+
+        return ComponentConfig(namespace="default", name=name, sourceCode=source)
+
+    async def test_created_component_is_queued_for_compile(self, db, admin_user):
+        """Config/package components sat at compile_status="pending" forever —
+        only the REST path ever invoked the builder."""
+        import uuid as _uuid
+
+        queued = []
+        name = f"comp_{_uuid.uuid4().hex[:6]}"
+        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
+        assert len(queued) == 1  # the new component's id
+
+    async def test_source_change_requeues_but_metadata_change_does_not(
+        self, db, admin_user
+    ):
+        import uuid as _uuid
+
+        queued = []
+        name = f"comp_{_uuid.uuid4().hex[:6]}"
+        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
+        await db.flush()
+
+        # Same source, new title → no recompile
+        cfg = self._config(name)
+        cfg.title = "New title"
+        await self._apply(db, str(admin_user.id), cfg, queued.append)
+        assert len(queued) == 1
+
+        # Changed source → recompile
+        cfg2 = self._config(name, source="export default () => 42")
+        await self._apply(db, str(admin_user.id), cfg2, queued.append)
+        assert len(queued) == 2
+
+
+# --------------------------------------------------------------------------
+# 7. FunctionVersion churn: metadata-only updates must not mint versions
+# --------------------------------------------------------------------------
+
+class TestFunctionVersionChurn:
+    async def _apply(self, db, owner_id, func_config):
+        from app.services.config_apply.resources import apply_functions
+
+        return await apply_functions(
+            db=db,
+            functions=[func_config],
+            dry_run=False,
+            managed_by="config",
+            config_name="test",
+            owner_user_id=owner_id,
+            calculate_hash=lambda d: "hash-" + str(sorted(str(d))),
+            track_change=lambda *a: None,
+            errors=[],
+            warnings=[],
+            function_ids={},
+        )
+
+    async def _versions(self, db, name):
+        from sqlalchemy import select
+
+        from app.models import Function, FunctionVersion
+
+        fn = (
+            await db.execute(select(Function).where(Function.name == name))
+        ).scalar_one()
+        rows = (
+            await db.execute(
+                select(FunctionVersion).where(FunctionVersion.function_id == fn.id)
+            )
+        ).scalars().all()
+        return fn, rows
+
+    async def test_metadata_only_update_creates_no_version(self, db, admin_user):
+        import uuid as _uuid
+
+        from app.schemas.config import FunctionConfig
+
+        name = f"fn_{_uuid.uuid4().hex[:6]}"
+        code = "def handler(input, context): return 1"
+        await self._apply(
+            db, str(admin_user.id), FunctionConfig(name=name, code=code)
+        )
+        await db.flush()
+        _, versions = await self._versions(db, name)
+        assert len(versions) == 1  # initial
+
+        # Description-only change: previously minted version 2
+        await self._apply(
+            db,
+            str(admin_user.id),
+            FunctionConfig(name=name, code=code, description="now documented"),
+        )
+        await db.flush()
+        fn, versions = await self._versions(db, name)
+        assert fn.description == "now documented"
+        assert len(versions) == 1  # unchanged
+
+    async def test_code_change_still_creates_version(self, db, admin_user):
+        import uuid as _uuid
+
+        from app.schemas.config import FunctionConfig
+
+        name = f"fn_{_uuid.uuid4().hex[:6]}"
+        await self._apply(
+            db, str(admin_user.id),
+            FunctionConfig(name=name, code="def handler(input, context): return 1"),
+        )
+        await db.flush()
+        await self._apply(
+            db, str(admin_user.id),
+            FunctionConfig(name=name, code="def handler(input, context): return 2"),
+        )
+        await db.flush()
+        _, versions = await self._versions(db, name)
+        assert sorted(v.version for v in versions) == [1, 2]
+        assert any("return 2" in v.code for v in versions)
+
+    async def test_schema_change_creates_version(self, db, admin_user):
+        import uuid as _uuid
+
+        from app.schemas.config import FunctionConfig
+
+        name = f"fn_{_uuid.uuid4().hex[:6]}"
+        code = "def handler(input, context): return 1"
+        await self._apply(db, str(admin_user.id), FunctionConfig(name=name, code=code))
+        await db.flush()
+        await self._apply(
+            db, str(admin_user.id),
+            FunctionConfig(
+                name=name, code=code,
+                inputSchema={"type": "object", "properties": {"x": {}}},
+            ),
+        )
+        await db.flush()
+        _, versions = await self._versions(db, name)
+        assert len(versions) == 2

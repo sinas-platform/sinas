@@ -92,7 +92,7 @@ class DatabaseConnectionConfig(BaseModel):
     port: int
     database: str
     username: str
-    password: Optional[str] = None  # Supports ${ENV_VAR}
+    password: Optional[str] = None  # Stored encrypted; no env interpolation
     sslMode: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
     annotations: list[DatabaseAnnotationConfig] = Field(default_factory=list)
