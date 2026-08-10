@@ -123,6 +123,25 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ .Values.features.codeExecution | quote }}
 - name: BUILTIN_DATABASE_ENABLED
   value: {{ .Values.features.builtinDatabase | quote }}
+{{- with (.Values.jwt).algorithm }}
+- name: JWT_ALGORITHM
+  value: {{ . | quote }}
+{{- end }}
+{{- with (.Values.jwt).issuer }}
+- name: JWT_ISSUER
+  value: {{ . | quote }}
+{{- end }}
+{{- with (.Values.jwt).audience }}
+- name: JWT_AUDIENCE
+  value: {{ . | quote }}
+{{- end }}
+{{- if (.Values.jwt).existingSecret }}
+- name: JWT_PRIVATE_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.jwt.existingSecret }}
+      key: {{ .Values.jwt.existingSecretKey | default "jwt-private-key" }}
+{{- end }}
 - name: BACKEND_PORT
   value: "8000"
 {{- with .Values.extraEnv }}

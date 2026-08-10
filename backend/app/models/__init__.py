@@ -23,6 +23,7 @@ from .pipeline import Pipeline, PipelineCursor, PipelineRun
 from .pending_delegation import PendingDelegation
 from .schedule import ScheduledJob
 from .secret import Secret
+from .signing_key import JWTSigningKey
 from .skill import Skill
 from .state import State
 from .store import Store
@@ -89,4 +90,5 @@ __all__ = [
     "ContentFilterEvaluation",
     "TableAnnotation",
     "ToolCallResult",
+    "JWTSigningKey",
 ]

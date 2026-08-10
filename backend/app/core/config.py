@@ -45,7 +45,24 @@ class Settings(BaseSettings):
     # Application
     debug: bool = False
     secret_key: str = "your-secret-key-change-in-production"
+    # Deprecated: superseded by jwt_algorithm below. Kept so existing
+    # ALGORITHM=HS256 env entries don't fail settings validation; internal
+    # purpose tokens (file serve, component render) are pinned to HS256.
     algorithm: str = "HS256"
+    # Access-token signing (#101). Default HS256 keeps tokens verifiable
+    # exactly as before (shared secret_key). RS256 signs with an RSA keypair
+    # so external services can verify Sinas tokens offline with standard JWT
+    # middleware via GET /.well-known/jwks.json.
+    jwt_algorithm: str = "HS256"  # HS256 | RS256
+    # RS256 access tokens carry iss + aud claims. Issuer defaults to
+    # public_base_url (see token_issuer property).
+    jwt_issuer: str = ""
+    jwt_audience: str = "sinas"
+    # RS256 private key resolution order: JWT_PRIVATE_KEY (PEM content) →
+    # JWT_PRIVATE_KEY_FILE (path) → auto-generated and persisted encrypted in
+    # the database (shared by all processes).
+    jwt_private_key: str = ""
+    jwt_private_key_file: str = ""
     uvicorn_workers: int = 4  # Number of Uvicorn worker processes
     # JWT Token Configuration (Best Practice)
     access_token_expire_minutes: int = 15  # Short-lived access tokens
@@ -334,6 +351,11 @@ class Settings(BaseSettings):
         if not domain or domain.lower() in ("localhost", "127.0.0.1"):
             return f"http://localhost:{self.backend_port}"
         return f"https://{domain}"
+
+    @property
+    def token_issuer(self) -> str:
+        """`iss` claim on RS256 access tokens; what verifiers configure as issuer."""
+        return self.jwt_issuer.strip() or self.public_base_url
 
     # Component builder
     builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service

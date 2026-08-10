@@ -77,7 +77,7 @@ async def serve_file(
     The token contains the file_id, version, and expiry. No auth header needed.
     """
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired file token")
 

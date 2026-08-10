@@ -234,7 +234,7 @@ async def render_component(
         raise HTTPException(status_code=401, detail="Missing render token")
 
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired render token")
 

@@ -27,6 +27,7 @@
             "group": "Platform",
             "pages": [
               "platform/authentication",
+              "platform/verifying-tokens",
               "platform/rbac",
               "platform/api-overview",
               "platform/async-jobs"

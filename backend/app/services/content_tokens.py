@@ -24,7 +24,9 @@ def generate_component_render_token(
         "purpose": "component_render",
         "exp": int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp()),
     }
-    return jose_jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+    # Internal purpose tokens are pinned to HS256 regardless of JWT_ALGORITHM:
+    # only Sinas itself verifies them, so asymmetric signing buys nothing.
+    return jose_jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
 
 def _refresh_file_serve_url(url: str) -> str | None:
@@ -37,7 +39,7 @@ def _refresh_file_serve_url(url: str) -> str | None:
         payload = jose_jwt.decode(
             token,
             settings.secret_key,
-            algorithms=[settings.algorithm],
+            algorithms=["HS256"],
             options={"verify_exp": False},
         )
         file_id = payload.get("file_id")
@@ -125,7 +127,7 @@ def refresh_component_render_tokens(
             payload = jose_jwt.decode(
                 token,
                 settings.secret_key,
-                algorithms=[settings.algorithm],
+                algorithms=["HS256"],
                 options={"verify_exp": False},
             )
             namespace = payload.get("namespace")

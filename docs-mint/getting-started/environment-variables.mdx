@@ -22,6 +22,11 @@ description: "All configuration options"
 | `SUPERADMIN_PASSWORD` | _(none)_ | Seed password for the superadmin. Only used when `AUTH_MODE` includes `password`. Setting this and restarting acts as a password-reset escape hatch. |
 | `TOKEN_EXCHANGE_DEFAULT_ROLE` | `GuestUsers` | Role assigned to users auto-provisioned via `POST /auth/token/exchange`. See [Token Exchange](/platform/authentication#token-exchange-bring-your-own-auth). |
 | `OAUTH_BIND_BROWSER_SESSION` | `true` | Bind connector OAuth (authorization-code) flows to the browser that started them via an HttpOnly nonce cookie — prevents account-linking CSRF. Set `false` only for split-origin local dev (console and API on different ports); keep `true` in production. |
+| `JWT_ALGORITHM` | `HS256` | Access-token signing. `RS256` signs with an RSA keypair and publishes it at `/.well-known/jwks.json` so external services can verify tokens offline. See [Verifying Sinas Tokens](/platform/verifying-tokens). |
+| `JWT_ISSUER` | instance URL | `iss` claim on RS256 access tokens. |
+| `JWT_AUDIENCE` | `sinas` | `aud` claim on RS256 access tokens. |
+| `JWT_PRIVATE_KEY` | _(none)_ | RS256 private key as PEM content. When neither this nor `JWT_PRIVATE_KEY_FILE` is set, a keypair is auto-generated and stored encrypted in the database. |
+| `JWT_PRIVATE_KEY_FILE` | _(none)_ | RS256 private key as a file path. |
 
 ## SMTP
 

@@ -200,6 +200,22 @@ features:
   ## record untouched.
   builtinDatabase: true
 
+## Access-token signing (OIDC-compatible verification).
+## algorithm "RS256" signs access tokens with an RSA keypair and publishes the
+## public key at /.well-known/jwks.json so external services can verify Sinas
+## tokens offline with standard JWT middleware. Default "" keeps HS256.
+jwt:
+  algorithm: ""
+  ## Optional: bring your own RS256 private key via an existing Secret.
+  ## When unset, Sinas auto-generates a keypair on first boot and stores it
+  ## encrypted in the database (shared by all processes) — no key management
+  ## needed.
+  existingSecret: ""
+  existingSecretKey: "jwt-private-key"
+  ## iss / aud claims on RS256 tokens; issuer defaults to the instance URL.
+  issuer: ""
+  audience: ""
+
 ## Extra environment variables appended to every sinas service (backend,
 ## queue workers, scheduler, cdc-worker). Any backend Settings knob
 ## (app/core/config.py) can be set here without a chart change, e.g.:

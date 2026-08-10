@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.email import send_otp_email_async
+from app.core.token_signing import decode_access_token, get_signing_context
 from app.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     check_permission,
@@ -328,8 +329,17 @@ def create_access_token(
         # Absent on real user/app tokens (treated as top-level callers).
         to_encode["execution_depth"] = execution_depth
 
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-    return encoded_jwt
+    ctx = get_signing_context()
+    headers = None
+    if ctx.algorithm == "RS256":
+        # iss/aud only under RS256: adding them to HS256 tokens would break
+        # any existing consumer whose JWT library auto-verifies aud when the
+        # claim is present. kid lets JWKS verifiers pick the right key.
+        to_encode["iss"] = settings.token_issuer
+        to_encode["aud"] = settings.jwt_audience
+        headers = {"kid": ctx.kid}
+
+    return jwt.encode(to_encode, ctx.sign_key, algorithm=ctx.algorithm, headers=headers)
 
 
 def get_execution_depth_from_request(request) -> Optional[int]:
@@ -344,7 +354,7 @@ def get_execution_depth_from_request(request) -> Optional[int]:
         return None
     token = auth_header[7:].strip()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = decode_access_token(token)
     except Exception:
         return None
     depth = payload.get("execution_depth")
@@ -631,7 +641,7 @@ async def verify_jwt_or_api_key(
 
     # Try JWT first
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = decode_access_token(token)
         user_id = payload.get("sub")
         email = payload.get("email")
 

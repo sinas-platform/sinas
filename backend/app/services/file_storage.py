@@ -216,7 +216,7 @@ def generate_file_url(file_id: str, version: int, expires_in: int = 3600) -> str
         "purpose": "file_serve",
         "exp": int(expire.timestamp()),
     }
-    token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+    token = jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
     domain = settings.domain
     if not domain or domain.lower() in ("localhost", "127.0.0.1"):
