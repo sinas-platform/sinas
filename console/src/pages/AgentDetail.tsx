@@ -324,7 +324,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               <label className="block text-sm font-medium text-gray-300 mb-2">Icon</label>
               <div className="flex items-start gap-4">
                 {/* Preview */}
-                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-[#1e1e1e] border border-white/[0.06] flex items-center justify-center overflow-hidden">
+                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-surface-2 border border-line-soft flex items-center justify-center overflow-hidden">
                   {(agent.icon_url || (formData.icon?.startsWith('url:') && formData.icon.length > 4)) ? (
                     <img
                       src={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : agent.icon_url!}
@@ -343,14 +343,14 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     <button
                       type="button"
                       onClick={() => setIconMode('collection')}
-                      className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}
+                      className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-surface-2 text-gray-400'}`}
                     >
                       From Collection
                     </button>
                     <button
                       type="button"
                       onClick={() => setIconMode('url')}
-                      className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}
+                      className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-surface-2 text-gray-400'}`}
                     >
                       External URL
                     </button>
@@ -465,7 +465,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   type="checkbox"
                   checked={formData.is_active ?? agent.is_active}
                   onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                  className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                 />
                 <label htmlFor="is_active" className="ml-2 text-sm text-gray-300">
                   Active
@@ -477,7 +477,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   type="checkbox"
                   checked={formData.is_default ?? agent.is_default}
                   onChange={(e) => setFormData({ ...formData, is_default: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                  className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                 />
                 <label htmlFor="is_default" className="ml-2 text-sm text-gray-300">
                   Default agent
@@ -489,7 +489,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   type="checkbox"
                   checked={formData.default_keep_alive ?? agent.default_keep_alive}
                   onChange={(e) => setFormData({ ...formData, default_keep_alive: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                  className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                 />
                 <label htmlFor="default_keep_alive" className="ml-2 text-sm text-gray-300">
                   Keep alive (survives disconnect)
@@ -658,7 +658,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Tools & Access</h2>
 
           {/* Tabs */}
-          <div className="flex border-b border-white/[0.06] mb-4">
+          <div className="flex border-b border-line-soft mb-4">
             <button
               type="button"
               onClick={() => setToolsTab('assistants')}
@@ -758,7 +758,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             >
               Hooks
             </button>
-            <div className="mx-1 w-px bg-white/[0.06] self-stretch" />
+            <div className="mx-1 w-px bg-hover-strong self-stretch" />
             <button
               type="button"
               onClick={() => setToolsTab('status')}
@@ -797,7 +797,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             {toolsTab === 'assistants' && (
               <div>
                 <p className="text-xs text-gray-500 mb-3">
-                  Select agents or add wildcard patterns (<code className="text-xs bg-[#161616] px-1 rounded">namespace/*</code>, <code className="text-xs bg-[#161616] px-1 rounded">*/*</code>)
+                  Select agents or add wildcard patterns (<code className="text-xs bg-surface-1 px-1 rounded">namespace/*</code>, <code className="text-xs bg-surface-1 px-1 rounded">*/*</code>)
                 </p>
                 {/* Tags for selected agents/patterns */}
                 {(() => {
@@ -839,7 +839,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   <input
                     type="text"
                     placeholder="Type to search agents or enter a pattern..."
-                    className="w-full px-3 py-1.5 text-sm border border-white/10 rounded-lg focus:ring-primary-500 focus:border-primary-500"
+                    className="w-full px-3 py-1.5 text-sm border border-line rounded-lg focus:ring-primary-500 focus:border-primary-500"
                     onChange={(e) => {
                       const input = e.target as HTMLInputElement;
                       input.dataset.filter = input.value;
@@ -906,12 +906,12 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     if (allSuggestions.length === 0) return null;
 
                     return (
-                      <div className="absolute z-10 w-full mt-1 bg-[#161616] border border-white/[0.06] rounded-lg max-h-48 overflow-y-auto">
+                      <div className="absolute z-10 w-full mt-1 bg-surface-1 border border-line-soft rounded-lg max-h-48 overflow-y-auto">
                         {allSuggestions.map((suggestion) => (
                           <button
                             key={suggestion.value}
                             type="button"
-                            className="w-full text-left px-3 py-2 hover:bg-white/5 flex items-center gap-2 text-sm"
+                            className="w-full text-left px-3 py-2 hover:bg-hover flex items-center gap-2 text-sm"
                             onMouseDown={(e) => {
                               e.preventDefault();
                               const updated = [...current, suggestion.value];
@@ -949,7 +949,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable skills that this agent can retrieve for instructions. Mark as "Preload" to inject into system prompt instead of exposing as tool.
                 </p>
                 {skills && skills.length > 0 ? (
-                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-96 overflow-y-auto">
+                  <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-96 overflow-y-auto">
                     {skills.map((skill: any) => {
                       const skillIdentifier = `${skill.namespace}/${skill.name}`;
                       const current = formData.enabled_skills || agent.enabled_skills || [];
@@ -960,7 +960,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       return (
                         <div
                           key={skill.id}
-                          className="flex items-start p-2 hover:bg-white/5 rounded"
+                          className="flex items-start p-2 hover:bg-hover rounded"
                         >
                           <input
                             type="checkbox"
@@ -972,7 +972,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((s: any) => s.skill !== skillIdentifier);
                               setFormData({ ...formData, enabled_skills: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
                             <div className="flex items-center gap-2">
@@ -980,7 +980,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 {skillIdentifier}
                               </span>
                               {!skill.is_active && (
-                                <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
+                                <span className="px-2 py-0.5 bg-surface-1 text-gray-400 text-xs font-medium rounded">
                                   Inactive
                                 </span>
                               )}
@@ -1002,7 +1002,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                     );
                                     setFormData({ ...formData, enabled_skills: updated });
                                   }}
-                                  className="w-3 h-3 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                                  className="w-3 h-3 text-primary-600 border-line rounded focus:ring-primary-500"
                                 />
                                 <span className="ml-2 text-xs text-gray-400">
                                   Preload (inject into system prompt)
@@ -1015,7 +1015,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No skills available. Create skills to use them with agents.</p>
                   </div>
                 )}
@@ -1029,7 +1029,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Select which functions this agent can call and configure default parameters
                 </p>
                 {functions && functions.length > 0 ? (
-                  <div className="space-y-3 border border-white/[0.06] rounded-lg p-3 max-h-[600px] overflow-y-auto">
+                  <div className="space-y-3 border border-line-soft rounded-lg p-3 max-h-[600px] overflow-y-auto">
                     {functions.map((func: any) => {
                       const funcIdentifier = `${func.namespace}/${func.name}`;
                       const isEnabled = (formData.enabled_functions || agent.enabled_functions || []).includes(funcIdentifier);
@@ -1041,7 +1041,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       return (
                         <div
                           key={func.id}
-                          className="border border-white/[0.06] rounded-lg p-3"
+                          className="border border-line-soft rounded-lg p-3"
                         >
                           <div className="flex items-start gap-3">
                             <input
@@ -1054,7 +1054,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   : currentFunctions.filter((id: string) => id !== funcIdentifier);
                                 setFormData({ ...formData, enabled_functions: newFunctions });
                               }}
-                              className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                              className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                             />
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
@@ -1062,7 +1062,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   {funcIdentifier}
                                 </span>
                                 {!func.is_active && (
-                                  <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
+                                  <span className="px-2 py-0.5 bg-surface-1 text-gray-400 text-xs font-medium rounded">
                                     Inactive
                                   </span>
                                 )}
@@ -1163,7 +1163,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                               }
                                               setFormData({ ...formData, function_parameters: newFunctionParams });
                                             }}
-                                            className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+                                            className="rounded border-line text-primary-600 focus:ring-primary-500"
                                           />
                                           <span className="text-xs text-gray-400">
                                             Locked
@@ -1184,7 +1184,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No functions available. Create functions first.</p>
                   </div>
                 )}
@@ -1200,7 +1200,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     Configure which stores this agent can access and the access level for each.
                   </p>
                   {stores && stores.length > 0 ? (
-                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-80 overflow-y-auto">
+                    <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-80 overflow-y-auto">
                       {stores.map((store: any) => {
                         const storeRef = `${store.namespace}/${store.name}`;
                         const currentStores = formData.enabled_stores || agent.enabled_stores || [];
@@ -1209,7 +1209,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                         return (
                           <div
                             key={storeRef}
-                            className="flex items-center justify-between p-2 hover:bg-white/5 rounded"
+                            className="flex items-center justify-between p-2 hover:bg-hover rounded"
                           >
                             <div className="flex-1">
                               <span className="text-sm font-medium text-gray-100 font-mono">{storeRef}</span>
@@ -1221,7 +1221,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 {store.encrypted && <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/30 text-purple-300 rounded">encrypted</span>}
                               </div>
                             </div>
-                            <div className="flex rounded-md overflow-hidden border border-white/10">
+                            <div className="flex rounded-md overflow-hidden border border-line">
                               {(['none', 'readonly', 'readwrite'] as const).map((mode) => (
                                 <button
                                   key={mode}
@@ -1236,7 +1236,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                                     accessMode === mode
                                       ? 'bg-primary-600 text-white'
-                                      : 'bg-[#1a1a1a] text-gray-400 hover:text-gray-200'
+                                      : 'bg-surface-2 text-gray-400 hover:text-gray-200'
                                   }`}
                                 >
                                   {mode === 'none' ? 'off' : mode === 'readonly' ? 'read' : 'read/write'}
@@ -1248,7 +1248,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       })}
                     </div>
                   ) : (
-                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                    <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                       <p className="text-sm text-gray-500">No stores available. Create stores first.</p>
                     </div>
                   )}
@@ -1263,13 +1263,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable SQL queries for this agent to execute against external databases
                 </p>
                 {queries && queries.length > 0 ? (
-                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-64 overflow-y-auto">
                     {queries.map((query: any) => {
                       const queryRef = `${query.namespace}/${query.name}`;
                       return (
                         <label
                           key={queryRef}
-                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-hover rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -1281,7 +1281,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ref: string) => ref !== queryRef);
                               setFormData({ ...formData, enabled_queries: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
                             <span className="text-sm font-medium text-gray-100 font-mono">{queryRef}</span>
@@ -1301,7 +1301,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No queries available. Create queries first.</p>
                   </div>
                 )}
@@ -1315,7 +1315,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable file collections for this agent to search and retrieve files
                 </p>
                 {collections && collections.length > 0 ? (
-                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-64 overflow-y-auto">
                     {collections.map((coll: any) => {
                       const collRef = `${coll.namespace}/${coll.name}`;
                       const current = formData.enabled_collections || agent.enabled_collections || [];
@@ -1327,7 +1327,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       return (
                         <div
                           key={collRef}
-                          className="flex items-center gap-3 p-2 hover:bg-white/5 rounded"
+                          className="flex items-center gap-3 p-2 hover:bg-hover rounded"
                         >
                           <input
                             type="checkbox"
@@ -1340,11 +1340,11 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   );
                               setFormData({ ...formData, enabled_collections: updated as any });
                             }}
-                            className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <span className="text-sm font-medium text-gray-100 font-mono flex-1">{collRef}</span>
                           {isEnabled && (
-                            <div className="flex rounded-md overflow-hidden border border-white/10">
+                            <div className="flex rounded-md overflow-hidden border border-line">
                               {(['readonly', 'readwrite'] as const).map((mode) => (
                                 <button
                                   key={mode}
@@ -1362,7 +1362,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                                     access === mode
                                       ? 'bg-primary-600 text-white'
-                                      : 'bg-[#1a1a1a] text-gray-400 hover:text-gray-200'
+                                      : 'bg-surface-2 text-gray-400 hover:text-gray-200'
                                   }`}
                                 >
                                   {mode === 'readonly' ? 'read' : 'read/write'}
@@ -1375,7 +1375,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No collections available. Create collections first.</p>
                   </div>
                 )}
@@ -1389,13 +1389,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                   Enable UI components for this agent to render and interact with
                 </p>
                 {components && components.length > 0 ? (
-                  <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-64 overflow-y-auto">
+                  <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-64 overflow-y-auto">
                     {components.map((comp: any) => {
                       const compRef = `${comp.namespace}/${comp.name}`;
                       return (
                         <label
                           key={compRef}
-                          className="flex items-start p-2 hover:bg-white/5 rounded cursor-pointer"
+                          className="flex items-start p-2 hover:bg-hover rounded cursor-pointer"
                         >
                           <input
                             type="checkbox"
@@ -1407,7 +1407,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 : current.filter((ref: string) => ref !== compRef);
                               setFormData({ ...formData, enabled_components: updated });
                             }}
-                            className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="ml-3 flex-1">
                             <span className="text-sm font-medium text-gray-100 font-mono">{compRef}</span>
@@ -1420,7 +1420,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No components available. Create components first.</p>
                   </div>
                 )}
@@ -1468,11 +1468,11 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       <button type="button" onClick={addHook} className="text-xs text-primary-400 hover:text-primary-300">+ Add Hook</button>
                     </div>
                     {hookList.length === 0 ? (
-                      <p className="text-xs text-gray-600 p-3 border border-white/[0.06] rounded-lg">No hooks configured</p>
+                      <p className="text-xs text-gray-600 p-3 border border-line-soft rounded-lg">No hooks configured</p>
                     ) : (
                       <div className="space-y-2">
                         {hookList.map((hook: any, i: number) => (
-                          <div key={i} className="border border-white/[0.06] rounded-lg p-3 space-y-2">
+                          <div key={i} className="border border-line-soft rounded-lg p-3 space-y-2">
                             <div className="flex items-center gap-2">
                               <div className="flex flex-col gap-0.5">
                                 <button type="button" onClick={() => moveHook(i, -1)} disabled={i === 0}
@@ -1500,7 +1500,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                               <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
                                 <input type="checkbox" checked={hook.async || false}
                                   onChange={e => updateHook(i, 'async', e.target.checked)}
-                                  className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded" />
+                                  className="w-3.5 h-3.5 text-primary-600 border-line rounded" />
                                 Fire-and-forget
                               </label>
                               {!hook.async && (
@@ -1550,7 +1550,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       const enabledOps: string[] = entry?.operations || [];
 
                       return (
-                        <div key={connRef} className="border border-white/[0.06] rounded-lg p-3">
+                        <div key={connRef} className="border border-line-soft rounded-lg p-3">
                           <label className="flex items-start cursor-pointer">
                             <input
                               type="checkbox"
@@ -1566,7 +1566,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                 }
                                 setFormData({ ...formData, enabled_connectors: updated });
                               }}
-                              className="mt-1 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                              className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                             />
                             <div className="ml-3 flex-1">
                               <span className="text-sm font-medium text-gray-100 font-mono">{connRef}</span>
@@ -1609,8 +1609,8 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   PUT: 'text-yellow-400', PATCH: 'text-orange-400', DELETE: 'text-red-400',
                                 };
                                 return (
-                                  <div key={op.name} className="border border-white/[0.04] rounded p-1.5">
-                                    <label className="flex items-center gap-2 hover:bg-white/5 rounded cursor-pointer p-0.5">
+                                  <div key={op.name} className="border border-line-soft rounded p-1.5">
+                                    <label className="flex items-center gap-2 hover:bg-hover rounded cursor-pointer p-0.5">
                                       <input
                                         type="checkbox"
                                         checked={isOpEnabled}
@@ -1624,7 +1624,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                           });
                                           setFormData({ ...formData, enabled_connectors: updated });
                                         }}
-                                        className="w-3.5 h-3.5 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                                        className="w-3.5 h-3.5 text-primary-600 border-line rounded focus:ring-primary-500"
                                       />
                                       <span className={`text-[10px] font-bold uppercase ${methodColors[op.method] || 'text-gray-400'}`}>
                                         {op.method}
@@ -1696,7 +1696,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                     <p className="text-sm text-gray-500">No connectors available. Create connectors first.</p>
                   </div>
                 )}
@@ -1748,13 +1748,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
               return (
                 <div>
                   <p className="text-xs text-gray-500 mb-3">
-                    Status templates shown in the chat UI while a tool is running. Use Jinja2 syntax to reference arguments, e.g. <code className="text-xs bg-[#161616] px-1 rounded">{'Searching for {{query}}...'}</code>
+                    Status templates shown in the chat UI while a tool is running. Use Jinja2 syntax to reference arguments, e.g. <code className="text-xs bg-surface-1 px-1 rounded">{'Searching for {{query}}...'}</code>
                   </p>
                   {enabledTools.length > 0 ? (
-                    <div className="space-y-2 border border-white/[0.06] rounded-lg p-3 max-h-80 overflow-y-auto">
+                    <div className="space-y-2 border border-line-soft rounded-lg p-3 max-h-80 overflow-y-auto">
                       {enabledTools.map(({ key, label, type }) => (
-                        <div key={key} className="flex items-center gap-3 p-2 hover:bg-white/5 rounded">
-                          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-white/[0.04] text-gray-500 border border-white/[0.06]">
+                        <div key={key} className="flex items-center gap-3 p-2 hover:bg-hover rounded">
+                          <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded bg-hover text-gray-500 border border-line-soft">
                             {type}
                           </span>
                           <span className="shrink-0 text-sm font-mono text-gray-300 min-w-[140px]">{label}</span>
@@ -1771,13 +1771,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                               setFormData({ ...formData, status_templates: updated });
                             }}
                             placeholder="e.g. Searching for {{query}}..."
-                            className="flex-1 bg-transparent text-sm text-gray-200 border border-white/[0.06] rounded px-2.5 py-1.5 placeholder-gray-600 focus:outline-none focus:border-primary-600/50"
+                            className="flex-1 bg-transparent text-sm text-gray-200 border border-line-soft rounded px-2.5 py-1.5 placeholder-gray-600 focus:outline-none focus:border-primary-600/50"
                           />
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="bg-[#0d0d0d] rounded-lg p-3 border border-white/[0.06]">
+                    <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
                       <p className="text-sm text-gray-500">No tools enabled. Enable functions, agents, or other tools first.</p>
                     </div>
                   )}
@@ -1791,7 +1791,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 <p className="text-xs text-gray-500 mb-3">
                   Sinas platform capabilities. These are opt-in tools beyond the normal function/query toolkit.
                 </p>
-                <div className="space-y-2 border border-white/[0.06] rounded-lg p-3">
+                <div className="space-y-2 border border-line-soft rounded-lg p-3">
                   {(() => {
                     const currentTools = formData.system_tools ?? agent.system_tools ?? [];
                     const isToolEnabled = (name: string) =>
@@ -1815,13 +1815,13 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                         {simpleTools.map((tool) => (
                           <label
                             key={tool.key}
-                            className="flex items-start gap-3 p-2.5 hover:bg-white/5 rounded cursor-pointer"
+                            className="flex items-start gap-3 p-2.5 hover:bg-hover rounded cursor-pointer"
                           >
                             <input
                               type="checkbox"
                               checked={isToolEnabled(tool.key)}
                               onChange={(e) => toggleTool(tool.key, e.target.checked)}
-                              className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                              className="mt-0.5 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                             />
                             <div>
                               <span className="text-sm font-medium text-gray-100">{tool.label}</span>
@@ -1831,7 +1831,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                         ))}
 
                         {/* Database Introspection — with connection picker */}
-                        <div className="p-2.5 hover:bg-white/5 rounded">
+                        <div className="p-2.5 hover:bg-hover rounded">
                           <label className="flex items-start gap-3 cursor-pointer">
                             <input
                               type="checkbox"
@@ -1843,7 +1843,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                   toggleTool('databaseIntrospection', false);
                                 }
                               }}
-                              className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                              className="mt-0.5 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                             />
                             <div className="flex-1">
                               <span className="text-sm font-medium text-gray-100">Database Introspection</span>
@@ -1894,7 +1894,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                                             connections: [...connections, name],
                                           });
                                         }}
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-mono text-gray-500 border border-white/[0.06] rounded-md hover:border-primary-600/30 hover:text-primary-300 transition-colors"
+                                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-mono text-gray-500 border border-line-soft rounded-md hover:border-primary-600/30 hover:text-primary-300 transition-colors"
                                       >
                                         <span className="text-[10px]">+</span> {name}
                                       </button>
@@ -1917,7 +1917,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
           </div>
         </div>
 
-        <div className="card bg-[#0d0d0d]">
+        <div className="card bg-surface-0">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Metadata</h2>
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>

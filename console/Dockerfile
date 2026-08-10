@@ -31,7 +31,6 @@ COPY index.html ./
 COPY tsconfig*.json ./
 COPY vite.config.ts ./
 COPY postcss.config.js ./
-COPY tailwind.config.js ./
 COPY eslint.config.js ./
 
 # Build the application

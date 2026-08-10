@@ -68,7 +68,7 @@ export function Connectors() {
               <Link
                 key={conn.id}
                 to={`/connectors/${conn.namespace}/${conn.name}`}
-                className="card flex items-center justify-between hover:border-white/[0.12] transition-colors group"
+                className="card flex items-center justify-between hover:border-line transition-colors group"
               >
                 <div className="flex items-center gap-4 min-w-0">
                   <Plug className="w-5 h-5 text-primary-400 flex-shrink-0" />

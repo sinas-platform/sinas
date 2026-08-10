@@ -46,7 +46,7 @@ function ConfirmDestroyModal({
 
   return (
     <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+      <div className="bg-surface-1 rounded-lg max-w-md w-full p-6">
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle className="w-5 h-5 text-red-400" />
           <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
@@ -213,7 +213,7 @@ export function DatabaseConnectionDetail() {
               <Cable className="w-6 h-6 text-primary-600" />
               <h1 className="text-3xl font-bold text-gray-100">{name}</h1>
               {connection && (
-                <span className="text-xs font-medium bg-[#161616] text-gray-300 px-2 py-0.5 rounded">
+                <span className="text-xs font-medium bg-surface-1 text-gray-300 px-2 py-0.5 rounded">
                   {connection.connection_type}
                 </span>
               )}
@@ -273,9 +273,9 @@ export function DatabaseConnectionDetail() {
         ) : tablesError ? (
           <ErrorDisplay error={tablesError} title="Failed to load tables" />
         ) : tables && tables.length > 0 ? (
-          <div className="overflow-hidden rounded-lg border border-white/5">
+          <div className="overflow-hidden rounded-lg border border-line-soft">
             <table className="w-full text-sm">
-              <thead className="bg-[#111]">
+              <thead className="bg-surface-input">
                 <tr>
                   <th className="text-left px-4 py-3 text-gray-400 font-medium">Table</th>
                   <th className="text-right px-4 py-3 text-gray-400 font-medium">Est. Rows</th>
@@ -287,7 +287,7 @@ export function DatabaseConnectionDetail() {
               </thead>
               <tbody className="divide-y divide-white/5">
                 {tables.map((t: DbTableInfo) => (
-                  <tr key={t.table_name} className="hover:bg-white/[0.02]">
+                  <tr key={t.table_name} className="hover:bg-hover">
                     <td className="px-4 py-3">
                       <Link
                         to={`/database-connections/${name}/tables/${t.table_name}?schema=${selectedSchema}`}
@@ -417,7 +417,7 @@ export function DatabaseConnectionDetail() {
       {/* Create Table Modal */}
       {showCreateTableModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Create Table</h2>
             <form
               onSubmit={(e) => {
@@ -445,7 +445,7 @@ export function DatabaseConnectionDetail() {
                       type="checkbox"
                       checked={ifNotExists}
                       onChange={(e) => setIfNotExists(e.target.checked)}
-                      className="h-4 w-4 text-primary-600 border-white/10 rounded"
+                      className="h-4 w-4 text-primary-600 border-line rounded"
                     />
                     IF NOT EXISTS
                   </label>
@@ -461,7 +461,7 @@ export function DatabaseConnectionDetail() {
                 </div>
                 <div className="space-y-3">
                   {columns.map((col, idx) => (
-                    <div key={idx} className="flex flex-wrap items-center gap-2 p-2 bg-[#111] rounded-lg">
+                    <div key={idx} className="flex flex-wrap items-center gap-2 p-2 bg-surface-input rounded-lg">
                       <div className="flex items-center gap-2 w-full">
                         <input
                           type="text"
@@ -487,7 +487,7 @@ export function DatabaseConnectionDetail() {
                             type="checkbox"
                             checked={!col.nullable}
                             onChange={(e) => updateColumn(idx, 'nullable', !e.target.checked)}
-                            className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                            className="h-3 w-3 text-primary-600 border-line rounded"
                           />
                           NOT NULL
                         </label>
@@ -496,7 +496,7 @@ export function DatabaseConnectionDetail() {
                             type="checkbox"
                             checked={col.primary_key || false}
                             onChange={(e) => updateColumn(idx, 'primary_key', e.target.checked)}
-                            className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                            className="h-3 w-3 text-primary-600 border-line rounded"
                           />
                           PK
                         </label>
@@ -562,7 +562,7 @@ export function DatabaseConnectionDetail() {
       {/* Create View Modal */}
       {showCreateViewModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Create View</h2>
             <form
               onSubmit={(e) => {
@@ -599,7 +599,7 @@ export function DatabaseConnectionDetail() {
                   type="checkbox"
                   checked={viewOrReplace}
                   onChange={(e) => setViewOrReplace(e.target.checked)}
-                  className="h-4 w-4 text-primary-600 border-white/10 rounded"
+                  className="h-4 w-4 text-primary-600 border-line rounded"
                 />
                 OR REPLACE (overwrite if exists)
               </label>

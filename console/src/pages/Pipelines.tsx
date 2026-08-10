@@ -65,7 +65,7 @@ export function Pipelines() {
               <Link
                 key={pipeline.id}
                 to={`/pipelines/${pipeline.namespace}/${pipeline.name}`}
-                className="card flex items-center justify-between hover:border-white/[0.12] transition-colors group"
+                className="card flex items-center justify-between hover:border-line transition-colors group"
               >
                 <div className="flex items-center gap-4 min-w-0">
                   <Workflow className="w-5 h-5 text-primary-400 flex-shrink-0" />

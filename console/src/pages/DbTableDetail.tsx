@@ -44,7 +44,7 @@ function ConfirmDestroyModal({
 
   return (
     <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+      <div className="bg-surface-1 rounded-lg max-w-md w-full p-6">
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle className="w-5 h-5 text-red-400" />
           <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
@@ -450,7 +450,7 @@ export function DbTableDetail() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/5">
+                  <tr className="border-b border-line-soft">
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Name</th>
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Display Name</th>
                     <th className="text-left px-3 py-2 text-gray-400 font-medium">Description</th>
@@ -467,7 +467,7 @@ export function DbTableDetail() {
                         c.constraint_type === 'FOREIGN KEY' && c.columns.includes(col.column_name)
                     );
                     return (
-                      <tr key={col.column_name} className="hover:bg-white/[0.02]">
+                      <tr key={col.column_name} className="hover:bg-hover">
                         <td className="px-3 py-2">
                           <span className="text-gray-100 font-mono">{col.column_name}</span>
                         </td>
@@ -554,7 +554,7 @@ export function DbTableDetail() {
                 <div className="space-y-2 text-sm">
                   {tableDetail.constraints.map((c: ConstraintInfo) => (
                     <div key={c.constraint_name} className="flex items-start gap-2">
-                      <span className="px-1.5 py-0.5 bg-[#1e1e1e] text-gray-300 rounded text-xs font-mono whitespace-nowrap">
+                      <span className="px-1.5 py-0.5 bg-surface-2 text-gray-300 rounded text-xs font-mono whitespace-nowrap">
                         {c.constraint_type}
                       </span>
                       <div>
@@ -632,7 +632,7 @@ export function DbTableDetail() {
 
         {/* Filter Builder */}
         {showFilters && (
-          <div className="mb-4 p-3 bg-[#111] rounded-lg border border-white/5">
+          <div className="mb-4 p-3 bg-surface-input rounded-lg border border-line-soft">
             <div className="space-y-2">
               {pendingFilters.map((f, idx) => (
                 <div key={idx} className="flex items-center gap-2">
@@ -710,7 +710,7 @@ export function DbTableDetail() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[#111]">
+                <thead className="bg-surface-input">
                   <tr>
                     {columnNames.map((col) => (
                       <th
@@ -740,7 +740,7 @@ export function DbTableDetail() {
                     </tr>
                   ) : (
                     rowsData.rows.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-white/[0.02]">
+                      <tr key={idx} className="hover:bg-hover">
                         {columnNames.map((col) => (
                           <td key={col} className="px-3 py-2 max-w-xs truncate">
                             <span
@@ -779,7 +779,7 @@ export function DbTableDetail() {
             </div>
 
             {/* Pagination */}
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/5">
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-line-soft">
               <span className="text-sm text-gray-400">
                 {rowsData.total_count} rows total
                 {rowsData.total_count > 0 && (
@@ -826,7 +826,7 @@ export function DbTableDetail() {
       {/* Add Column Modal */}
       {showAddColumnModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Column(s)</h2>
             <form
               onSubmit={(e) => {
@@ -872,7 +872,7 @@ export function DbTableDetail() {
                           updated[idx] = { ...updated[idx], nullable: !e.target.checked };
                           setNewColumns(updated);
                         }}
-                        className="h-3 w-3 text-primary-600 border-white/10 rounded"
+                        className="h-3 w-3 text-primary-600 border-line rounded"
                       />
                       NOT NULL
                     </label>
@@ -920,7 +920,7 @@ export function DbTableDetail() {
       {/* Insert Row Modal */}
       {showInsertModal && tableDetail && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Insert Row</h2>
             <form onSubmit={handleInsert} className="space-y-3">
               {tableDetail.columns.map((col: ColumnInfo) => {
@@ -968,7 +968,7 @@ export function DbTableDetail() {
       {/* Edit Row Modal */}
       {showEditModal && editRow && tableDetail && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Edit Row</h2>
             <form onSubmit={handleUpdate} className="space-y-3">
               {columnNames.map((col) => {

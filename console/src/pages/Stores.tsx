@@ -122,7 +122,7 @@ export function Stores() {
                       <span className={`px-2 py-0.5 text-xs font-medium rounded flex items-center gap-1 ${
                         store.default_visibility === 'shared'
                           ? 'text-blue-400 bg-blue-900/20'
-                          : 'text-gray-400 bg-[#0d0d0d]'
+                          : 'text-gray-400 bg-surface-0'
                       }`}>
                         {store.default_visibility === 'shared' ? (
                           <Unlock className="w-3 h-3" />
@@ -141,7 +141,7 @@ export function Stores() {
                         <summary className="cursor-pointer text-gray-500 hover:text-gray-300">
                           View schema
                         </summary>
-                        <pre className="mt-2 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto text-gray-300">
+                        <pre className="mt-2 p-2 bg-surface-0 rounded border border-line-soft overflow-x-auto text-gray-300">
                           {JSON.stringify(store.schema, null, 2)}
                         </pre>
                       </details>
@@ -214,7 +214,7 @@ function StoreStateCount({ namespace, name }: { namespace: string; name: string 
   if (count === 0) return null;
 
   return (
-    <span className="px-2 py-0.5 text-xs font-medium rounded text-gray-400 bg-[#0d0d0d]">
+    <span className="px-2 py-0.5 text-xs font-medium rounded text-gray-400 bg-surface-0">
       {count} state{count !== 1 ? 's' : ''}
     </span>
   );
@@ -273,7 +273,7 @@ function StoreStatesPanel({
   });
 
   return (
-    <div className="mt-4 pt-4 border-t border-white/[0.06]">
+    <div className="mt-4 pt-4 border-t border-line-soft">
       <div className="flex items-center gap-3 mb-3">
         <h4 className="text-sm font-semibold text-gray-300 shrink-0">States</h4>
         <select
@@ -322,7 +322,7 @@ function StoreStatesPanel({
           {filtered.map((state: any) => (
             <div
               key={state.id || state.key}
-              className="border border-white/[0.06] rounded-lg p-3 hover:bg-white/5 transition-colors"
+              className="border border-line-soft rounded-lg p-3 hover:bg-hover transition-colors"
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
@@ -331,14 +331,14 @@ function StoreStatesPanel({
                       {state.key}
                     </span>
                     {state.user_email && (
-                      <span className="px-2 py-0.5 text-xs font-medium rounded text-gray-400 bg-[#0d0d0d]">
+                      <span className="px-2 py-0.5 text-xs font-medium rounded text-gray-400 bg-surface-0">
                         {state.user_email}
                       </span>
                     )}
                     <span className={`px-2 py-0.5 text-xs font-medium rounded flex items-center gap-1 ${
                       state.visibility === 'shared'
                         ? 'text-blue-400 bg-blue-900/20'
-                        : 'text-gray-400 bg-[#0d0d0d]'
+                        : 'text-gray-400 bg-surface-0'
                     }`}>
                       {state.visibility === 'shared' ? (
                         <Users className="w-3 h-3" />
@@ -354,7 +354,7 @@ function StoreStatesPanel({
                       </span>
                     )}
                     {state.relevance_score != null && state.relevance_score !== 1 && (
-                      <span className="px-2 py-0.5 bg-[#161616] text-gray-400 text-xs font-medium rounded">
+                      <span className="px-2 py-0.5 bg-surface-1 text-gray-400 text-xs font-medium rounded">
                         Score: {state.relevance_score}
                       </span>
                     )}
@@ -397,7 +397,7 @@ function StoreStatesPanel({
                           </button>
                         </div>
                         {revealedValues[state.id || state.key] && (
-                          <pre className="mt-1.5 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto text-gray-300">
+                          <pre className="mt-1.5 p-2 bg-surface-0 rounded border border-line-soft overflow-x-auto text-gray-300">
                             {JSON.stringify(state.value, null, 2)}
                           </pre>
                         )}
@@ -407,7 +407,7 @@ function StoreStatesPanel({
                         <summary className="cursor-pointer text-gray-500 hover:text-gray-300">
                           View value
                         </summary>
-                        <pre className="mt-1.5 p-2 bg-[#0d0d0d] rounded border border-white/[0.06] overflow-x-auto text-gray-300">
+                        <pre className="mt-1.5 p-2 bg-surface-0 rounded border border-line-soft overflow-x-auto text-gray-300">
                           {JSON.stringify(state.value, null, 2)}
                         </pre>
                       </details>
@@ -425,7 +425,7 @@ function StoreStatesPanel({
                 <div className="flex items-center gap-1.5 ml-3">
                   <button
                     onClick={() => { setEditingState(state); setShowStateModal(true); }}
-                    className="p-1.5 text-gray-400 hover:text-gray-100 hover:bg-white/10 rounded"
+                    className="p-1.5 text-gray-400 hover:text-gray-100 hover:bg-hover-strong rounded"
                     title="Edit state"
                   >
                     <Edit className="w-3.5 h-3.5" />
@@ -519,10 +519,10 @@ function StateModal({
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
         <div
-          className="bg-[#161616] rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto"
+          className="bg-surface-1 rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="sticky top-0 bg-[#161616] border-b border-white/[0.06] px-6 py-4 flex items-center justify-between">
+          <div className="sticky top-0 bg-surface-1 border-b border-line-soft px-6 py-4 flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold text-gray-100">
                 {state ? 'Edit State' : 'New State'}
@@ -564,13 +564,13 @@ function StateModal({
                 placeholder='{"example": "value"}'
                 onChange={(e) => setFormData({ ...formData, value: e.target.value })}
                 padding={15}
-                data-color-mode="dark"
+
                 style={{
-                  backgroundColor: '#111111',
+                  backgroundColor: 'var(--surface-input)',
                   fontFamily: 'ui-monospace, monospace',
                   fontSize: 13,
-                  color: '#ededed',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--content)',
+                  border: '1px solid var(--line)',
                   borderRadius: '0.375rem',
                   minHeight: '150px',
                 }}
@@ -595,7 +595,7 @@ function StateModal({
                   type="checkbox"
                   checked={formData.encrypted}
                   onChange={(e) => setFormData({ ...formData, encrypted: e.target.checked })}
-                  className="w-4 h-4 rounded border-white/20 bg-[#111] text-amber-500 focus:ring-amber-500/30"
+                  className="w-4 h-4 rounded border-line-strong bg-surface-input text-amber-500 focus:ring-amber-500/30"
                 />
                 <span className="flex items-center gap-1.5 text-sm text-gray-300">
                   <Shield className="w-4 h-4 text-amber-500" />
@@ -650,7 +650,7 @@ function StateModal({
               </div>
             </div>
 
-            <div className="flex gap-2 justify-end pt-4 border-t border-white/[0.06]">
+            <div className="flex gap-2 justify-end pt-4 border-t border-line-soft">
               <button type="button" onClick={onClose} className="btn btn-secondary">
                 Cancel
               </button>
@@ -724,10 +724,10 @@ function StoreModal({
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
         <div
-          className="bg-[#161616] rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto"
+          className="bg-surface-1 rounded-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="sticky top-0 bg-[#161616] border-b border-white/[0.06] px-6 py-4 flex items-center justify-between">
+          <div className="sticky top-0 bg-surface-1 border-b border-line-soft px-6 py-4 flex items-center justify-between">
             <h2 className="text-xl font-semibold text-gray-100">
               {store ? 'Edit Store' : 'New Store'}
             </h2>
@@ -798,7 +798,7 @@ function StoreModal({
                   type="checkbox"
                   checked={formData.strict}
                   onChange={(e) => setFormData({ ...formData, strict: e.target.checked })}
-                  className="w-4 h-4 rounded border-white/20 bg-[#111] text-amber-500 focus:ring-amber-500/30"
+                  className="w-4 h-4 rounded border-line-strong bg-surface-input text-amber-500 focus:ring-amber-500/30"
                 />
                 <span className="text-sm text-gray-300">
                   Strict mode
@@ -830,7 +830,7 @@ function StoreModal({
                   type="checkbox"
                   checked={formData.encrypted}
                   onChange={(e) => setFormData({ ...formData, encrypted: e.target.checked })}
-                  className="w-4 h-4 rounded border-white/20 bg-[#111] text-amber-500 focus:ring-amber-500/30"
+                  className="w-4 h-4 rounded border-line-strong bg-surface-input text-amber-500 focus:ring-amber-500/30"
                 />
                 <span className="flex items-center gap-1.5 text-sm text-gray-300">
                   <Shield className="w-4 h-4 text-amber-500" />
@@ -842,7 +842,7 @@ function StoreModal({
               </p>
             </div>
 
-            <div className="flex gap-2 justify-end pt-4 border-t border-white/[0.06]">
+            <div className="flex gap-2 justify-end pt-4 border-t border-line-soft">
               <button type="button" onClick={onClose} className="btn btn-secondary">
                 Cancel
               </button>

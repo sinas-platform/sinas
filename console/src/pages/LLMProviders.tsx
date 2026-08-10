@@ -132,7 +132,7 @@ export function LLMProviders() {
       ) : providers && providers.length > 0 ? (
         <div className="grid gap-6">
           {providers.map((provider) => (
-            <div key={provider.id} className={`card ${!provider.is_active ? 'opacity-60 bg-[#0d0d0d]' : ''}`}>
+            <div key={provider.id} className={`card ${!provider.is_active ? 'opacity-60 bg-surface-0' : ''}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center flex-1">
                   <Brain className={`w-8 h-8 mr-3 flex-shrink-0 ${provider.is_active ? 'text-primary-600' : 'text-gray-500'}`} />
@@ -140,12 +140,12 @@ export function LLMProviders() {
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-100">{provider.name}</h3>
                       {provider.is_default && (
-                        <span className="text-xs font-medium bg-primary-100 text-primary-700 px-2 py-0.5 rounded">Default</span>
+                        <span className="text-xs font-medium bg-primary-900/30 text-primary-400 px-2 py-0.5 rounded">Default</span>
                       )}
                       {provider.is_active ? (
                         <span className="px-2 py-0.5 bg-green-900/30 text-green-300 text-xs font-medium rounded">Active</span>
                       ) : (
-                        <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
+                        <span className="px-2 py-0.5 bg-surface-2 text-gray-400 text-xs font-medium rounded">Inactive</span>
                       )}
                     </div>
                     <p className="text-sm text-gray-400">
@@ -188,9 +188,9 @@ export function LLMProviders() {
                 </div>
               </div>
               {provider.config && Object.keys(provider.config).length > 0 && (
-                <div className="mt-4 pt-4 border-t border-white/[0.06]">
+                <div className="mt-4 pt-4 border-t border-line-soft">
                   <p className="text-sm font-medium text-gray-300 mb-2">Configuration:</p>
-                  <pre className="text-xs bg-[#0d0d0d] p-3 rounded overflow-x-auto">
+                  <pre className="text-xs bg-surface-0 p-3 rounded overflow-x-auto">
                     {JSON.stringify(provider.config, null, 2)}
                   </pre>
                 </div>
@@ -213,7 +213,7 @@ export function LLMProviders() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Add LLM Provider</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -332,7 +332,7 @@ export function LLMProviders() {
                     type="checkbox"
                     checked={createFormData.is_active}
                     onChange={(e) => setCreateFormData({ ...createFormData, is_active: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   <label htmlFor="is_active" className="ml-2 block text-sm text-gray-300">
                     Active
@@ -345,7 +345,7 @@ export function LLMProviders() {
                     type="checkbox"
                     checked={createFormData.is_default}
                     onChange={(e) => setCreateFormData({ ...createFormData, is_default: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   <label htmlFor="is_default" className="ml-2 block text-sm text-gray-300">
                     Set as Default
@@ -390,7 +390,7 @@ export function LLMProviders() {
       {/* Edit Modal */}
       {showEditModal && selectedProvider && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Edit LLM Provider</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
@@ -508,7 +508,7 @@ export function LLMProviders() {
                     type="checkbox"
                     checked={editFormData.is_active ?? false}
                     onChange={(e) => setEditFormData({ ...editFormData, is_active: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   <label htmlFor="edit_is_active" className="ml-2 block text-sm text-gray-300">
                     Active
@@ -521,7 +521,7 @@ export function LLMProviders() {
                     type="checkbox"
                     checked={editFormData.is_default ?? false}
                     onChange={(e) => setEditFormData({ ...editFormData, is_default: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   <label htmlFor="edit_is_default" className="ml-2 block text-sm text-gray-300">
                     Set as Default

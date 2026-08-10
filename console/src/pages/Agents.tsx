@@ -194,7 +194,7 @@ export function Agents() {
                   ) : (
                     <Bot className="w-8 h-8 text-primary-600" />
                   )}
-                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#161616] ${agent.is_active ? 'bg-green-500' : 'bg-gray-600'}`} />
+                  <div className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-surface-1 ${agent.is_active ? 'bg-green-500' : 'bg-gray-600'}`} />
                 </div>
 
                 {/* Info */}
@@ -204,7 +204,7 @@ export function Agents() {
                       <span className="text-gray-500">{agent.namespace}/</span>{agent.name}
                     </h3>
                     {agent.is_default && (
-                      <span className="text-xs font-medium bg-primary-100 text-primary-700 px-2 py-0.5 rounded flex-shrink-0">Default</span>
+                      <span className="text-xs font-medium bg-primary-900/30 text-primary-400 px-2 py-0.5 rounded flex-shrink-0">Default</span>
                     )}
                   </div>
                   <p className="text-sm text-gray-400 truncate mt-0.5">
@@ -236,7 +236,7 @@ export function Agents() {
                   </button>
                   <Link
                     to={`/agents/${agent.namespace}/${agent.name}`}
-                    className="p-2 text-gray-500 hover:text-primary-600 hover:bg-white/10 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-600 hover:bg-hover-strong rounded-md transition-colors"
                     title="Edit"
                   >
                     <Edit className="w-4 h-4" />
@@ -247,7 +247,7 @@ export function Agents() {
                         duplicateMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-white/10 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-blue-600 hover:bg-hover-strong rounded-md transition-colors"
                     disabled={duplicateMutation.isPending}
                     title="Duplicate"
                   >
@@ -259,7 +259,7 @@ export function Agents() {
                         deleteMutation.mutate({ namespace: agent.namespace, name: agent.name });
                       }
                     }}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-white/10 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-hover-strong rounded-md transition-colors"
                     disabled={deleteMutation.isPending}
                     title="Delete"
                   >
@@ -297,7 +297,7 @@ export function Agents() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Create New Agent</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -393,7 +393,7 @@ export function Agents() {
       {/* Start Chat Modal (for agents with input_schema) */}
       {showChatModal && chatAgent && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-1">Start Chat</h2>
             <p className="text-sm text-gray-500 mb-4">
               Configure input parameters for <span className="font-medium">{chatAgent.namespace}/{chatAgent.name}</span>

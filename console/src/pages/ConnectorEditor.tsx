@@ -622,7 +622,7 @@ export function ConnectorEditor() {
         </div>
 
         {formData.operations.map((op, i) => (
-          <div key={i} className="border border-white/[0.06] rounded-lg">
+          <div key={i} className="border border-line-soft rounded-lg">
             <div className="flex items-center gap-3 p-3 cursor-pointer" onClick={() => toggleOpExpand(i)}>
               {expandedOps.has(i) ? <ChevronDown className="w-4 h-4 text-gray-500" /> : <ChevronRight className="w-4 h-4 text-gray-500" />}
               <span className={`px-2 py-0.5 rounded text-xs font-bold uppercase ${methodColors[op.method] || 'bg-gray-800 text-gray-400'}`}>
@@ -644,7 +644,7 @@ export function ConnectorEditor() {
             </div>
 
             {expandedOps.has(i) && (
-              <div className="border-t border-white/[0.06] p-4 space-y-3">
+              <div className="border-t border-line-soft p-4 space-y-3">
                 <div className="grid grid-cols-3 gap-3">
                   <div>
                     <label className="label">Name</label>
@@ -703,7 +703,7 @@ export function ConnectorEditor() {
       {/* OpenAPI Import Modal */}
       {showImportModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-100">Import from OpenAPI</h2>
               <button onClick={() => { setShowImportModal(false); setImportPreview(null); }} className="p-1 text-gray-500 hover:text-gray-400">
@@ -715,11 +715,11 @@ export function ConnectorEditor() {
               <div className="space-y-4">
                 <div className="flex gap-2">
                   <button onClick={() => setImportSpecMode('paste')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm ${importSpecMode === 'paste' ? 'bg-primary-600/20 text-primary-400 border border-primary-600/40' : 'bg-[#0d0d0d] text-gray-400 border border-white/[0.06]'}`}>
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm ${importSpecMode === 'paste' ? 'bg-primary-600/20 text-primary-400 border border-primary-600/40' : 'bg-surface-0 text-gray-400 border border-line-soft'}`}>
                     <FileText className="w-4 h-4" /> Paste Spec
                   </button>
                   <button onClick={() => setImportSpecMode('url')}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm ${importSpecMode === 'url' ? 'bg-primary-600/20 text-primary-400 border border-primary-600/40' : 'bg-[#0d0d0d] text-gray-400 border border-white/[0.06]'}`}>
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm ${importSpecMode === 'url' ? 'bg-primary-600/20 text-primary-400 border border-primary-600/40' : 'bg-surface-0 text-gray-400 border border-line-soft'}`}>
                     <Globe className="w-4 h-4" /> From URL
                   </button>
                 </div>
@@ -763,7 +763,7 @@ export function ConnectorEditor() {
                 </div>
                 <div className="space-y-2 max-h-[50vh] overflow-y-auto">
                   {importPreview.operations?.map((op: any) => (
-                    <div key={op.name} className="flex items-center gap-3 p-2 border border-white/[0.06] rounded">
+                    <div key={op.name} className="flex items-center gap-3 p-2 border border-line-soft rounded">
                       <input type="checkbox" checked={importSelected.has(op.name)}
                         onChange={() => {
                           const s = new Set(importSelected);
@@ -795,7 +795,7 @@ export function ConnectorEditor() {
       {/* Test Modal */}
       {showTestModal && formData.operations[testOpIndex] && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-100">
                 Test: {formData.operations[testOpIndex].name}
@@ -812,7 +812,7 @@ export function ConnectorEditor() {
                   language="json"
                   onChange={e => { try { setTestParams(JSON.parse(e.target.value)); } catch {} }}
                   padding={12}
-                  style={{ fontSize: 12, backgroundColor: '#0d0d0d', borderRadius: 8, fontFamily: 'monospace' }}
+                  style={{ fontSize: 12, backgroundColor: 'var(--surface-0)', borderRadius: 8, fontFamily: 'monospace' }}
                   minHeight={60}
                 />
               </div>
@@ -834,7 +834,7 @@ export function ConnectorEditor() {
                         </span>
                         <span className="text-xs text-gray-500">{testResult.elapsed_ms}ms</span>
                       </div>
-                      <div className="bg-[#0d0d0d] rounded-lg p-3 overflow-x-auto max-h-[40vh] overflow-y-auto">
+                      <div className="bg-surface-0 rounded-lg p-3 overflow-x-auto max-h-[40vh] overflow-y-auto">
                         <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap">
                           {typeof testResult.body === 'string' ? testResult.body : JSON.stringify(testResult.body, null, 2)}
                         </pre>

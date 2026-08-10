@@ -165,7 +165,7 @@ export function Secrets() {
       {/* Create/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-100">
                 {editingSecret ? 'Update Secret' : 'Create Secret'}

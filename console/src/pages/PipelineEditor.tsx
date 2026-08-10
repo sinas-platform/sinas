@@ -15,11 +15,11 @@ import type { PipelineRun, PipelineRunOutcome } from '../types';
 
 const codeEditorStyle = {
   fontSize: 13,
-  backgroundColor: '#111111',
-  color: '#ededed',
+  backgroundColor: 'var(--surface-input)',
+  color: 'var(--content)',
   fontFamily: 'ui-monospace, SFMono-Regular, monospace',
   borderRadius: 6,
-  border: '1px solid rgba(255,255,255,0.08)',
+  border: '1px solid var(--line)',
 };
 
 function statusIcon(status: string) {
@@ -40,7 +40,7 @@ function statusIcon(status: string) {
 function RunRow({ run, onReplay }: { run: PipelineRun; onReplay: (runId: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   return (
-    <div className="border border-white/[0.06] rounded-lg">
+    <div className="border border-line-soft rounded-lg">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -62,7 +62,7 @@ function RunRow({ run, onReplay }: { run: PipelineRun; onReplay: (runId: string)
         </div>
       </button>
       {expanded && (
-        <div className="px-3 pb-3 space-y-2 border-t border-white/[0.06] pt-2">
+        <div className="px-3 pb-3 space-y-2 border-t border-line-soft pt-2">
           {run.error && <p className="text-xs text-red-400 whitespace-pre-wrap">{run.error}</p>}
           {run.steps?.length > 0 && (
             <div className="space-y-1">
@@ -468,7 +468,7 @@ export function PipelineEditor() {
               language="json"
               onChange={(e) => { setSaveError(null); setStepsText(e.target.value); }}
               padding={12}
-              data-color-mode="dark"
+
               style={{ ...codeEditorStyle, minHeight: 220 }}
             />
           ) : (
@@ -557,7 +557,7 @@ export function PipelineEditor() {
             placeholder='{ "output.$": "steps.fetch.output.body" }'
             onChange={(e) => { setSaveError(null); setOutputMappingText(e.target.value); }}
             padding={12}
-            data-color-mode="dark"
+
             style={{ ...codeEditorStyle, minHeight: 60 }}
           />
         </div>
@@ -573,7 +573,7 @@ export function PipelineEditor() {
                 language="json"
                 onChange={(e) => setRunInputText(e.target.value)}
                 padding={10}
-                data-color-mode="dark"
+
                 style={{ ...codeEditorStyle, minHeight: 40 }}
               />
             </div>

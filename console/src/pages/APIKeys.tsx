@@ -90,7 +90,7 @@ export function APIKeys() {
               type="checkbox"
               checked={showInactive}
               onChange={(e) => setShowInactive(e.target.checked)}
-              className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+              className="rounded border-line text-primary-600 focus:ring-primary-500"
             />
             Show inactive
           </label>
@@ -184,7 +184,7 @@ export function APIKeys() {
                     className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
                       key.is_active
                         ? 'bg-green-900/30 text-green-300'
-                        : 'bg-[#161616] text-gray-200'
+                        : 'bg-surface-1 text-gray-200'
                     }`}
                   >
                     {key.is_active ? 'Active' : 'Inactive'}
@@ -237,8 +237,8 @@ export function APIKeys() {
             }}
           />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto">
-            <div className="sticky top-0 bg-[#161616] border-b border-white/[0.06] p-6">
+            <div className="bg-surface-1 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto">
+            <div className="sticky top-0 bg-surface-1 border-b border-line-soft p-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-100">Create API Key</h2>
                 <button
@@ -303,7 +303,7 @@ export function APIKeys() {
                 </div>
               )}
 
-              <div className="flex justify-end space-x-3 pt-4 border-t border-white/[0.06]">
+              <div className="flex justify-end space-x-3 pt-4 border-t border-line-soft">
                 <button
                   type="button"
                   onClick={() => {
@@ -334,7 +334,7 @@ export function APIKeys() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setCreatedKey(null)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 pointer-events-auto">
+            <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 pointer-events-auto">
             <div className="text-center mb-6">
               <div className="inline-flex items-center justify-center w-12 h-12 bg-green-900/30 rounded-full mb-4">
                 <Check className="w-6 h-6 text-green-600" />
@@ -345,10 +345,10 @@ export function APIKeys() {
               </p>
             </div>
 
-            <div className="bg-[#0d0d0d] rounded-lg p-4 mb-6">
+            <div className="bg-surface-0 rounded-lg p-4 mb-6">
               <label className="block text-xs font-medium text-gray-300 mb-2">Your API Key</label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-[#161616] border border-white/10 rounded text-sm font-mono break-all">
+                <code className="flex-1 px-3 py-2 bg-surface-1 border border-line rounded text-sm font-mono break-all">
                   {createdKey.key}
                 </code>
                 <button

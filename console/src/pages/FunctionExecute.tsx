@@ -82,7 +82,7 @@ export function FunctionExecute() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Input Panel */}
         <div className="space-y-6">
-          <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+          <div className="bg-surface-1 rounded-lg border border-line-soft p-6">
             <h3 className="text-lg font-semibold text-gray-100 mb-4">Input</h3>
 
             {/* Function Selector */}
@@ -105,7 +105,7 @@ export function FunctionExecute() {
 
             {/* Function Details */}
             {selectedFunctionObj && (
-              <div className="mb-4 p-3 bg-[#0d0d0d] rounded border border-white/[0.06]">
+              <div className="mb-4 p-3 bg-surface-0 rounded border border-line-soft">
                 <p className="text-sm font-medium text-gray-100 mb-1">
                   {selectedFunctionObj.namespace}/{selectedFunctionObj.name}
                 </p>
@@ -205,7 +205,7 @@ export function FunctionExecute() {
 
         {/* Output Panel */}
         <div className="space-y-6">
-          <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+          <div className="bg-surface-1 rounded-lg border border-line-soft p-6">
             <h3 className="text-lg font-semibold text-gray-100 mb-4">Output</h3>
 
             {!executeMutation.data && !executeMutation.error && !executeMutation.isPending && (
@@ -252,7 +252,7 @@ export function FunctionExecute() {
                 )}
 
                 {/* Execution ID */}
-                <div className="mb-4 p-3 bg-[#0d0d0d] rounded border border-white/[0.06]">
+                <div className="mb-4 p-3 bg-surface-0 rounded border border-line-soft">
                   <p className="text-xs text-gray-500">Execution ID</p>
                   <p className="text-sm font-mono text-gray-100 mt-1">
                     {executeMutation.data.execution_id}

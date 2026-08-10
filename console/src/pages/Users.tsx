@@ -19,14 +19,14 @@ export function Users() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-white/[0.06]">
+      <div className="border-b border-line-soft">
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab('users')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'users'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <UsersIcon className="w-5 h-5 inline mr-2" />
@@ -37,7 +37,7 @@ export function Users() {
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'roles'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <Shield className="w-5 h-5 inline mr-2" />
@@ -48,7 +48,7 @@ export function Users() {
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'permissions'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <Lock className="w-5 h-5 inline mr-2" />
@@ -164,7 +164,7 @@ function UsersTab() {
           <div className="card overflow-x-auto p-0">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-white/[0.06]">
+                <tr className="border-b border-line-soft">
                   <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                   <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Roles</th>
                   <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -173,7 +173,7 @@ function UsersTab() {
               </thead>
               <tbody>
                 {users.map((user: any) => (
-                  <tr key={user.id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
+                  <tr key={user.id} className="border-b border-line-soft hover:bg-hover">
                     <td className="py-3 px-4">
                       <div className="text-sm text-gray-100">{user.email}</div>
                       <div className="text-xs text-gray-600 font-mono select-all">{user.id}</div>
@@ -337,7 +337,7 @@ function ConfirmResetLinkModal({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#161616] rounded-2xl p-6 border border-white/[0.06] w-full max-w-md">
+      <div className="bg-surface-1 rounded-2xl p-6 border border-line-soft w-full max-w-md">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-100">Generate password reset link</h3>
@@ -391,7 +391,7 @@ function ResetLinkResultModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#161616] rounded-2xl p-6 border border-white/[0.06] w-full max-w-lg">
+      <div className="bg-surface-1 rounded-2xl p-6 border border-line-soft w-full max-w-lg">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h3 className="text-lg font-semibold text-gray-100">Password reset link</h3>
@@ -414,7 +414,7 @@ function ResetLinkResultModal({
                 readOnly
                 value={resetUrl}
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 px-3 py-2 bg-[#111111] border border-white/10 rounded-lg text-gray-100 font-mono text-xs"
+                className="flex-1 px-3 py-2 bg-surface-input border border-line rounded-lg text-gray-100 font-mono text-xs"
               />
               <button
                 onClick={() => copy(resetUrl, 'url')}
@@ -435,7 +435,7 @@ function ResetLinkResultModal({
                 readOnly
                 value={result.reset_token}
                 onFocus={(e) => e.currentTarget.select()}
-                className="flex-1 px-3 py-2 bg-[#111111] border border-white/10 rounded-lg text-gray-100 font-mono text-xs"
+                className="flex-1 px-3 py-2 bg-surface-input border border-line rounded-lg text-gray-100 font-mono text-xs"
               />
               <button
                 onClick={() => copy(result.reset_token, 'token')}
@@ -483,7 +483,7 @@ function ConfirmDeleteModal({
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onCancel} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 pointer-events-auto">
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="w-5 h-5 text-red-400" />
             <h2 className="text-xl font-semibold text-gray-100">{title}</h2>
@@ -605,7 +605,7 @@ function UserProfileModal({ user, onClose }: { user: any; onClose: () => void })
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto pointer-events-auto">
           <div className="flex items-start justify-between mb-1">
             <h2 className="text-xl font-semibold text-gray-100">Custom Fields & Identities</h2>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
@@ -695,7 +695,7 @@ function UserProfileModal({ user, onClose }: { user: any; onClose: () => void })
                 {identities.map((identity: any) => (
                   <div
                     key={`${identity.provider}:${identity.subject}`}
-                    className="flex items-center justify-between p-3 bg-[#0d0d0d] rounded"
+                    className="flex items-center justify-between p-3 bg-surface-0 rounded"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -802,7 +802,7 @@ function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: 
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 pointer-events-auto">
           <h2 className="text-xl font-semibold text-gray-100 mb-1">Edit Roles</h2>
           <p className="text-sm text-gray-400 mb-4">{user.email}</p>
 
@@ -812,14 +812,14 @@ function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: 
               return (
                 <label
                   key={role.id}
-                  className="flex items-center gap-3 p-3 rounded-lg bg-[#0d0d0d] hover:bg-white/[0.03] cursor-pointer"
+                  className="flex items-center gap-3 p-3 rounded-lg bg-surface-0 hover:bg-hover cursor-pointer"
                 >
                   <input
                     type="checkbox"
                     checked={isAssigned}
                     onChange={() => toggleRole(role.name)}
                     disabled={isPending}
-                    className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+                    className="rounded border-line text-primary-600 focus:ring-primary-500"
                   />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
@@ -837,7 +837,7 @@ function EditUserRolesModal({ user, allRoles, onClose }: { user: any; allRoles: 
             })}
           </div>
 
-          <div className="flex justify-end mt-6 pt-4 border-t border-white/[0.06]">
+          <div className="flex justify-end mt-6 pt-4 border-t border-line-soft">
             <button onClick={onClose} className="btn btn-secondary">Done</button>
           </div>
         </div>
@@ -962,7 +962,7 @@ function RoleModal({ role, onClose }: { role: any; onClose: () => void }) {
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 pointer-events-auto">
           <h2 className="text-xl font-semibold text-gray-100 mb-4">{role ? 'Edit' : 'Create'} Role</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -996,12 +996,12 @@ function RoleManagementModal({ role, onClose }: { role: any; onClose: () => void
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto pointer-events-auto">
           <h2 className="text-xl font-semibold text-gray-100 mb-4">Manage Members: {role.name}</h2>
 
           <MembersManagement role={role} />
 
-          <div className="flex justify-end mt-6 pt-4 border-t border-white/[0.06]">
+          <div className="flex justify-end mt-6 pt-4 border-t border-line-soft">
             <button onClick={onClose} className="btn btn-secondary">Close</button>
           </div>
         </div>
@@ -1038,7 +1038,7 @@ function MembersManagement({ role }: { role: any }) {
       {members && members.length > 0 ? (
         <div className="space-y-2">
           {members.map((member: any) => (
-            <div key={member.user_id} className="flex items-center justify-between p-3 bg-[#0d0d0d] rounded">
+            <div key={member.user_id} className="flex items-center justify-between p-3 bg-surface-0 rounded">
               <div>
                 <p className="text-sm font-medium text-gray-100">{member.user_email || member.user_id}</p>
                 {member.role && <p className="text-xs text-gray-500">Role: {member.role}</p>}
@@ -1089,7 +1089,7 @@ function AddMemberModal({ role, onClose }: { role: any; onClose: () => void }) {
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60]" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-[60] p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 pointer-events-auto">
           <h3 className="text-lg font-semibold text-gray-100 mb-4">Add Member to {role.name}</h3>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
@@ -1133,7 +1133,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
     <>
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={onClose} />
       <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-        <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 pointer-events-auto">
+        <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 pointer-events-auto">
           <h2 className="text-xl font-semibold text-gray-100 mb-4">Create User</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

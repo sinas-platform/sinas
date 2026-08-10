@@ -168,7 +168,7 @@ export function Chats() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-[#0d0d0d] border-b border-white/[0.06]">
+              <thead className="bg-surface-0 border-b border-line-soft">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Title
@@ -193,7 +193,7 @@ export function Chats() {
               <tbody className="divide-y divide-white/[0.06]">
                 {filteredChats.map((chat: Chat) => {
                   return (
-                    <tr key={chat.id} className={`hover:bg-white/5 ${chat.archived ? 'opacity-60' : ''}`}>
+                    <tr key={chat.id} className={`hover:bg-hover ${chat.archived ? 'opacity-60' : ''}`}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Link
@@ -271,7 +271,7 @@ export function Chats() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Create New Chat</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>

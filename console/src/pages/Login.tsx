@@ -68,19 +68,19 @@ export function Login() {
   })();
 
   return (
-    <div className="min-h-screen bg-[#090909] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface-page flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo and title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <img src="/sinas-logo.svg" alt="sinas" className="h-16" />
+            <><img src="/sinas-logo.svg" alt="sinas" className="h-16 light:hidden" /><img src="/sinas-logo-light.svg" alt="sinas" className="h-16 hidden light:block" /></>
           </div>
           <h1 className="text-xl font-semibold text-gray-100 mb-2">Management Console</h1>
           <p className="text-gray-400">Sovereign Infrastructure for Native Agentic Systems</p>
         </div>
 
         {/* Login card */}
-        <div className="bg-[#161616] rounded-2xl p-8 border border-white/[0.06]">
+        <div className="bg-surface-1 rounded-2xl p-8 border border-line-soft">
           {step === 'credentials' ? (
             <>
               <div className="mb-6">
@@ -103,7 +103,7 @@ export function Login() {
                       placeholder="you@example.com"
                       autoComplete="email"
                       required
-                      className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      className="w-full pl-10 pr-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     />
                   </div>
                 </div>
@@ -123,7 +123,7 @@ export function Login() {
                         placeholder="••••••••"
                         autoComplete="current-password"
                         required
-                        className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        className="w-full pl-10 pr-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                       />
                     </div>
                   </div>
@@ -187,7 +187,7 @@ export function Login() {
                       autoComplete="one-time-code"
                       required
                       maxLength={6}
-                      className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
+                      className="w-full pl-10 pr-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent text-center text-2xl font-mono tracking-widest"
                     />
                   </div>
                 </div>

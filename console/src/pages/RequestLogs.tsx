@@ -37,14 +37,14 @@ export function RequestLogs() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-white/[0.06]">
+      <div className="border-b border-line-soft">
         <nav className="-mb-px flex space-x-8">
           <button
             onClick={() => setActiveTab('requests')}
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'requests'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <Activity className="w-5 h-5 inline mr-2" />
@@ -55,7 +55,7 @@ export function RequestLogs() {
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'messages'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <MessageSquare className="w-5 h-5 inline mr-2" />
@@ -66,7 +66,7 @@ export function RequestLogs() {
             className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
               activeTab === 'executions'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-white/10'
+                : 'border-transparent text-gray-500 hover:text-gray-300 hover:border-line'
             }`}
           >
             <Workflow className="w-5 h-5 inline mr-2" />
@@ -139,7 +139,7 @@ function RequestLogsTab() {
       PATCH: 'text-purple-400 bg-purple-900/20',
       DELETE: 'text-red-600 bg-red-900/20',
     };
-    return colors[method] || 'text-gray-400 bg-[#0d0d0d]';
+    return colors[method] || 'text-gray-400 bg-surface-0';
   };
 
   const formatBytes = (bytes: number) => {
@@ -252,7 +252,7 @@ function RequestLogsTab() {
             <h3 className="text-lg font-semibold text-gray-100 mb-4">Top Paths</h3>
             <div className="space-y-2">
               {stats.top_paths.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
+                <div key={idx} className="flex items-center justify-between p-2 bg-surface-0 rounded">
                   <span className="text-sm font-mono text-gray-100">{item.path}</span>
                   <span className="text-sm font-semibold text-gray-400">{item.count}</span>
                 </div>
@@ -263,7 +263,7 @@ function RequestLogsTab() {
             <h3 className="text-lg font-semibold text-gray-100 mb-4">Top Permissions</h3>
             <div className="space-y-2">
               {stats.top_permissions.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
+                <div key={idx} className="flex items-center justify-between p-2 bg-surface-0 rounded">
                   <span className="text-sm font-mono text-gray-100">{item.permission}</span>
                   <span className="text-sm font-semibold text-gray-400">{item.count}</span>
                 </div>
@@ -371,10 +371,10 @@ function RequestLogsTab() {
         ) : (
           <div className="space-y-2">
             {logs.map((log: any) => (
-              <div key={log.request_id} className="border border-white/[0.06] rounded-lg overflow-hidden">
+              <div key={log.request_id} className="border border-line-soft rounded-lg overflow-hidden">
                 <button
                   onClick={() => setExpandedLog(expandedLog === log.request_id ? null : log.request_id)}
-                  className="w-full px-4 py-3 flex items-center gap-3 hover:bg-white/5 transition-colors text-left"
+                  className="w-full px-4 py-3 flex items-center gap-3 hover:bg-hover transition-colors text-left"
                 >
                   {expandedLog === log.request_id ? (
                     <ChevronDown className="w-4 h-4 text-gray-500 flex-shrink-0" />
@@ -404,7 +404,7 @@ function RequestLogsTab() {
                 </button>
 
                 {expandedLog === log.request_id && (
-                  <div className="px-4 py-3 bg-[#0d0d0d] border-t border-white/[0.06] space-y-3">
+                  <div className="px-4 py-3 bg-surface-0 border-t border-line-soft space-y-3">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">User</p>
@@ -439,7 +439,7 @@ function RequestLogsTab() {
                     {log.query_params && (
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Query Params</p>
-                        <pre className="text-xs text-gray-100 bg-[#161616] p-2 rounded border border-white/[0.06] overflow-x-auto">
+                        <pre className="text-xs text-gray-100 bg-surface-1 p-2 rounded border border-line-soft overflow-x-auto">
                           {log.query_params}
                         </pre>
                       </div>
@@ -448,7 +448,7 @@ function RequestLogsTab() {
                     {log.request_body && log.request_body !== '{}' && (
                       <div>
                         <p className="text-xs font-medium text-gray-500 mb-1">Request Body</p>
-                        <pre className="text-xs text-gray-100 bg-[#161616] p-2 rounded border border-white/[0.06] overflow-x-auto">
+                        <pre className="text-xs text-gray-100 bg-surface-1 p-2 rounded border border-line-soft overflow-x-auto">
                           {JSON.stringify(JSON.parse(log.request_body), null, 2)}
                         </pre>
                       </div>
@@ -565,10 +565,10 @@ function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?:
             const tc = triggerColors[exec.trigger_type] || 'text-gray-400';
 
             return (
-              <div key={exec.execution_id} className="border border-white/[0.06] rounded-lg">
+              <div key={exec.execution_id} className="border border-line-soft rounded-lg">
                 <button
                   onClick={() => setExpandedExec(isExpanded ? null : exec.execution_id)}
-                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-white/[0.02] transition-colors"
+                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-hover transition-colors"
                 >
                   {isExpanded ? <ChevronDown className="w-3.5 h-3.5 text-gray-500 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-500 shrink-0" />}
                   <span className={`px-1.5 py-0.5 text-[10px] font-bold uppercase rounded ${sc}`}>
@@ -592,7 +592,7 @@ function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?:
                 </button>
 
                 {isExpanded && (
-                  <div className="border-t border-white/[0.06] p-4 space-y-3 text-xs">
+                  <div className="border-t border-line-soft p-4 space-y-3 text-xs">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <span className="text-gray-500 block mb-1">Execution ID</span>
@@ -639,7 +639,7 @@ function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?:
                     {exec.traceback && (
                       <div>
                         <span className="text-gray-500 block mb-1">Traceback</span>
-                        <div className="bg-[#0d0d0d] rounded p-2 max-h-96 overflow-auto">
+                        <div className="bg-surface-0 rounded p-2 max-h-96 overflow-auto">
                           <pre className="text-gray-300 font-mono whitespace-pre-wrap">{exec.traceback}</pre>
                         </div>
                       </div>
@@ -648,7 +648,7 @@ function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?:
                     {exec.input_data && Object.keys(exec.input_data).length > 0 && (
                       <div>
                         <span className="text-gray-500 block mb-1">Input</span>
-                        <div className="bg-[#0d0d0d] rounded p-2 max-h-40 overflow-y-auto">
+                        <div className="bg-surface-0 rounded p-2 max-h-40 overflow-y-auto">
                           <pre className="text-gray-300 font-mono whitespace-pre-wrap">{JSON.stringify(exec.input_data, null, 2)}</pre>
                         </div>
                       </div>
@@ -657,7 +657,7 @@ function ExecutionsTab({ initialTreeChatId, onClearTree }: { initialTreeChatId?:
                     {exec.output_data != null && (
                       <div>
                         <span className="text-gray-500 block mb-1">Output</span>
-                        <div className="bg-[#0d0d0d] rounded p-2 max-h-40 overflow-y-auto">
+                        <div className="bg-surface-0 rounded p-2 max-h-40 overflow-y-auto">
                           <pre className="text-gray-300 font-mono whitespace-pre-wrap">{typeof exec.output_data === 'string' ? exec.output_data : JSON.stringify(exec.output_data, null, 2)}</pre>
                         </div>
                       </div>
@@ -782,7 +782,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                       {exec.input_data && (
                         <div>
                           <span className="text-gray-500 block mb-1">Input</span>
-                          <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                          <div className="bg-surface-0 rounded p-2 max-h-32 overflow-y-auto">
                             <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">{JSON.stringify(exec.input_data, null, 2)}</pre>
                           </div>
                         </div>
@@ -790,7 +790,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                       {exec.output_data != null && (
                         <div>
                           <span className="text-gray-500 block mb-1">Output</span>
-                          <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                          <div className="bg-surface-0 rounded p-2 max-h-32 overflow-y-auto">
                             <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">{typeof exec.output_data === 'string' ? exec.output_data : JSON.stringify(exec.output_data, null, 2)}</pre>
                           </div>
                         </div>
@@ -804,7 +804,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                       {exec.traceback && (
                         <div>
                           <span className="text-gray-500 block mb-1">Traceback</span>
-                          <div className="bg-[#0d0d0d] rounded p-2 max-h-64 overflow-auto">
+                          <div className="bg-surface-0 rounded p-2 max-h-64 overflow-auto">
                             <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">{exec.traceback}</pre>
                           </div>
                         </div>
@@ -831,7 +831,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                     isUser ? 'bg-blue-900/10 border-l-2 border-blue-600/40' :
                     isAssistant && hasToolCalls ? 'bg-yellow-900/5 border-l-2 border-yellow-600/30' :
                     isAssistant ? 'bg-green-900/5 border-l-2 border-green-600/30' :
-                    'border-l-2 border-white/[0.06]'
+                    'border-l-2 border-line-soft'
                   }`}
                 >
                   {hasToolCalls ? (
@@ -861,7 +861,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
 
                 {/* Tool calls tree (nested) */}
                 {isExpanded && hasToolCalls && (
-                  <div className="ml-8 border-l border-white/[0.06] space-y-0.5 my-0.5">
+                  <div className="ml-8 border-l border-line-soft space-y-0.5 my-0.5">
                     {toolCalls.map((tc: any) => {
                       const tcId = tc.id;
                       const funcName = tc.function?.name || 'unknown';
@@ -874,7 +874,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                         <div key={tcId} className="ml-3">
                           <button
                             onClick={() => toggleNode(tcId)}
-                            className="w-full flex items-center gap-2 p-1.5 text-left hover:bg-white/[0.02] rounded"
+                            className="w-full flex items-center gap-2 p-1.5 text-left hover:bg-hover rounded"
                           >
                             {tcExpanded ? <ChevronDown className="w-3 h-3 text-gray-500" /> : <ChevronRight className="w-3 h-3 text-gray-500" />}
                             <span className="text-[10px] text-yellow-500">TOOL</span>
@@ -896,7 +896,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                               {/* Arguments */}
                               <div>
                                 <span className="text-gray-500 block mb-1">Arguments</span>
-                                <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                                <div className="bg-surface-0 rounded p-2 max-h-32 overflow-y-auto">
                                   <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">
                                     {(() => { try { return JSON.stringify(JSON.parse(tc.function?.arguments || '{}'), null, 2); } catch { return tc.function?.arguments || '{}'; } })()}
                                   </pre>
@@ -907,7 +907,7 @@ function ExecutionTree({ chatId, onBack }: { chatId: string; onBack: () => void 
                               {toolResult && (
                                 <div>
                                   <span className="text-gray-500 block mb-1">Result</span>
-                                  <div className="bg-[#0d0d0d] rounded p-2 max-h-32 overflow-y-auto">
+                                  <div className="bg-surface-0 rounded p-2 max-h-32 overflow-y-auto">
                                     <pre className="text-gray-300 font-mono whitespace-pre-wrap text-[11px]">
                                       {(() => { const c = typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content); try { return JSON.stringify(JSON.parse(c || ''), null, 2); } catch { return c || ''; } })()}
                                     </pre>

@@ -194,7 +194,7 @@ export function ComponentEditor() {
   return (
     <div className="h-[calc(100vh-4rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-800 bg-[#0d0d0d]">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-gray-800 bg-surface-0">
         <div className="flex items-center gap-3">
           <Link to="/components" className="text-gray-400 hover:text-white transition-colors">
             <ArrowLeft className="w-5 h-5" />
@@ -295,7 +295,7 @@ export function ComponentEditor() {
             <select
               value={visibility}
               onChange={(e) => { setVisibility(e.target.value); setDirty(true); }}
-              className="bg-[#0d0d0d] border border-gray-800 rounded text-xs text-gray-400 px-2 py-1"
+              className="bg-surface-0 border border-gray-800 rounded text-xs text-gray-400 px-2 py-1"
             >
               <option value="private">Private</option>
               <option value="shared">Shared</option>
@@ -307,7 +307,7 @@ export function ComponentEditor() {
           <textarea
             value={sourceCode}
             onChange={(e) => { setSourceCode(e.target.value); setDirty(true); }}
-            className="flex-1 w-full bg-[#0a0a0a] text-gray-200 text-sm font-mono p-4 resize-none focus:outline-none"
+            className="flex-1 w-full bg-surface-page text-gray-200 text-sm font-mono p-4 resize-none focus:outline-none"
             spellCheck={false}
           />
 
@@ -318,7 +318,7 @@ export function ComponentEditor() {
               value={cssOverrides}
               onChange={(e) => { setCssOverrides(e.target.value); setDirty(true); }}
               rows={3}
-              className="w-full bg-[#0a0a0a] text-gray-300 text-xs font-mono px-4 py-2 resize-none focus:outline-none"
+              className="w-full bg-surface-page text-gray-300 text-xs font-mono px-4 py-2 resize-none focus:outline-none"
               placeholder="body { background: #1a1a2e; }"
               spellCheck={false}
             />
@@ -327,7 +327,7 @@ export function ComponentEditor() {
 
         {/* Resources panel (toggled) */}
         {showResources && (
-          <div className="w-80 flex flex-col bg-[#0d0d0d] border-r border-gray-800 overflow-hidden">
+          <div className="w-80 flex flex-col bg-surface-0 border-r border-gray-800 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
               <span className="text-sm font-medium text-gray-200">Resources</span>
               <button onClick={() => setShowResources(false)} className="text-gray-500 hover:text-white">
@@ -370,12 +370,12 @@ export function ComponentEditor() {
                     (queries as any[]).map((q: any) => {
                       const ref = `${q.namespace}/${q.name}`;
                       return (
-                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-white/5 rounded cursor-pointer">
+                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-hover rounded cursor-pointer">
                           <input
                             type="checkbox"
                             checked={enabledQueries.includes(ref)}
                             onChange={() => toggleItem(enabledQueries, setEnabledQueries, ref)}
-                            className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-0.5 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-mono text-gray-200 truncate">{ref}</div>
@@ -406,12 +406,12 @@ export function ComponentEditor() {
                     (functions as any[]).map((fn: any) => {
                       const ref = `${fn.namespace}/${fn.name}`;
                       return (
-                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-white/5 rounded cursor-pointer">
+                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-hover rounded cursor-pointer">
                           <input
                             type="checkbox"
                             checked={enabledFunctions.includes(ref)}
                             onChange={() => toggleItem(enabledFunctions, setEnabledFunctions, ref)}
-                            className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-0.5 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-mono text-gray-200 truncate">{ref}</div>
@@ -438,12 +438,12 @@ export function ComponentEditor() {
                     (agents as any[]).map((a: any) => {
                       const ref = `${a.namespace}/${a.name}`;
                       return (
-                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-white/5 rounded cursor-pointer">
+                        <label key={ref} className="flex items-start gap-2 p-2 hover:bg-hover rounded cursor-pointer">
                           <input
                             type="checkbox"
                             checked={enabledAgents.includes(ref)}
                             onChange={() => toggleItem(enabledAgents, setEnabledAgents, ref)}
-                            className="mt-0.5 w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                            className="mt-0.5 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
                           />
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-mono text-gray-200 truncate">{ref}</div>
@@ -474,7 +474,7 @@ export function ComponentEditor() {
                         const existing = currentStores.find((s: any) => s.store === ref);
                         const access = existing?.access || 'none';
                         return (
-                          <div key={ref} className="flex items-center justify-between p-2 hover:bg-white/5 rounded">
+                          <div key={ref} className="flex items-center justify-between p-2 hover:bg-hover rounded">
                             <div className="flex-1 min-w-0">
                               <div className="text-sm font-mono text-gray-200 truncate">{ref}</div>
                               {store.description && (
@@ -496,7 +496,7 @@ export function ComponentEditor() {
                                 setEnabledStores(updated);
                                 setDirty(true);
                               }}
-                              className="bg-[#0d0d0d] border border-gray-800 rounded text-xs text-gray-400 px-2 py-1 ml-2"
+                              className="bg-surface-0 border border-gray-800 rounded text-xs text-gray-400 px-2 py-1 ml-2"
                             >
                               <option value="none">None</option>
                               <option value="readonly">Read-only</option>
@@ -517,7 +517,7 @@ export function ComponentEditor() {
 
         {/* Preview iframe */}
         <div className="flex-1 flex flex-col bg-white">
-          <div className="px-4 py-2 bg-[#111111] border-b border-gray-800 text-xs text-gray-500">
+          <div className="px-4 py-2 bg-surface-input border-b border-gray-800 text-xs text-gray-500">
             Preview {component.compile_status !== 'success' && '(compile required)'}
           </div>
           {component.compile_status === 'success' ? (

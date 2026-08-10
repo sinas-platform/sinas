@@ -452,7 +452,7 @@ print(details["status"], details["output_data"])`,
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Icon</label>
               <div className="flex items-start gap-4">
-                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-[#1e1e1e] border border-white/[0.06] flex items-center justify-center overflow-hidden">
+                <div className="flex-shrink-0 w-[4.5rem] h-[4.5rem] rounded-lg bg-surface-2 border border-line-soft flex items-center justify-center overflow-hidden">
                   {(func?.icon_url || (formData.icon?.startsWith('url:') && formData.icon.length > 4)) ? (
                     <img
                       src={formData.icon?.startsWith('url:') ? formData.icon.slice(4) : func?.icon_url || ''}
@@ -474,8 +474,8 @@ print(details["status"], details["output_data"])`,
                 </div>
                 <div className="flex-1 space-y-2">
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setIconMode('collection')} className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}>From Collection</button>
-                    <button type="button" onClick={() => setIconMode('url')} className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-[#1e1e1e] text-gray-400'}`}>External URL</button>
+                    <button type="button" onClick={() => setIconMode('collection')} className={`px-3 py-1 text-xs rounded ${iconMode === 'collection' ? 'bg-primary-600 text-white' : 'bg-surface-2 text-gray-400'}`}>From Collection</button>
+                    <button type="button" onClick={() => setIconMode('url')} className={`px-3 py-1 text-xs rounded ${iconMode === 'url' ? 'bg-primary-600 text-white' : 'bg-surface-2 text-gray-400'}`}>External URL</button>
                   </div>
                   {iconMode === 'url' ? (
                     <input
@@ -531,7 +531,7 @@ print(details["status"], details["output_data"])`,
               </div>
             </div>
 
-            <div className="space-y-3 pt-2 border-t border-white/[0.06]">
+            <div className="space-y-3 pt-2 border-t border-line-soft">
               <h3 className="text-sm font-medium text-gray-100">Execution Settings</h3>
 
               <div className="flex items-start">
@@ -540,7 +540,7 @@ print(details["status"], details["output_data"])`,
                   id="shared_pool"
                   checked={formData.shared_pool}
                   onChange={(e) => setFormData({ ...formData, shared_pool: e.target.checked })}
-                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                 />
                 <label htmlFor="shared_pool" className="ml-3">
                   <span className="block text-sm font-medium text-gray-300">Use Shared Worker Pool</span>
@@ -556,7 +556,7 @@ print(details["status"], details["output_data"])`,
                   id="requires_approval"
                   checked={formData.requires_approval}
                   onChange={(e) => setFormData({ ...formData, requires_approval: e.target.checked })}
-                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                  className="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                 />
                 <label htmlFor="requires_approval" className="ml-3">
                   <span className="block text-sm font-medium text-gray-300">Require Approval Before Execution</span>
@@ -580,7 +580,7 @@ print(details["status"], details["output_data"])`,
                   placeholder="Default"
                   value={formData.timeout ?? ''}
                   onChange={(e) => setFormData({ ...formData, timeout: e.target.value ? parseInt(e.target.value, 10) : null })}
-                  className="w-32 px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-gray-100 text-sm focus:ring-primary-500 focus:border-primary-500"
+                  className="w-32 px-3 py-1.5 bg-hover border border-line rounded-md text-gray-100 text-sm focus:ring-primary-500 focus:border-primary-500"
                 />
               </div>
             </div>
@@ -590,12 +590,12 @@ print(details["status"], details["output_data"])`,
         {/* Code Editor */}
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Python Code *</h2>
-          <div className="border border-white/10 rounded-lg overflow-hidden flex" style={{ minHeight: '400px' }}>
+          <div className="border border-line rounded-lg overflow-hidden flex" style={{ minHeight: '400px' }}>
             {/* Line numbers */}
             <div
               className="select-none text-right pr-3 pt-[15px] text-gray-600 text-sm leading-[21px]"
               style={{
-                backgroundColor: '#0d0d0d',
+                backgroundColor: 'var(--surface-0)',
                 fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
                 fontSize: 14,
                 minWidth: '3rem',
@@ -613,11 +613,11 @@ print(details["status"], details["output_data"])`,
                 placeholder="Enter your Python code here..."
                 onChange={(e) => { setSaveError(null); setFormData({ ...formData, code: e.target.value }); }}
                 padding={15}
-                data-color-mode="dark"
+
                 style={{
                   fontSize: 14,
-                  backgroundColor: '#111111',
-                  color: '#ededed',
+                  backgroundColor: 'var(--surface-input)',
+                  color: 'var(--content)',
                   fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
                   minHeight: '400px',
                 }}
@@ -632,7 +632,7 @@ print(details["status"], details["output_data"])`,
           )}
           <div className="flex items-center justify-between mt-2">
             <p className="text-xs text-gray-500">
-              Entry point: <code className="font-mono bg-[#161616] px-1 rounded">def handler(input_data, context)</code>
+              Entry point: <code className="font-mono bg-surface-1 px-1 rounded">def handler(input_data, context)</code>
             </p>
             {formData.name && (
               <div className="flex items-center ml-4">
@@ -657,7 +657,7 @@ print(details["status"], details["output_data"])`,
 
           {/* Test Execution — always visible for saved functions */}
           {!isNew && (
-            <div className="mt-4 pt-4 border-t border-white/[0.06]">
+            <div className="mt-4 pt-4 border-t border-line-soft">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-gray-300">Test Execution</h3>
                 <div className="flex items-center gap-2">
@@ -710,7 +710,7 @@ print(details["status"], details["output_data"])`,
                     testMutation.error || testResult?.error
                       ? 'bg-red-900/10 border border-red-800/30 text-red-400'
                       : testMutation.isPending
-                      ? 'bg-[#0d0d0d] border border-white/10 text-gray-500'
+                      ? 'bg-surface-0 border border-line text-gray-500'
                       : 'bg-green-900/10 border border-green-800/30 text-gray-300'
                   }`}>
                     {testMutation.isPending
@@ -762,7 +762,7 @@ print(details["status"], details["output_data"])`,
               <div>
                 <h4 className="text-sm font-semibold text-gray-100 mb-2">input_data &amp; context</h4>
                 <p className="text-xs text-gray-400 mb-2">
-                  Every function receives <code className="font-mono bg-[#161616] px-1 rounded">input_data</code> (dict matching the input schema) and <code className="font-mono bg-[#161616] px-1 rounded">context</code> (dict with execution metadata).
+                  Every function receives <code className="font-mono bg-surface-1 px-1 rounded">input_data</code> (dict matching the input schema) and <code className="font-mono bg-surface-1 px-1 rounded">context</code> (dict with execution metadata).
                 </p>
                 <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
                   <pre className="text-xs text-gray-100 font-mono">{`def handler(input_data, context):
@@ -787,7 +787,7 @@ print(details["status"], details["output_data"])`,
               <div>
                 <h4 className="text-sm font-semibold text-gray-100 mb-2">Trigger-specific input_data</h4>
                 <p className="text-xs text-gray-400 mb-2">
-                  Depending on how the function is invoked, <code className="font-mono bg-[#161616] px-1 rounded">input_data</code> is populated differently:
+                  Depending on how the function is invoked, <code className="font-mono bg-surface-1 px-1 rounded">input_data</code> is populated differently:
                 </p>
                 <div className="space-y-3">
                   <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
@@ -895,7 +895,7 @@ return {"block": True, "reply": "Sorry, that message was blocked"}
               <div>
                 <h4 className="text-sm font-semibold text-gray-100 mb-2">Secrets (shared pool only)</h4>
                 <p className="text-xs text-gray-400 mb-2">
-                  Functions running in the shared pool can access encrypted secrets via <code className="font-mono bg-[#161616] px-1 rounded">context['secrets']</code>.
+                  Functions running in the shared pool can access encrypted secrets via <code className="font-mono bg-surface-1 px-1 rounded">context['secrets']</code>.
                 </p>
                 <div className="bg-gray-900 rounded-lg p-3 overflow-x-auto">
                   <pre className="text-xs text-gray-100 font-mono">{`def handler(input_data, context):

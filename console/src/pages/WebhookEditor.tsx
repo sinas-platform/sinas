@@ -244,7 +244,7 @@ print(result["execution_id"], result["result"])`,
             {/* Target Type Toggle */}
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">Target</label>
-              <div className="flex rounded-lg border border-white/10 overflow-hidden w-fit">
+              <div className="flex rounded-lg border border-line overflow-hidden w-fit">
                 <button type="button"
                   onClick={() => setFormData({
                     ...formData,
@@ -255,8 +255,8 @@ print(result["execution_id"], result["result"])`,
                   })}
                   className={`px-4 py-2 text-sm font-medium ${
                     formData.target_type === 'function'
-                      ? 'bg-[#2563eb] text-white'
-                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'}`}>
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
                   Function
                 </button>
                 <button type="button"
@@ -267,10 +267,10 @@ print(result["execution_id"], result["result"])`,
                     // raw is function-only
                     response_mode: formData.response_mode === 'raw' ? 'sync' : formData.response_mode,
                   })}
-                  className={`px-4 py-2 text-sm font-medium border-l border-white/10 ${
+                  className={`px-4 py-2 text-sm font-medium border-l border-line ${
                     formData.target_type === 'agent'
-                      ? 'bg-[#2563eb] text-white'
-                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'}`}>
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
                   Agent
                 </button>
               </div>
@@ -381,7 +381,7 @@ print(result["execution_id"], result["result"])`,
                 URL Path *
               </label>
               <div className="flex items-stretch">
-                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-white/10 bg-[#0d0d0d] text-gray-500 text-sm font-mono">
+                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-line bg-surface-0 text-gray-500 text-sm font-mono">
                   /h/
                 </span>
                 <input
@@ -436,7 +436,7 @@ print(result["execution_id"], result["result"])`,
                 id="requires_auth"
                 checked={formData.requires_auth}
                 onChange={(e) => setFormData({ ...formData, requires_auth: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
               />
               <label htmlFor="requires_auth" className="ml-2 text-sm text-gray-300">
                 Requires Authentication
@@ -481,13 +481,13 @@ print(result["execution_id"], result["result"])`,
               </div>
             </div>
 
-            <div className="border border-white/[0.06] rounded-lg p-4 space-y-3">
+            <div className="border border-line-soft rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-gray-300">Deduplication</label>
                 <input type="checkbox"
                   checked={formData.dedup_enabled}
                   onChange={(e) => setFormData({ ...formData, dedup_enabled: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500" />
+                  className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500" />
               </div>
               {formData.dedup_enabled && (
                 <div className="space-y-3">
@@ -550,7 +550,7 @@ print(result["execution_id"], result["result"])`,
               {Object.entries(formData.default_values).map(([key, value]) => (
                 <div
                   key={key}
-                  className="flex items-center justify-between p-3 bg-[#0d0d0d] rounded"
+                  className="flex items-center justify-between p-3 bg-surface-0 rounded"
                 >
                   <div className="flex-1">
                     <span className="font-mono text-sm font-medium">{key}</span>

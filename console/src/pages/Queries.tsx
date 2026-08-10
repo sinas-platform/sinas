@@ -117,7 +117,7 @@ export function Queries() {
                   <Link
                     key={query.id}
                     to={`/queries/${query.namespace}/${query.name}`}
-                    className={`card transition-colors block ${!query.is_active ? 'opacity-60 bg-[#0d0d0d]' : ''}`}
+                    className={`card transition-colors block ${!query.is_active ? 'opacity-60 bg-surface-0' : ''}`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center flex-1">
@@ -135,7 +135,7 @@ export function Queries() {
                               {query.operation}
                             </span>
                             {!query.is_active && (
-                              <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
+                              <span className="px-2 py-0.5 bg-surface-2 text-gray-400 text-xs font-medium rounded">Inactive</span>
                             )}
                           </div>
                           {query.description && (
@@ -181,7 +181,7 @@ export function Queries() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Query</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">

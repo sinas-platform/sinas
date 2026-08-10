@@ -114,7 +114,7 @@ export function PermissionEditor(props: PermissionEditorProps) {
 
       {/* Selected Permissions */}
       {selectedPermissions.length > 0 && (
-        <div className="mb-3 border border-white/[0.06] rounded-lg p-3 bg-[#0d0d0d]">
+        <div className="mb-3 border border-line-soft rounded-lg p-3 bg-surface-0">
           <div className="text-xs font-medium text-gray-300 mb-2">
             Selected ({selectedPermissions.length}):
           </div>
@@ -167,13 +167,13 @@ export function PermissionEditor(props: PermissionEditorProps) {
 
       {/* Permission Reference */}
       {permissionRegistry && permissionRegistry.length > 0 && (
-        <details className="border border-white/[0.06] rounded-lg">
-          <summary className="cursor-pointer p-3 text-sm font-medium text-gray-300 hover:bg-white/5">
+        <details className="border border-line-soft rounded-lg">
+          <summary className="cursor-pointer p-3 text-sm font-medium text-gray-300 hover:bg-hover">
             Permission Reference
           </summary>
           <div className="p-3 pt-0">
             {/* Scope toggle */}
-            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/[0.04]">
+            <div className="flex items-center gap-2 mb-3 pb-2 border-b border-line-soft">
               <span className="text-xs text-gray-500">Scope:</span>
               <button
                 type="button"
@@ -181,7 +181,7 @@ export function PermissionEditor(props: PermissionEditorProps) {
                 className={`px-2 py-0.5 text-xs rounded ${
                   permScope === 'own'
                     ? 'bg-blue-900/30 text-blue-300 font-medium'
-                    : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
+                    : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
                 }`}
               >
                 :own
@@ -192,7 +192,7 @@ export function PermissionEditor(props: PermissionEditorProps) {
                 className={`px-2 py-0.5 text-xs rounded ${
                   permScope === 'all'
                     ? 'bg-blue-900/30 text-blue-300 font-medium'
-                    : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
+                    : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
                 }`}
               >
                 :all
@@ -225,7 +225,7 @@ export function PermissionEditor(props: PermissionEditorProps) {
                           className={`px-1.5 py-0.5 text-[11px] rounded font-mono transition-colors ${
                             selected
                               ? 'bg-blue-900/30 text-blue-300'
-                              : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
+                              : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
                           }`}
                           title={permKey}
                         >

@@ -214,14 +214,14 @@ export function ScheduleEditor() {
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 Type
               </label>
-              <div className="flex rounded-lg border border-white/10 overflow-hidden w-fit">
+              <div className="flex rounded-lg border border-line overflow-hidden w-fit">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, schedule_type: 'function', target_namespace: 'default', target_name: '', content: '' })}
                   className={`px-4 py-2 text-sm font-medium ${
                     formData.schedule_type === 'function'
-                      ? 'bg-[#2563eb] text-white'
-                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'
                   }`}
                 >
                   Function
@@ -229,10 +229,10 @@ export function ScheduleEditor() {
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, schedule_type: 'agent', target_namespace: 'default', target_name: '', content: '' })}
-                  className={`px-4 py-2 text-sm font-medium border-l border-white/10 ${
+                  className={`px-4 py-2 text-sm font-medium border-l border-line ${
                     formData.schedule_type === 'agent'
-                      ? 'bg-[#2563eb] text-white'
-                      : 'bg-[#161616] text-gray-300 hover:bg-white/5'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'
                   }`}
                 >
                   Agent
@@ -342,8 +342,8 @@ export function ScheduleEditor() {
                   className="input font-mono"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Examples: <code className="font-mono bg-[#161616] px-1 rounded">0 0 * * *</code> (daily at midnight),{' '}
-                  <code className="font-mono bg-[#161616] px-1 rounded">*/15 * * * *</code> (every 15 min)
+                  Examples: <code className="font-mono bg-surface-1 px-1 rounded">0 0 * * *</code> (daily at midnight),{' '}
+                  <code className="font-mono bg-surface-1 px-1 rounded">*/15 * * * *</code> (every 15 min)
                 </p>
               </div>
 
@@ -371,7 +371,7 @@ export function ScheduleEditor() {
                 id="is_active"
                 checked={formData.is_active}
                 onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
               />
               <label htmlFor="is_active" className="ml-2 text-sm text-gray-300">
                 Active (schedule will run)
@@ -406,18 +406,18 @@ export function ScheduleEditor() {
           </div>
 
           {!hasSchemaFields || rawMode ? (
-            <div className="border border-white/10 rounded-lg overflow-hidden">
+            <div className="border border-line rounded-lg overflow-hidden">
               <CodeEditor
                 value={formData.input_data}
                 language="json"
                 placeholder='{}'
                 onChange={(e) => setFormData({ ...formData, input_data: e.target.value })}
                 padding={15}
-                data-color-mode="dark"
+
                 style={{
                   fontSize: 14,
-                  backgroundColor: '#111111',
-                  color: '#ededed',
+                  backgroundColor: 'var(--surface-input)',
+                  color: 'var(--content)',
                   fontFamily: 'ui-monospace, SFMono-Regular, SF Mono, Consolas, Liberation Mono, Menlo, monospace',
                   minHeight: '150px',
                 }}

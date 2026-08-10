@@ -67,7 +67,7 @@ export function Schedules() {
                         className={`px-2 py-0.5 text-xs font-medium rounded ${
                           schedule.is_active
                             ? 'bg-green-900/30 text-green-300'
-                            : 'bg-[#161616] text-gray-200'
+                            : 'bg-surface-1 text-gray-200'
                         }`}
                       >
                         {schedule.is_active ? 'Active' : 'Inactive'}

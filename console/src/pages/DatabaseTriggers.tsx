@@ -75,7 +75,7 @@ function CreateTriggerModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#161616] rounded-lg border border-white/[0.06] w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface-1 rounded-lg border border-line-soft w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <h2 className="text-xl font-semibold text-gray-100 mb-4">New Database Trigger</h2>
 
@@ -329,7 +329,7 @@ export function DatabaseTriggers() {
                             ? 'bg-red-900/30 text-red-300'
                             : trigger.is_active
                               ? 'bg-green-900/30 text-green-300'
-                              : 'bg-[#161616] text-gray-200'
+                              : 'bg-surface-1 text-gray-200'
                         }`}
                       >
                         {trigger.error_message ? 'Error' : trigger.is_active ? 'Active' : 'Inactive'}

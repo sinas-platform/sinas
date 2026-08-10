@@ -62,7 +62,7 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
 
       {/* Filters */}
       {showFilters && (
-        <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-4">
+        <div className="bg-surface-1 rounded-lg border border-line-soft p-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Search */}
             <div>
@@ -116,10 +116,10 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
       )}
 
       {/* Messages Table */}
-      <div className="bg-[#161616] rounded-lg border border-white/[0.06] overflow-hidden">
+      <div className="bg-surface-1 rounded-lg border border-line-soft overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-white/[0.06]">
-            <thead className="bg-[#0d0d0d]">
+            <thead className="bg-surface-0">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Timestamp
@@ -141,7 +141,7 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-[#161616] divide-y divide-white/[0.06]">
+            <tbody className="bg-surface-1 divide-y divide-white/[0.06]">
               {isLoading ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
@@ -167,7 +167,7 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
                     <>
                       <tr
                         key={message.id}
-                        className="hover:bg-white/5 cursor-pointer"
+                        className="hover:bg-hover cursor-pointer"
                         onClick={() => hasLongContent && toggleMessageExpanded(message.id)}
                       >
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -197,7 +197,7 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
                                 ? 'bg-green-900/30 text-green-300'
                                 : message.role === 'tool'
                                 ? 'bg-yellow-900/30 text-yellow-300'
-                                : 'bg-[#161616] text-gray-200'
+                                : 'bg-surface-1 text-gray-200'
                             }`}
                           >
                             {message.role}
@@ -237,13 +237,13 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
                       </tr>
                       {/* Expanded row for full tool_calls/tool_call_id details */}
                       {isExpanded && (message.tool_calls || message.tool_call_id) && (
-                        <tr key={`${message.id}-details`} className="bg-[#0d0d0d]">
+                        <tr key={`${message.id}-details`} className="bg-surface-0">
                           <td colSpan={6} className="px-6 py-4">
                             <div className="space-y-2">
                               {message.tool_calls && (
                                 <div>
                                   <p className="text-xs font-semibold text-gray-300 mb-2">Tool Calls:</p>
-                                  <pre className="text-xs bg-[#161616] p-3 rounded border border-white/[0.06] overflow-x-auto">
+                                  <pre className="text-xs bg-surface-1 p-3 rounded border border-line-soft overflow-x-auto">
                                     {JSON.stringify(message.tool_calls, null, 2)}
                                   </pre>
                                 </div>
@@ -268,20 +268,20 @@ export function Messages({ onViewTree }: { onViewTree?: (chatId: string) => void
 
       {/* Stats */}
       {messages && messages.length > 0 && (
-        <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+        <div className="bg-surface-1 rounded-lg border border-line-soft p-6">
           <h3 className="text-lg font-semibold text-gray-100 mb-4">Insights</h3>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-[#0d0d0d] rounded-lg p-4">
+            <div className="bg-surface-0 rounded-lg p-4">
               <p className="text-sm text-gray-500">Total Messages</p>
               <p className="text-2xl font-bold text-gray-100 mt-1">{total}</p>
             </div>
-            <div className="bg-[#0d0d0d] rounded-lg p-4">
+            <div className="bg-surface-0 rounded-lg p-4">
               <p className="text-sm text-gray-500">Tool Calls</p>
               <p className="text-2xl font-bold text-gray-100 mt-1">
                 {messages.filter((m: any) => m.tool_calls && m.tool_calls.length > 0).length}
               </p>
             </div>
-            <div className="bg-[#0d0d0d] rounded-lg p-4">
+            <div className="bg-surface-0 rounded-lg p-4">
               <p className="text-sm text-gray-500">Showing</p>
               <p className="text-2xl font-bold text-gray-100 mt-1">{messages.length}</p>
             </div>
