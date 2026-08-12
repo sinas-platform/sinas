@@ -338,3 +338,144 @@ async def test_provider_submit_records_agent_ops(monkeypatch):
 
     src = inspect.getsource(batch_service.submit_agent_batch)
     assert "metering.record(metering.OperationKind.AGENT, n=len(requests))" in src
+
+
+# ── Gemini batch adapter (hybrid: OpenAI batches + Google Files API) ─────
+
+
+class _FakeHttpxResponse:
+    def __init__(self, headers=None, json_data=None, text=""):
+        self.headers = headers or {}
+        self._json = json_data
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._json
+
+
+class _FakeHttpxClient:
+    """Stands in for httpx.AsyncClient; replays scripted responses."""
+
+    calls: list = []
+    responses: dict = {}
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, url, **kwargs):
+        _FakeHttpxClient.calls.append(("POST", url, kwargs))
+        post_count = len([c for c in _FakeHttpxClient.calls if c[0] == "POST"])
+        return _FakeHttpxClient.responses[("POST", post_count)]
+
+    async def get(self, url, **kwargs):
+        _FakeHttpxClient.calls.append(("GET", url, kwargs))
+        return _FakeHttpxClient.responses[("GET", 1)]
+
+
+def _patch_httpx(monkeypatch, responses):
+    from app.providers import gemini_provider
+
+    _FakeHttpxClient.calls = []
+    _FakeHttpxClient.responses = responses
+    monkeypatch.setattr(gemini_provider.httpx, "AsyncClient", _FakeHttpxClient)
+    return _FakeHttpxClient
+
+
+def test_gemini_defaults_and_url_derivation():
+    from app.providers import GeminiProvider
+
+    provider = GeminiProvider(api_key="g")
+    assert provider.supports_batch is True
+    assert provider.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/"
+    assert provider._files_root == "https://generativelanguage.googleapis.com/v1beta"
+    assert provider._upload_root == "https://generativelanguage.googleapis.com/upload/v1beta"
+
+    proxied = GeminiProvider(api_key="g", base_url="https://proxy.corp/v1beta/openai/")
+    assert proxied._files_root == "https://proxy.corp/v1beta"
+    assert proxied._upload_root == "https://proxy.corp/upload/v1beta"
+
+
+async def test_gemini_upload_batch_file(monkeypatch):
+    from app.providers import GeminiProvider
+
+    fake = _patch_httpx(monkeypatch, {
+        ("POST", 1): _FakeHttpxResponse(
+            headers={"X-Goog-Upload-URL": "https://upload.example/u1"}
+        ),
+        ("POST", 2): _FakeHttpxResponse(json_data={"file": {"name": "files/in123"}}),
+    })
+
+    provider = GeminiProvider(api_key="g")
+    file_id = await provider._upload_batch_file(b'{"custom_id": "e1"}\n')
+
+    assert file_id == "files/in123"
+    method, url, kwargs = fake.calls[0]
+    assert url == "https://generativelanguage.googleapis.com/upload/v1beta/files"
+    assert kwargs["headers"]["x-goog-api-key"] == "g"
+    assert kwargs["headers"]["X-Goog-Upload-Protocol"] == "resumable"
+    # Second call goes to the session URL from the start response
+    assert fake.calls[1][1] == "https://upload.example/u1"
+    assert fake.calls[1][2]["headers"]["X-Goog-Upload-Command"] == "upload, finalize"
+
+
+async def test_gemini_download_batch_file(monkeypatch):
+    from app.providers import GeminiProvider
+
+    fake = _patch_httpx(monkeypatch, {
+        ("GET", 1): _FakeHttpxResponse(text='{"custom_id": "e1"}\n'),
+    })
+
+    provider = GeminiProvider(api_key="g")
+    text = await provider._download_batch_file("files/out9")
+
+    assert text == '{"custom_id": "e1"}\n'
+    method, url, kwargs = fake.calls[0]
+    assert url == "https://generativelanguage.googleapis.com/v1beta/files/out9:download"
+    assert kwargs["params"] == {"alt": "media"}
+
+
+async def test_gemini_submit_batch_uses_google_upload(monkeypatch):
+    """End-to-end submit: JSONL goes to Google's Files API, the returned
+    file name feeds the OpenAI-compat batches.create."""
+    from app.providers import GeminiProvider
+
+    _patch_httpx(monkeypatch, {
+        ("POST", 1): _FakeHttpxResponse(
+            headers={"X-Goog-Upload-URL": "https://upload.example/u1"}
+        ),
+        ("POST", 2): _FakeHttpxResponse(json_data={"file": {"name": "files/in123"}}),
+    })
+
+    provider = GeminiProvider(api_key="g")
+    captured = {}
+
+    async def fake_batch_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id="batches/gem1")
+
+    provider.client = SimpleNamespace(
+        batches=SimpleNamespace(create=fake_batch_create)
+    )
+
+    batch_id = await provider.submit_batch([
+        {
+            "custom_id": "exec-1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "model": "gemini-2.5-flash",
+            "temperature": 0.2,
+            "max_tokens": None,
+        }
+    ])
+
+    assert batch_id == "batches/gem1"
+    assert captured["input_file_id"] == "files/in123"
+    assert captured["endpoint"] == "/v1/chat/completions"

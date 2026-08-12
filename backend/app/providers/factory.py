@@ -8,6 +8,7 @@ from app.core.encryption import EncryptionService
 
 from .anthropic_provider import AnthropicProvider
 from .azure_openai_provider import AzureOpenAIProvider
+from .gemini_provider import GeminiProvider
 from .base import BaseLLMProvider
 from .mistral_provider import MistralProvider
 from .ollama_provider import OllamaProvider
@@ -129,6 +130,8 @@ async def create_provider(
             drop_params=config.get("drop_params"),
             extra_params=config.get("extra_params"),
         )
+    elif provider_type == "gemini":
+        provider = GeminiProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "mistral":
         provider = MistralProvider(api_key=api_key, base_url=base_url)
     elif provider_type == "anthropic":

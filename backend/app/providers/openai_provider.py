@@ -217,6 +217,22 @@ class OpenAIProvider(BaseLLMProvider):
 
     # ── Batch API ─────────────────────────────────────────────────────────
 
+    async def _upload_batch_file(self, jsonl: bytes) -> str:
+        """Upload the batch input file; returns its file id.
+
+        Hook: Gemini's OpenAI-compat endpoint supports batches.create but not
+        files.create — its subclass replaces this with Google's Files API.
+        """
+        input_file = await self.client.files.create(
+            file=("batch.jsonl", jsonl), purpose="batch"
+        )
+        return input_file.id
+
+    async def _download_batch_file(self, file_id: str) -> str:
+        """Download a batch output/error file's text content (same hook rationale)."""
+        content = await self.client.files.content(file_id)
+        return content.text
+
     async def submit_batch(self, requests: list[dict[str, Any]]) -> str:
         lines = []
         for req in requests:
@@ -236,11 +252,9 @@ class OpenAIProvider(BaseLLMProvider):
             }))
         jsonl = ("\n".join(lines) + "\n").encode("utf-8")
 
-        input_file = await self.client.files.create(
-            file=("batch.jsonl", jsonl), purpose="batch"
-        )
+        input_file_id = await self._upload_batch_file(jsonl)
         batch = await self.client.batches.create(
-            input_file_id=input_file.id,
+            input_file_id=input_file_id,
             endpoint="/v1/chat/completions",
             completion_window="24h",
         )
@@ -267,8 +281,8 @@ class OpenAIProvider(BaseLLMProvider):
         ):
             if not file_id:
                 continue
-            content = await self.client.files.content(file_id)
-            for line in content.text.splitlines():
+            text = await self._download_batch_file(file_id)
+            for line in text.splitlines():
                 if not line.strip():
                     continue
                 entry = json.loads(line)
