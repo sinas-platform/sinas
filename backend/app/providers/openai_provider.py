@@ -144,7 +144,14 @@ class OpenAIProvider(BaseLLMProvider):
             yield result
 
     def format_tool_calls(self, tool_calls: Any) -> list[dict[str, Any]]:
-        """Convert OpenAI tool calls to standard format (already in correct format)."""
+        """Convert OpenAI tool calls to standard format (already in correct format).
+
+        Extra fields the endpoint attaches are preserved, not reconstructed
+        away: OpenAI-compatible gateways can require them round-tripped in
+        the conversation history. Gemini 3 rejects tool-loop turns with
+        "Function call is missing a thought_signature" unless the signature
+        from each functionCall part is sent back verbatim.
+        """
         formatted = []
 
         for idx, tc in enumerate(tool_calls):
@@ -164,6 +171,17 @@ class OpenAIProvider(BaseLLMProvider):
             # Include index if present (used in streaming)
             if hasattr(tc, "index"):
                 tool_call_dict["index"] = tc.index
+
+            # Preserve extra fields the SDK didn't model (pydantic stores
+            # unknown response fields in model_extra) — e.g. Gemini's
+            # thought_signature / extra_content on the call or its function.
+            for key, value in (getattr(tc, "model_extra", None) or {}).items():
+                if value is not None and key not in tool_call_dict:
+                    tool_call_dict[key] = value
+            fn = getattr(tc, "function", None)
+            for key, value in (getattr(fn, "model_extra", None) or {}).items():
+                if value is not None and key not in tool_call_dict["function"]:
+                    tool_call_dict["function"][key] = value
 
             formatted.append(tool_call_dict)
 

@@ -675,6 +675,17 @@ class MessageService:
                         tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
                             "arguments"
                         ]
+                    # Preserve any extra per-call fields (e.g. Gemini's
+                    # thought_signature) — providers can require them
+                    # round-tripped in the follow-up history.
+                    for key, value in tc.items():
+                        if key in ("id", "type", "function", "index") or value is None:
+                            continue
+                        tool_calls_list[tc_index][key] = value
+                    for key, value in (tc.get("function") or {}).items():
+                        if key in ("name", "arguments") or value is None:
+                            continue
+                        tool_calls_list[tc_index]["function"][key] = value
 
             yield chunk
 
@@ -1263,6 +1274,17 @@ class MessageService:
                         tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
                             "arguments"
                         ]
+                    # Preserve any extra per-call fields (e.g. Gemini's
+                    # thought_signature) — providers can require them
+                    # round-tripped in the follow-up history.
+                    for key, value in tc.items():
+                        if key in ("id", "type", "function", "index") or value is None:
+                            continue
+                        tool_calls_list[tc_index][key] = value
+                    for key, value in (tc.get("function") or {}).items():
+                        if key in ("name", "arguments") or value is None:
+                            continue
+                        tool_calls_list[tc_index]["function"][key] = value
 
             yield chunk
 
