@@ -606,6 +606,36 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 Maximum number of tokens to generate in the response
               </p>
             </div>
+
+            <div>
+              <label htmlFor="prompt_caching" className="block text-sm font-medium text-gray-300 mb-2">
+                Prompt Caching
+              </label>
+              <select
+                id="prompt_caching"
+                className="input"
+                value={
+                  (formData.provider_overrides ?? agent.provider_overrides ?? {}).prompt_caching === undefined
+                    ? 'inherit'
+                    : String((formData.provider_overrides ?? agent.provider_overrides ?? {}).prompt_caching)
+                }
+                onChange={(e) => {
+                  const current = { ...(formData.provider_overrides ?? agent.provider_overrides ?? {}) };
+                  if (e.target.value === 'inherit') delete current.prompt_caching;
+                  else current.prompt_caching = e.target.value === 'true';
+                  setFormData({ ...formData, provider_overrides: current });
+                }}
+              >
+                <option value="inherit">Inherit from provider</option>
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Override the provider's prompt-caching setting for this agent.
+                Caching pays off for agents with large, reused system prompts;
+                one-shot agents may be cheaper without it.
+              </p>
+            </div>
           </div>
         </div>
 

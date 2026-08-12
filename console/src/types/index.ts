@@ -235,6 +235,7 @@ export interface Agent {
   name: string;
   description: string | null;
   llm_provider_id: string | null;
+  provider_overrides?: Record<string, boolean> | null;
   model: string | null;
   temperature: number;
   max_tokens: number | null;
@@ -271,6 +272,7 @@ export interface AgentCreate {
   name: string;
   description?: string;
   llm_provider_id?: string;
+  provider_overrides?: Record<string, boolean>;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -300,6 +302,7 @@ export interface AgentUpdate {
   name?: string;
   description?: string;
   llm_provider_id?: string;
+  provider_overrides?: Record<string, boolean>;
   model?: string;
   temperature?: number;
   max_tokens?: number;

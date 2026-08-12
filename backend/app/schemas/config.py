@@ -186,6 +186,8 @@ class AgentConfig(BaseModel):
     description: Optional[str] = None
     llmProviderName: Optional[str] = None  # NULL = use default provider
     model: Optional[str] = None  # NULL = use provider's default model
+    # Whitelisted provider behavior overrides, e.g. {"prompt_caching": false}
+    providerOverrides: Optional[dict[str, Any]] = None
     temperature: float = 0.7
     maxTokens: Optional[int] = None
     systemPrompt: Optional[str] = None

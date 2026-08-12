@@ -14,12 +14,54 @@ from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 from .tracking import UsageTrackingProvider
 
+# Provider settings an AGENT may override (Agent.provider_overrides).
+# key -> (expected type, provider attribute). Strictly behavior settings:
+# connection/credential settings (api_key, base_url, org ids) must never be
+# agent-overridable — an agent author could redirect the provider's key.
+# Keys whose attribute a provider doesn't have are ignored for that provider
+# (e.g. prompt_caching on OpenAI, where caching is automatic).
+AGENT_OVERRIDABLE: dict[str, tuple[type, str]] = {
+    "prompt_caching": (bool, "enable_prompt_caching"),
+}
+
+
+def validate_provider_overrides(overrides: Any) -> list[str]:
+    """Validate an Agent.provider_overrides value. Returns error strings."""
+    if overrides is None:
+        return []
+    if not isinstance(overrides, dict):
+        return ["provider_overrides must be an object"]
+    errors = []
+    for key, value in overrides.items():
+        spec = AGENT_OVERRIDABLE.get(key)
+        if spec is None:
+            errors.append(
+                f"Unknown provider override '{key}' — allowed: "
+                f"{', '.join(sorted(AGENT_OVERRIDABLE))}"
+            )
+        elif not isinstance(value, spec[0]):
+            errors.append(
+                f"Provider override '{key}' must be {spec[0].__name__}, "
+                f"got {type(value).__name__}"
+            )
+    return errors
+
+
+def _apply_overrides(provider: BaseLLMProvider, overrides: Optional[dict[str, Any]]) -> None:
+    if not overrides:
+        return
+    for key, value in overrides.items():
+        spec = AGENT_OVERRIDABLE.get(key)
+        if spec and isinstance(value, spec[0]) and hasattr(provider, spec[1]):
+            setattr(provider, spec[1], value)
+
 
 async def create_provider(
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     usage_context: Optional[dict[str, Any]] = None,
+    overrides: Optional[dict[str, Any]] = None,
 ) -> BaseLLMProvider:
     """
     Create an LLM provider instance from database configuration.
@@ -100,6 +142,10 @@ async def create_provider(
         provider = OllamaProvider(base_url=base_url or "http://localhost:11434")
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")
+
+    # Per-agent behavior overrides (Agent.provider_overrides), applied after
+    # construction so they win over the provider-level config.
+    _apply_overrides(provider, overrides)
 
     return UsageTrackingProvider(
         inner=provider,

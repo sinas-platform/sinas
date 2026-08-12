@@ -38,6 +38,11 @@ class Agent(Base, PermissionMixin):
         ForeignKey("llm_providers.id"), index=True
     )  # NULL = use default provider
     model: Mapped[Optional[str]] = mapped_column(String(100))  # NULL = use provider's default model
+    # Per-agent overrides of provider BEHAVIOR settings (whitelisted keys
+    # only — see app.providers.factory.AGENT_OVERRIDABLE). Absent key =
+    # inherit the provider's setting. Connection/credential settings are
+    # deliberately not overridable here.
+    provider_overrides: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     temperature: Mapped[float] = mapped_column(Float, default=0.7)
     max_tokens: Mapped[Optional[int]] = mapped_column(Integer)  # NULL = use provider's default
 

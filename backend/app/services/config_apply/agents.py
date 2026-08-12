@@ -22,6 +22,24 @@ from app.services.config_apply.normalizers import (
 logger = logging.getLogger(__name__)
 
 
+def _validated_overrides(agent_config, errors: list[str]):
+    """Whitelist-check providerOverrides; invalid entries become apply errors
+    (same fail-loudly posture as unresolvable provider names)."""
+    overrides = getattr(agent_config, "providerOverrides", None)
+    if not overrides:
+        return None
+    from app.providers.factory import validate_provider_overrides
+
+    problems = validate_provider_overrides(overrides)
+    if problems:
+        errors.extend(
+            f"Agent '{agent_config.namespace}/{agent_config.name}': {p}"
+            for p in problems
+        )
+        return None
+    return overrides
+
+
 async def _resolve_llm_provider_id(
     db: AsyncSession,
     provider_name: str | None,
@@ -188,6 +206,9 @@ async def apply_agents(
 
                     existing.description = agent_config.description
                     existing.model = agent_config.model
+                    existing.provider_overrides = _validated_overrides(
+                        agent_config, errors
+                    )
                     existing.temperature = agent_config.temperature
                     existing.max_tokens = agent_config.maxTokens
                     existing.system_prompt = agent_config.systemPrompt
@@ -247,6 +268,7 @@ async def apply_agents(
                         description=agent_config.description,
                         llm_provider_id=llm_provider_id,
                         model=agent_config.model,
+                        provider_overrides=_validated_overrides(agent_config, errors),
                         temperature=agent_config.temperature,
                         max_tokens=agent_config.maxTokens,
                         system_prompt=agent_config.systemPrompt,

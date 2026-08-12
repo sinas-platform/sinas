@@ -72,6 +72,20 @@ class AgentCreate(BaseModel):
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None  # NULL = use default provider
     model: Optional[str] = None  # NULL = use provider's default model
+    # Whitelisted provider behavior overrides (e.g. {"prompt_caching": false});
+    # absent key = inherit provider setting. See providers.factory.AGENT_OVERRIDABLE.
+    provider_overrides: Optional[dict[str, Any]] = None
+
+    @field_validator("provider_overrides")
+    @classmethod
+    def _check_provider_overrides(cls, v):
+        from app.providers.factory import validate_provider_overrides
+
+        errors = validate_provider_overrides(v)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return v
+
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None  # NULL = use provider's default
     system_prompt: Optional[str] = None
@@ -129,6 +143,18 @@ class AgentUpdate(BaseModel):
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None
     model: Optional[str] = None
+    provider_overrides: Optional[dict[str, Any]] = None
+
+    @field_validator("provider_overrides")
+    @classmethod
+    def _check_provider_overrides(cls, v):
+        from app.providers.factory import validate_provider_overrides
+
+        errors = validate_provider_overrides(v)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return v
+
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
@@ -177,6 +203,7 @@ class AgentResponse(BaseModel):
     description: Optional[str]
     llm_provider_id: Optional[uuid.UUID]
     model: Optional[str]
+    provider_overrides: Optional[dict[str, Any]] = None
     temperature: float
     max_tokens: Optional[int]
     system_prompt: Optional[str]

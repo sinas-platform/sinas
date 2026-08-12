@@ -75,6 +75,7 @@ async def create_agent(
         description=agent_data.description,
         llm_provider_id=agent_data.llm_provider_id,
         model=agent_data.model,
+        provider_overrides=agent_data.provider_overrides,
         temperature=agent_data.temperature or 0.7,
         max_tokens=agent_data.max_tokens,
         system_prompt=agent_data.system_prompt,
@@ -214,6 +215,10 @@ async def update_agent(
         agent.llm_provider_id = agent_data.llm_provider_id
     if agent_data.model is not None:
         agent.model = agent_data.model
+    if agent_data.provider_overrides is not None:
+        # {} clears all overrides (back to pure inherit); keys are whitelisted
+        # by the schema validator.
+        agent.provider_overrides = agent_data.provider_overrides or None
     if agent_data.temperature is not None:
         agent.temperature = agent_data.temperature
     if agent_data.max_tokens is not None:

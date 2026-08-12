@@ -109,7 +109,9 @@ async def _resolve_batch_provider(
             f"Agent has no model and provider '{provider_row.name}' has no default_model"
         )
 
-    provider = await create_provider(provider_name=provider_row.name, db=db)
+    provider = await create_provider(
+        provider_name=provider_row.name, db=db, overrides=agent.provider_overrides
+    )
     if not provider.supports_batch:
         raise BatchError(
             f"Provider '{provider_row.name}' ({provider_row.provider_type}) does not "

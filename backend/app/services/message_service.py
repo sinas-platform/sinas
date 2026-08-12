@@ -316,6 +316,7 @@ class MessageService:
                 "agent": f"{agent.namespace}/{agent.name}" if agent else None,
                 "source": "chat",
             },
+            overrides=agent.provider_overrides if agent else None,
         )
 
         # If no model specified, use the provider's default model
@@ -1153,6 +1154,7 @@ class MessageService:
         chat = result_chat.scalar_one_or_none()
 
         updated_messages = []
+        agent = None
 
         if chat and chat.agent_id:
             result_agent = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
@@ -1205,6 +1207,7 @@ class MessageService:
                 "agent": _agent_label,
                 "source": "chat",
             },
+            overrides=agent.provider_overrides if agent else None,
         )
 
         clean_tools = strip_tool_metadata(tools)

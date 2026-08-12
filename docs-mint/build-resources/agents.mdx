@@ -13,6 +13,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `namespace` / `name` | Unique identifier (e.g., `support/ticket-agent`) |
 | `llm_provider_id` | LLM provider to use (null = system default) |
 | `model` | Model override (null = provider's default) |
+| `provider_overrides` | Per-agent overrides of provider behavior settings, e.g. `{"prompt_caching": false}`. Absent key = inherit the provider's setting. Only whitelisted behavior keys are accepted; connection settings can't be overridden. Config key: `providerOverrides`. |
 | `system_prompt` | Jinja2 template for the system message |
 | `temperature` | Sampling temperature (default: 0.7) |
 | `max_tokens` | Max token limit for responses |
