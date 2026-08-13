@@ -5,11 +5,21 @@ import { Link } from 'react-router-dom';
 
 const authTypeBadge: Record<string, { label: string; className: string }> = {
   bearer: { label: 'Bearer', className: 'bg-blue-900/30 text-blue-400' },
+  bearer_token: { label: 'Bearer', className: 'bg-blue-900/30 text-blue-400' },
   basic: { label: 'Basic', className: 'bg-purple-900/30 text-purple-400' },
   api_key: { label: 'API Key', className: 'bg-yellow-900/30 text-yellow-400' },
   sinas_token: { label: 'Sinas Token', className: 'bg-green-900/30 text-green-400' },
+  oauth2_client_credentials: { label: 'OAuth (Service)', className: 'bg-cyan-900/30 text-cyan-400' },
+  oauth2_authorization_code: { label: 'OAuth (User)', className: 'bg-cyan-900/30 text-cyan-400' },
   none: { label: 'No Auth', className: 'bg-gray-800 text-gray-500' },
 };
+
+/* An unmapped-but-present auth type must never masquerade as "No Auth" —
+   show the raw type instead. */
+function authBadge(type: string | undefined) {
+  if (!type || type === 'none') return authTypeBadge.none;
+  return authTypeBadge[type] ?? { label: type, className: 'bg-gray-800 text-gray-400' };
+}
 
 export function Connectors() {
   const queryClient = useQueryClient();
@@ -62,7 +72,7 @@ export function Connectors() {
       ) : (
         <div className="grid gap-4">
           {connectors.map((conn: any) => {
-            const badge = authTypeBadge[conn.auth?.type] || authTypeBadge.none;
+            const badge = authBadge(conn.auth?.type);
             const opCount = conn.operations?.length || 0;
             return (
               <Link
