@@ -300,12 +300,22 @@ class OpenAIProvider(BaseLLMProvider):
                     if choices:
                         item["content"] = (choices[0].get("message") or {}).get("content")
                     usage = body.get("usage") or {}
-                    details = usage.get("prompt_tokens_details") or {}
+                    # Gemini's batch output reports usage in camelCase
+                    # (promptTokens); OpenAI uses snake_case. Accept both.
+                    details = (
+                        usage.get("prompt_tokens_details")
+                        or usage.get("promptTokensDetails")
+                        or {}
+                    )
                     item["usage"] = {
-                        "prompt_tokens": usage.get("prompt_tokens", 0) or 0,
-                        "completion_tokens": usage.get("completion_tokens", 0) or 0,
-                        "total_tokens": usage.get("total_tokens", 0) or 0,
-                        "cache_read_tokens": details.get("cached_tokens", 0) or 0,
+                        "prompt_tokens": usage.get("prompt_tokens")
+                        or usage.get("promptTokens") or 0,
+                        "completion_tokens": usage.get("completion_tokens")
+                        or usage.get("completionTokens") or 0,
+                        "total_tokens": usage.get("total_tokens")
+                        or usage.get("totalTokens") or 0,
+                        "cache_read_tokens": details.get("cached_tokens")
+                        or details.get("cachedTokens") or 0,
                         "cache_write_tokens": 0,
                     }
                 else:

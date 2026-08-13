@@ -245,6 +245,7 @@ export function LLMProviders() {
                 >
                   <option value="openai">OpenAI</option>
                   <option value="azure">Azure OpenAI</option>
+                  <option value="gemini">Google Gemini</option>
                   <option value="anthropic">Anthropic (Claude)</option>
                   <option value="mistral">Mistral AI</option>
                   <option value="ollama">Ollama</option>
@@ -422,6 +423,7 @@ export function LLMProviders() {
                 >
                   <option value="openai">OpenAI</option>
                   <option value="azure">Azure OpenAI</option>
+                  <option value="gemini">Google Gemini</option>
                   <option value="anthropic">Anthropic (Claude)</option>
                   <option value="mistral">Mistral AI</option>
                   <option value="ollama">Ollama</option>

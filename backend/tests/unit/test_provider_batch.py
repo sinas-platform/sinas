@@ -479,3 +479,29 @@ async def test_gemini_submit_batch_uses_google_upload(monkeypatch):
     assert batch_id == "batches/gem1"
     assert captured["input_file_id"] == "files/in123"
     assert captured["endpoint"] == "/v1/chat/completions"
+
+
+async def test_gemini_camelcase_usage_parsed():
+    """Gemini's batch output JSONL reports usage in camelCase — zeros were
+    recorded until the parser accepted both namings."""
+    import json as _json
+    from types import SimpleNamespace as NS
+
+    output = _json.dumps({
+        "custom_id": "exec-1",
+        "response": {
+            "status_code": 200,
+            "body": {
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"promptTokens": 29, "completionTokens": 21, "totalTokens": 1373},
+            },
+        },
+    })
+    provider, _ = _openai_with_fake_batches(
+        batch=NS(status="completed", output_file_id="file_out", error_file_id=None),
+        file_contents={"file_out": output + "\n"},
+    )
+    (result,) = await provider.fetch_batch_results("b")
+    assert result["usage"]["prompt_tokens"] == 29
+    assert result["usage"]["completion_tokens"] == 21
+    assert result["usage"]["total_tokens"] == 1373
