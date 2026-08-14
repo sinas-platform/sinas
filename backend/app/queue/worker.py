@@ -155,32 +155,43 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
 
     except SharedPoolSaturated as e:
         # Backpressure, not failure: the engine left the Execution row
-        # PENDING. Defer the job and let arq re-run it as slots free — this
-        # is what makes "30 rapid uploads onto a 4-slot pool" drain instead
-        # of 26 of them dying instantly.
+        # PENDING. Defer the job and let arq re-run it as slots free — the
+        # queue is the waiting room, so bulk ingest (thousands of uploads
+        # onto a small pool) drains over however long it takes. The
+        # time bound only exists so a permanently wedged pool eventually
+        # fails loudly; 0 = wait forever.
         job_try = ctx.get("job_try", 1)
-        budget = settings.queue_saturation_max_retries
-        if job_try < budget:
+        enqueued_at = base_fields.get("enqueued_at") or time.time()
+        base_fields["enqueued_at"] = enqueued_at  # start the clock if the status key expired
+        elapsed = time.time() - float(enqueued_at)
+        window = settings.queue_saturation_timeout_seconds
+        if window <= 0 or elapsed < window:
             defer = min(2 ** job_try, 30) + random.uniform(0, 2)
             await redis.set(
                 f"{JOB_STATUS_PREFIX}{job_id}",
                 json.dumps({
                     **base_fields,
                     "status": "queued",
-                    "detail": f"shared pool saturated; retry {job_try}/{budget} in {defer:.0f}s",
+                    "detail": (
+                        f"shared pool saturated; waited {elapsed:.0f}s, "
+                        f"retrying in {defer:.0f}s"
+                    ),
                 }),
                 ex=JOB_TTL,
             )
             logger.info(
                 f"Function job {job_id} deferred {defer:.0f}s "
-                f"(pool saturated, attempt {job_try}/{budget})"
+                f"(pool saturated {elapsed:.0f}s, attempt {job_try})"
             )
             completed = True
             raise Retry(defer=defer)
 
-        # Budget exhausted — now it IS a failure. The engine skipped its
+        # Window exhausted — now it IS a failure. The engine skipped its
         # failure bookkeeping for saturation, so do it here.
-        logger.error(f"Function job {job_id} failed: pool saturated for {budget} attempts")
+        logger.error(
+            f"Function job {job_id} failed: pool saturated for {elapsed:.0f}s "
+            f"(window {window}s)"
+        )
         from app.core.database import AsyncSessionLocal
         from app.models.execution import Execution, ExecutionStatus
         from sqlalchemy import select as _select
@@ -471,10 +482,17 @@ class WorkerSettings:
     queue_name = "sinas:queue:functions"
     max_jobs = settings.queue_function_concurrency
     job_timeout = settings.queue_default_timeout
-    # Must exceed the saturation budget or arq's own cap kills a deferred
-    # job before our explicit exhausted-path bookkeeping runs. Plain
-    # exceptions are unaffected: arq only re-runs jobs that raise Retry.
-    max_tries = max(settings.queue_max_retries, settings.queue_saturation_max_retries + 1)
+    # Must exceed the worst-case saturation attempt count (≈ window / 30s
+    # backoff cap) or arq's own cap kills a deferred job before our explicit
+    # exhausted-path bookkeeping runs. Plain exceptions are unaffected: arq
+    # only re-runs jobs that raise Retry. For window=0 (wait forever), give
+    # arq an effectively unlimited budget.
+    max_tries = max(
+        settings.queue_max_retries,
+        (settings.queue_saturation_timeout_seconds // 30 + 10)
+        if settings.queue_saturation_timeout_seconds > 0
+        else 1_000_000,
+    )
     retry_delay = settings.queue_retry_delay
 
 

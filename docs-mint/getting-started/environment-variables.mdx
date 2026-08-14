@@ -177,6 +177,7 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `QUEUE_AGENT_REPLICAS` | `2` | Agent queue worker replicas |
 | `QUEUE_FUNCTION_CONCURRENCY` | `10` | Concurrent functions per worker |
 | `QUEUE_AGENT_CONCURRENCY` | `5` | Concurrent agent jobs per worker |
+| `QUEUE_SATURATION_TIMEOUT_SECONDS` | `21600` | How long a queued function job may wait for a shared-pool slot (deferred retries with backoff) before failing. Bulk ingest drains through this window; `0` = wait forever. |
 | `QUEUE_AGENT_SUB_REPLICAS` | `2` | Sub-agent queue worker replicas (delegated agent jobs) |
 | `QUEUE_AGENT_SUB_CONCURRENCY` | `5` | Concurrent jobs per sub-agent worker |
 | `DEFAULT_WORKER_COUNT` | `4` | Shared (trusted) worker containers for `shared_pool` functions. Also the default ceiling for `MAX_EXECUTION_DEPTH`. |

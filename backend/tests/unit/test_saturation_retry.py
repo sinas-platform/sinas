@@ -138,7 +138,7 @@ class TestWorkerDefersOnSaturation:
         from app.services.queue_service import JOB_STATUS_PREFIX
         status = json.loads(redis.store[f"{JOB_STATUS_PREFIX}{kwargs['job_id']}"])
         assert status["status"] == "queued"
-        assert "saturated" in status["detail"]
+        assert "saturated" in status["detail"] and "retrying" in status["detail"]
         assert redis.published == []  # no failure signal
 
     async def test_backoff_caps_at_30s(self, monkeypatch):
@@ -187,10 +187,16 @@ class TestWorkerDefersOnSaturation:
         monkeypatch.setattr("app.core.database.AsyncSessionLocal", fake_session)
 
         redis = _FakeRedis()
-        budget = settings.queue_saturation_max_retries
+        kwargs = _job_kwargs(execution_id)
+        # Job enqueued far beyond the saturation window -> real failure
+        import time as _time
+        old = _time.time() - settings.queue_saturation_timeout_seconds - 60
+        redis.store[
+            f"sinas:job:status:{kwargs['job_id']}"
+        ] = json.dumps({"enqueued_at": old})
         with pytest.raises(SharedPoolSaturated):
             await worker.execute_function_job(
-                {"redis": redis, "job_try": budget}, **_job_kwargs(execution_id)
+                {"redis": redis, "job_try": 5}, **kwargs
             )
 
         await db.refresh(row)
@@ -204,7 +210,32 @@ class TestWorkerDefersOnSaturation:
 
 
 class TestWorkerSettings:
-    def test_max_tries_exceeds_saturation_budget(self):
+    def test_max_tries_covers_saturation_window(self):
         from app.queue.worker import WorkerSettings
 
-        assert WorkerSettings.max_tries > settings.queue_saturation_max_retries
+        # Worst-case attempts ~= window / 30s backoff cap; arq's cap must
+        # never fire before our explicit window check does.
+        assert WorkerSettings.max_tries > settings.queue_saturation_timeout_seconds // 30
+
+
+class TestLongWaitStaysQueued:
+    async def test_within_window_defers_even_after_many_attempts(self, monkeypatch):
+        """1000-upload scenario: hours of waiting is normal, not failure —
+        attempt count must not terminate a job that is still in-window."""
+        from app.queue import worker
+
+        async def boom(**kwargs):
+            raise SharedPoolSaturated("4/4")
+
+        monkeypatch.setattr(
+            "app.services.execution_engine.executor.execute_function", boom
+        )
+        import time as _time
+        redis = _FakeRedis()
+        kwargs = _job_kwargs(str(uuid.uuid4()))
+        # 40 minutes in, attempt 90 — previously dead at attempt 20
+        redis.store[
+            f"sinas:job:status:{kwargs['job_id']}"
+        ] = json.dumps({"enqueued_at": _time.time() - 2400})
+        with pytest.raises(Retry):
+            await worker.execute_function_job({"redis": redis, "job_try": 90}, **kwargs)

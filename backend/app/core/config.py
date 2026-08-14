@@ -261,11 +261,13 @@ class Settings(BaseSettings):
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker
     queue_default_timeout: int = 300
     queue_max_retries: int = 3
-    # Saturation backpressure: how many deferred retries a function job gets
-    # when the shared worker pool is full, before it becomes a real failure.
-    # With exponential backoff capped at 30s this is roughly a 9-minute
-    # window for the pool to drain (bulk uploads, batch fan-outs).
-    queue_saturation_max_retries: int = 20
+    # Saturation backpressure: how long a function job may wait in the queue
+    # (deferred retries, backoff capped at 30s) for a shared-pool slot before
+    # it becomes a real failure. The queue IS the waiting room — bulk ingest
+    # (thousands of uploads onto a small pool) is expected to drain over
+    # hours. The bound exists only so a permanently wedged pool eventually
+    # fails loudly instead of spinning forever. 0 = wait forever.
+    queue_saturation_timeout_seconds: int = 21600  # 6 hours
     queue_retry_delay: int = 10
 
     # Pipeline runs (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
