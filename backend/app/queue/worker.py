@@ -2,12 +2,16 @@
 import asyncio
 import json
 import logging
+import random
 import time
 import uuid
 from typing import Any
 
+from arq.worker import Retry
+
 from app.core.config import settings
 from app.core.redis import get_redis_settings
+from app.services.shared_admission import SharedPoolSaturated
 from app.services.queue_service import (
     DLQ_KEY,
     JOB_RESULT_PREFIX,
@@ -148,6 +152,63 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         completed = True
         logger.info(f"Function job {job_id} completed successfully")
         return result
+
+    except SharedPoolSaturated as e:
+        # Backpressure, not failure: the engine left the Execution row
+        # PENDING. Defer the job and let arq re-run it as slots free — this
+        # is what makes "30 rapid uploads onto a 4-slot pool" drain instead
+        # of 26 of them dying instantly.
+        job_try = ctx.get("job_try", 1)
+        budget = settings.queue_saturation_max_retries
+        if job_try < budget:
+            defer = min(2 ** job_try, 30) + random.uniform(0, 2)
+            await redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({
+                    **base_fields,
+                    "status": "queued",
+                    "detail": f"shared pool saturated; retry {job_try}/{budget} in {defer:.0f}s",
+                }),
+                ex=JOB_TTL,
+            )
+            logger.info(
+                f"Function job {job_id} deferred {defer:.0f}s "
+                f"(pool saturated, attempt {job_try}/{budget})"
+            )
+            completed = True
+            raise Retry(defer=defer)
+
+        # Budget exhausted — now it IS a failure. The engine skipped its
+        # failure bookkeeping for saturation, so do it here.
+        logger.error(f"Function job {job_id} failed: pool saturated for {budget} attempts")
+        from app.core.database import AsyncSessionLocal
+        from app.models.execution import Execution, ExecutionStatus
+        from sqlalchemy import select as _select
+        from datetime import datetime as _dt
+
+        async with AsyncSessionLocal() as _db:
+            row = (
+                await _db.execute(
+                    _select(Execution).where(Execution.execution_id == execution_id)
+                )
+            ).scalar_one_or_none()
+            if row and row.status == ExecutionStatus.PENDING:
+                row.status = ExecutionStatus.FAILED
+                row.error = str(e)
+                row.completed_at = _dt.utcnow()
+                await _db.commit()
+
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps({**base_fields, "status": "failed", "error": str(e)}),
+            ex=JOB_TTL,
+        )
+        await redis.publish(
+            f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+            json.dumps({"status": "failed", "error": str(e)}),
+        )
+        completed = True
+        raise
 
     except Exception as e:
         logger.error(f"Function job {job_id} failed: {e}")
@@ -410,7 +471,10 @@ class WorkerSettings:
     queue_name = "sinas:queue:functions"
     max_jobs = settings.queue_function_concurrency
     job_timeout = settings.queue_default_timeout
-    max_tries = settings.queue_max_retries
+    # Must exceed the saturation budget or arq's own cap kills a deferred
+    # job before our explicit exhausted-path bookkeeping runs. Plain
+    # exceptions are unaffected: arq only re-runs jobs that raise Retry.
+    max_tries = max(settings.queue_max_retries, settings.queue_saturation_max_retries + 1)
     retry_delay = settings.queue_retry_delay
 
 

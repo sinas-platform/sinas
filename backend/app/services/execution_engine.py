@@ -18,6 +18,7 @@ from app.models.execution import Execution, ExecutionStatus
 from app.models.function import Function
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.executor.base import ExecutionResult, ResultStatus
+from app.services.shared_admission import SharedPoolSaturated
 
 logger = logging.getLogger(__name__)
 
@@ -350,28 +351,25 @@ class FunctionExecutor:
                     # (the nested-execution deadlock). Opt-in via
                     # settings.shared_pool_reserve; nested calls (depth > 0)
                     # bypass the gate.
-                    from app.services.shared_admission import (
-                        SharedPoolSaturated,
-                        shared_pool_admission,
-                    )
+                    from app.services.shared_admission import shared_pool_admission
 
-                    try:
-                        async with shared_pool_admission(depth, execution_id):
-                            exec_result = await self._execute_in_shared_pool(
-                                function=function,
-                                input_data=input_data,
-                                execution_id=execution_id,
-                                user_id=user_id,
-                                user_email=user_email,
-                                user_custom_fields=user_custom_fields,
-                                access_token=access_token,
-                                trigger_type=trigger_type,
-                                chat_id=chat_id,
-                                db=db,
-                                timeout=function_timeout,
-                            )
-                    except SharedPoolSaturated as e:
-                        raise FunctionExecutionError(str(e))
+                    # SharedPoolSaturated propagates raw from here — the
+                    # outer handler resets the row to PENDING and re-raises so
+                    # the queue worker can defer-and-retry instead of failing.
+                    async with shared_pool_admission(depth, execution_id):
+                        exec_result = await self._execute_in_shared_pool(
+                            function=function,
+                            input_data=input_data,
+                            execution_id=execution_id,
+                            user_id=user_id,
+                            user_email=user_email,
+                            user_custom_fields=user_custom_fields,
+                            access_token=access_token,
+                            trigger_type=trigger_type,
+                            chat_id=chat_id,
+                            db=db,
+                            timeout=function_timeout,
+                        )
                     elapsed = time.time() - start_time
                     print(f"⏱️  [TIMING] Shared pool execution completed in {elapsed:.3f}s")
                 else:
@@ -472,6 +470,14 @@ class FunctionExecutor:
 
                 return result
 
+            except SharedPoolSaturated:
+                # Backpressure, not failure ("fail-fast, retryable" by
+                # design): leave the row PENDING so the queue worker's
+                # deferred retry finds it un-failed, and skip the failure
+                # callback/logging entirely.
+                execution.status = ExecutionStatus.PENDING
+                await db.commit()
+                raise
             except Exception as e:
                 # Update execution record with error
                 execution.status = ExecutionStatus.FAILED

@@ -261,6 +261,11 @@ class Settings(BaseSettings):
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker
     queue_default_timeout: int = 300
     queue_max_retries: int = 3
+    # Saturation backpressure: how many deferred retries a function job gets
+    # when the shared worker pool is full, before it becomes a real failure.
+    # With exponential backoff capped at 30s this is roughly a 9-minute
+    # window for the pool to drain (bulk uploads, batch fan-outs).
+    queue_saturation_max_retries: int = 20
     queue_retry_delay: int = 10
 
     # Pipeline runs (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
