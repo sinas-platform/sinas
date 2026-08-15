@@ -481,7 +481,7 @@ class SharedWorkerManager:
                 name=container_name,
                 detach=True,
                 network=self.sandbox_network,
-                mem_limit="1g",
+                mem_limit=settings.worker_memory_limit,
                 nano_cpus=1_000_000_000,  # 1 CPU core
                 cap_drop=["ALL"],  # Drop all capabilities for security
                 cap_add=["CHOWN", "SETUID", "SETGID"],  # Only essential capabilities

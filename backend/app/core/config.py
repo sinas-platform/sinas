@@ -244,6 +244,10 @@ class Settings(BaseSettings):
     docker_network: str = "auto"  # Docker network for containers (auto-detect or specify)
     sandbox_network: str = "sinas-sandbox"  # Isolated network for executor containers (internet only, no access to internal services)
     default_worker_count: int = 4  # Number of workers to start on backend startup
+    # Memory limit per shared worker container (Docker size string). Was
+    # hardcoded to 1g; heavier post-processing functions (document parsing,
+    # embedding prep) legitimately need more.
+    worker_memory_limit: str = "1g"
 
     # Message history
     max_history_messages: int = 100  # Max messages to load for conversation history
