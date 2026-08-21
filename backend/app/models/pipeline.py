@@ -129,6 +129,9 @@ class PipelineRun(Base):
     input: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
     # [{name, type, status, startedAt, durationMs, executionId?, chatId?, error?}]
     steps: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    # Final run output (output_mapping applied), persisted on success so the
+    # record matches what the live caller was given.
+    output: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text)
 
     cursor_before: Mapped[Optional[str]] = mapped_column(Text)

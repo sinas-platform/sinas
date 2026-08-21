@@ -120,9 +120,15 @@ class QueueService:
         """
         pool = await get_arq_pool()
         job_id = str(uuid.uuid4())
+        # Pre-allocate the RUN id and return that, not the job id: callers
+        # poll GET /pipelines/runs/{run_id} with what we hand back, and the
+        # job id never appears in pipeline_runs. (The run row itself is
+        # created when the worker starts executing.)
+        run_id = str(uuid.uuid4())
         await pool.enqueue_job(
             "execute_pipeline_run_job",
             job_id=job_id,
+            run_id=run_id,
             pipeline_id=pipeline_id,
             run_input=run_input,
             trigger_type=trigger_type,
@@ -132,8 +138,8 @@ class QueueService:
             _job_id=job_id,
             _queue_name=PIPELINE_QUEUE,
         )
-        logger.info(f"Enqueued pipeline run job {job_id} (pipeline={pipeline_id})")
-        return job_id
+        logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
+        return run_id
 
     async def enqueue_pipeline_fire(
         self,

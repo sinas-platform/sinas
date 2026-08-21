@@ -500,6 +500,7 @@ async def run_pipeline(
     trigger_id: Optional[str],
     user_id: str,
     user_token: str,
+    run_id: Optional[str] = None,
     exec_depth: int = 0,
     agent_depth: int = 0,
     sync: bool = False,
@@ -522,7 +523,9 @@ async def run_pipeline(
         db.expunge(pipeline)
 
     label = f"{pipeline.namespace}/{pipeline.name}"
-    run_id = str(uuid.uuid4())
+    # Queued runs arrive with a pre-allocated id (the one their enqueue
+    # response promised); sync runs mint their own.
+    run_id = run_id or str(uuid.uuid4())
     redis = await get_redis()
 
     # --- single-flight ---
@@ -776,6 +779,7 @@ async def _persist_outcome(
                 .values(
                     status=status,
                     error=error,
+                    output=output if status == "succeeded" else None,
                     steps=step_summaries,
                     cursor_after=new_cursor,
                     completed_at=_now(),

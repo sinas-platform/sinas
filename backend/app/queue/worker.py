@@ -397,6 +397,7 @@ async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
     return await pipeline_runner.run_pipeline(
         pipeline_id,
         kwargs.get("run_input"),
+        run_id=kwargs.get("run_id"),
         trigger_type=kwargs.get("trigger_type", "API"),
         trigger_id=kwargs.get("trigger_id"),
         user_id=user_id,

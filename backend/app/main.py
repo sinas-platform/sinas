@@ -135,6 +135,16 @@ app.add_middleware(
 # Add request logging middleware
 app.add_middleware(RequestLoggerMiddleware)
 
+
+@app.middleware("http")
+async def add_version_header(request, call_next):
+    """Stamp every response with the platform version — registered on the
+    root app so mounted sub-apps (/api/v1, adapters) inherit it. Lets
+    clients and operators confirm which build answered without /info."""
+    response = await call_next(request)
+    response.headers["X-Sinas-Version"] = __version__
+    return response
+
 _servers = [
     {"url": "/", "description": "Runtime API"},
     {"url": "/api/v1", "description": "Management API"},
