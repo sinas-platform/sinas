@@ -49,10 +49,55 @@ class AnthropicProvider(BaseLLMProvider):
             # Convert OpenAI tool format to Anthropic format
             params["tools"] = self._convert_tools_to_anthropic(tools)
 
+        # Structured outputs: Anthropic has no response_format param; its
+        # structured-output path is forced tool use. Only when the request
+        # carries no real tools — forcing a tool_choice would otherwise
+        # stop the agent's actual tool loop, and tool-using agents already
+        # get the schema instruction in their system prompt.
+        structured_tool = None
+        response_format = kwargs.get("response_format")
+        if response_format and not tools and response_format.get("type") == "json_schema":
+            js = response_format.get("json_schema") or {}
+            structured_tool = {
+                "name": (js.get("name") or "structured_response")[:64],
+                "description": (
+                    "Deliver the final response in the required JSON shape. "
+                    "Call exactly once with the complete answer."
+                ),
+                "input_schema": js.get("schema") or {"type": "object"},
+            }
+            params["tools"] = [structured_tool]
+            params["tool_choice"] = {"type": "tool", "name": structured_tool["name"]}
+
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
 
-        response = await self.client.messages.create(**params)
+        try:
+            response = await self.client.messages.create(**params)
+        except ValueError as e:
+            # The SDK refuses non-streaming requests whose ESTIMATED duration
+            # exceeds its limit (derived from max_tokens and model speed).
+            # Rather than encode any threshold ourselves, catch its guard and
+            # accumulate a stream into the identical Message object.
+            if "streaming" not in str(e).lower():
+                raise
+            async with self.client.messages.stream(**params) as s:
+                response = await s.get_final_message()
+
+        if structured_tool is not None:
+            # The forced tool call IS the answer: return its input as the
+            # message content so downstream parses one clean JSON document.
+            for block in response.content:
+                if block.type == "tool_use" and block.name == structured_tool["name"]:
+                    return {
+                        "content": self._serialize_args(block.input),
+                        "tool_calls": None,
+                        "usage": self.extract_usage(response),
+                        # stop_reason is "tool_use" mechanically; semantically
+                        # this is a completed final answer.
+                        "finish_reason": "stop",
+                    }
+            # Model refused the tool (rare) — fall through to normal parsing.
 
         # Extract content (Anthropic returns list of content blocks)
         content = ""
