@@ -62,6 +62,20 @@ spec:
           protocol: TCP
         - port: 6443
           protocol: TCP
+    {{- range .Values.networkPolicy.egressNamespaces }}
+    ## Operator-allowlisted cross-namespace egress
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+      {{- if .ports }}
+      ports:
+        {{- range .ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- end }}
     ## External internet — except RFC1918 (blocks cross-namespace pod IPs).
     - to:
         - ipBlock:
@@ -148,6 +162,20 @@ spec:
       ports:
         - port: 8000
           protocol: TCP
+    {{- range .Values.networkPolicy.egressNamespaces }}
+    ## Operator-allowlisted cross-namespace egress
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .namespace }}
+      {{- if .ports }}
+      ports:
+        {{- range .ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- end }}
     ## Internet — no RFC1918, so no other cluster-internal services.
     - to:
         - ipBlock:

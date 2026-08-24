@@ -123,6 +123,19 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
       name: {{ .Release.Name }}-secrets
       key: clickhouse-password
 {{- end }}
+{{- $auto := "otp" }}
+{{- if .Values.superadminPassword }}
+{{- $auto = ternary "password+otp" "password" (ne .Values.smtp.host "") }}
+{{- end }}
+- name: AUTH_MODE
+  value: {{ .Values.auth.mode | default $auto | quote }}
+{{- if .Values.superadminPassword }}
+- name: SUPERADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Release.Name }}-secrets
+      key: superadmin-password
+{{- end }}
 - name: CODE_EXECUTION_ENABLED
   value: {{ .Values.features.codeExecution | quote }}
 - name: BUILTIN_DATABASE_ENABLED

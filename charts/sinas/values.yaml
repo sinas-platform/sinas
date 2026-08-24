@@ -22,8 +22,19 @@ secrets:
   secretKey: ""
   encryptionKey: ""
 
-## Superadmin
+## Superadmin. With the default OTP auth mode, login codes arrive by EMAIL —
+## so without smtp.* configured a fresh install would be impossible to log
+## into. Set superadminPassword for SMTP-less installs (the install fails
+## fast if superadminEmail is set with neither). When superadminPassword is
+## set, auth mode auto-selects "password" (or "password+otp" with SMTP);
+## override with auth.mode.
 superadminEmail: ""
+superadminPassword: ""
+
+## Authentication mode: "otp", "password", or "password+otp".
+## Empty = auto (see superadmin comment above).
+auth:
+  mode: ""
 
 ## Executor — how sinas runs user/agent code.
 ##
@@ -102,6 +113,14 @@ fileStorage:
 networkPolicy:
   enabled: true
   ingressNamespace: ""
+  ## Cross-namespace EGRESS is denied by default (private ranges are excluded
+  ## from the internet rule, and only same-namespace pods are allowed) — calls
+  ## to companion services in other namespaces will TIME OUT, not be refused.
+  ## Allowlist them here; ports optional (all ports when omitted):
+  ##   egressNamespaces:
+  ##     - namespace: sgr
+  ##       ports: [8080]
+  egressNamespaces: []
 
 ## Builder (Node.js esbuild server)
 builder:
