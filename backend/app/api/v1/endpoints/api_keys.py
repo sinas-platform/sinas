@@ -2,14 +2,20 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import generate_api_key, get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission, validate_permission_subset
 from app.models import APIKey, APIKeyRole, Role
-from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse, APIKeyRoleRef
+from app.schemas.api_key import (
+    APIKeyCreate,
+    APIKeyCreated,
+    APIKeyResponse,
+    APIKeyRoleRef,
+    APIKeyUpdate,
+)
 
 router = APIRouter()
 
@@ -214,6 +220,68 @@ async def get_api_key(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
     set_permission_used(http_request, "sinas.api_keys.read")
+
+    roles_by_key = await _roles_by_key(db, [api_key.id])
+    return _key_response(api_key, roles_by_key.get(str(api_key.id), []))
+
+
+@router.patch("/api-keys/{key_id}", response_model=APIKeyResponse)
+async def update_api_key(
+    key_id: str,
+    request_data: APIKeyUpdate,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """
+    Update an API key's name, explicit permissions, or linked roles in place —
+    the key value never changes, so no rotation. Omitted fields are left
+    unchanged; provided permission/role sets REPLACE the previous ones.
+    """
+    user_id, permissions = current_user_data
+
+    api_key = await APIKey.get_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="update",
+        resource_id=key_id,
+    )
+    set_permission_used(http_request, "sinas.api_keys.update")
+
+    if request_data.permissions is not None and request_data.permissions:
+        # Same mint-time guard as create: the updater cannot grant beyond
+        # their own permissions (the live cap bounds requests regardless)
+        is_valid, violations = validate_permission_subset(request_data.permissions, permissions)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "API key permissions exceed your role permissions. "
+                    f"Violations: {', '.join(violations)}"
+                ),
+            )
+
+    roles: list[Role] = []
+    if request_data.role_ids is not None:
+        if request_data.role_ids:
+            result = await db.execute(select(Role).where(Role.id.in_(request_data.role_ids)))
+            roles = list(result.scalars().all())
+            missing = {str(r) for r in request_data.role_ids} - {str(r.id) for r in roles}
+            if missing:
+                raise HTTPException(
+                    status_code=400, detail=f"Unknown role ids: {', '.join(sorted(missing))}"
+                )
+        await db.execute(delete(APIKeyRole).where(APIKeyRole.api_key_id == api_key.id))
+        for role in roles:
+            db.add(APIKeyRole(api_key_id=api_key.id, role_id=role.id))
+
+    if request_data.name is not None:
+        api_key.name = request_data.name
+    if request_data.permissions is not None:
+        api_key.permissions = request_data.permissions
+
+    await db.flush()
 
     roles_by_key = await _roles_by_key(db, [api_key.id])
     return _key_response(api_key, roles_by_key.get(str(api_key.id), []))

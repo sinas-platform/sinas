@@ -40,6 +40,18 @@ class APIKeyCreate(BaseModel):
     expires_at: Optional[datetime] = Field(None, description="Optional expiration date")
 
 
+class APIKeyUpdate(BaseModel):
+    """Update an API key's scope in place — no rotation needed.
+
+    Omitted fields are left unchanged; role_ids/permissions replace the
+    previous set when provided.
+    """
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    permissions: Optional[dict[str, bool]] = None
+    role_ids: Optional[list[uuid.UUID]] = None
+
+
 class APIKeyResponse(BaseModel):
     """API key information (without the actual key)."""
 

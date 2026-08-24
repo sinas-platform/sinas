@@ -215,3 +215,119 @@ class TestResolution:
         plain = resp.json()["key"]
         _, perms = await validate_api_key(db, plain)
         assert perms.get("sinas.agents/*/*.read:own") is False
+
+
+class TestUpdate:
+    async def test_attach_role_to_existing_key(self, client, db, key_user):
+        user, role = key_user
+        created = await client.post(
+            "/api/v1/api-keys",
+            json={"name": "bind-later", "permissions": {"sinas.agents/*/*.read:own": True}},
+            headers=auth_headers(user),
+        )
+        key_id, plain = created.json()["id"], created.json()["key"]
+
+        # No PATCH permission in key_user's role yet — add the update grant
+        db.add(
+            RolePermission(
+                role_id=role.id,
+                permission_key="sinas.api_keys/*/*.update:own",
+                permission_value=True,
+            )
+        )
+        db.add(
+            RolePermission(
+                role_id=role.id, permission_key="sinas.api_keys.update:own", permission_value=True
+            )
+        )
+        await db.flush()
+
+        resp = await client.patch(
+            f"/api/v1/api-keys/{key_id}",
+            json={"role_ids": [str(role.id)]},
+            headers=auth_headers(user),
+        )
+        assert resp.status_code == 200, resp.text
+        assert [r["name"] for r in resp.json()["roles"]] == [role.name]
+        # Existing explicit grant untouched, role grants now flow — same key value
+        _, perms = await validate_api_key(db, plain)
+        assert perms.get("sinas.api_keys.create:own") is True  # from role
+        assert perms.get("sinas.agents/*/*.read:own") is True  # explicit, kept
+
+        # Clearing roles with [] removes the links
+        resp = await client.patch(
+            f"/api/v1/api-keys/{key_id}", json={"role_ids": []}, headers=auth_headers(user)
+        )
+        assert resp.status_code == 200
+        assert resp.json()["roles"] == []
+        _, perms = await validate_api_key(db, plain)
+        assert "sinas.api_keys.create:own" not in perms
+
+    async def test_update_permissions_subset_enforced(self, client, db, key_user):
+        user, role = key_user
+        db.add(
+            RolePermission(
+                role_id=role.id, permission_key="sinas.api_keys.update:own", permission_value=True
+            )
+        )
+        await db.flush()
+        created = await client.post(
+            "/api/v1/api-keys", json={"name": "escalate-later"}, headers=auth_headers(user)
+        )
+        resp = await client.patch(
+            f"/api/v1/api-keys/{created.json()['id']}",
+            json={"permissions": {"sinas.*:all": True}},
+            headers=auth_headers(user),
+        )
+        assert resp.status_code == 400
+        assert "exceed" in resp.json()["detail"]
+
+    async def test_update_requires_permission(self, client, db, key_user, test_user):
+        user, _ = key_user
+        created = await client.post(
+            "/api/v1/api-keys", json={"name": "not-yours"}, headers=auth_headers(user)
+        )
+        resp = await client.patch(
+            f"/api/v1/api-keys/{created.json()['id']}",
+            json={"name": "hijacked"},
+            headers=auth_headers(test_user),
+        )
+        assert resp.status_code == 403
+
+
+class TestRoleCreateInlinePermissions:
+    async def test_admin_creates_role_with_permissions_atomically(self, client, db, admin_user):
+        name = f"inline-{uuid.uuid4().hex[:8]}"
+        resp = await client.post(
+            "/api/v1/roles",
+            json={
+                "name": name,
+                "description": "one call",
+                "permissions": {"sinas.agents/pkg/*.chat:all": True},
+            },
+            headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 201, resp.text
+        role_id = resp.json()["id"]
+        rows = (
+            await db.execute(select(RolePermission).where(RolePermission.role_id == role_id))
+        ).scalars().all()
+        assert {r.permission_key: r.permission_value for r in rows} == {
+            "sinas.agents/pkg/*.chat:all": True
+        }
+
+    async def test_inline_permissions_require_manage_permission(self, client, db, key_user):
+        user, role = key_user
+        db.add(
+            RolePermission(
+                role_id=role.id, permission_key="sinas.roles.create:own", permission_value=True
+            )
+        )
+        await db.flush()
+        resp = await client.post(
+            "/api/v1/roles",
+            json={"name": f"sneaky-{uuid.uuid4().hex[:8]}", "permissions": {"sinas.*:all": True}},
+            headers=auth_headers(user),
+        )
+        assert resp.status_code == 403
+        assert "manage role permissions" in resp.json()["detail"]

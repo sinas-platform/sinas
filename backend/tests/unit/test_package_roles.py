@@ -173,3 +173,22 @@ class TestPackageRoles:
         result, _, _ = await PackageService(db).preview(yaml, str(admin_user.id))
         assert any("allowBroadRolePermissions" in w for w in result.warnings)
         assert await _role(db, f"{pkg}-service") is None
+
+
+class TestChatWithoutReadAdvisory:
+    async def test_chat_only_role_installs_with_advisory(self, db, admin_user):
+        pkg = f"pkg-{uuid.uuid4().hex[:8]}"
+        yaml = _yaml(pkg, "pkgns", f"{pkg}-service", [("sinas.agents/pkgns/*.chat:all", True)])
+        package, result = await PackageService(db).install(yaml, str(admin_user.id))
+        assert result.success
+        assert any("403 on its first call" in w for w in result.warnings)
+
+    async def test_chat_with_read_has_no_advisory(self, db, admin_user):
+        pkg = f"pkg-{uuid.uuid4().hex[:8]}"
+        yaml = _yaml(pkg, "pkgns", f"{pkg}-service", [
+            ("sinas.agents/pkgns/*.chat:all", True),
+            ("sinas.agents/pkgns/*.read:all", True),
+        ])
+        package, result = await PackageService(db).install(yaml, str(admin_user.id))
+        assert result.success
+        assert not any("403 on its first call" in w for w in result.warnings)

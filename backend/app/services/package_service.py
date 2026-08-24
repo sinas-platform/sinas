@@ -74,22 +74,26 @@ def _package_namespaces(config: SinasConfig) -> set[str]:
     return namespaces
 
 
-def package_role_violations(config: SinasConfig) -> tuple[list[str], list[str]]:
+def package_role_violations(config: SinasConfig) -> tuple[list[str], list[str], list[str]]:
     """
     Governance checks for roles shipped by a package.
 
-    Returns (hard_errors, broad_permissions):
+    Returns (hard_errors, broad_permissions, advisories):
     - hard_errors: things a package may never do — bind users (emailDomain is
       auto-membership). Always rejected.
     - broad_permissions: granted keys reaching outside the namespaces the
       package itself installs into (non-namespaced keys, foreign or wildcard
       namespaces). Rejected unless the operator explicitly consents.
+    - advisories: known potholes surfaced as warnings — e.g. agents .chat
+      without .read (the chats endpoint checks read on the agent BEFORE the
+      chat permission, so a chat-only role 403s on the very first call).
     """
     hard: list[str] = []
     broad: list[str] = []
+    advisories: list[str] = []
     roles = getattr(config.spec, "roles", None) or []
     if not roles:
-        return hard, broad
+        return hard, broad, advisories
 
     namespaces = _package_namespaces(config)
     for role in roles:
@@ -98,13 +102,25 @@ def package_role_violations(config: SinasConfig) -> tuple[list[str], list[str]]:
                 f"role '{role.name}' sets emailDomain — packages define roles, "
                 "never bind them to users"
             )
-        for perm in role.permissions:
-            if not perm.value:
-                continue  # denials can't widen anything
-            m = NAMESPACED_PERM_RE.match(perm.key)
+        granted = [p.key for p in role.permissions if p.value]
+        for key in granted:
+            m = NAMESPACED_PERM_RE.match(key)
             if not m or m.group("ns") == "*" or m.group("ns") not in namespaces:
-                broad.append(f"role '{role.name}': {perm.key}")
-    return hard, broad
+                broad.append(f"role '{role.name}': {key}")
+
+        for key in granted:
+            m = re.match(r"^sinas\.agents/([^/]+)/.+\.chat:", key)
+            if m and not any(
+                g.startswith(f"sinas.agents/{m.group(1)}/") and ".read:" in g
+                for g in granted
+            ):
+                advisories.append(
+                    f"role '{role.name}' grants {key} without a matching "
+                    f"sinas.agents/{m.group(1)}/*.read permission — chatting with an "
+                    "agent also requires reading it, so this role will 403 on its "
+                    "first call"
+                )
+    return hard, broad, advisories
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -168,7 +184,7 @@ class PackageService:
         pkg_name = config.package.name
         managed_by = f"pkg:{pkg_name}"
 
-        hard, broad = package_role_violations(config)
+        hard, broad, role_advisories = package_role_violations(config)
         if hard:
             raise ValueError("Package roles rejected: " + "; ".join(hard))
         if broad and not allow_broad_role_permissions:
@@ -205,6 +221,7 @@ class PackageService:
             result.warnings.append(
                 "Accepted broad role permissions (operator consent): " + "; ".join(broad)
             )
+        result.warnings.extend(role_advisories)
 
         # Create or update package record
         if existing_package:
@@ -288,7 +305,7 @@ class PackageService:
         result = await apply_service.apply_config(config, dry_run=True)
         result.warnings.extend(validation.warnings)
 
-        hard, broad = package_role_violations(config)
+        hard, broad, role_advisories = package_role_violations(config)
         for violation in hard:
             result.errors.append(f"Package roles rejected: {violation}")
         for perm in broad:
@@ -296,6 +313,7 @@ class PackageService:
                 "Broad role permission (install requires allowBroadRolePermissions=true): "
                 + perm
             )
+        result.warnings.extend(role_advisories)
 
         return result, variable_declarations, requires_input
 

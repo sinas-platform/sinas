@@ -10,6 +10,13 @@ class RoleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     email_domain: Optional[str] = Field(None, max_length=255)
+    permissions: dict[str, bool] = Field(
+        default_factory=dict,
+        description=(
+            "Optional initial permission map, set atomically with the role "
+            "(requires sinas.roles.manage_permissions:all)."
+        ),
+    )
 
 
 class RoleUpdate(BaseModel):
