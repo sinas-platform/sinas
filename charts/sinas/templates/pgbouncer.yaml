@@ -20,6 +20,8 @@ spec:
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer:latest
+          resources:
+            {{- toYaml .Values.pgbouncer.resources | nindent 12 }}
           env:
             - name: DATABASE_PASSWORD
               valueFrom:

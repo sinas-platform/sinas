@@ -64,11 +64,25 @@ postgres:
   database: sinas
   password: ""  # required — install fails if empty
   storage: 5Gi
+  ## Compute requests matter: without them, GKE Autopilot bills its platform
+  ## default (0.5 vCPU / 2Gi PER POD) and standard clusters give the database
+  ## BestEffort QoS (first evicted under pressure). Requests below are sized
+  ## for an idle/small instance — raise for production load. Limits are
+  ## deliberately not set by default (an undersized memory limit OOM-kills
+  ## your database); add resources.limits here if you want a ceiling.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
 
 ## Redis
 redis:
   maxmemory: "256mb"
   storage: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 320Mi  # headroom over maxmemory
 
 ## ClickHouse
 clickhouse:
@@ -88,6 +102,10 @@ pgbouncer:
   defaultPoolSize: 50
   minPoolSize: 10
   reservePoolSize: 10
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
 
 ## File storage — shared volume for uploaded files (/var/sinas/files).
 ## Mounted into backend, queue-worker, queue-agent, scheduler.
