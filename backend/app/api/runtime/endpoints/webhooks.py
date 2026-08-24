@@ -113,18 +113,25 @@ async def _execute_agent_webhook(
         webhook.message_template or "", context
     )
     message = message.strip()
-    # Fall back on a PARTIAL render too, not just an empty one: 'New issue {{a}}:
-    # {{b}}' against an unexpected payload renders 'New issue :' — non-empty, but
-    # it would invoke (and bill) the agent with no information about the event.
-    if not message or msg_had_undefined:
+    # A partial render must never REPLACE the author's framing — multi-event
+    # templates legitimately reference fields absent per event type, and the
+    # trailing instructions ("act on this per your triage instructions") are
+    # the whole point of the template. Non-empty partial render → keep it and
+    # APPEND the raw payload so no data is lost either. Only a fully empty
+    # render falls back to bare payload JSON.
+    if not message:
         logger.warning(
-            "Webhook %s: message template did not fully render (empty=%s, undefined=%s); "
-            "falling back to raw payload",
+            "Webhook %s: message template rendered empty; falling back to raw payload",
             webhook.path,
-            not message,
-            msg_had_undefined,
         )
         message = json.dumps(context)
+    elif msg_had_undefined:
+        logger.info(
+            "Webhook %s: message template partially rendered (undefined variables); "
+            "appending raw payload",
+            webhook.path,
+        )
+        message = f"{message}\n\nFull event payload:\n{json.dumps(context)}"
 
     session_key: Optional[str] = None
     if webhook.session_key_template:

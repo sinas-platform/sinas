@@ -659,14 +659,18 @@ class TestRuntimeAgentTarget:
         monkeypatch.setattr(queue_service, "enqueue_agent_message", fake_enqueue_agent_message)
 
         # Payload missing everything the template references: the webhook must
-        # still succeed (undefined variables never raise), but a PARTIAL render
-        # must not be sent as-is. 'New issue :' is non-empty yet carries no
-        # information about the event, so the agent would be invoked — and
-        # billed — with nothing to act on. Fall back to the raw payload instead.
+        # still succeed (undefined variables never raise), and a PARTIAL render
+        # keeps the author's framing while APPENDING the raw payload — the
+        # template's instructions are the point, and replacing them with bare
+        # JSON handed the agent data with zero guidance (field report from the
+        # integration packages: multi-event templates legitimately reference
+        # fields absent per event type).
         resp = await client.post(f"/webhooks/{path}", json={"unrelated": True})
         assert resp.status_code == 202, resp.text
-        assert captured["content"] != "New issue :"
-        assert "unrelated" in captured["content"]
+        content = captured["content"]
+        assert content.startswith("New issue")          # author framing kept
+        assert "Full event payload:" in content         # data appended
+        assert "unrelated" in content                   # nothing lost
 
     async def test_fully_empty_render_falls_back_to_payload(
         self, client, db, test_user, monkeypatch

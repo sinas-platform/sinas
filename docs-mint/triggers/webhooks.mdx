@@ -56,7 +56,7 @@ return {"_status": 201, "_headers": {"X-Request-Id": "abc"}, "_body": {"ok": Tru
 
 ## Agent targets
 
-A webhook can trigger an agent directly, without a bridge function. The request payload is rendered through `message_template` (Jinja2) and sent to the agent as a user message. Undefined template variables render as empty strings — an unexpected payload shape never fails the webhook.
+A webhook can trigger an agent directly, without a bridge function. The request payload is rendered through `message_template` (Jinja2) and sent to the agent as a user message. Undefined template variables render as empty strings — an unexpected payload shape never fails the webhook. If any variable was undefined, the rendered message is delivered with the full raw payload appended (so the agent keeps both your instructions and the data); a template that renders fully empty falls back to the raw payload alone. For multi-event sources (e.g. GitHub issues + PRs + comments), reference only fields present in every payload variant, or guard with `{% if x is defined %}`.
 
 With a `session_key_template`, repeated events that render the same key continue the same conversation (like the `session_key` on `POST /agents/{ns}/{name}/invoke`) — e.g. all events for one Jira issue or one Slack thread share a chat. Without it, each delivery starts a fresh chat.
 
