@@ -184,7 +184,10 @@ class PackageService:
 
         # Substitute variables if provided
         if variables:
-            yaml_content, _ = await self._resolve_variables(yaml_content, variables, user_id)
+            # Preview is a dry run: validate + substitute, persist nothing.
+            yaml_content, _ = await self._resolve_variables(
+                yaml_content, variables, user_id, persist_secrets=False
+            )
 
         config, validation = await ConfigParser.parse_and_validate(yaml_content, db=self.db)
 
@@ -488,8 +491,12 @@ class PackageService:
         yaml_content: str,
         provided: dict[str, Any],
         user_id: str,
+        persist_secrets: bool = True,
     ) -> tuple[str, dict[str, Any]]:
         """Validate and substitute install-time variables.
+
+        persist_secrets=False (preview) validates secret variables but writes
+        nothing — a dry run must never persist secrets.
 
         Returns (substituted_yaml, stored_values).
         stored_values is what gets persisted in Package.values
@@ -563,23 +570,31 @@ class PackageService:
                 value = str(value)
 
             elif var_type == "secret":
-                # Create/upsert the secret
-                from app.core.encryption import encryption_service
-                from app.models.secret import Secret
-                existing = await self.db.execute(
-                    select(Secret).where(Secret.name == name)
-                )
-                secret = existing.scalar_one_or_none()
-                if secret:
-                    secret.encrypted_value = encryption_service.encrypt(str(value))
-                else:
-                    secret = Secret(
-                        name=name,
-                        encrypted_value=encryption_service.encrypt(str(value)),
-                        description=decl.get("description"),
+                if persist_secrets:
+                    # Upsert the SHARED secret. Scoped to visibility="shared":
+                    # a name-only lookup could silently overwrite another
+                    # user's PRIVATE secret of the same name (same bug class
+                    # the config-apply secrets path fixed).
+                    from app.core.encryption import encryption_service
+                    from app.models.secret import Secret
+                    existing = await self.db.execute(
+                        select(Secret).where(
+                            Secret.name == name, Secret.visibility == "shared"
+                        )
                     )
-                    self.db.add(secret)
-                await self.db.flush()
+                    secret = existing.scalar_one_or_none()
+                    if secret:
+                        secret.encrypted_value = encryption_service.encrypt(str(value))
+                    else:
+                        secret = Secret(
+                            name=name,
+                            encrypted_value=encryption_service.encrypt(str(value)),
+                            description=decl.get("description"),
+                            user_id=user_id,
+                            visibility="shared",
+                        )
+                        self.db.add(secret)
+                    await self.db.flush()
                 # The substitution value is the secret reference syntax
                 resolved[name] = f"{{{{{name}}}}}"
                 stored_values[name] = "***"
