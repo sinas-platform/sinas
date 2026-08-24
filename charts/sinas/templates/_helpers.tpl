@@ -127,8 +127,10 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 {{- if .Values.superadminPassword }}
 {{- $auto = ternary "password+otp" "password" (ne .Values.smtp.host "") }}
 {{- end }}
+## Paren-safe: `helm upgrade --reuse-values` from a pre-auth release has no
+## `auth` key at all, and a bare .Values.auth.mode nil-pointers there.
 - name: AUTH_MODE
-  value: {{ .Values.auth.mode | default $auto | quote }}
+  value: {{ (.Values.auth).mode | default $auto | quote }}
 {{- if .Values.superadminPassword }}
 - name: SUPERADMIN_PASSWORD
   valueFrom:

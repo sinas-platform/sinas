@@ -21,8 +21,10 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
+          {{- with (.Values.redis).resources }}
           resources:
-            {{- toYaml .Values.redis.resources | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command:
             - redis-server
             - --appendonly
