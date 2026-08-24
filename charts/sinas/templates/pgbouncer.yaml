@@ -28,10 +28,9 @@ spec:
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
-                  key: database-password
+                  {{- include "sinas.dbPasswordRef" . | nindent 18 }}
             - name: DATABASE_URL
-              value: "postgres://{{ .Values.postgres.user }}:$(DATABASE_PASSWORD)@postgres:5432/{{ .Values.postgres.database }}"
+              value: "postgres://{{ .Values.postgres.user }}:$(DATABASE_PASSWORD)@{{ ((.Values.postgres).external).host | default "postgres" }}:5432/{{ .Values.postgres.database }}"
             - name: POOL_MODE
               value: {{ .Values.pgbouncer.poolMode | quote }}
             - name: MAX_CLIENT_CONN

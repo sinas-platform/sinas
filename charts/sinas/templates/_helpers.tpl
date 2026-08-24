@@ -43,14 +43,28 @@ imagePullSecrets:
 {{- end }}
 
 {{/*
+Database password secretKeyRef body — release secret by default, or the
+operator's pre-created secret when postgres.external.existingSecret is set.
+Shared by backendEnv and pgbouncer.
+*/}}
+{{- define "sinas.dbPasswordRef" -}}
+{{- if ((.Values.postgres).external).existingSecret -}}
+name: {{ .Values.postgres.external.existingSecret }}
+key: {{ .Values.postgres.external.existingSecretKey | default "password" }}
+{{- else -}}
+name: {{ .Release.Name }}-secrets
+key: database-password
+{{- end }}
+{{- end }}
+
+{{/*
 Backend environment — shared by backend, all workers, scheduler, cdc-worker
 */}}
 {{- define "sinas.backendEnv" -}}
 - name: DATABASE_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ .Release.Name }}-secrets
-      key: database-password
+      {{- include "sinas.dbPasswordRef" . | nindent 6 }}
 - name: DATABASE_USER
   value: {{ .Values.postgres.user | quote }}
 - name: DATABASE_HOST
@@ -62,7 +76,7 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: DATABASE_URL
   value: "postgresql://{{ .Values.postgres.user }}:$(DATABASE_PASSWORD)@pgbouncer:5432/{{ .Values.postgres.database }}"
 - name: DATABASE_DIRECT_HOST
-  value: postgres
+  value: {{ ((.Values.postgres).external).host | default "postgres" | quote }}
 {{- if .Values.clickhouse.enabled }}
 - name: CLICKHOUSE_HOST
   value: clickhouse

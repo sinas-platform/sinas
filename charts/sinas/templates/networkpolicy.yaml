@@ -76,6 +76,32 @@ spec:
         {{- end }}
       {{- end }}
     {{- end }}
+    {{- $extHost := ((.Values.postgres).external).host }}
+    {{- if and $extHost (regexMatch "^(\\d{1,3}\\.){3}\\d{1,3}$" $extHost) }}
+    ## External postgres (postgres.external.host) — auto-allowed, because the
+    ## RFC1918 exclusion below would otherwise silently drop every database
+    ## connection to a private-IP managed instance. DNS hostnames cannot be
+    ## auto-derived; allowlist their range via egressCidrs instead.
+    - to:
+        - ipBlock:
+            cidr: {{ $extHost }}/32
+      ports:
+        - port: 5432
+          protocol: TCP
+    {{- end }}
+    {{- range .Values.networkPolicy.egressCidrs }}
+    ## Operator-allowlisted private-IP egress (external datastores etc.)
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      {{- if .ports }}
+      ports:
+        {{- range .ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+      {{- end }}
+    {{- end }}
     ## External internet — except RFC1918 (blocks cross-namespace pod IPs).
     - to:
         - ipBlock:

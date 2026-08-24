@@ -73,7 +73,28 @@ registry:
 postgres:
   user: postgres
   database: sinas
-  password: ""  # required — install fails if empty
+  password: ""  # required — install fails if empty (unless external.existingSecret)
+  ## External PostgreSQL (Cloud SQL, RDS, ...). Setting external.host skips
+  ## the in-cluster postgres pod and its PVC entirely; pgbouncer STAYS
+  ## in-cluster and pools against the external instance (managed databases
+  ## have hard connection limits — keep it in the path). The standard port
+  ## 5432 is assumed. Password comes from postgres.password as usual, or
+  ## point existingSecret at a pre-created Secret (key existingSecretKey) to
+  ## keep it out of values. The database and user must already exist; the
+  ## user needs CREATEDB unless features.builtinDatabase=false.
+  ## NOTE: private-IP instances live in RFC1918 space, which the default
+  ## NetworkPolicy blocks. When host is an IPv4 literal the chart
+  ## auto-allows egress to it on 5432; a DNS hostname resolving to a
+  ## private IP needs its range allowlisted in networkPolicy.egressCidrs,
+  ## or connections will TIME OUT, not be refused.
+  ## TLS: connections are negotiated opportunistically ("prefer" semantics
+  ## in pgbouncer and the drivers), which satisfies encrypt-only instances
+  ## (e.g. Cloud SQL ENCRYPTED_ONLY). Instances requiring CLIENT
+  ## CERTIFICATES are not supported.
+  external:
+    host: ""
+    existingSecret: ""
+    existingSecretKey: "password"
   storage: 5Gi
   ## Compute requests matter: without them, GKE Autopilot bills its platform
   ## default (0.5 vCPU / 2Gi PER POD) and standard clusters give the database
@@ -139,6 +160,14 @@ networkPolicy:
   ##     - namespace: sgr
   ##       ports: [8080]
   egressNamespaces: []
+  ## Private-IP (RFC1918) egress allowlist by CIDR, for destinations OUTSIDE
+  ## the cluster — e.g. a Cloud SQL or Memorystore private IP (see
+  ## postgres.external). Applies to the sinas services only, never sandbox
+  ## pods. ports optional (all ports when omitted):
+  ##   egressCidrs:
+  ##     - cidr: 10.23.96.3/32
+  ##       ports: [5432]
+  egressCidrs: []
 
 ## Builder (Node.js esbuild server)
 builder:
