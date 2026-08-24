@@ -66,6 +66,11 @@ export interface AdminCreateResetLinkResponse {
 }
 
 // API Keys
+export interface APIKeyRoleRef {
+  id: string;
+  name: string;
+}
+
 export interface APIKey {
   id: string;
   user_id: string;
@@ -73,6 +78,7 @@ export interface APIKey {
   name: string;
   key_prefix: string;
   permissions: Record<string, boolean>;
+  roles?: APIKeyRoleRef[];
   is_active: boolean;
   last_used_at: string | null;
   expires_at: string | null;
@@ -82,6 +88,7 @@ export interface APIKey {
 export interface APIKeyCreate {
   name: string;
   permissions: Record<string, boolean>;
+  role_ids?: string[];
   expires_at?: string;
 }
 

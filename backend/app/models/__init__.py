@@ -33,6 +33,7 @@ from .tool_call_result import ToolCallResult
 from .usage import UsagePeriod
 from .user import (
     APIKey,
+    APIKeyRole,
     OTPSession,
     PasswordResetToken,
     RefreshToken,
@@ -63,6 +64,7 @@ __all__ = [
     "RolePermission",
     "OTPSession",
     "APIKey",
+    "APIKeyRole",
     "RefreshToken",
     "PasswordResetToken",
     "Chat",

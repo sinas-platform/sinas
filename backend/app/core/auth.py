@@ -25,6 +25,7 @@ from app.core.permissions import (
 )
 from app.models import (
     APIKey,
+    APIKeyRole,
     OTPSession,
     PasswordResetToken,
     RefreshToken,
@@ -558,6 +559,41 @@ async def create_api_key(
     return api_key, plain_key
 
 
+async def resolve_api_key_permissions(
+    db: AsyncSession, api_key: APIKey, user: User
+) -> dict[str, bool]:
+    """
+    Effective permissions for an API key at request time.
+
+    Union of the linked roles' permissions, overlaid with the key's explicit
+    grants, then capped by the owner's LIVE role permissions: a granted entry
+    survives only while the owner currently holds it. Keys therefore track
+    role edits and owner demotions instead of freezing a mint-time snapshot —
+    revoking a permission from a role or user revokes it from their keys too.
+    """
+    perms: dict[str, bool] = {}
+
+    # Union of linked roles' permissions (same OR logic as user roles)
+    result = await db.execute(
+        select(RolePermission)
+        .join(APIKeyRole, APIKeyRole.role_id == RolePermission.role_id)
+        .where(APIKeyRole.api_key_id == api_key.id)
+    )
+    for perm in result.scalars().all():
+        if perm.permission_value or perm.permission_key not in perms:
+            perms[perm.permission_key] = perm.permission_value
+
+    # Explicit grants override role-derived entries (an explicit False is a
+    # deliberate denial on this key)
+    perms.update(api_key.permissions or {})
+
+    if not any(perms.values()):
+        return perms
+
+    owner_perms = await get_user_permissions(db, str(user.id))
+    return {k: v for k, v in perms.items() if not v or check_permission(owner_perms, k)}
+
+
 async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, dict[str, bool]]]:
     """
     Validate an API key and return the user and permissions.
@@ -598,7 +634,7 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, d
     user.last_login_at = datetime.now(UTC)
     await db.commit()
 
-    return user, api_key.permissions
+    return user, await resolve_api_key_permissions(db, api_key, user)
 
 
 # Authentication Dependencies

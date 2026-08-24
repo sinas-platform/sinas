@@ -7,11 +7,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import generate_api_key, get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
-from app.core.permissions import check_permission
-from app.models import APIKey
-from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse
+from app.core.permissions import check_permission, validate_permission_subset
+from app.models import APIKey, APIKeyRole, Role
+from app.schemas.api_key import APIKeyCreate, APIKeyCreated, APIKeyResponse, APIKeyRoleRef
 
 router = APIRouter()
+
+
+async def _roles_by_key(db: AsyncSession, key_ids: list) -> dict[str, list[APIKeyRoleRef]]:
+    """Role refs for a set of API keys, one query."""
+    if not key_ids:
+        return {}
+    result = await db.execute(
+        select(APIKeyRole.api_key_id, Role.id, Role.name)
+        .join(Role, Role.id == APIKeyRole.role_id)
+        .where(APIKeyRole.api_key_id.in_(key_ids))
+    )
+    by_key: dict[str, list[APIKeyRoleRef]] = {}
+    for api_key_id, role_id, role_name in result.all():
+        by_key.setdefault(str(api_key_id), []).append(APIKeyRoleRef(id=role_id, name=role_name))
+    return by_key
+
+
+def _key_response(key: APIKey, roles: list[APIKeyRoleRef]) -> APIKeyResponse:
+    # Built explicitly (not from_attributes): the `roles` relationship is an
+    # APIKeyRole list, not the {id, name} refs the schema carries, and lazy
+    # loading it here would fail in async context anyway.
+    return APIKeyResponse(
+        id=key.id,
+        user_id=key.user_id,
+        name=key.name,
+        key_prefix=key.key_prefix,
+        permissions=key.permissions,
+        roles=roles,
+        is_active=key.is_active,
+        last_used_at=key.last_used_at,
+        expires_at=key.expires_at,
+        created_at=key.created_at,
+        revoked_at=key.revoked_at,
+    )
 
 
 @router.post("/api-keys", response_model=APIKeyCreated, status_code=status.HTTP_201_CREATED)
@@ -25,6 +59,11 @@ async def create_api_key(
     Create a new API key for the current user.
 
     The plain API key is returned only once - store it securely!
+
+    Scope the key with explicit `permissions` (validated as a subset of your
+    own), with `role_ids` linking it to roles (the key then tracks the roles
+    as they are edited), or both. Either way, effective permissions are capped
+    by the owner's live permissions on every request.
     """
     user_id, permissions = current_user_data
 
@@ -32,6 +71,31 @@ async def create_api_key(
         set_permission_used(http_request, "sinas.api_keys.create:own", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to create API keys")
     set_permission_used(http_request, "sinas.api_keys.create:own")
+
+    # Explicit grants must be a subset of the creator's own permissions
+    if request_data.permissions:
+        is_valid, violations = validate_permission_subset(request_data.permissions, permissions)
+        if not is_valid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "API key permissions exceed your role permissions. "
+                    f"Violations: {', '.join(violations)}"
+                ),
+            )
+
+    # Resolve linked roles (existence only — effective permissions are capped
+    # by the owner's live permissions at request time, so a role the owner
+    # does not hold contributes nothing until they are assigned it)
+    roles: list[Role] = []
+    if request_data.role_ids:
+        result = await db.execute(select(Role).where(Role.id.in_(request_data.role_ids)))
+        roles = list(result.scalars().all())
+        missing = {str(r) for r in request_data.role_ids} - {str(r.id) for r in roles}
+        if missing:
+            raise HTTPException(
+                status_code=400, detail=f"Unknown role ids: {', '.join(sorted(missing))}"
+            )
 
     # Generate API key
     plain_key, key_hash, key_prefix = generate_api_key()
@@ -50,6 +114,10 @@ async def create_api_key(
 
     db.add(api_key)
     await db.flush()
+
+    for role in roles:
+        db.add(APIKeyRole(api_key_id=api_key.id, role_id=role.id))
+    await db.flush()
     await db.refresh(api_key)
 
     # Return response with plain key (only time it's shown)
@@ -59,6 +127,7 @@ async def create_api_key(
         key=plain_key,  # Plain key - only shown once!
         key_prefix=api_key.key_prefix,
         permissions=api_key.permissions,
+        roles=[APIKeyRoleRef(id=r.id, name=r.name) for r in roles],
         expires_at=api_key.expires_at,
         created_at=api_key.created_at,
     )
@@ -106,14 +175,16 @@ async def list_api_keys(
     # Sort by created_at desc
     api_keys_sorted = sorted(api_keys, key=lambda k: k.created_at, reverse=True)
 
+    roles_by_key = await _roles_by_key(db, key_ids)
+
     # Build response with user email for admins
     responses = []
     for key in api_keys_sorted:
-        response_data = APIKeyResponse.model_validate(key).model_dump()
+        response = _key_response(key, roles_by_key.get(str(key.id), []))
         # Add user email if viewing with :all scope (admin)
         if key.user:
-            response_data["user_email"] = key.user.email
-        responses.append(APIKeyResponse(**response_data))
+            response.user_email = key.user.email
+        responses.append(response)
 
     return responses
 
@@ -144,7 +215,8 @@ async def get_api_key(
 
     set_permission_used(http_request, "sinas.api_keys.read")
 
-    return APIKeyResponse.model_validate(api_key)
+    roles_by_key = await _roles_by_key(db, [api_key.id])
+    return _key_response(api_key, roles_by_key.get(str(api_key.id), []))
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)

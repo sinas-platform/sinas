@@ -24,6 +24,15 @@ export function APIKeys() {
     retry: false,
   });
 
+  // For the linked-roles picker; non-admins may lack roles.read — degrade to
+  // explicit permissions only.
+  const { data: roles } = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => apiClient.listRoles(),
+    retry: false,
+    enabled: showCreateModal,
+  });
+
   const filteredApiKeys = apiKeys?.filter(key => showInactive || key.is_active);
 
   const formatDate = (dateString: string) => {
@@ -50,7 +59,7 @@ export function APIKeys() {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
       setCreatedKey({ id: data.id, key: data.key });
       setShowCreateModal(false);
-      setFormData({ name: '', permissions: {} });
+      setFormData({ name: '', permissions: {}, role_ids: [] });
     },
   });
 
@@ -146,6 +155,19 @@ export function APIKeys() {
                         </>
                       )}
                     </div>
+                    {key.roles && key.roles.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                        <span className="text-xs text-gray-500">Roles:</span>
+                        {key.roles.map((role) => (
+                          <span
+                            key={role.id}
+                            className="px-2 py-0.5 bg-purple-900/30 text-purple-300 text-xs rounded"
+                          >
+                            {role.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {key.permissions && Object.keys(key.permissions).length > 0 && (
                       <div className="mt-2">
                         <details className="text-xs">
@@ -233,7 +255,7 @@ export function APIKeys() {
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
             onClick={() => {
               setShowCreateModal(false);
-              setFormData({ name: '', permissions: {} });
+              setFormData({ name: '', permissions: {}, role_ids: [] });
             }}
           />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
@@ -244,7 +266,7 @@ export function APIKeys() {
                 <button
                   onClick={() => {
                     setShowCreateModal(false);
-                    setFormData({ name: '', permissions: {} });
+                    setFormData({ name: '', permissions: {}, role_ids: [] });
                   }}
                   className="text-gray-500 hover:text-gray-400"
                 >
@@ -290,6 +312,45 @@ export function APIKeys() {
                 </p>
               </div>
 
+              {roles && roles.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Linked Roles (Optional)
+                  </label>
+                  <div className="max-h-40 overflow-y-auto border border-line rounded-lg divide-y divide-line-soft">
+                    {roles.map((role) => (
+                      <label
+                        key={role.id}
+                        className="flex items-center gap-2 px-3 py-2 text-sm text-gray-300 cursor-pointer hover:bg-surface-0"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.role_ids?.includes(role.id) ?? false}
+                          onChange={(e) => {
+                            const current = formData.role_ids ?? [];
+                            setFormData({
+                              ...formData,
+                              role_ids: e.target.checked
+                                ? [...current, role.id]
+                                : current.filter((id) => id !== role.id),
+                            });
+                          }}
+                          className="rounded border-line text-primary-600 focus:ring-primary-500"
+                        />
+                        <span>{role.name}</span>
+                        {role.description && (
+                          <span className="text-xs text-gray-500 truncate">{role.description}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The key follows linked roles as they change (no re-minting), always capped by
+                    your own live permissions.
+                  </p>
+                </div>
+              )}
+
               <PermissionEditor
                 mode="dict"
                 label="Permissions"
@@ -299,7 +360,8 @@ export function APIKeys() {
 
               {createMutation.isError && (
                 <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-                  Failed to create API key. Please try again.
+                  {(createMutation.error as { response?: { data?: { detail?: string } } })?.response
+                    ?.data?.detail || 'Failed to create API key. Please try again.'}
                 </div>
               )}
 
@@ -308,7 +370,7 @@ export function APIKeys() {
                   type="button"
                   onClick={() => {
                     setShowCreateModal(false);
-                    setFormData({ name: '', permissions: {} });
+                    setFormData({ name: '', permissions: {}, role_ids: [] });
                   }}
                   className="btn btn-secondary"
                   disabled={createMutation.isPending}

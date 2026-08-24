@@ -190,6 +190,32 @@ class APIKey(Base, PermissionMixin):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="api_keys", foreign_keys=[user_id])
+    roles: Mapped[list["APIKeyRole"]] = relationship(
+        "APIKeyRole", back_populates="api_key", cascade="all, delete-orphan"
+    )
+
+
+class APIKeyRole(Base):
+    """Links an API key to a role. A linked key's effective permissions are
+    the union of its roles' permissions (plus any explicit grants), capped at
+    request time by the owner's live permissions — so keys track role edits
+    instead of freezing a snapshot."""
+
+    __tablename__ = "api_key_roles"
+    __table_args__ = (Index("ix_api_key_role_unique", "api_key_id", "role_id", unique=True),)
+
+    id: Mapped[uuid_pk]
+    api_key_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("roles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_at: Mapped[created_at]
+
+    # Relationships
+    api_key: Mapped["APIKey"] = relationship("APIKey", back_populates="roles")
+    role: Mapped["Role"] = relationship("Role")
 
 
 class RefreshToken(Base):

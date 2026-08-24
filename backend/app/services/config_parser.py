@@ -95,10 +95,6 @@ class ConfigParser:
 
         # Add warnings for SinasPackage with environment-specific resources
         if config.kind == "SinasPackage":
-            if config.spec.roles:
-                validation.warnings.append(
-                    "SinasPackage includes roles — these are environment-specific and will be skipped during install"
-                )
             if config.spec.users:
                 validation.warnings.append(
                     "SinasPackage includes users — these are environment-specific and will be skipped during install"

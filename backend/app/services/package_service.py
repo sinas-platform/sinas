@@ -2,6 +2,7 @@
 Package service for installing, uninstalling, and managing integration packages.
 """
 import logging
+import re
 from typing import Any, Optional
 
 import yaml
@@ -21,6 +22,7 @@ from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
 from app.models.store import Store
 from app.models.template import Template
+from app.models.user import APIKeyRole, Role, RolePermission, UserRole
 from app.models.webhook import Webhook
 from app.schemas.config import ConfigApplyResponse, SinasConfig
 from app.services.config_apply import ConfigApplyService
@@ -45,11 +47,64 @@ from app.services.resource_serializers import (
 
 logger = logging.getLogger(__name__)
 
-# Resource types that packages cannot include (environment-specific)
-PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
+# Resource types that packages cannot include (environment-specific).
+# Roles are deliberately NOT here: a package may DEFINE roles (its own
+# least-privilege permission surface) but never BIND them — assignment to
+# users stays an operator act, and emailDomain (auto-membership) is rejected.
+PACKAGE_SKIP_TYPES = {"users", "llmProviders", "databaseConnections"}
+
+# Permission keys shaped sinas.<resource>/<namespace>/... — anything else
+# (non-namespaced or non-sinas keys) counts as broad for package roles.
+NAMESPACED_PERM_RE = re.compile(r"^sinas\.[a-z_]+/(?P<ns>[^/]+)/")
 
 # Models that support managed_by
 MANAGED_MODELS = [Agent, Connector, Manifest, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
+
+
+def _package_namespaces(config: SinasConfig) -> set[str]:
+    """Namespaces the package installs resources into."""
+    namespaces: set[str] = set()
+    for field in type(config.spec).model_fields:
+        value = getattr(config.spec, field, None)
+        if isinstance(value, list):
+            for item in value:
+                ns = getattr(item, "namespace", None)
+                if isinstance(ns, str) and ns:
+                    namespaces.add(ns)
+    return namespaces
+
+
+def package_role_violations(config: SinasConfig) -> tuple[list[str], list[str]]:
+    """
+    Governance checks for roles shipped by a package.
+
+    Returns (hard_errors, broad_permissions):
+    - hard_errors: things a package may never do — bind users (emailDomain is
+      auto-membership). Always rejected.
+    - broad_permissions: granted keys reaching outside the namespaces the
+      package itself installs into (non-namespaced keys, foreign or wildcard
+      namespaces). Rejected unless the operator explicitly consents.
+    """
+    hard: list[str] = []
+    broad: list[str] = []
+    roles = getattr(config.spec, "roles", None) or []
+    if not roles:
+        return hard, broad
+
+    namespaces = _package_namespaces(config)
+    for role in roles:
+        if role.emailDomain:
+            hard.append(
+                f"role '{role.name}' sets emailDomain — packages define roles, "
+                "never bind them to users"
+            )
+        for perm in role.permissions:
+            if not perm.value:
+                continue  # denials can't widen anything
+            m = NAMESPACED_PERM_RE.match(perm.key)
+            if not m or m.group("ns") == "*" or m.group("ns") not in namespaces:
+                broad.append(f"role '{role.name}': {perm.key}")
+    return hard, broad
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -78,6 +133,7 @@ class PackageService:
         yaml_content: str,
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
+        allow_broad_role_permissions: bool = False,
     ) -> tuple[Package, ConfigApplyResponse]:
         """
         Install a package from YAML content.
@@ -86,6 +142,8 @@ class PackageService:
             yaml_content: YAML string with kind: SinasPackage
             user_id: ID of the user installing the package
             variables: Install-time variable values (keyed by variable name)
+            allow_broad_role_permissions: accept package roles whose granted
+                permissions reach outside the package's own namespaces
 
         Returns:
             Tuple of (Package record, ConfigApplyResponse)
@@ -110,6 +168,16 @@ class PackageService:
         pkg_name = config.package.name
         managed_by = f"pkg:{pkg_name}"
 
+        hard, broad = package_role_violations(config)
+        if hard:
+            raise ValueError("Package roles rejected: " + "; ".join(hard))
+        if broad and not allow_broad_role_permissions:
+            raise ValueError(
+                "Package role permissions reach outside the package's own namespaces: "
+                + "; ".join(broad)
+                + ". Review them, then re-install with allowBroadRolePermissions=true to accept."
+            )
+
         # Check if already installed — upgrade in place if so
         existing_result = await self.db.execute(
             select(Package).where(Package.name == pkg_name)
@@ -133,6 +201,10 @@ class PackageService:
 
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
+        if broad:
+            result.warnings.append(
+                "Accepted broad role permissions (operator consent): " + "; ".join(broad)
+            )
 
         # Create or update package record
         if existing_package:
@@ -215,6 +287,16 @@ class PackageService:
 
         result = await apply_service.apply_config(config, dry_run=True)
         result.warnings.extend(validation.warnings)
+
+        hard, broad = package_role_violations(config)
+        for violation in hard:
+            result.errors.append(f"Package roles rejected: {violation}")
+        for perm in broad:
+            result.warnings.append(
+                "Broad role permission (install requires allowBroadRolePermissions=true): "
+                + perm
+            )
+
         return result, variable_declarations, requires_input
 
     async def uninstall(self, package_name: str) -> dict:
@@ -257,6 +339,16 @@ class PackageService:
             result = await self.db.execute(stmt)
             if result.rowcount > 0:
                 deleted_counts[type_name] = result.rowcount
+
+        # Package-managed roles: children first (their FKs have no ON DELETE),
+        # then the roles. User assignments vanish with the role — deliberate:
+        # an uninstalled package's authority should not linger anywhere.
+        role_ids = select(Role.id).where(Role.managed_by == managed_by).scalar_subquery()
+        for child in (RolePermission, UserRole, APIKeyRole):
+            await self.db.execute(delete(child).where(child.role_id.in_(role_ids)))
+        result = await self.db.execute(delete(Role).where(Role.managed_by == managed_by))
+        if result.rowcount > 0:
+            deleted_counts["roles"] = result.rowcount
 
         # Delete package record
         await self.db.delete(package)
