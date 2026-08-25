@@ -43,6 +43,43 @@ imagePullSecrets:
 {{- end }}
 
 {{/*
+Scheduling — nodeSelector / tolerations / affinity for one workload.
+
+Call with: (dict "values" (.Values.backend) "root" . "inherit" true)
+
+inherit=true  — stateless Deployments. Falls back to the global
+                .Values.scheduling defaults when the workload sets nothing,
+                so operators can move the whole stateless tier onto Spot /
+                preemptible capacity with one setting.
+inherit=false — StatefulSets (postgres / redis / clickhouse). Per-workload
+                settings ONLY: the global default must never reach them
+                implicitly. These sit on single-attach ReadWriteOnce
+                volumes, where a preemption is a database restart with a
+                volume reattach — not a rolling handoff. Placing them
+                deliberately requires setting postgres.nodeSelector (etc.)
+                by name.
+
+tolerations matter beyond Autopilot: GKE Autopilot injects the Spot
+toleration for you, GKE Standard and self-managed clusters do not.
+*/}}
+{{- define "sinas.scheduling" -}}
+{{- $w := .values | default dict }}
+{{- $g := ternary ((.root.Values).scheduling | default dict) dict .inherit }}
+{{- with ($w.nodeSelector | default $g.nodeSelector) }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with ($w.tolerations | default $g.tolerations) }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with ($w.affinity | default $g.affinity) }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
 Database password secretKeyRef body — release secret by default, or the
 operator's pre-created secret when postgres.external.existingSecret is set.
 Shared by backendEnv and pgbouncer.

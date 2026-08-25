@@ -20,6 +20,7 @@ spec:
     spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.queueWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-worker
           image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
@@ -58,6 +59,7 @@ spec:
     spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgent) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-agent
           image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
@@ -96,6 +98,7 @@ spec:
     spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.scheduler) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: scheduler
           image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
@@ -133,6 +136,7 @@ spec:
         app.kubernetes.io/component: cdc-worker
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.cdcWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: cdc-worker
           image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}

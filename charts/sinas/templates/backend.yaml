@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/component: backend
     spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.backend) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.smtp.ipv4 }}
       hostAliases:

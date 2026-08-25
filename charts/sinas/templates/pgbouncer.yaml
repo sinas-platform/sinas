@@ -17,6 +17,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: pgbouncer
     spec:
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.pgbouncer) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: pgbouncer
           image: edoburu/pgbouncer:latest

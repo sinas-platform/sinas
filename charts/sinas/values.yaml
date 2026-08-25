@@ -169,6 +169,39 @@ networkPolicy:
   ##       ports: [5432]
   egressCidrs: []
 
+## Scheduling — where the STATELESS workloads run (backend, builder,
+## console, pgbouncer, queue-worker, queue-agent, scheduler, cdc-worker).
+## The single biggest cost lever on managed Kubernetes: moving these onto
+## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
+## and they tolerate preemption (they restart and resume).
+##
+##   scheduling:
+##     nodeSelector:
+##       cloud.google.com/gke-spot: "true"
+##     tolerations:
+##       - key: cloud.google.com/gke-spot
+##         operator: Equal
+##         value: "true"
+##         effect: NoSchedule
+##
+## tolerations are needed on GKE Standard and self-managed clusters; GKE
+## Autopilot injects the Spot toleration itself.
+##
+## IMPORTANT: these defaults deliberately do NOT reach postgres, redis or
+## clickhouse. Those are StatefulSets on single-attach ReadWriteOnce
+## volumes, where a preemption is a database restart with a volume
+## reattach rather than a rolling handoff — never put them on preemptible
+## capacity by accident. To place them, set their own keys explicitly
+## (postgres.nodeSelector / .tolerations / .affinity).
+##
+## Every workload accepts its own nodeSelector / tolerations / affinity
+## (e.g. queueAgent.nodeSelector), which REPLACES the global default for
+## that workload rather than merging with it.
+scheduling:
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 ## Builder (Node.js esbuild server)
 builder:
   resources:

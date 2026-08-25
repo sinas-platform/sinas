@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: redis
     spec:
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.redis) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: redis
           image: redis:7-alpine

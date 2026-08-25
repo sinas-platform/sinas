@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/component: console
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.console) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: console
           image: {{ .Values.image.registry }}/console:{{ .Values.image.tag }}
