@@ -127,7 +127,10 @@ async def test_anthropic_submit_batch_builds_params():
     assert request["custom_id"] == "exec-1"
     params = request["params"]
     assert params["model"] == "claude-sonnet-5"
-    assert params["temperature"] == 0.3
+    # SDK >=1.0.0 removed sampling knobs from the Messages API; a requested
+    # temperature must be dropped, not forwarded (forwarding is a TypeError
+    # on create() and a 400 on batch items)
+    assert "temperature" not in params
     assert params["max_tokens"] == 512
     assert "tools" not in params
     # System extracted from messages and cache-marked (caching stacks with batch)

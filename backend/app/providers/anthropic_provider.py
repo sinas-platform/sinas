@@ -35,10 +35,13 @@ class AnthropicProvider(BaseLLMProvider):
         # Convert OpenAI-style messages to Anthropic format
         system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
+        # SDK >=1.0.0 removed the sampling knobs (temperature/top_p/top_k) from
+        # the Messages API entirely — passing them is a TypeError. The
+        # `temperature` argument is kept for provider-interface compatibility
+        # and deliberately ignored.
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,  # Anthropic requires max_tokens
         }
 
@@ -140,10 +143,11 @@ class AnthropicProvider(BaseLLMProvider):
         # Convert OpenAI-style messages to Anthropic format
         system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
+        # temperature deliberately not passed — removed from the SDK >=1.0.0
+        # (see complete())
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,
         }
 
@@ -536,11 +540,11 @@ class AnthropicProvider(BaseLLMProvider):
         system_message, filtered_messages = self._convert_messages_to_anthropic(
             request["messages"]
         )
-        temperature = request.get("temperature")
+        # temperature deliberately not passed — removed from the SDK >=1.0.0
+        # (see complete()); batch items use the same params schema
         params: dict[str, Any] = {
             "model": request["model"],
             "messages": filtered_messages,
-            "temperature": temperature if temperature is not None else 1.0,
             "max_tokens": request.get("max_tokens") or 16384,
         }
         if system_message:
