@@ -5,6 +5,14 @@
 ##
 ## Console uses window.location.hostname as the API base, so both services
 ## must share the same hostname.
+##
+## The prefix list below has to track the runtime API's route table by hand.
+## A missing prefix does not fail loudly: the catch-all serves index.html with
+## HTTP 200, so the caller gets HTML where it expected JSON. That is how /info
+## was lost — the console reads auth_mode from it before login, could not parse
+## the HTML, and fell back to its 'otp' default, rendering an OTP form on a
+## password-mode instance. Check this list against /openapi.json when adding a
+## top-level route.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -31,7 +39,7 @@ spec:
     - host: {{ .Values.domain | quote }}
       http:
         paths:
-          {{- range list "/api" "/adapters" "/auth" "/files" "/stores" "/webhooks" "/agents" "/chats" "/functions" "/executions" "/manifests" "/components" "/queries" "/skills" "/collections" "/states" "/jobs" "/templates" "/health" "/docs" "/openapi.json" }}
+          {{- range list "/api" "/adapters" "/auth" "/files" "/stores" "/webhooks" "/agents" "/chats" "/functions" "/executions" "/manifests" "/components" "/queries" "/skills" "/collections" "/states" "/jobs" "/templates" "/health" "/docs" "/openapi.json" "/info" "/userinfo" "/batches" "/pipelines" }}
           - path: {{ . }}
             pathType: Prefix
             backend:
