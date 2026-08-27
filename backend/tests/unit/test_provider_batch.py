@@ -26,6 +26,7 @@ def _agent(**overrides):
         enabled_collections=None,
         enabled_components=None,
         enabled_connectors=None,
+        enabled_pipelines=None,
         system_tools=None,
         hooks=None,
         enabled_skills=None,
@@ -48,6 +49,9 @@ def test_each_tool_source_blocks():
         "enabled_collections": [{"name": "c"}],
         "enabled_components": ["ns/c"],
         "enabled_connectors": [{"connector": "ns/c"}],
+        # asTool pipelines produce tools too — an agent carrying only these
+        # used to pass validation and then run the batch tool-less
+        "enabled_pipelines": ["ns/p"],
         "system_tools": ["codeExecution"],
         "hooks": {"on_user_message": [{"function": "ns/f"}]},
     }
