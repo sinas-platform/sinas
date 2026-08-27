@@ -68,6 +68,12 @@ def _provider_batch_blockers(agent: Any) -> list[str]:
         blockers.append("components")
     if agent.enabled_connectors:
         blockers.append("connectors")
+    if agent.enabled_pipelines:
+        # asTool pipelines are tools like any other (pipeline_<ns>__<name>).
+        # Omitting them here meant such an agent passed validation and was
+        # then submitted tool-less "by contract" — running the whole batch
+        # without its tools, silently, with no error.
+        blockers.append("pipelines")
     if agent.system_tools:
         blockers.append("system tools")
     if agent.hooks and any(agent.hooks.get(k) for k in agent.hooks):
