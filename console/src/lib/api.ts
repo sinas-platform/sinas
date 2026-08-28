@@ -244,7 +244,7 @@ class APIClient {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
-    window.location.href = '/login';
+    window.location.href = `${import.meta.env.BASE_URL}login`;
   }
 
   setErrorHandler(handler: (message: string) => void) {

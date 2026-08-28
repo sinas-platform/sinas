@@ -1,6 +1,6 @@
 Sinas has been deployed to namespace {{ .Release.Namespace }}.
 
-  Console:  https://{{ .Values.domain }}/
+  Console:  https://{{ .Values.domain }}/ui/
   API:      https://{{ .Values.domain }}/api/v1
   Health:   https://{{ .Values.domain }}/health
 
