@@ -11,11 +11,13 @@ from app.core.database import get_db
 from app.models.agent import Agent
 from app.models.file import Collection
 from app.models.function import Function
+from app.models.pipeline import Pipeline
 from app.models.skill import Skill
 from app.models.template import Template
 from app.schemas.agent import AgentResponse
 from app.schemas.file import CollectionResponse
 from app.schemas.function import FunctionResponse
+from app.schemas.pipeline import PipelineResponse
 from app.schemas.skill import SkillResponse
 from app.schemas.template import TemplateResponse
 
@@ -185,3 +187,41 @@ async def list_templates(
 
     set_permission_used(request, "sinas.templates.read")
     return [TemplateResponse.model_validate(t) for t in templates]
+
+
+@router.get("/pipelines", response_model=list[PipelineResponse])
+async def list_pipelines(
+    request: Request,
+    x_application: Optional[str] = Header(None),
+    app_query: Optional[str] = Query(None, alias="app"),
+    db: AsyncSession = Depends(get_db),
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """List pipelines visible to the current user, optionally filtered by app context.
+
+    Completes the runtime discovery surface: run/replay/runs existed without a
+    way to learn which pipelines exist, forcing runtime consumers onto the
+    management plane (/api/v1) for discovery.
+    """
+    user_id, permissions = current_user_data
+
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest, "pipelines")
+    if ns_filter is not None and len(ns_filter) == 0:
+        set_permission_used(request, "sinas.pipelines.read")
+        return []
+
+    filters = Pipeline.is_active == True  # noqa: E712
+    if ns_filter is not None:
+        filters = and_(filters, Pipeline.namespace.in_(ns_filter))
+
+    pipelines = await Pipeline.list_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        additional_filters=filters,
+    )
+
+    set_permission_used(request, "sinas.pipelines.read")
+    return [PipelineResponse.model_validate(p) for p in pipelines]
