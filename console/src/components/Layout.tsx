@@ -123,7 +123,7 @@ export function Layout() {
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-line-soft">
-            <><img src="/sinas-logo.svg" alt="sinas" className="h-8 light:hidden" /><img src="/sinas-logo-light.svg" alt="sinas" className="h-8 hidden light:block" /></>
+            <><img src={`${import.meta.env.BASE_URL}sinas-logo.svg`} alt="sinas" className="h-8 light:hidden" /><img src={`${import.meta.env.BASE_URL}sinas-logo-light.svg`} alt="sinas" className="h-8 hidden light:block" /></>
             <button
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden text-gray-400 hover:text-gray-200"

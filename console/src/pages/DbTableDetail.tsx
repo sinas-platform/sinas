@@ -183,7 +183,7 @@ export function DbTableDetail() {
     mutationFn: () =>
       apiClient.dropDbTable(connectionName!, table!, schema, false),
     onSuccess: () => {
-      window.location.href = `/database-connections/${connectionName}`;
+      window.location.href = `${import.meta.env.BASE_URL}database-connections/${connectionName}`;
     },
   });
 

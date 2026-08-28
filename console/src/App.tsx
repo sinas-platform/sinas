@@ -98,7 +98,7 @@ function App() {
       <ToastProvider>
         <APIErrorHandler>
           <AuthProvider>
-            <BrowserRouter>
+            <BrowserRouter basename="/ui">
           <Routes>
             <Route
               path="/login"

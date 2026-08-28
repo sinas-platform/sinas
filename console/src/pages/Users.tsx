@@ -377,7 +377,7 @@ function ResetLinkResultModal({
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState<'token' | 'url' | null>(null);
-  const resetUrl = `${window.location.origin}/reset-password?token=${encodeURIComponent(result.reset_token)}`;
+  const resetUrl = `${window.location.origin}${import.meta.env.BASE_URL}reset-password?token=${encodeURIComponent(result.reset_token)}`;
 
   const copy = async (value: string, kind: 'token' | 'url') => {
     try {
