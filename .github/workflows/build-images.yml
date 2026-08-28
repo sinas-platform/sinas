@@ -153,6 +153,7 @@ jobs:
         with:
           files: |
             docker-compose-${{ github.ref_name }}.yml
+            Caddyfile
             sinas-${{ github.ref_name }}.tgz
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
