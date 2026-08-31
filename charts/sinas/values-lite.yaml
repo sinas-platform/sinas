@@ -60,3 +60,20 @@ pgbouncer:
     requests:
       cpu: 25m
       memory: 32Mi
+
+## Embedded worker concurrency, capped for one small process (the full
+## profile spreads these across dedicated worker containers; in all-in-one
+## they share the backend pod and its memory limit — notably pipelines,
+## which default to 50 in their dedicated worker). Worst-case sandbox
+## memory ≈ (FUNCTION + AGENT + AGENT_SUB) × MAX_FUNCTION_MEMORY, and the
+## sandboxes are SEPARATE pods — budget them per client, not in this pod's
+## limit.
+extraEnv:
+  - name: QUEUE_FUNCTION_CONCURRENCY
+    value: "5"
+  - name: QUEUE_AGENT_CONCURRENCY
+    value: "3"
+  - name: QUEUE_AGENT_SUB_CONCURRENCY
+    value: "3"
+  - name: QUEUE_PIPELINE_CONCURRENCY
+    value: "5"
