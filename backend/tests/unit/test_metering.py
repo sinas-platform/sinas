@@ -1,5 +1,10 @@
 """Operations metering: hot-path counting, snapshots, cumulative push.
 
+v2 contract fixtures for Platform contract tests live in
+tests/fixtures/metering/. Contract decisions (POST-only, "init" sentinel
+applied-not-rejected with adopt-and-migrate, both rollover paths reset)
+are recorded on SIN-640/SIN-641.
+
 Redis is faked (local test env has no reachable Redis, and the fake lets us
 assert exact keys); the DB is real. metering.py imports get_redis inside each
 function, so patching app.core.redis.get_redis covers everything.
