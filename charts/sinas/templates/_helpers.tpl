@@ -131,8 +131,16 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 {{- end }}
 - name: REDIS_URL
   value: "redis://redis:6379/0"
+{{/* `| default true` can't express default-on booleans (false is "empty"), hence hasKey. */}}
+{{- if or (not (hasKey (.Values.builder | default dict) "enabled")) .Values.builder.enabled }}
 - name: BUILDER_URL
   value: "http://builder:3000"
+{{- else }}
+## Builder disabled: point at a shared builder (builder.url) or leave empty —
+## Component builds then fail with a clear connect error, everything else works.
+- name: BUILDER_URL
+  value: {{ (.Values.builder).url | default "" | quote }}
+{{- end }}
 ## Executor selection — k8s-native: sandbox code runs in ephemeral pods
 ## created via the Kubernetes API (no Docker socket anywhere).
 - name: SANDBOX_EXECUTOR

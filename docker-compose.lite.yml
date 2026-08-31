@@ -1,0 +1,98 @@
+# Sinas lite — the all-in-one single-container profile.
+#
+# Three containers instead of ~22: postgres, redis, and one sinas process
+# that runs the API, queue workers, scheduler, CDC poller AND serves the
+# console at /ui. No pgbouncer (one process needs no cross-process pooling),
+# no clickhouse (request logging off; point CLICKHOUSE_HOST at a shared
+# instance to re-enable), no builder (set BUILDER_URL at a shared one to
+# enable Component builds), no caddy (the sinas container terminates HTTP —
+# put your own TLS proxy or ingress in front).
+#
+# Code execution is OFF by default and the host Docker socket is NOT
+# mounted — the container holds no host privileges. To enable code
+# execution (ephemeral sandbox containers via the host socket), add the
+# additive override, which mounts the socket and flips the executors on:
+#
+#   docker compose -f docker-compose.lite.yml up -d                                # no code execution
+#   docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d  # with code execution
+#
+# Requires the same .env as the full profile (SECRET_KEY, ENCRYPTION_KEY).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sinas-lite-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD must be set in .env file}
+      POSTGRES_DB: ${DATABASE_NAME:-sinas}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: sinas-lite-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-128mb} --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+
+  sinas:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/lite:${IMAGE_TAG:-latest}
+    container_name: sinas-lite
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      ALL_IN_ONE: "true"
+      SERVE_CONSOLE: "true"
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      DATABASE_URL: postgresql://${DATABASE_USER:-postgres}:${DATABASE_PASSWORD}@postgres:5432/${DATABASE_NAME:-sinas}
+      DATABASE_DIRECT_HOST: postgres
+      # Empty host = explicit disable: no retries, log queries return empty.
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-}
+      REDIS_URL: redis://redis:6379/0
+      # Off by default (no Docker socket in this file); the lite.exec
+      # override mounts the socket and enables the Docker executors.
+      SANDBOX_EXECUTOR: ${SANDBOX_EXECUTOR:-disabled}
+      TRUSTED_EXECUTOR: ${TRUSTED_EXECUTOR:-disabled}
+      CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-false}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+      FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
+      # No embedded builder — Component builds need a shared one.
+      BUILDER_URL: ${BUILDER_URL:-}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
+    deploy:
+      resources:
+        limits:
+          cpus: "${APP_CPU_LIMIT:-2.0}"
+          memory: ${APP_MEMORY_LIMIT:-1G}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  file_storage:

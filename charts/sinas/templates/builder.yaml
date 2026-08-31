@@ -1,3 +1,4 @@
+{{- if or (not (hasKey (.Values.builder | default dict) "enabled")) .Values.builder.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -53,3 +54,4 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
+{{- end }}

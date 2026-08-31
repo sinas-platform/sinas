@@ -1,0 +1,62 @@
+# Sinas lite — the small-footprint managed/free-tier preset.
+#
+#   helm install my-tenant charts/sinas -f charts/sinas/values-lite.yaml \
+#     --set domain=... --set secrets.secretKey=... --set secrets.encryptionKey=... \
+#     --set postgres.password=... --set superadminEmail=...
+#
+# One sinas pod (API + queue workers + scheduler + CDC + console at /ui),
+# postgres, redis, pgbouncer. No ClickHouse (request logging off), no
+# builder (set builder.url to a shared one to enable Component builds), no
+# console pod. Sandbox code still runs in ephemeral hardened pods; there is
+# no warm trusted pool — set executor.trusted to k8s_shared to bring it back.
+#
+# For fleet hosting, also point postgres.external.host at a shared cluster
+# (database per tenant) and clickhouse/builder at shared services.
+
+allInOne: true
+
+clickhouse:
+  enabled: false
+
+builder:
+  enabled: false
+  url: ""
+
+executor:
+  sandbox: "k8s_pod"
+  ## No warm trusted pods on the free tier. NOT "inprocess": metered/billable
+  ## instances must keep trusted code out of the credential-bearing process
+  ## (meter-integrity invariant) — k8s_shared spawns pods on demand.
+  trusted: "k8s_shared"
+  trustedWorkers: 1
+
+backend:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "150m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+
+postgres:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+
+redis:
+  maxmemory: "128mb"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 192Mi
+
+pgbouncer:
+  defaultPoolSize: 10
+  minPoolSize: 2
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi

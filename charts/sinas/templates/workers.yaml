@@ -1,3 +1,4 @@
+{{- if not .Values.allInOne }}
 ## queue-worker
 apiVersion: apps/v1
 kind: Deployment
@@ -146,3 +147,4 @@ spec:
             {{- include "sinas.backendEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.cdcWorker.resources | nindent 12 }}
+{{- end }}

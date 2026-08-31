@@ -32,10 +32,6 @@ from app.services.container_pool import container_pool
 from app.services.scheduler import scheduler
 from app.services.shared_worker_manager import shared_worker_manager
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [scheduler] %(levelname)s %(name)s: %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
@@ -169,7 +165,13 @@ async def _listen_for_job_changes(stop_event: asyncio.Event) -> None:
         await pubsub.aclose()
 
 
-async def main() -> None:
+async def run(stop_event: asyncio.Event) -> None:
+    """Scheduler service body: startup, run until stop_event, graceful stop.
+
+    Factored out of main() so the all-in-one profile can run it as a task
+    inside the API process. Owns everything except signal handling and the
+    shared Redis client's lifecycle (the caller closes that).
+    """
     # --- Redis ---
     redis = await get_redis()
     await redis.ping()
@@ -391,15 +393,9 @@ async def main() -> None:
         )
 
     # --- Pub/sub listener for live job changes ---
-    stop_event = asyncio.Event()
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))
 
-    print("🚀 Scheduler service running — press Ctrl+C or send SIGTERM to stop")
-
-    # Block until shutdown signal
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    print("🚀 Scheduler service running")
     await stop_event.wait()
 
     # --- Graceful shutdown ---
@@ -411,8 +407,24 @@ async def main() -> None:
         pass
     await scheduler.stop()
     await container_pool.shutdown()
-    await close_redis()
     print("👋 Scheduler service stopped")
+
+
+async def main() -> None:
+    # Standalone process only — embedded (all-in-one) mode inherits the API
+    # process's logging config instead of installing this one at import time.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [scheduler] %(levelname)s %(name)s: %(message)s",
+    )
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+    try:
+        await run(stop_event)
+    finally:
+        await close_redis()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,16 @@ ingress:
     enabled: false
     secretName: ""  # existing TLS secret; leave empty when using cert-manager annotations
 
+## All-in-one ("lite") profile. When true, the queue workers, scheduler and
+## CDC poller run inside the backend process (as asyncio tasks), the console
+## SPA is served by the backend at /ui, and the queue-worker, queue-agent,
+## scheduler, cdc-worker and console Deployments are not rendered. The
+## backend is pinned to 1 replica / 1 uvicorn worker (the embedded
+## scheduler/CDC loops are singletons) and uses the `lite` image (backend +
+## console build). Pair with values-lite.yaml for the full small-footprint
+## preset (no ClickHouse, no builder, small resource requests).
+allInOne: false
+
 ## Secrets (required — provide via --set or a secrets values file)
 secrets:
   secretKey: ""
@@ -202,8 +212,13 @@ scheduling:
   tolerations: []
   affinity: {}
 
-## Builder (Node.js esbuild server)
+## Builder (Node.js esbuild server). enabled=false skips the Deployment;
+## set url to a shared builder to keep Component builds working, or leave it
+## empty to have builds fail with a clear connect error (nothing else is
+## affected — the builder is only used when someone builds a Component).
 builder:
+  enabled: true
+  url: ""
   resources:
     requests:
       cpu: "50m"

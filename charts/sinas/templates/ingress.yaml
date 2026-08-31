@@ -40,6 +40,17 @@ spec:
     - host: {{ .Values.domain | quote }}
       http:
         paths:
+          {{- if .Values.allInOne }}
+          ## allInOne: the backend serves the console at /ui itself (and
+          ## 302s the bare domain to /ui/) — one rule covers everything.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          {{- else }}
           - path: /ui
             pathType: Prefix
             backend:
@@ -63,4 +74,5 @@ spec:
                 name: backend
                 port:
                   number: 8000
+          {{- end }}
 {{- end }}
