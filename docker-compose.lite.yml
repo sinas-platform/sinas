@@ -76,6 +76,15 @@ services:
       CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-false}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
       FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
+      # Embedded worker concurrency, capped for one small process. The full
+      # profile spreads these across dedicated worker containers; here they
+      # all share the API process and its memory limit. Worst-case sandbox
+      # memory ≈ (FUNCTION + AGENT + AGENT_SUB) × MAX_FUNCTION_MEMORY,
+      # spawned OUTSIDE this container — size the host for it.
+      QUEUE_FUNCTION_CONCURRENCY: ${QUEUE_FUNCTION_CONCURRENCY:-5}
+      QUEUE_AGENT_CONCURRENCY: ${QUEUE_AGENT_CONCURRENCY:-3}
+      QUEUE_AGENT_SUB_CONCURRENCY: ${QUEUE_AGENT_SUB_CONCURRENCY:-3}
+      QUEUE_PIPELINE_CONCURRENCY: ${QUEUE_PIPELINE_CONCURRENCY:-5}
       # No embedded builder — Component builds need a shared one.
       BUILDER_URL: ${BUILDER_URL:-}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
