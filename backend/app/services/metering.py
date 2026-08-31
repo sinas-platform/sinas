@@ -42,7 +42,15 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-SCHEMA = "sinas.metering/v1"
+SCHEMA = "sinas.metering/v2"
+
+# First-report sentinel: sent while no Platform period is cached. The
+# Platform applies an "init" report to the then-current billing period and
+# returns that period in the ack; Core then adopts it WITHOUT resetting —
+# the applied counts are the period's baseline, and a reset would make the
+# next report's counters regress (tripping the Platform's counter_regression
+# check). Reset happens only on a subsequent period CHANGE.
+INIT_PERIOD_ID = "init"
 
 # Old-period Redis keys are kept briefly after their final push, then expire.
 _ROLLED_OVER_KEY_TTL = int(timedelta(days=7).total_seconds())
@@ -91,6 +99,20 @@ def _key(pid: str, suffix: str) -> str:
     return f"usage:{instance_id()}:{pid}:{suffix}"
 
 
+def _platform_pid_key() -> str:
+    return f"usage:{instance_id()}:platform_period"
+
+
+async def current_pid(redis) -> str:
+    """Period id live counters are keyed by: the Platform-issued period once
+    the POST handshake has supplied one, the local monthly fallback before
+    that (and always, in offline/self-hosted mode)."""
+    pid = await redis.get(_platform_pid_key())
+    if isinstance(pid, bytes):
+        pid = pid.decode()
+    return pid or period_id()
+
+
 def push_jitter_seconds(interval_minutes: int) -> int:
     """Deterministic per-instance offset so fleet pushes spread across the
     window instead of aligning to the wall clock."""
@@ -112,7 +134,7 @@ async def record(kind: OperationKind, n: int = 1) -> None:
         from app.core.redis import get_redis
 
         redis = await get_redis()
-        pid = period_id()
+        pid = await current_pid(redis)
         pipe = redis.pipeline(transaction=False)
         pipe.incrby(_key(pid, "total"), n)
         pipe.incrby(_key(pid, f"kind:{kind.value}"), n)
@@ -152,9 +174,16 @@ async def snapshot(db: AsyncSession) -> None:
     from app.models import UsagePeriod
 
     redis = await get_redis()
-    current = period_id()
+    state = await _load_platform_state(db)
+    if state is not None:
+        # Platform-period mode: one current period, bounds from the handshake.
+        # No previous-period finalization — rollover discards (MVP contract).
+        pids = (state.period_id,)
+    else:
+        current = period_id()
+        pids = (current, _previous_period_id(current))
 
-    for pid in (current, _previous_period_id(current)):
+    for pid in pids:
         counters = await _read_redis_counters(redis, pid)
         if counters is None:
             continue
@@ -169,7 +198,10 @@ async def snapshot(db: AsyncSession) -> None:
         ).scalar_one_or_none()
 
         if row is None:
-            start, end = period_bounds(pid)
+            if state is not None and pid == state.period_id:
+                start, end = state.period_start, state.period_end
+            else:
+                start, end = period_bounds(pid)
             row = UsagePeriod(
                 instance_id=instance_id(),
                 period_id=pid,
@@ -191,10 +223,36 @@ async def snapshot(db: AsyncSession) -> None:
     await db.commit()
 
 
+async def _load_platform_state(db: AsyncSession):
+    """Current Platform-issued period for this instance, or None before the
+    first successful POST handshake (and always in offline mode)."""
+    from app.models import MeteringPlatformPeriod
+
+    return (
+        await db.execute(
+            select(MeteringPlatformPeriod).where(
+                MeteringPlatformPeriod.instance_id == instance_id()
+            )
+        )
+    ).scalar_one_or_none()
+
+
 async def seed_redis_from_db(db: AsyncSession) -> None:
     """On startup: restore the current period's count into Redis, taking the
     max of both sides so neither a Redis restart nor a stale snapshot can
     move the count backwards."""
+    from app.core.redis import get_redis
+
+    state = await _load_platform_state(db)
+    pid = state.period_id if state else period_id()
+    if state is not None:
+        # Restore the shared pointer record()/current_pid() key by
+        try:
+            redis = await get_redis()
+            await redis.set(_platform_pid_key(), state.period_id)
+        except Exception:
+            pass
+
     from app.core.redis import get_redis
     from app.models import UsagePeriod
 
@@ -202,7 +260,7 @@ async def seed_redis_from_db(db: AsyncSession) -> None:
         await db.execute(
             select(UsagePeriod).where(
                 UsagePeriod.instance_id == instance_id(),
-                UsagePeriod.period_id == period_id(),
+                UsagePeriod.period_id == pid,
             )
         )
     ).scalar_one_or_none()
@@ -224,31 +282,125 @@ async def seed_redis_from_db(db: AsyncSession) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Push: cumulative heartbeat to the platform
+# Push: cumulative heartbeat to the Platform (sinas.metering/v2)
+#
+# The POST is also the period handshake — there is no context endpoint.
+# Every response carries the current Platform period; Core persists it and
+# keys its counters by it. Three situations:
+#
+#   bootstrap  no cached period → report canonical_period_id "init". The
+#              Platform applies it to the then-current period and returns
+#              that period. Core ADOPTS AND MIGRATES its local counters to
+#              the new id (no reset — the applied counts are the baseline;
+#              a reset would regress the next report's counters).
+#   steady     ack period == cached period → mark reported.
+#   rollover   ack period != cached period (200 grace-window apply), or a
+#              409 period_mismatch / period_context_required → adopt the
+#              new period and RESET counters + snapshot_seq to zero. Ops
+#              accumulated in between are discarded (accepted MVP gap).
 # ---------------------------------------------------------------------------
 
 
-def _build_payload(row) -> dict[str, Any]:
+def _build_payload(row, canonical_pid: str) -> dict[str, Any]:
+    by_kind = {k.value: int((row.by_kind or {}).get(k.value, 0)) for k in OperationKind}
+    # The Platform validates total == sum(by_kind) with an explicit "other";
+    # counters can drift apart across a Redis blip, so compute the remainder.
+    other = max(0, int(row.total or 0) - sum(by_kind.values()))
     return {
         "schema": SCHEMA,
         "instance_id": row.instance_id,
         "platform_version": __version__,
-        "period_id": row.period_id,
-        "period_start": row.period_start.isoformat(),
-        "period_end": row.period_end.isoformat(),
-        # Cumulative period-to-date — never a delta. The platform takes
-        # max(total) per (instance_id, period_id); a missed or duplicated
-        # beat self-heals.
-        "total": row.total,
-        "by_kind": row.by_kind or {},
+        "canonical_period_id": canonical_pid,
+        # Decimal strings throughout: the Platform is TypeScript + Postgres
+        # BigInt, and IEEE doubles corrupt large counters.
+        "cumulative": {
+            "total": str(int(row.total or 0)),
+            "by_kind": {**{k: str(v) for k, v in by_kind.items()}, "other": str(other)},
+        },
+        "snapshot_seq": str(int(row.snapshot_seq)),
         "last_op_at": row.last_op_at.isoformat() if row.last_op_at else None,
-        "snapshot_seq": row.snapshot_seq,
         "sent_at": datetime.now(UTC).isoformat(),
     }
 
 
+def _parse_period(body: Any) -> Optional[dict[str, Any]]:
+    """{"id", "start", "end"} from a response body, or None if absent/bad."""
+    try:
+        period = (body or {}).get("period") or {}
+        pid = str(period["id"])
+        start = datetime.fromisoformat(period["start"].replace("Z", "+00:00"))
+        end = datetime.fromisoformat(period["end"].replace("Z", "+00:00"))
+        return {"id": pid, "start": start, "end": end}
+    except Exception:
+        return None
+
+
+async def _persist_period(db: AsyncSession, period: dict[str, Any]) -> None:
+    from app.models import MeteringPlatformPeriod
+
+    state = await _load_platform_state(db)
+    if state is None:
+        state = MeteringPlatformPeriod(instance_id=instance_id())
+        db.add(state)
+    state.period_id = period["id"]
+    state.period_start = period["start"]
+    state.period_end = period["end"]
+
+
+async def _adopt_migrate(db: AsyncSession, redis, old_pid: str, period: dict[str, Any], row) -> None:
+    """Bootstrap adopt: the "init" report was applied to `period`, so local
+    counters move under the new id with their values intact."""
+    from app.models import UsagePeriod
+
+    await _persist_period(db, period)
+    new_pid = period["id"]
+
+    # Live counters: copy, then let the old keys age out. A record() racing
+    # this in another process may land on the old key and be lost — bounded
+    # by one op and covered by the accepted bootstrap gap.
+    counters = await _read_redis_counters(redis, old_pid)
+    if counters is not None:
+        pipe = redis.pipeline(transaction=False)
+        pipe.incrby(_key(new_pid, "total"), counters["total"])
+        for k, v in counters["by_kind"].items():
+            pipe.incrby(_key(new_pid, f"kind:{k}"), v)
+        await pipe.execute()
+        for k in OperationKind:
+            await redis.expire(_key(old_pid, f"kind:{k.value}"), _ROLLED_OVER_KEY_TTL)
+        await redis.expire(_key(old_pid, "total"), _ROLLED_OVER_KEY_TTL)
+    await redis.set(_platform_pid_key(), new_pid)
+
+    # Durable row: re-key under the Platform period, values and seq intact
+    # (seq continuity is what keeps the monotonic contract unbroken).
+    existing = (
+        await db.execute(
+            select(UsagePeriod).where(
+                UsagePeriod.instance_id == instance_id(),
+                UsagePeriod.period_id == new_pid,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        row.period_id = new_pid
+        row.period_start = period["start"]
+        row.period_end = period["end"]
+
+
+async def _adopt_reset(db: AsyncSession, redis, old_pid: str, period: dict[str, Any]) -> None:
+    """Rollover adopt: new period starts from zero; the old period's tail is
+    discarded (accepted MVP gap — no previous-period finalization)."""
+    await _persist_period(db, period)
+    await redis.set(_platform_pid_key(), period["id"])
+    for k in OperationKind:
+        await redis.expire(_key(old_pid, f"kind:{k.value}"), _ROLLED_OVER_KEY_TTL)
+    await redis.expire(_key(old_pid, "total"), _ROLLED_OVER_KEY_TTL)
+    # No usage_periods row yet: the next snapshot creates it at zero with
+    # snapshot_seq 0 once the first op of the new period lands.
+
+
 async def push(db: AsyncSession) -> int:
-    """POST every period row with unreported progress. Returns rows pushed.
+    """POST the current period's cumulative report and process the period
+    handshake in the response. Returns reports accepted.
 
     Failures are logged and abandoned until the next cycle — cumulative
     totals mean there is nothing to replay.
@@ -256,88 +408,103 @@ async def push(db: AsyncSession) -> int:
     from app.core.redis import get_redis
     from app.models import UsagePeriod
 
-    endpoint = settings.metering_endpoint.strip()
-    if not endpoint:
-        logger.warning("METERING_ENABLED but METERING_ENDPOINT is empty — nothing sent")
+    url = settings.platform_report_url.strip()
+    if not url:
+        logger.warning("METERING_ENABLED but PLATFORM_REPORT_URL is empty — nothing sent")
         return 0
 
-    rows = (
-        (
-            await db.execute(
-                select(UsagePeriod)
-                .where(UsagePeriod.instance_id == instance_id())
-                .order_by(UsagePeriod.period_start)
+    redis = await get_redis()
+    state = await _load_platform_state(db)
+    pid = state.period_id if state else period_id()
+    canonical = state.period_id if state else INIT_PERIOD_ID
+
+    row = (
+        await db.execute(
+            select(UsagePeriod).where(
+                UsagePeriod.instance_id == instance_id(),
+                UsagePeriod.period_id == pid,
             )
         )
-        .scalars()
-        .all()
-    )
-    to_send = [
-        r for r in rows if r.reported_at is None or r.updated_at > r.reported_at
-    ]
-    if not to_send:
+    ).scalar_one_or_none()
+    if row is None or (row.reported_at is not None and row.updated_at <= row.reported_at):
         return 0
 
     headers = {}
-    if settings.metering_api_key:
-        headers["Authorization"] = f"Bearer {settings.metering_api_key}"
+    if settings.platform_api_key:
+        # Never log this header or the settings value (SIN-649).
+        headers["Authorization"] = f"Bearer {settings.platform_api_key}"
+
+    row.snapshot_seq += 1
+    payload = _build_payload(row, canonical)
+    key = f"{row.instance_id}:{row.period_id}:{row.snapshot_seq}"
 
     pushed = 0
-    current = period_id()
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for row in to_send:
-            row.snapshot_seq += 1
-            payload = _build_payload(row)
-            key = f"{row.instance_id}:{row.period_id}:{row.snapshot_seq}"
+        for attempt in range(_PUSH_ATTEMPTS):
+            try:
+                resp = await client.post(
+                    url, json=payload, headers={**headers, "Idempotency-Key": key}
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Metering push {key} failed "
+                    f"(attempt {attempt + 1}/{_PUSH_ATTEMPTS}): {e}"
+                )
+                resp = None
 
-            ok = False
-            for attempt in range(_PUSH_ATTEMPTS):
+            if resp is not None:
                 try:
-                    resp = await client.post(
-                        endpoint,
-                        json=payload,
-                        headers={**headers, "Idempotency-Key": key},
-                    )
-                    if 200 <= resp.status_code < 300:
-                        ok = True
-                        break
-                    logger.warning(
-                        f"Metering push {key}: HTTP {resp.status_code} "
-                        f"(attempt {attempt + 1}/{_PUSH_ATTEMPTS})"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Metering push {key} failed "
-                        f"(attempt {attempt + 1}/{_PUSH_ATTEMPTS}): {e}"
-                    )
-                if attempt < _PUSH_ATTEMPTS - 1:
-                    import asyncio
+                    body = resp.json()
+                except Exception:
+                    body = {}
 
-                    # Backoff with jitter so a fleet retries out of phase
-                    await asyncio.sleep((2**attempt) + random.uniform(0, 1))
+                if 200 <= resp.status_code < 300:
+                    row.reported_at = datetime.now(UTC)
+                    pushed = 1
+                    period = _parse_period(body)
+                    if period and period["id"] != canonical:
+                        if canonical == INIT_PERIOD_ID:
+                            await _adopt_migrate(db, redis, pid, period, row)
+                        else:
+                            await _adopt_reset(db, redis, pid, period)
+                    break
 
-            if ok:
-                row.reported_at = datetime.now(UTC)
-                pushed += 1
-                if row.period_id != current:
-                    # Rolled-over period got its final push; let its Redis
-                    # keys age out instead of lingering forever.
-                    try:
-                        redis = await get_redis()
-                        for kind in OperationKind:
-                            await redis.expire(
-                                _key(row.period_id, f"kind:{kind.value}"),
-                                _ROLLED_OVER_KEY_TTL,
-                            )
-                        await redis.expire(
-                            _key(row.period_id, "total"), _ROLLED_OVER_KEY_TTL
+                if resp.status_code == 409:
+                    disposition = (body or {}).get("disposition")
+                    period = _parse_period(body)
+                    if (
+                        disposition in ("period_mismatch", "period_context_required")
+                        and period is not None
+                    ):
+                        # Rollover detected the hard way: adopt + reset. The
+                        # rejected counters are the discarded tail.
+                        await _adopt_reset(db, redis, pid, period)
+                        logger.info(
+                            f"Metering: period changed to {period['id']} "
+                            f"({disposition}); counters reset"
                         )
-                    except Exception:
-                        pass
-            await db.commit()
+                    else:
+                        # sequence_reused / counter_regression: retrying the
+                        # same payload cannot help — surface loudly.
+                        logger.error(
+                            f"Metering push {key} rejected: 409 {disposition}"
+                        )
+                    break
 
+                logger.warning(
+                    f"Metering push {key}: HTTP {resp.status_code} "
+                    f"(attempt {attempt + 1}/{_PUSH_ATTEMPTS})"
+                )
+
+            if attempt < _PUSH_ATTEMPTS - 1:
+                import asyncio
+
+                # Backoff with jitter so a fleet retries out of phase
+                await asyncio.sleep((2**attempt) + random.uniform(0, 1))
+
+    await db.commit()
     if pushed:
-        logger.info(f"Metering: pushed {pushed} period report(s)")
+        logger.info("Metering: pushed 1 period report")
     return pushed
 
 

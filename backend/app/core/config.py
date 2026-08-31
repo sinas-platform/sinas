@@ -378,12 +378,16 @@ class Settings(BaseSettings):
     # Operations metering (managed SaaS). Default-off; when enabled, every
     # operation (function/code/query/agent/upload/tool) increments a Redis
     # counter, the scheduler snapshots it to usage_periods, and a heartbeat
-    # pushes the CUMULATIVE period total to metering_endpoint. Pure emission:
-    # nothing is enforced on the instance and nothing is pulled down. A dead
-    # endpoint or Redis blip never affects platform behavior.
+    # POSTs the CUMULATIVE period total to the Platform (sinas.metering/v2).
+    # The Platform is the period authority: period id and boundaries arrive
+    # exclusively in POST responses (no context endpoint) — first report is
+    # sent under canonical_period_id "init". Pure emission: nothing is
+    # enforced on the instance and nothing is pulled down. A dead endpoint
+    # or Redis blip never affects platform behavior. With the platform
+    # settings unset, counting stays local and no report is ever attempted.
     metering_enabled: bool = False
-    metering_endpoint: str = ""  # e.g. https://ops.example.com/v1/usage
-    metering_api_key: str = ""  # sent as Authorization: Bearer <key>
+    platform_report_url: str = ""  # e.g. https://platform.example.com/api/sinas/metering/v1/reports
+    platform_api_key: str = ""  # opaque instance token, sent as Authorization: Bearer — never logged
     metering_instance_id: str = ""  # defaults to `domain`; set explicitly in SaaS
     metering_snapshot_minutes: int = 5  # Redis -> usage_periods cadence
     metering_push_minutes: int = 15  # heartbeat cadence (jittered per instance)
