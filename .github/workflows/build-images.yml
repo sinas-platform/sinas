@@ -1,7 +1,8 @@
 name: Build & Push Docker Images
 
-# Builds the four Sinas images (backend, builder, executor, console) and pushes them to
-# GHCR. See RELEASING.md for the full versioning/release flow.
+# Builds the five Sinas images (backend, builder, executor, console, and lite —
+# backend + console SPA for the all-in-one profile) and pushes them to GHCR.
+# See RELEASING.md for the full versioning/release flow.
 #
 # Triggers & resulting image tags:
 #   push to dev            -> :dev            (+ :sha-…)      integration builds
@@ -118,11 +119,83 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           platforms: ${{ env.PLATFORMS }}
 
+  # Lite image: the backend image + the console's built SPA, for the all-in-one
+  # single-container profile (docker-compose.lite.yml / values-lite.yaml).
+  # Built AFTER the matrix from the backend and console images this run pushed.
+  lite:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Resolve base image tag
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+            [ -z "$TAG" ] && TAG="${{ github.event.inputs.ref }}"
+            TAG=$(printf '%s' "$TAG" | sed 's#[^a-zA-Z0-9._-]#-#g' | cut -c1-120)
+          elif [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAG=edge
+          elif [ "${GITHUB_REF}" = "refs/heads/dev" ]; then
+            TAG=dev
+          else
+            TAG="${GITHUB_REF_NAME}"   # semver tag builds
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/lite
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=sha,prefix=,enable=${{ github.event_name != 'workflow_dispatch' }}
+            type=raw,value=${{ steps.base.outputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.lite
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BASE_IMAGE=${{ env.IMAGE_PREFIX }}/backend:${{ steps.base.outputs.tag }}
+            CONSOLE_IMAGE=${{ env.IMAGE_PREFIX }}/console:${{ steps.base.outputs.tag }}
+          cache-from: type=gha,scope=lite
+          cache-to: type=gha,mode=max,scope=lite
+          platforms: ${{ env.PLATFORMS }}
+
   # On a version tag, publish a GitHub Release with a ready-to-run, version-pinned
   # docker-compose.yml and the packaged Helm chart attached, then push the chart to
   # GHCR as an OCI artifact. Prerelease flag is set automatically for -rc tags.
   release:
-    needs: build
+    needs: [build, lite]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -140,6 +213,7 @@ jobs:
           # Pin the image tag to this release; the registry default already points at GHCR,
           # so the file runs as-is (users still supply their own .env for secrets/config).
           sed "s/\${IMAGE_TAG:-latest}/${VERSION}/g" docker-compose.yml > "docker-compose-${VERSION}.yml"
+          sed "s/\${IMAGE_TAG:-latest}/${VERSION}/g" docker-compose.lite.yml > "docker-compose-lite-${VERSION}.yml"
 
       - name: Package Helm chart
         run: |
@@ -153,6 +227,7 @@ jobs:
         with:
           files: |
             docker-compose-${{ github.ref_name }}.yml
+            docker-compose-lite-${{ github.ref_name }}.yml
             Caddyfile
             sinas-${{ github.ref_name }}.tgz
           prerelease: ${{ contains(github.ref_name, '-') }}

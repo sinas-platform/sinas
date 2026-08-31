@@ -6,7 +6,8 @@ metadata:
     {{- include "sinas.labels" . | nindent 4 }}
     app.kubernetes.io/component: backend
 spec:
-  replicas: {{ .Values.backend.replicas }}
+  ## allInOne pins one replica: the embedded scheduler/CDC are singletons.
+  replicas: {{ ternary 1 (.Values.backend.replicas | int) (.Values.allInOne | default false) }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -28,16 +29,26 @@ spec:
       {{- end }}
       containers:
         - name: backend
-          image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
+          ## allInOne uses the lite image: backend + the console's built SPA
+          ## (served at /ui by the process itself).
+          image: {{ .Values.image.registry }}/{{ ternary "lite" "backend" (.Values.allInOne | default false) }}:{{ .Values.image.tag }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - sh
             - -c
-            - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+            - "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
           ports:
             - containerPort: 8000
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- if .Values.allInOne }}
+            ## Queue workers, scheduler and CDC run inside this process.
+            ## Singleton loops: exactly one replica, one uvicorn worker.
+            - name: ALL_IN_ONE
+              value: "true"
+            - name: SERVE_CONSOLE
+              value: "true"
+            {{- end }}
             - name: SUPERADMIN_EMAIL
               value: {{ .Values.superadminEmail | quote }}
             - name: SMTP_HOST

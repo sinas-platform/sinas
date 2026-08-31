@@ -1,0 +1,25 @@
+# Lite image — the backend image plus the console's built SPA, for the
+# all-in-one single-container profile (docker-compose.lite.yml /
+# values-lite.yaml). Built FROM the already-published backend and console
+# images so it adds one COPY layer, not a rebuild:
+#
+#   docker build -f Dockerfile.lite \
+#     --build-arg BASE_IMAGE=ghcr.io/sinas-platform/sinas/backend:TAG \
+#     --build-arg CONSOLE_IMAGE=ghcr.io/sinas-platform/sinas/console:TAG \
+#     -t ghcr.io/sinas-platform/sinas/lite:TAG .
+ARG BASE_IMAGE=ghcr.io/sinas-platform/sinas/backend:latest
+ARG CONSOLE_IMAGE=ghcr.io/sinas-platform/sinas/console:latest
+
+FROM ${CONSOLE_IMAGE} AS console
+
+FROM ${BASE_IMAGE}
+
+# The console image ships its Vite build (base '/ui/') at html/ui.
+COPY --from=console /usr/share/nginx/html/ui /app/console-dist
+
+# All-in-one: queue workers, scheduler and CDC run inside the API process.
+# The scheduler/CDC loops are singletons — exactly ONE uvicorn worker.
+ENV ALL_IN_ONE=true \
+    SERVE_CONSOLE=true
+
+CMD alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1

@@ -258,6 +258,18 @@ class Settings(BaseSettings):
     tool_result_max_inline: int = int(os.getenv("TOOL_RESULT_MAX_INLINE", "5"))  # Last N results kept inline
     tool_result_max_size: int = int(os.getenv("TOOL_RESULT_MAX_SIZE", "102400"))  # 100KB truncation limit
 
+    # All-in-one ("lite") deployment. When enabled, the API process also runs
+    # the queue workers, scheduler and CDC poller as asyncio tasks — one
+    # container instead of five. The scheduler and CDC loops are singletons,
+    # so this REQUIRES a single uvicorn worker (UVICORN_WORKERS=1) and a
+    # single backend replica.
+    all_in_one: bool = False
+    # Serve the console SPA from console_dist_path at /ui, replacing the
+    # separate console container. Independent of all_in_one; skipped with a
+    # warning when the directory doesn't exist.
+    serve_console: bool = False
+    console_dist_path: str = "/app/console-dist"
+
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"
     queue_function_concurrency: int = 10
