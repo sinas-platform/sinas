@@ -12,12 +12,14 @@ from app.models.agent import Agent
 from app.models.file import Collection
 from app.models.function import Function
 from app.models.pipeline import Pipeline
+from app.models.query import Query as QueryModel
 from app.models.skill import Skill
 from app.models.template import Template
 from app.schemas.agent import AgentResponse
 from app.schemas.file import CollectionResponse
 from app.schemas.function import FunctionResponse
 from app.schemas.pipeline import PipelineResponse
+from app.schemas.query import QueryResponse
 from app.schemas.skill import SkillResponse
 from app.schemas.template import TemplateResponse
 
@@ -225,3 +227,42 @@ async def list_pipelines(
 
     set_permission_used(request, "sinas.pipelines.read")
     return [PipelineResponse.model_validate(p) for p in pipelines]
+
+
+@router.get("/queries", response_model=list[QueryResponse])
+async def list_queries(
+    request: Request,
+    x_application: Optional[str] = Header(None),
+    app_query: Optional[str] = Query(None, alias="app"),
+    db: AsyncSession = Depends(get_db),
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """List queries visible to the current user, optionally filtered by app context.
+
+    Same discovery gap as pipelines (#168): POST /queries/{ns}/{name}/execute
+    existed with no way to learn which queries exist without the management
+    plane. Permission gate matches the management list (read), so this
+    exposes nothing a management-plane read could not already see.
+    """
+    user_id, permissions = current_user_data
+
+    manifest = await get_manifest_context(db, x_application, app_query)
+    ns_filter = get_namespace_filter(manifest, "queries")
+    if ns_filter is not None and len(ns_filter) == 0:
+        set_permission_used(request, "sinas.queries.read")
+        return []
+
+    filters = QueryModel.is_active == True  # noqa: E712
+    if ns_filter is not None:
+        filters = and_(filters, QueryModel.namespace.in_(ns_filter))
+
+    queries = await QueryModel.list_with_permissions(
+        db=db,
+        user_id=user_id,
+        permissions=permissions,
+        action="read",
+        additional_filters=filters,
+    )
+
+    set_permission_used(request, "sinas.queries.read")
+    return [QueryResponse.model_validate(q) for q in queries]
