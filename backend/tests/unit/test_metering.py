@@ -192,9 +192,12 @@ class TestSnapshot:
 
 
 class _Resp:
-    def __init__(self, status_code, text=""):
+    def __init__(self, status_code, body=None):
         self.status_code = status_code
-        self.text = text
+        self._body = body if body is not None else {}
+
+    def json(self):
+        return self._body
 
 
 class _FakeClient:
@@ -216,10 +219,23 @@ class _FakeClient:
         return result
 
 
+P1 = {"id": "01J5PERIODONE", "start": "2026-07-14T00:00:00Z", "end": "2026-08-14T00:00:00Z"}
+P2 = {"id": "01J5PERIODTWO", "start": "2026-08-14T00:00:00Z", "end": "2026-09-14T00:00:00Z"}
+
+
+def _ack(period, disposition="applied"):
+    return {
+        "schema": "opensaas.metering-response/v1",
+        "accepted": True,
+        "disposition": disposition,
+        "period": period,
+    }
+
+
 @pytest.fixture
-def endpoint(monkeypatch):
-    monkeypatch.setattr(settings, "metering_endpoint", "https://ops.example.com/v1/usage")
-    monkeypatch.setattr(settings, "metering_api_key", "sekrit")
+def platform(monkeypatch):
+    monkeypatch.setattr(settings, "platform_report_url", "https://platform.example.com/api/sinas/metering/v1/reports")
+    monkeypatch.setattr(settings, "platform_api_key", "sekrit")
     # No real sleeping in retry backoff
     async def _no_sleep(_):
         pass
@@ -233,27 +249,168 @@ def _patch_client(monkeypatch, responses):
     return client
 
 
-class TestPush:
-    async def test_pushes_cumulative_total_with_idempotency_key(
-        self, db, metering_on, endpoint, monkeypatch
+async def _state(db):
+    from app.models import MeteringPlatformPeriod
+
+    return (
+        await db.execute(
+            select(MeteringPlatformPeriod).where(
+                MeteringPlatformPeriod.instance_id == INSTANCE
+            )
+        )
+    ).scalar_one_or_none()
+
+
+class TestPushV2:
+    async def test_init_bootstrap_adopts_and_migrates_without_reset(
+        self, db, metering_on, platform, monkeypatch
     ):
         await record(OperationKind.FUNCTION)
         await record(OperationKind.FUNCTION)
         await snapshot(db)
-        client = _patch_client(monkeypatch, [_Resp(200)])
+        client = _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
 
-        pushed = await metering.push(db)
-        assert pushed == 1
+        assert await metering.push(db) == 1
 
         post = client.posts[0]
         assert post["headers"]["Authorization"] == "Bearer sekrit"
         assert post["headers"]["Idempotency-Key"] == f"{INSTANCE}:{period_id()}:1"
         payload = post["json"]
-        assert payload["schema"] == SCHEMA
-        assert payload["total"] == 2  # cumulative, not a delta
-        assert payload["by_kind"] == {"function": 2}
-        assert payload["snapshot_seq"] == 1
+        assert payload["schema"] == "sinas.metering/v2"
+        assert payload["canonical_period_id"] == "init"
+        # Decimal strings, nested cumulative, explicit other
+        assert payload["cumulative"]["total"] == "2"
+        assert payload["cumulative"]["by_kind"]["function"] == "2"
+        assert payload["cumulative"]["by_kind"]["other"] == "0"
+        assert payload["snapshot_seq"] == "1"
 
+        # Adopted: state persisted, live counters MIGRATED (not reset)
+        state = await _state(db)
+        assert state is not None and state.period_id == P1["id"]
+        assert metering_on.store.get(_k("total", P1["id"])) == 2
+        row = (
+            await db.execute(
+                select(UsagePeriod).where(
+                    UsagePeriod.instance_id == INSTANCE,
+                    UsagePeriod.period_id == P1["id"],
+                )
+            )
+        ).scalar_one()
+        assert row.total == 2  # baseline preserved — no counter regression
+        assert row.snapshot_seq == 1  # seq continuity
+        assert row.reported_at is not None
+
+    async def test_steady_state_reports_under_cached_period(
+        self, db, metering_on, platform, monkeypatch
+    ):
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
+        await metering.push(db)
+
+        await record(OperationKind.AGENT)
+        await snapshot(db)
+        row = (
+            await db.execute(
+                select(UsagePeriod).where(
+                    UsagePeriod.instance_id == INSTANCE,
+                    UsagePeriod.period_id == P1["id"],
+                )
+            )
+        ).scalar_one()
+        row.updated_at = datetime.now(UTC) + timedelta(seconds=1)
+        await db.flush()
+
+        client = _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
+        assert await metering.push(db) == 1
+        payload = client.posts[0]["json"]
+        assert payload["canonical_period_id"] == P1["id"]
+        assert payload["cumulative"]["total"] == "2"  # still cumulative
+        assert payload["snapshot_seq"] == "2"
+
+    async def test_rollover_in_ack_adopts_and_resets(
+        self, db, metering_on, platform, monkeypatch
+    ):
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
+        await metering.push(db)
+
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        row = (
+            await db.execute(
+                select(UsagePeriod).where(
+                    UsagePeriod.instance_id == INSTANCE,
+                    UsagePeriod.period_id == P1["id"],
+                )
+            )
+        ).scalar_one()
+        row.updated_at = datetime.now(UTC) + timedelta(seconds=1)
+        await db.flush()
+
+        # Grace-window apply: 200 whose period moved on
+        _patch_client(monkeypatch, [_Resp(200, _ack(P2))])
+        assert await metering.push(db) == 1
+
+        state = await _state(db)
+        assert state.period_id == P2["id"]
+        assert metering_on.store.get(metering._platform_pid_key()) == P2["id"]
+        # Old period's live keys age out; new period starts empty (reset)
+        assert _k("total", P1["id"]) in metering_on.expired
+        assert metering_on.store.get(_k("total", P2["id"])) is None
+
+    async def test_409_period_mismatch_resets_without_marking_reported(
+        self, db, metering_on, platform, monkeypatch
+    ):
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
+        await metering.push(db)
+
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        row = (
+            await db.execute(
+                select(UsagePeriod).where(
+                    UsagePeriod.instance_id == INSTANCE,
+                    UsagePeriod.period_id == P1["id"],
+                )
+            )
+        ).scalar_one()
+        row.updated_at = datetime.now(UTC) + timedelta(seconds=1)
+        reported_before = row.reported_at
+        await db.flush()
+
+        client = _patch_client(
+            monkeypatch,
+            [_Resp(409, {"disposition": "period_mismatch", "period": P2})],
+        )
+        assert await metering.push(db) == 0
+        assert len(client.posts) == 1  # no retry on contract 409s
+        state = await _state(db)
+        assert state.period_id == P2["id"]
+        assert row.reported_at == reported_before  # rejected report not marked
+
+    async def test_409_counter_regression_is_terminal_no_adopt(
+        self, db, metering_on, platform, monkeypatch
+    ):
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        client = _patch_client(
+            monkeypatch, [_Resp(409, {"disposition": "counter_regression"})]
+        )
+        assert await metering.push(db) == 0
+        assert len(client.posts) == 1
+        assert await _state(db) is None
+
+    async def test_duplicate_disposition_counts_as_acknowledged(
+        self, db, metering_on, platform, monkeypatch
+    ):
+        await record(OperationKind.FUNCTION)
+        await snapshot(db)
+        _patch_client(monkeypatch, [_Resp(200, _ack(P1, disposition="duplicate"))])
+        assert await metering.push(db) == 1
         row = (
             await db.execute(
                 select(UsagePeriod).where(UsagePeriod.instance_id == INSTANCE)
@@ -261,44 +418,17 @@ class TestPush:
         ).scalar_one()
         assert row.reported_at is not None
 
-    async def test_no_progress_means_no_push(self, db, metering_on, endpoint, monkeypatch):
+    async def test_no_progress_means_no_push(self, db, metering_on, platform, monkeypatch):
         await record(OperationKind.FUNCTION)
         await snapshot(db)
-        _patch_client(monkeypatch, [_Resp(200)])
+        _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
         assert await metering.push(db) == 1
 
         _patch_client(monkeypatch, [])
         assert await metering.push(db) == 0  # nothing changed since report
 
-    async def test_new_activity_pushes_again_with_next_seq(
-        self, db, metering_on, endpoint, monkeypatch
-    ):
-        await record(OperationKind.FUNCTION)
-        await snapshot(db)
-        _patch_client(monkeypatch, [_Resp(200)])
-        await metering.push(db)
-
-        await record(OperationKind.FUNCTION)
-        await snapshot(db)
-        # In-test transaction timestamps don't advance, so simulate the
-        # updated_at bump a later transaction would produce
-        row = (
-            await db.execute(
-                select(UsagePeriod).where(UsagePeriod.instance_id == INSTANCE)
-            )
-        ).scalar_one()
-        row.updated_at = datetime.now(UTC) + timedelta(seconds=1)
-        await db.flush()
-
-        client = _patch_client(monkeypatch, [_Resp(200)])
-        assert await metering.push(db) == 1
-        payload = client.posts[0]["json"]
-        assert payload["total"] == 2  # still cumulative
-        assert payload["snapshot_seq"] == 2
-        assert client.posts[0]["headers"]["Idempotency-Key"].endswith(":2")
-
     async def test_failed_push_retries_next_cycle_no_data_loss(
-        self, db, metering_on, endpoint, monkeypatch
+        self, db, metering_on, platform, monkeypatch
     ):
         await record(OperationKind.FUNCTION)
         await snapshot(db)
@@ -314,52 +444,32 @@ class TestPush:
         assert row.reported_at is None  # still owed
 
         # Next cycle succeeds; total is cumulative so nothing was lost
-        client = _patch_client(monkeypatch, [_Resp(200)])
+        client = _patch_client(monkeypatch, [_Resp(200, _ack(P1))])
         assert await metering.push(db) == 1
-        assert client.posts[0]["json"]["total"] == 1
+        assert client.posts[0]["json"]["cumulative"]["total"] == "1"
 
-    async def test_empty_endpoint_sends_nothing(self, db, metering_on, monkeypatch):
-        monkeypatch.setattr(settings, "metering_endpoint", "")
+    async def test_empty_url_sends_nothing(self, db, metering_on, monkeypatch):
+        monkeypatch.setattr(settings, "platform_report_url", "")
         await record(OperationKind.FUNCTION)
         await snapshot(db)
         assert await metering.push(db) == 0
 
 
-# ---------------------------------------------------------------------------
-# Rollover
-# ---------------------------------------------------------------------------
+class TestPayloadV2:
+    def test_other_absorbs_counter_drift(self):
+        from types import SimpleNamespace
 
-
-class TestRollover:
-    async def test_previous_period_finalized_and_keys_expired(
-        self, db, metering_on, endpoint, monkeypatch
-    ):
-        prev = metering._previous_period_id(period_id())
-        # Leftover counters from last month + fresh activity this month
-        metering_on.store[_k("total", prev)] = 40
-        metering_on.store[_k("kind:function", prev)] = 40
-        await record(OperationKind.AGENT)
-
-        await snapshot(db)
-        rows = (
-            (
-                await db.execute(
-                    select(UsagePeriod)
-                    .where(UsagePeriod.instance_id == INSTANCE)
-                    .order_by(UsagePeriod.period_start)
-                )
-            )
-            .scalars()
-            .all()
+        row = SimpleNamespace(
+            instance_id=INSTANCE,
+            total=10,
+            by_kind={"function": 3, "agent": 4},
+            snapshot_seq=7,
+            last_op_at=None,
         )
-        assert [r.period_id for r in rows] == [prev, period_id()]
-        assert rows[0].total == 40
-        assert rows[1].total == 1
-
-        client = _patch_client(monkeypatch, [_Resp(200), _Resp(200)])
-        assert await metering.push(db) == 2
-        # Old period got its final push; its Redis keys are set to expire
-        assert _k("total", prev) in metering_on.expired
+        payload = metering._build_payload(row, "init")
+        assert payload["cumulative"]["by_kind"]["other"] == "3"
+        assert payload["cumulative"]["total"] == "10"
+        assert payload["snapshot_seq"] == "7"
 
 
 # ---------------------------------------------------------------------------

@@ -38,3 +38,24 @@ class UsagePeriod(Base):
     __table_args__ = (
         Index("uq_usage_periods_instance_period", "instance_id", "period_id", unique=True),
     )
+
+
+class MeteringPlatformPeriod(Base):
+    """The Platform-issued billing period this instance is currently
+    reporting under (sinas.metering/v2). One row per instance_id.
+
+    Populated exclusively from POST /reports responses — there is no context
+    endpoint. Absent row = not yet bootstrapped: reports go out under
+    canonical_period_id "init" until the Platform's ack supplies the period.
+    A changed period id in a later response replaces this row and resets the
+    period's counters (the accepted MVP rollover gap)."""
+
+    __tablename__ = "metering_platform_period"
+
+    instance_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    period_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    created_at: Mapped[created_at]
+    updated_at: Mapped[updated_at]

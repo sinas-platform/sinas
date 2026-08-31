@@ -30,7 +30,7 @@ from .store import Store
 from .table_annotation import TableAnnotation
 from .template import Template
 from .tool_call_result import ToolCallResult
-from .usage import UsagePeriod
+from .usage import MeteringPlatformPeriod, UsagePeriod
 from .user import (
     APIKey,
     APIKeyRole,
@@ -94,5 +94,6 @@ __all__ = [
     "TableAnnotation",
     "ToolCallResult",
     "JWTSigningKey",
+    "MeteringPlatformPeriod",
     "UsagePeriod",
 ]
