@@ -8,11 +8,13 @@
 # enable Component builds), no caddy (the sinas container terminates HTTP —
 # put your own TLS proxy or ingress in front).
 #
-# Code execution runs in ephemeral containers via the host Docker socket
-# (SANDBOX_EXECUTOR=docker_ephemeral); set CODE_EXECUTION_ENABLED=false to
-# drop the socket mount entirely.
+# Code execution is OFF by default and the host Docker socket is NOT
+# mounted — the container holds no host privileges. To enable code
+# execution (ephemeral sandbox containers via the host socket), add the
+# additive override, which mounts the socket and flips the executors on:
 #
-#   docker compose -f docker-compose.lite.yml up -d
+#   docker compose -f docker-compose.lite.yml up -d                                # no code execution
+#   docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d  # with code execution
 #
 # Requires the same .env as the full profile (SECRET_KEY, ENCRYPTION_KEY).
 
@@ -52,7 +54,6 @@ services:
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - file_storage:/var/sinas/files
     env_file:
       - .env
@@ -68,10 +69,11 @@ services:
       # Empty host = explicit disable: no retries, log queries return empty.
       CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-}
       REDIS_URL: redis://redis:6379/0
-      # Ephemeral sandboxes, no warm pool, shared trusted workers on demand.
-      SANDBOX_EXECUTOR: ${SANDBOX_EXECUTOR:-docker_ephemeral}
-      TRUSTED_EXECUTOR: ${TRUSTED_EXECUTOR:-docker_shared}
-      CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-true}
+      # Off by default (no Docker socket in this file); the lite.exec
+      # override mounts the socket and enables the Docker executors.
+      SANDBOX_EXECUTOR: ${SANDBOX_EXECUTOR:-disabled}
+      TRUSTED_EXECUTOR: ${TRUSTED_EXECUTOR:-disabled}
+      CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-false}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
       FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
       # No embedded builder — Component builds need a shared one.
