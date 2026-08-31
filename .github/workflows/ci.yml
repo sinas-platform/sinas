@@ -76,6 +76,12 @@ jobs:
     defaults:
       run:
         working-directory: console
+    env:
+      # Exact published @sinas/sdk version the gate builds against, so an
+      # unchanged commit always resolves the same dependency graph. Bump on
+      # SDK releases (the console Dockerfile builds against "latest", so
+      # bumping promptly keeps this gate aligned with the shipped image).
+      SINAS_SDK_VERSION: 0.7.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -83,13 +89,10 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Point @sinas/sdk at npm
+      - name: Point @sinas/sdk at npm (pinned)
         # package.json ships a file:../../sinas-js dev path; CI swaps it for
-        # the published package. Deliberately "latest", NOT a pinned version:
-        # the console Dockerfile does the same substitution, so this gate
-        # mirrors what the shipped image will actually build against — a
-        # pinned CI graph could stay green while the image build breaks.
-        run: sed -i 's|"file:../../sinas-js"|"latest"|g' package.json
+        # the pinned published version above.
+        run: sed -i "s|\"file:../../sinas-js\"|\"${SINAS_SDK_VERSION}\"|g" package.json
 
       - name: Install
         run: npm install --no-audit --no-fund
