@@ -71,9 +71,14 @@ jobs:
       - name: Resolve dispatch image tag
         if: github.event_name == 'workflow_dispatch'
         id: disp
+        # Inputs reach the shell via env, never expression interpolation —
+        # interpolating them into the script body would let a crafted
+        # dispatch input execute in this packages:write job.
+        env:
+          IN_TAG: ${{ github.event.inputs.image_tag }}
+          IN_REF: ${{ github.event.inputs.ref }}
         run: |
-          TAG="${{ github.event.inputs.image_tag }}"
-          [ -z "$TAG" ] && TAG="${{ github.event.inputs.ref }}"
+          TAG="${IN_TAG:-$IN_REF}"
           # Sanitize to a valid, readable image tag.
           TAG=$(printf '%s' "$TAG" | sed 's#[^a-zA-Z0-9._-]#-#g' | cut -c1-120)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -136,10 +141,15 @@ jobs:
 
       - name: Resolve base image tag
         id: base
+        # Inputs reach the shell via env, never expression interpolation —
+        # interpolating them into the script body would let a crafted
+        # dispatch input execute in this packages:write job.
+        env:
+          IN_TAG: ${{ github.event.inputs.image_tag }}
+          IN_REF: ${{ github.event.inputs.ref }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.image_tag }}"
-            [ -z "$TAG" ] && TAG="${{ github.event.inputs.ref }}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${IN_TAG:-$IN_REF}"
             TAG=$(printf '%s' "$TAG" | sed 's#[^a-zA-Z0-9._-]#-#g' | cut -c1-120)
           elif [ "${GITHUB_REF}" = "refs/heads/main" ]; then
             TAG=edge
