@@ -91,8 +91,13 @@ jobs:
 
       - name: Point @sinas/sdk at npm (pinned)
         # package.json ships a file:../../sinas-js dev path; CI swaps it for
-        # the pinned published version above.
-        run: sed -i "s|\"file:../../sinas-js\"|\"${SINAS_SDK_VERSION}\"|g" package.json
+        # the pinned published version above. The lockfile must go with it:
+        # it records the file: link, and npm treats that entry as satisfying
+        # an exact-version spec, leaving a dangling symlink instead of
+        # fetching the package (tsc then fails with TS2307).
+        run: |
+          sed -i "s|\"file:../../sinas-js\"|\"${SINAS_SDK_VERSION}\"|g" package.json
+          rm -f package-lock.json
 
       - name: Install
         run: npm install --no-audit --no-fund
