@@ -316,6 +316,9 @@ class Settings(BaseSettings):
     # and per execution.
     workbench_lazy_fetch_max_bytes: int = 64 * 1024 * 1024
     workbench_lazy_fetch_max_calls: int = 100
+    # File references: cap on the resolved size of one {"$workbench": path}
+    # tool-call parameter.
+    workbench_ref_max_bytes: int = 10 * 1024 * 1024
 
     # Tool results above this many characters are truncated (structure-aware,
     # see services/tool_execution.truncate_tool_result) before they enter the

@@ -122,7 +122,11 @@ def get_workbench_tool_definitions() -> list[dict[str, Any]]:
             "workbench_list",
             "List/search files in this chat's workbench — your private, persistent "
             "working tree. Files persist across turns of this conversation. "
-            "Optionally filter by a content query or metadata.",
+            "Optionally filter by a content query or metadata. "
+            "In ANY tool call, you can pass {\"$workbench\": \"<path>\"} as a "
+            "parameter value to send that file's contents without copying them "
+            "(add \"encoding\": \"base64\" for binary parameters). Oversized "
+            "tool results are saved in full under tool_results/ here.",
             {
                 "query": {"type": "string", "description": "Optional text/regex query against file contents"},
                 "metadata_filter": {"type": "object", "description": "Optional key-value metadata filter"},

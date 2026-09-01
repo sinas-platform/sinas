@@ -658,6 +658,21 @@ async def execute_single_tool(
             result_chat = await db.execute(select(Chat).where(Chat.id == chat_id))
             chat = result_chat.scalar_one_or_none()
 
+            # Workbench file references: {"$workbench": "path"} parameter
+            # values are replaced by the file's content before dispatch, so
+            # content never has to travel through the model. A failed
+            # reference fails the whole call — the sentinel must not leak
+            # through to the tool as literal arguments.
+            from app.services import workbench_refs
+
+            if workbench_refs.contains_reference(arguments):
+                try:
+                    arguments = await workbench_refs.resolve_references(
+                        db, chat, user_id, arguments
+                    )
+                except workbench_refs.ReferenceError_ as e:
+                    return (tool_call["id"], tool_name, json.dumps({"error": str(e)}))
+
             # Look up tool metadata from the tools list (set during tool discovery)
             tool_metadata = {}
             tool_found_in_list = False
@@ -962,7 +977,19 @@ async def execute_single_tool(
             )
             if len(result_content) > max_result_size:
                 print(f"⚠️ Truncating tool result for {tool_name}: {len(result_content)} -> {max_result_size} bytes", flush=True)
+                # Spill the FULL result to the workbench before truncating —
+                # otherwise the excess is gone for good (truncation runs
+                # before any persistence). The inline copy then carries a
+                # pointer the model can follow with workbench_read or code
+                # execution. No workbench → today's truncate-only behavior.
+                spill_path = await workbench_refs.spill_result(
+                    db, chat, user_id, tool_name, tool_call["id"], result_content
+                )
                 result_content = truncate_tool_result(result_content, max_result_size)
+                if spill_path:
+                    result_content = workbench_refs.attach_spill_pointer(
+                        result_content, spill_path
+                    )
 
     except Exception as e:
         print(f"❌ Tool execution failed: {tool_name}: {e}", flush=True)
