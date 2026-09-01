@@ -761,6 +761,22 @@ async def approve_tool_call(
     pending_approval.approved = request.approved
     await db.commit()
 
+    # "Always allow": remember the user's decision for this chat so the
+    # same tool skips the ask next time (session-scoped grant).
+    if request.approved and request.always_allow:
+        from app.services import approval_rules
+
+        # Session grants key on the tool name the model calls. For function
+        # tools the pending row stores namespace/name; the tool name is the
+        # call's function name — recover it from the stored call.
+        tool_name = None
+        for tc in pending_approval.all_tool_calls or []:
+            if tc.get("id") == tool_call_id:
+                tool_name = tc.get("function", {}).get("name")
+                break
+        if tool_name:
+            await approval_rules.add_session_grant(chat_id, tool_name)
+
     # Extract token and enqueue resume job
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
     channel_id = str(uuid.uuid4())

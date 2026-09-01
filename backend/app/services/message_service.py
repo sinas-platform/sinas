@@ -880,45 +880,10 @@ class MessageService:
             )
 
             if approval_needed:
-                _tool_meta = {t["function"]["name"]: t["function"].get("_metadata", {}) for t in tools} if tools else {}
-                for tool_call in tool_calls:
-                    tool_name = tool_call["function"]["name"]
-                    arguments_str = tool_call["function"]["arguments"]
-
-                    meta = _tool_meta.get(tool_name, {})
-
-                    # System tool with approval (e.g. sinas_package_install)
-                    if meta.get("system_tool") and meta.get("requires_approval"):
-                        parsed_args = arguments_str
-                        if isinstance(arguments_str, str):
-                            parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
-                        yield {
-                            "type": "approval_required",
-                            "tool_call_id": tool_call["id"],
-                            "function_namespace": "sinas",
-                            "function_name": tool_name,
-                            "arguments": parsed_args,
-                        }
-                        continue
-
-                    namespace, name = meta.get("namespace"), meta.get("name")
-                    if not namespace or not name:
-                        continue
-
-                    function = await Function.get_by_name(self.db, namespace, name)
-                    if function and function.requires_approval:
-                        parsed_args = arguments_str
-                        if isinstance(arguments_str, str):
-                            parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
-
-                        yield {
-                            "type": "approval_required",
-                            "tool_call_id": tool_call["id"],
-                            "function_namespace": namespace,
-                            "function_name": name,
-                            "arguments": parsed_args,
-                        }
-
+                # check_approval_requirements already resolved rules and
+                # created the PendingToolApproval rows — announce each.
+                for entry in approval_needed:
+                    yield {"type": "approval_required", **entry}
                 return
 
             async for chunk in self._handle_tool_calls(
@@ -1501,39 +1466,10 @@ class MessageService:
             )
 
             if approval_needed:
-                _tool_meta = {t["function"]["name"]: t["function"].get("_metadata", {}) for t in tools} if tools else {}
-                for tool_call in final_tool_calls:
-                    tc_name = tool_call["function"]["name"]
-                    tc_args = tool_call["function"]["arguments"]
-                    meta = _tool_meta.get(tc_name, {})
-
-                    if meta.get("system_tool") and meta.get("requires_approval"):
-                        parsed_args = tc_args
-                        if isinstance(tc_args, str):
-                            parsed_args = json.loads(tc_args) if tc_args.strip() else {}
-                        yield {
-                            "type": "approval_required",
-                            "tool_call_id": tool_call["id"],
-                            "function_namespace": "sinas",
-                            "function_name": tc_name,
-                            "arguments": parsed_args,
-                        }
-                        continue
-
-                    ns, nm = meta.get("namespace"), meta.get("name")
-                    if ns and nm:
-                        function = await Function.get_by_name(self.db, ns, nm)
-                        if function and function.requires_approval:
-                            parsed_args = tc_args
-                            if isinstance(tc_args, str):
-                                parsed_args = json.loads(tc_args) if tc_args.strip() else {}
-                            yield {
-                                "type": "approval_required",
-                                "tool_call_id": tool_call["id"],
-                                "function_namespace": ns,
-                                "function_name": nm,
-                                "arguments": parsed_args,
-                            }
+                # check_approval_requirements already resolved rules and
+                # created the PendingToolApproval rows — announce each.
+                for entry in approval_needed:
+                    yield {"type": "approval_required", **entry}
                 return
 
             async for result_chunk in self._handle_tool_calls(

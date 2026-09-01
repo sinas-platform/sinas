@@ -324,15 +324,30 @@ async def check_approval_requirements(
     temperature: float,
     max_tokens: Optional[int],
     tools: Optional[list[dict[str, Any]]] = None,
-) -> bool:
-    """Check if any tool calls require user approval before execution.
+) -> list[dict[str, Any]]:
+    """Check which tool calls require user approval before execution.
 
-    If approval is needed, creates PendingToolApproval records.
+    Applies the agent's tool-approval rules and the chat's session grants on
+    top of the intrinsic requires_approval flags; creates a
+    PendingToolApproval record per asked call.
 
     Returns:
-        True if any tool calls require approval, False otherwise
+        One {tool_call_id, function_namespace, function_name, arguments}
+        entry per call that needs approval (empty list: run everything).
     """
-    requires_approval = False
+    from app.services import approval_rules
+
+    asked: list[dict[str, Any]] = []
+
+    # Agent tool-approval rules (permission modes) + the user's per-chat
+    # "always allow" grants — both consulted per call below, layered over
+    # the intrinsic requires_approval flags.
+    tool_approvals = None
+    chat = await db.get(Chat, chat_id)
+    if chat and chat.agent_id:
+        agent = await db.get(Agent, chat.agent_id)
+        tool_approvals = agent.tool_approvals if agent else None
+    session_grants = await approval_rules.get_session_grants(chat_id)
 
     # Build tool name → metadata lookup from tools list
     tool_meta_map = {}
@@ -349,35 +364,47 @@ async def check_approval_requirements(
         meta = tool_meta_map.get(tool_name, {})
         namespace: Optional[str] = None
         name: Optional[str] = None
+        intrinsic_ask = False
 
         if meta.get("system_tool"):
             # Sinas built-in system tool (e.g. package management).
             # Approval requirement comes directly from the tool definition's
             # _metadata.requires_approval flag.
-            if not meta.get("requires_approval"):
-                continue
+            intrinsic_ask = bool(meta.get("requires_approval"))
             namespace = "sinas"
             name = tool_name
-        else:
+        elif meta.get("namespace") and meta.get("name"):
             # Regular user-defined function tool
-            namespace = meta.get("namespace")
-            name = meta.get("name")
-            if not namespace or not name:
-                # Not a function tool (agents, collections, etc.), skip
-                continue
-
-            # Load function to check requires_approval flag
+            namespace = meta["namespace"]
+            name = meta["name"]
             function = await Function.get_by_name(db, namespace, name)
-            if not function or not function.requires_approval:
-                continue
+            intrinsic_ask = bool(function and function.requires_approval)
+        else:
+            # Any other tool kind (collections, workbench, connectors,
+            # pipelines, delegation…): no intrinsic flag, but agent rules
+            # can still gate it.
+            namespace = "tool"
+            name = tool_name
+
+        if (
+            approval_rules.resolve_action(
+                tool_approvals, tool_name, intrinsic_ask, session_grants
+            )
+            != approval_rules.ASK
+        ):
+            continue
 
         # This tool requires approval
-        requires_approval = True
-
         # Parse arguments safely - handle empty strings
         parsed_args = arguments_str
         if isinstance(arguments_str, str):
             parsed_args = json.loads(arguments_str) if arguments_str.strip() else {}
+        asked.append({
+            "tool_call_id": tool_call["id"],
+            "function_namespace": namespace,
+            "function_name": name,
+            "arguments": parsed_args,
+        })
 
         # Create PendingToolApproval record
         pending_approval = PendingToolApproval(
@@ -400,10 +427,10 @@ async def check_approval_requirements(
         )
         db.add(pending_approval)
 
-    if requires_approval:
+    if asked:
         await db.commit()
 
-    return requires_approval
+    return asked
 
 
 async def prepare_agent_delegation(

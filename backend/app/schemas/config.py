@@ -228,6 +228,14 @@ class AgentConfig(BaseModel):
             "(per-chat persistent working tree)."
         ),
     )
+    toolApprovals: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Tool approval rules: {'default': 'auto'|'ask', 'rules': "
+            "[{'match': '<glob>', 'action': 'auto'|'ask'}]}. First matching "
+            "rule wins; 'auto' overrides a function's requiresApproval."
+        ),
+    )
 
 
 class WebhookDedupConfig(BaseModel):
