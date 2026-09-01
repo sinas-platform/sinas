@@ -251,6 +251,12 @@ class Settings(BaseSettings):
 
     # Message history
     max_history_messages: int = 100  # Max messages to load for conversation history
+    # Compaction: when a conversation outgrows max_history_messages, the
+    # dropped prefix is summarized (asynchronously, incrementally) and the
+    # summary rides along as context instead of the history just falling off
+    # a cliff. Disable to restore pure windowing.
+    compaction_enabled: bool = True
+    compaction_summary_max_tokens: int = 800
     max_tool_iterations: int = 25  # Max consecutive tool-call rounds before stopping
 
     # Tool result store

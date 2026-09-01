@@ -397,22 +397,35 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     status_templates = agent_obj.status_templates or {}
 
             if approved:
-                # Execute the approved tool calls and stream the LLM response
-                async for chunk in message_service._handle_tool_calls(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    user_token=user_token,
-                    messages=pending_approval.conversation_context["messages"],
-                    tool_calls=pending_approval.all_tool_calls,
-                    provider=pending_approval.conversation_context.get("provider"),
-                    model=pending_approval.conversation_context.get("model"),
-                    temperature=pending_approval.conversation_context.get("temperature", 0.7),
-                    max_tokens=pending_approval.conversation_context.get("max_tokens"),
-                    tools=pending_approval.conversation_context.get("tools", []),
-                    status_templates=status_templates,
-                ):
-                    if isinstance(chunk, dict):
-                        await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
+                # Continuations re-enter the loop, so they hold the chat lock
+                # like any other loop (waiting briefly for a running one).
+                from app.services import chat_steering
+
+                lock_token = await chat_steering.acquire_chat_lock_wait(chat_id)
+                if lock_token is None:
+                    await stream_relay.publish_error(
+                        channel_id, "Chat is busy with another running turn — try again"
+                    )
+                    return
+                try:
+                    # Execute the approved tool calls and stream the LLM response
+                    async for chunk in message_service._handle_tool_calls(
+                        chat_id=chat_id,
+                        user_id=user_id,
+                        user_token=user_token,
+                        messages=pending_approval.conversation_context["messages"],
+                        tool_calls=pending_approval.all_tool_calls,
+                        provider=pending_approval.conversation_context.get("provider"),
+                        model=pending_approval.conversation_context.get("model"),
+                        temperature=pending_approval.conversation_context.get("temperature", 0.7),
+                        max_tokens=pending_approval.conversation_context.get("max_tokens"),
+                        tools=pending_approval.conversation_context.get("tools", []),
+                        status_templates=status_templates,
+                    ):
+                        if isinstance(chunk, dict):
+                            await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
+                finally:
+                    await chat_steering.release_chat_lock(chat_id, lock_token)
             else:
                 # Handle rejection - publish rejection info
                 await stream_relay.publish(channel_id, {
@@ -525,7 +538,16 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     completed = False
     _suspended = False
     _output_parts: list[str] = []
+    lock_token = None
+    from app.services import chat_steering
+
     try:
+        lock_token = await chat_steering.acquire_chat_lock_wait(chat_id)
+        if lock_token is None:
+            await stream_relay.publish_error(
+                channel_id, "Chat is busy with another running turn — try again"
+            )
+            return
         async with AsyncSessionLocal() as db:
             message_service = MessageService(db)
             async for chunk in message_service._stream_followup_after_tools(
@@ -625,6 +647,8 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         raise
 
     finally:
+        if lock_token is not None:
+            await chat_steering.release_chat_lock(chat_id, lock_token)
         ping_task.cancel()
         if not completed:
             logger.warning(f"Delegate-resume job {job_id} cancelled/timed out")

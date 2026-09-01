@@ -186,6 +186,9 @@ class ToolApprovalRequest(BaseModel):
     """Approve or reject a tool call that requires user approval."""
 
     approved: bool
+    # "Always allow" for the rest of this chat: approving with this flag
+    # records a session grant so the same tool won't ask again.
+    always_allow: bool = False
 
 
 class ToolApprovalResponse(BaseModel):
