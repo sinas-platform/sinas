@@ -66,15 +66,21 @@ is cheap until code lands).
 
 ### Storage: a backing collection, not new tables
 
-A workbench **is** a collection with a reserved flavor — auto-created on first
-use, e.g. namespace `_workbench`, name = the chat's `session_key`, owned by
-the chat's user. This buys, for free: `File`/`FileVersion` versioning, the
-existing four file tools, storage backends, and the existing uniqueness/
-visibility machinery. What's new is a `kind` (or reserved-namespace
-convention) so workbenches are excluded from normal collection listings and
-lifecycle (deleted/archived with the chat), and relative-path filenames
-(`src/app.py`) — `File.name` is a 255-char string today, so nested paths fit;
-we validate against traversal.
+A workbench **is** a collection row — auto-created on first use, owned by
+the chat's user — but discriminated by a **`kind` column**
+(`'collection' | 'workbench'`), not by a reserved-namespace convention.
+Reusing the table buys `File`/`FileVersion` versioning, the four file
+tools' internals, storage backends, and uniqueness machinery for free.
+The `kind` discriminator is what keeps the reuse from leaking: workbench
+rows have no user-facing namespace/name identity (internal key only, e.g.
+the chat id), are **not addressable through the collections API at all**
+— every collections-API query and the collection permission resolver
+filter on `kind='collection'` at the query level, so there is no
+string-matched namespace exclusion anywhere — and are reached exclusively
+via `/chats/{id}/workbench`, authorized by chat access. Lifecycle follows
+the chat (archived/deleted with it). New alongside `kind`: relative-path
+filenames (`src/app.py`) — `File.name` is a 255-char string today, so
+nested paths fit; we validate against traversal.
 
 Scope is **per-chat** in v1. A per-task/per-delegation scope can layer on
 later by keying the backing collection differently; don't design for it now.
@@ -96,15 +102,14 @@ for `shared` to mean inside it.
   inherited default. With everything private, the existing per-file checks
   already deny reads and hide search results for any other user who
   reaches the backing collection through generic code paths.
-- **Authorization derives from chat access, not collection grants.** The
-  reserved `_workbench` namespace is excluded from wildcard collection
-  permission matching (`collections:*` must not sweep in other people's
-  workbenches) and from collection listings; the rule is: you can reach a
-  workbench iff you can reach its chat. Operator/support access to
+- **Authorization derives from chat access, not collection grants.**
+  Because workbench rows are typed `kind='workbench'` and filtered out of
+  the collections API and permission resolver at the query level (see
+  Storage above), a wildcard `collections:*` grant structurally cannot
+  reach them — no namespace string-matching involved. The rule is: you can
+  reach a workbench iff you can reach its chat. Operator/support access to
   workbench contents, if wanted, is its own explicit permission — never a
-  side effect of a broad collection grant. This is belt-and-braces on top
-  of the private-visibility guarantee, and it's the part to test
-  adversarially.
+  side effect of a broad collection grant. Test this adversarially anyway.
 - **`metadata_schema` / `file_metadata`:** backing collections carry no
   metadata schema (free-form); `file_metadata` stays available and is where
   workbench bookkeeping lives (e.g. `origin: upload | tool | execution`,
@@ -174,6 +179,39 @@ lifecycle problem to take on only after sync proves the experience. Sync
 makes warmth an optimization instead of a correctness requirement — pool
 affinity by `chat_id` gets most of the feel with none of the lifecycle risk.
 
+### Collections and the workbench: checkout, not mount
+
+A chat's user typically holds permissions on several collections. Those
+collections are **not** mounted into the workbench or the sandbox. Three
+reasons: the sandbox tree is all-or-nothing (a mounted collection would
+expose `shared` files wholesale and bypass per-file `private` visibility
+the moment code, not the tool layer, does the reading); auto-mounting
+makes every sandbox write a potential mutation of curated shared data
+(the two-way-sync problem in a different coat); and eagerly syncing
+everything a user can read is exactly the transfer-cost explosion the
+lazy design avoids.
+
+Instead, the git mental model — the workbench is the working copy,
+collections are remotes:
+
+- **Read via existing tools, unchanged:** the collection file tools keep
+  working in workbench-enabled chats, with their existing permission and
+  visibility checks. Browsing a collection doesn't require pulling it in.
+- **Checkout (v1):** an explicit `workbench_checkout(collection, path)`
+  tool copies a file (or prefix) into the workbench. The copy records
+  provenance in `file_metadata` (source collection, file id, version), so
+  promotion back to the source can be offered as an *update* — and can
+  detect that the source moved on since checkout and surface a conflict
+  instead of silently clobbering.
+- **Read-only lazy mount (v1.5):** selected collections can appear in the
+  sandbox under a read-only root (e.g. `/collections/<name>/`) using the
+  same stub + `fetch_file` pause channel as oversized workbench files —
+  the manifest is built per-user (private files of others never listed),
+  and the backend re-checks permission on every fetch. Read-only means no
+  write-back semantics to design; modifying still goes through checkout.
+  This lands after the fetch channel exists and only if checkout proves
+  too much friction.
+
 ### Chat uploads land in the workbench
 
 Chat uploads currently target a collection directly, which conflates "hand
@@ -228,7 +266,8 @@ gains the sync behavior. This flag is the **only** config-apply touchpoint.
 
 | Component | Change |
 |---|---|
-| `models/file.py` + migration | collection `kind` (or reserved namespace) for workbench backing collections; chat-lifecycle cascade |
+| `models/file.py` + migration | `kind` discriminator on collections; workbench rows carry no public namespace/name; chat-lifecycle cascade; collections-API queries and permission resolver filter `kind='collection'` |
+| `collection_tools.py` (new tool) | `workbench_checkout` — copy collection files into the workbench with provenance metadata |
 | `collection_tools.py` | resolve the implicit target collection to the chat's workbench when the agent flag is on; accept nested paths |
 | `code_execution.py` | build sync manifest from `chat_id`; write back changed files post-execution |
 | `executor/` wrapper + `container_executor.py` | materialize tree pre-run, hash-walk and return changes post-run |
