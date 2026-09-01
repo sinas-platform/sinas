@@ -8,6 +8,7 @@ Covers the two contracts from the workbench ADR:
   with provenance and visibility filtering, promote as checkout's reverse
   (source update with conflict detection, else create-in-target).
 """
+import os
 import uuid
 
 import pytest
@@ -324,3 +325,132 @@ class TestCheckoutPromote:
             db, chat, uid, "workbench_promote", {"filename": "shared.txt", "collection": ref}
         )
         assert result.get("error") == "conflict"
+
+
+# ---------------------------------------------------------------------------
+# Sandbox sync (copy-in manifest, wrapper diff, copy-out write-back)
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxSync:
+    @pytest.mark.asyncio
+    async def test_manifest_and_write_back_roundtrip(self, db, chat, test_user):
+        from app.services.workbench import apply_sync_changes, build_sync_manifest
+
+        tools = WorkbenchTools()
+        uid = str(test_user.id)
+        await tools.execute_tool(
+            db, chat, uid, "workbench_write", {"filename": "data/input.txt", "content": "42\n"}
+        )
+
+        manifest = await build_sync_manifest(db, chat)
+        assert [f["path"] for f in manifest["files"]] == ["data/input.txt"]
+        assert manifest["skipped"] == []
+
+        import base64
+        result = await apply_sync_changes(
+            db, chat, uid,
+            [
+                {"path": "data/output.txt", "content_b64": base64.b64encode(b"84\n").decode()},
+                {"path": "../evil.txt", "content_b64": base64.b64encode(b"x").decode()},
+            ],
+        )
+        assert result["synced"] == ["data/output.txt"]
+        assert result["rejected"][0]["path"] == "../evil.txt"
+
+        manifest = await build_sync_manifest(db, chat)
+        assert {f["path"] for f in manifest["files"]} == {"data/input.txt", "data/output.txt"}
+
+    @pytest.mark.asyncio
+    async def test_manifest_skips_oversized_files(self, db, chat, test_user, monkeypatch):
+        from app.core.config import settings as app_settings
+        from app.services.workbench import build_sync_manifest
+
+        monkeypatch.setattr(app_settings, "workbench_sync_max_file_bytes", 10)
+        tools = WorkbenchTools()
+        uid = str(test_user.id)
+        await tools.execute_tool(
+            db, chat, uid, "workbench_write", {"filename": "big.txt", "content": "x" * 100}
+        )
+        await tools.execute_tool(
+            db, chat, uid, "workbench_write", {"filename": "small.txt", "content": "ok"}
+        )
+
+        manifest = await build_sync_manifest(db, chat)
+        assert [f["path"] for f in manifest["files"]] == ["small.txt"]
+        assert manifest["skipped"][0]["path"] == "big.txt"
+
+    def test_wrapper_materializes_and_reports_changes(self):
+        """Run the real sandbox wrapper in-process: files land in cwd, and
+        created/changed files come back as workbench_changes by hash diff."""
+        import base64
+        import hashlib
+
+        from app.services.code_execution import _build_wrapper
+
+        user_code = (
+            "content = open('data/input.txt').read()\n"
+            "with open('result.txt', 'w') as f:\n"
+            "    f.write(content.upper())\n"
+            "with open('untouched.txt', 'w') as f:\n"
+            "    f.write('same')\n"
+        )
+        wrapper = _build_wrapper(user_code, workbench=True)
+        ns: dict = {}
+        exec(wrapper, ns)
+
+        untouched = b"same"
+        input_data = {
+            "workbench_files": [
+                {
+                    "path": "data/input.txt",
+                    "content_b64": base64.b64encode(b"hello").decode(),
+                    "sha256": hashlib.sha256(b"hello").hexdigest(),
+                },
+                {
+                    "path": "untouched.txt",
+                    "content_b64": base64.b64encode(untouched).decode(),
+                    "sha256": hashlib.sha256(untouched).hexdigest(),
+                },
+            ],
+            "workbench_limits": {"max_file_bytes": 1024, "max_total_bytes": 4096},
+        }
+        output = ns["handler"](input_data, {})
+        assert output["status"] == "completed", output
+
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in output["workbench_changes"]}
+        # result.txt is new; untouched.txt was rewritten with identical bytes
+        # (hash-identical → not a change); input.txt was only read.
+        assert changes == {"result.txt": b"HELLO"}
+
+    def test_wrapper_reports_changes_even_when_user_code_fails(self):
+        import base64
+
+        from app.services.code_execution import _build_wrapper
+
+        user_code = (
+            "with open('partial.txt', 'w') as f:\n"
+            "    f.write('progress')\n"
+            "raise RuntimeError('boom')\n"
+        )
+        wrapper = _build_wrapper(user_code, workbench=True)
+        ns: dict = {}
+        exec(wrapper, ns)
+        output = ns["handler"]({"workbench_files": [], "workbench_limits": {}}, {})
+        assert output["status"] == "failed"
+        changes = {c["path"] for c in output["workbench_changes"]}
+        assert changes == {"partial.txt"}
+
+    def test_wrapper_cleans_up_temp_tree(self, tmp_path):
+        import glob
+        import tempfile
+
+        from app.services.code_execution import _build_wrapper
+
+        before = set(glob.glob(os.path.join(tempfile.gettempdir(), "workbench_*")))
+        wrapper = _build_wrapper("x = 1\n", workbench=True)
+        ns: dict = {}
+        exec(wrapper, ns)
+        ns["handler"]({"workbench_files": [], "workbench_limits": {}}, {})
+        after = set(glob.glob(os.path.join(tempfile.gettempdir(), "workbench_*")))
+        assert after == before

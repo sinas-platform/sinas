@@ -116,8 +116,76 @@ async def execute(
         }
     start_time = time.time()
 
+    # Workbench sync (copy-in): when the chat's agent opted into the
+    # workbench, materialize its tree into this execution and persist
+    # changes back afterwards (see _finalize_workbench below).
+    workbench_input: dict[str, Any] = {}
+    workbench_skipped_in: list[dict[str, Any]] = []
+    workbench_chat_id: Optional[str] = None
+    if chat_id:
+        from sqlalchemy import select as _select
+
+        from app.core.database import AsyncSessionLocal as _SessionLocal
+        from app.models.chat import Chat as _Chat
+        from app.services import workbench as workbench_service
+
+        try:
+            async with _SessionLocal() as _db:
+                _chat = (
+                    await _db.execute(_select(_Chat).where(_Chat.id == chat_id))
+                ).scalar_one_or_none()
+                if _chat and await workbench_service.chat_has_workbench_enabled(_db, _chat):
+                    manifest = await workbench_service.build_sync_manifest(_db, _chat)
+                    await _db.commit()  # get_or_create may have inserted the workbench row
+                    workbench_chat_id = str(_chat.id)
+                    workbench_skipped_in = manifest["skipped"]
+                    workbench_input = {
+                        "workbench_files": manifest["files"],
+                        "workbench_limits": {
+                            "max_file_bytes": settings.workbench_sync_max_file_bytes,
+                            "max_total_bytes": settings.workbench_sync_max_total_bytes,
+                        },
+                    }
+        except Exception as e:
+            logger.error(f"Workbench copy-in failed for chat {chat_id}: {e}")
+
+    async def _finalize_workbench(res: dict[str, Any]) -> dict[str, Any]:
+        """Copy-out: persist created/changed files, strip the blob payload."""
+        if workbench_chat_id is None:
+            return res
+        inner = res.get("result")
+        if not isinstance(inner, dict):
+            return res
+        changes = inner.pop("workbench_changes", None)
+        return_skipped = inner.pop("workbench_return_skipped", None)
+        info: dict[str, Any] = {}
+        if changes:
+            try:
+                async with _SessionLocal() as _db:
+                    _chat = (
+                        await _db.execute(_select(_Chat).where(_Chat.id == workbench_chat_id))
+                    ).scalar_one_or_none()
+                    if _chat:
+                        sync = await workbench_service.apply_sync_changes(
+                            _db, _chat, str(_chat.user_id), changes
+                        )
+                        await _db.commit()
+                        info["synced"] = sync["synced"]
+                        if sync["rejected"]:
+                            info["rejected"] = sync["rejected"]
+            except Exception as e:
+                logger.error(f"Workbench copy-out failed for chat {workbench_chat_id}: {e}")
+                info["error"] = f"Failed to persist workbench changes: {e}"
+        if workbench_skipped_in:
+            info["not_materialized"] = workbench_skipped_in
+        if return_skipped:
+            info["not_synced_back"] = return_skipped
+        if info:
+            res["workbench"] = info
+        return res
+
     # Wrap the user code so we capture stdout and the last expression result.
-    wrapper_code = _build_wrapper(code)
+    wrapper_code = _build_wrapper(code, workbench=workbench_chat_id is not None)
 
     payload = {
         "action": "execute_inline",
@@ -126,7 +194,7 @@ async def execute(
         "function_namespace": "_code_execution",
         "function_name": "handler",
         "timeout": effective_timeout,
-        "input_data": {},
+        "input_data": workbench_input,
         "context": {
             "user_id": user_id or "",
             "user_email": "",
@@ -172,8 +240,8 @@ async def execute(
                 wire = await run_payload_in_pod(
                     name, namespace, payload, effective_timeout
                 )
-                return _shape_code_result(
-                    wire, int((time.time() - start_time) * 1000)
+                return await _finalize_workbench(
+                    _shape_code_result(wire, int((time.time() - start_time) * 1000))
                 )
             finally:
                 await delete_sandbox_pod(name, namespace)
@@ -194,8 +262,10 @@ async def execute(
                     db, execution_id=execution_id
                 )
             try:
-                return await _run_code_payload(
-                    container, payload, execution_id, effective_timeout, start_time
+                return await _finalize_workbench(
+                    await _run_code_payload(
+                        container, payload, execution_id, effective_timeout, start_time
+                    )
                 )
             finally:
                 await remove_ephemeral_container(container, name)
@@ -216,7 +286,7 @@ async def execute(
         # Discard the container if the run errored (avoid handing leaked state on).
         if result.get("error") is not None:
             tainted = True
-        return result
+        return await _finalize_workbench(result)
     except Exception as e:
         tainted = True
         return _error(e)
@@ -337,11 +407,74 @@ def _shape_code_result(
     }
 
 
-def _build_wrapper(user_code: str) -> str:
-    """Wrap user code to capture stdout and the last expression result."""
+def _build_wrapper(user_code: str, workbench: bool = False) -> str:
+    """Wrap user code to capture stdout and the last expression result.
+
+    With workbench=True the wrapper materializes the chat's workbench files
+    (passed via input_data) into a fresh temp directory, chdirs into it for
+    the user code, and afterwards reports created/changed files back (by
+    sha256 diff) as output["workbench_changes"] for the backend to persist.
+    The temp tree is always removed — pooled containers must not leak one
+    chat's files into the next execution.
+    """
     # The wrapper captures stdout and evaluates the code, trying to capture
     # the last expression as a result value.
     user_code_repr = repr(user_code)
+    workbench_setup = ""
+    workbench_teardown = ""
+    if workbench:
+        workbench_setup = '''
+    import os as _os, base64 as _b64, hashlib as _hashlib, shutil as _shutil, tempfile as _tempfile
+    _wb_files = (input_data or {}).get("workbench_files") or []
+    _wb_limits = (input_data or {}).get("workbench_limits") or {}
+    _wb_hashes = {}
+    _wb_root = _tempfile.mkdtemp(prefix="workbench_")
+    _wb_old_cwd = _os.getcwd()
+    for _f in _wb_files:
+        _p = _os.path.join(_wb_root, _f["path"])
+        _os.makedirs(_os.path.dirname(_p), exist_ok=True)
+        with open(_p, "wb") as _fh:
+            _fh.write(_b64.b64decode(_f["content_b64"]))
+        _wb_hashes[_f["path"]] = _f["sha256"]
+    _os.chdir(_wb_root)
+'''
+        workbench_teardown = '''
+    _wb_changes = []
+    _wb_return_skipped = []
+    try:
+        _max_file = int(_wb_limits.get("max_file_bytes") or 2 * 1024 * 1024)
+        _max_total = int(_wb_limits.get("max_total_bytes") or 32 * 1024 * 1024)
+        _total = 0
+        for _dirpath, _dirnames, _filenames in _os.walk(_wb_root):
+            _dirnames[:] = [_d for _d in _dirnames if not _d.startswith(".")]
+            for _fn in _filenames:
+                _full = _os.path.join(_dirpath, _fn)
+                _rel = _os.path.relpath(_full, _wb_root).replace(_os.sep, "/")
+                if _os.path.islink(_full):
+                    continue
+                _size = _os.path.getsize(_full)
+                if _size > _max_file or _total + _size > _max_total:
+                    _wb_return_skipped.append({"path": _rel, "size_bytes": _size})
+                    continue
+                with open(_full, "rb") as _fh:
+                    _data = _fh.read()
+                _digest = _hashlib.sha256(_data).hexdigest()
+                if _wb_hashes.get(_rel) == _digest:
+                    continue
+                _total += _size
+                _wb_changes.append({"path": _rel, "content_b64": _b64.b64encode(_data).decode()})
+    except Exception as _wb_exc:
+        _wb_return_skipped.append({"path": "<walk>", "error": str(_wb_exc)})
+    finally:
+        try:
+            _os.chdir(_wb_old_cwd)
+        except Exception:
+            _os.chdir("/tmp")
+        _shutil.rmtree(_wb_root, ignore_errors=True)
+    output["workbench_changes"] = _wb_changes
+    if _wb_return_skipped:
+        output["workbench_return_skipped"] = _wb_return_skipped
+'''
     return f'''
 import sys, io, json, traceback
 
@@ -356,7 +489,7 @@ def handler(input_data, context):
 
     result = None
     error = None
-
+{workbench_setup}
     try:
         user_code = {user_code_repr}
         # Try to split into statements and eval the last one for a result
@@ -383,6 +516,7 @@ def handler(input_data, context):
         "stdout": captured_stdout.getvalue(),
         "stderr": captured_stderr.getvalue(),
     }}
+{workbench_teardown}
     if error:
         output["error"] = error
         output["status"] = "failed"

@@ -296,6 +296,12 @@ class Settings(BaseSettings):
     agent_job_timeout: int = 600  # Default timeout for agent jobs (10 minutes)
     code_execution_timeout: int = 120  # Default timeout for code execution (2 minutes)
 
+    # Workbench → sandbox sync caps (eager copy-in/copy-out per execution).
+    # Files above the per-file cap are reported to the code as skipped rather
+    # than materialized; the total cap bounds one execution's transfer.
+    workbench_sync_max_file_bytes: int = 2 * 1024 * 1024
+    workbench_sync_max_total_bytes: int = 32 * 1024 * 1024
+
     # Tool results above this many characters are truncated (structure-aware,
     # see services/tool_execution.truncate_tool_result) before they enter the
     # LLM context. Distinct from tool_result_max_size above, which caps what

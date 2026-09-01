@@ -541,6 +541,121 @@ class WorkbenchTools:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Sandbox sync (eager copy-in / copy-out)
+# ---------------------------------------------------------------------------
+
+
+async def chat_has_workbench_enabled(db: AsyncSession, chat: Chat) -> bool:
+    """True when the chat's agent opted in via system_tools: ["workbench"]."""
+    from app.models.agent import Agent
+    from app.services.system_tool_helpers import has_system_tool
+
+    if not chat or not chat.agent_id:
+        return False
+    agent = (await db.execute(select(Agent).where(Agent.id == chat.agent_id))).scalar_one_or_none()
+    return bool(agent) and has_system_tool(agent.system_tools or [], "workbench")
+
+
+async def build_sync_manifest(db: AsyncSession, chat: Chat) -> dict[str, Any]:
+    """Collect the workbench tree for copy-in to a sandbox execution.
+
+    Returns {"files": [{path, content_b64, sha256}], "skipped": [{path,
+    size_bytes, reason}]} bounded by the workbench_sync_* settings. Skipped
+    files stay tool-accessible; they just don't materialize in the sandbox.
+    """
+    import base64
+
+    from app.core.config import settings
+
+    workbench = await get_or_create_workbench(db, chat)
+    rows = (
+        await db.execute(select(File).where(File.collection_id == workbench.id))
+    ).scalars().all()
+
+    storage = get_storage()
+    files: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    total = 0
+    for f in rows:
+        version = (
+            await db.execute(
+                select(FileVersion).where(
+                    FileVersion.file_id == f.id,
+                    FileVersion.version_number == f.current_version,
+                )
+            )
+        ).scalar_one_or_none()
+        if version is None:
+            continue
+        if version.size_bytes > settings.workbench_sync_max_file_bytes:
+            skipped.append({"path": f.name, "size_bytes": version.size_bytes, "reason": "file too large"})
+            continue
+        if total + version.size_bytes > settings.workbench_sync_max_total_bytes:
+            skipped.append({"path": f.name, "size_bytes": version.size_bytes, "reason": "total sync cap reached"})
+            continue
+        try:
+            content = await storage.read(version.storage_path)
+        except Exception as e:
+            skipped.append({"path": f.name, "size_bytes": version.size_bytes, "reason": f"read failed: {e}"})
+            continue
+        total += len(content)
+        files.append(
+            {
+                "path": f.name,
+                "content_b64": base64.b64encode(content).decode(),
+                "sha256": version.hash_sha256,
+            }
+        )
+    return {"files": files, "skipped": skipped}
+
+
+async def apply_sync_changes(
+    db: AsyncSession, chat: Chat, user_id: str, changes: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Write files an execution created or modified back into the workbench.
+
+    Each change is {path, content_b64}. Deletions are deliberately NOT
+    synced: a crashed or chdir-ing execution must never wipe workbench
+    files it simply didn't touch. Returns {"synced": [...], "rejected":
+    [{path, reason}]}.
+    """
+    import base64
+
+    from app.services.collection_tools import _infer_content_type
+
+    workbench = await get_or_create_workbench(db, chat)
+    storage = get_storage()
+    synced: list[str] = []
+    rejected: list[dict[str, str]] = []
+    for change in changes or []:
+        path = change.get("path", "")
+        err = _validate_path(path)
+        if err:
+            rejected.append({"path": path, "reason": err})
+            continue
+        try:
+            content = base64.b64decode(change.get("content_b64", ""))
+        except Exception:
+            rejected.append({"path": path, "reason": "invalid base64 content"})
+            continue
+        result = await _write_bytes(
+            db,
+            storage,
+            workbench,
+            filename=path,
+            content=content,
+            content_type=_infer_content_type(path),
+            user_id=user_id,
+            visibility="private",
+        )
+        if "error" in result:
+            rejected.append({"path": path, "reason": result["error"]})
+        else:
+            synced.append(path)
+    return {"synced": synced, "rejected": rejected}
+
+
 async def _write_bytes(
     db: AsyncSession,
     storage: FileStorage,
