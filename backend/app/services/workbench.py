@@ -577,9 +577,11 @@ async def chat_has_workbench_enabled(db: AsyncSession, chat: Chat) -> bool:
 async def build_sync_manifest(db: AsyncSession, chat: Chat) -> dict[str, Any]:
     """Collect the workbench tree for copy-in to a sandbox execution.
 
-    Returns {"files": [{path, content_b64, sha256}], "skipped": [{path,
-    size_bytes, reason}]} bounded by the workbench_sync_* settings. Skipped
-    files stay tool-accessible; they just don't materialize in the sandbox.
+    Returns {"files": [{path, content_b64, sha256}], "lazy": [{path,
+    size_bytes, sha256}], "skipped": [{path, size_bytes, reason}]} bounded
+    by the workbench_sync_* settings. Lazy files materialize as stubs in the
+    sandbox and are fetched over the pause channel on first read; skipped
+    files (unreadable storage) don't materialize at all.
     """
     import base64
 
@@ -592,6 +594,7 @@ async def build_sync_manifest(db: AsyncSession, chat: Chat) -> dict[str, Any]:
 
     storage = get_storage()
     files: list[dict[str, Any]] = []
+    lazy: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     total = 0
     for f in rows:
@@ -605,11 +608,13 @@ async def build_sync_manifest(db: AsyncSession, chat: Chat) -> dict[str, Any]:
         ).scalar_one_or_none()
         if version is None:
             continue
-        if version.size_bytes > settings.workbench_sync_max_file_bytes:
-            skipped.append({"path": f.name, "size_bytes": version.size_bytes, "reason": "file too large"})
-            continue
-        if total + version.size_bytes > settings.workbench_sync_max_total_bytes:
-            skipped.append({"path": f.name, "size_bytes": version.size_bytes, "reason": "total sync cap reached"})
+        if (
+            version.size_bytes > settings.workbench_sync_max_file_bytes
+            or total + version.size_bytes > settings.workbench_sync_max_total_bytes
+        ):
+            lazy.append(
+                {"path": f.name, "size_bytes": version.size_bytes, "sha256": version.hash_sha256}
+            )
             continue
         try:
             content = await storage.read(version.storage_path)
@@ -624,7 +629,55 @@ async def build_sync_manifest(db: AsyncSession, chat: Chat) -> dict[str, Any]:
                 "sha256": version.hash_sha256,
             }
         )
-    return {"files": files, "skipped": skipped}
+    return {"files": files, "lazy": lazy, "skipped": skipped}
+
+
+async def fetch_file_bytes(
+    db: AsyncSession, chat: Chat, path: str, max_bytes: int
+) -> dict[str, Any]:
+    """Serve one workbench file for a sandbox lazy-fetch request.
+
+    Returns {"path", "content_b64", "sha256"} or {"path", "error"}. The
+    request path comes from inside the sandbox — treat it as untrusted.
+    """
+    import base64
+
+    err = _validate_path(path)
+    if err:
+        return {"path": path, "error": err}
+
+    workbench = await get_or_create_workbench(db, chat)
+    f = (
+        await db.execute(
+            select(File).where(File.collection_id == workbench.id, File.name == path)
+        )
+    ).scalar_one_or_none()
+    if not f:
+        return {"path": path, "error": f"'{path}' not found in the workbench"}
+    version = (
+        await db.execute(
+            select(FileVersion).where(
+                FileVersion.file_id == f.id,
+                FileVersion.version_number == f.current_version,
+            )
+        )
+    ).scalar_one_or_none()
+    if version is None:
+        return {"path": path, "error": f"'{path}' has no stored version"}
+    if version.size_bytes > max_bytes:
+        return {
+            "path": path,
+            "error": f"'{path}' is {version.size_bytes} bytes, above the lazy-fetch limit of {max_bytes}",
+        }
+    try:
+        content = await get_storage().read(version.storage_path)
+    except Exception as e:
+        return {"path": path, "error": f"read failed: {e}"}
+    return {
+        "path": path,
+        "content_b64": base64.b64encode(content).decode(),
+        "sha256": version.hash_sha256,
+    }
 
 
 async def apply_sync_changes(

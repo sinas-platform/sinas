@@ -362,9 +362,9 @@ class TestSandboxSync:
         assert {f["path"] for f in manifest["files"]} == {"data/input.txt", "data/output.txt"}
 
     @pytest.mark.asyncio
-    async def test_manifest_skips_oversized_files(self, db, chat, test_user, monkeypatch):
+    async def test_manifest_marks_oversized_files_lazy(self, db, chat, test_user, monkeypatch):
         from app.core.config import settings as app_settings
-        from app.services.workbench import build_sync_manifest
+        from app.services.workbench import build_sync_manifest, fetch_file_bytes
 
         monkeypatch.setattr(app_settings, "workbench_sync_max_file_bytes", 10)
         tools = WorkbenchTools()
@@ -378,7 +378,18 @@ class TestSandboxSync:
 
         manifest = await build_sync_manifest(db, chat)
         assert [f["path"] for f in manifest["files"]] == ["small.txt"]
-        assert manifest["skipped"][0]["path"] == "big.txt"
+        assert [e["path"] for e in manifest["lazy"]] == ["big.txt"]
+        assert manifest["skipped"] == []
+
+        # The lazy file is servable over the fetch channel…
+        import base64
+        result = await fetch_file_bytes(db, chat, "big.txt", max_bytes=1024)
+        assert base64.b64decode(result["content_b64"]) == b"x" * 100
+        # …within the fetch cap, and traversal paths are rejected.
+        result = await fetch_file_bytes(db, chat, "big.txt", max_bytes=10)
+        assert "error" in result
+        result = await fetch_file_bytes(db, chat, "../escape", max_bytes=1024)
+        assert "error" in result
 
     def test_wrapper_materializes_and_reports_changes(self):
         """Run the real sandbox wrapper in-process: files land in cwd, and
@@ -533,3 +544,127 @@ class TestWorkbenchAPI:
             db, chat, str(test_user.id), "workbench_read", {"filename": "notes.md"}
         )
         assert "# hi" in str(result)
+
+
+# ---------------------------------------------------------------------------
+# Lazy fetch (stub materialization, open() hook, pause-channel roundtrip)
+# ---------------------------------------------------------------------------
+
+
+def _serve_one_fetch(eid: str, responses: dict):
+    """Background thread playing the backend: waits for the wrapper's fetch
+    request file and answers it, like the executor wait-loop does."""
+    import base64
+    import hashlib
+    import json as _json
+    import os as _os
+    import time as _time
+
+    req = f"/tmp/wb_fetch_req_{eid}.json"
+    resp = f"/tmp/wb_fetch_resp_{eid}.json"
+    deadline = _time.time() + 10
+    while _time.time() < deadline:
+        if _os.path.exists(req):
+            with open(req) as fh:
+                request = _json.load(fh)
+            _os.remove(req)
+            path = request["path"]
+            if path in responses:
+                content = responses[path]
+                payload = {
+                    "path": path,
+                    "content_b64": base64.b64encode(content).decode(),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            else:
+                payload = {"path": path, "error": "not found"}
+            with open(resp + ".tmp", "w") as fh:
+                _json.dump(payload, fh)
+            _os.replace(resp + ".tmp", resp)
+            return
+        _time.sleep(0.02)
+
+
+class TestLazyFetchWrapper:
+    def _run(self, user_code: str, lazy: list, responses: dict, files: list = ()):
+        import threading
+        import uuid as _uuid
+
+        from app.services.code_execution import _build_wrapper
+
+        eid = _uuid.uuid4().hex
+        wrapper = _build_wrapper(user_code, workbench=True)
+        ns: dict = {}
+        exec(wrapper, ns)
+        server = threading.Thread(target=_serve_one_fetch, args=(eid, responses), daemon=True)
+        server.start()
+        output = ns["handler"](
+            {
+                "workbench_files": list(files),
+                "workbench_lazy": [{"path": p} for p in lazy],
+                "workbench_limits": {"max_file_bytes": 4096, "max_total_bytes": 8192},
+            },
+            {"execution_id": eid},
+        )
+        server.join(timeout=5)
+        return output
+
+    def test_open_of_lazy_file_fetches_real_bytes(self):
+        output = self._run(
+            "data = open('big.csv').read()\n"
+            "with open('summary.txt', 'w') as f:\n"
+            "    f.write(str(len(data)))\n",
+            lazy=["big.csv"],
+            responses={"big.csv": b"a,b\n" * 50},
+        )
+        assert output["status"] == "completed", output
+        import base64
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in output["workbench_changes"]}
+        # The fetched-but-unmodified lazy file is NOT a change; only summary.txt is.
+        assert changes == {"summary.txt": b"200"}
+
+    def test_unfetched_stub_never_reported_as_change(self):
+        output = self._run(
+            "x = 1\n",
+            lazy=["huge.bin"],
+            responses={},
+        )
+        assert output["status"] == "completed"
+        assert output["workbench_changes"] == []
+
+    def test_modified_lazy_file_is_a_change(self):
+        output = self._run(
+            "content = open('doc.txt').read()\n"
+            "with open('doc.txt', 'w') as f:\n"
+            "    f.write(content + ' edited')\n",
+            lazy=["doc.txt"],
+            responses={"doc.txt": b"original"},
+        )
+        assert output["status"] == "completed", output
+        import base64
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in output["workbench_changes"]}
+        assert changes == {"doc.txt": b"original edited"}
+
+    def test_fetch_error_surfaces_to_user_code(self):
+        output = self._run(
+            "open('missing.bin').read()\n",
+            lazy=["missing.bin"],
+            responses={},
+        )
+        assert output["status"] == "failed"
+        assert "missing.bin" in output.get("error", "")
+
+    def test_explicit_workbench_fetch_helper(self):
+        output = self._run(
+            "workbench_fetch('blob.bin')\n"
+            "import os\n"
+            "size = os.path.getsize('blob.bin')\n"
+            "with open('size.txt', 'w') as f:\n"
+            "    f.write(str(size))\n",
+            lazy=["blob.bin"],
+            responses={"blob.bin": b"\x00" * 123},
+        )
+        assert output["status"] == "completed", output
+        import base64
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in output["workbench_changes"]}
+        assert changes["size.txt"] == b"123"

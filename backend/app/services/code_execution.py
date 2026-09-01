@@ -121,6 +121,7 @@ async def execute(
     # changes back afterwards (see _finalize_workbench below).
     workbench_input: dict[str, Any] = {}
     workbench_skipped_in: list[dict[str, Any]] = []
+    workbench_lazy: list[dict[str, Any]] = []
     workbench_chat_id: Optional[str] = None
     if chat_id:
         from sqlalchemy import select as _select
@@ -139,8 +140,12 @@ async def execute(
                     await _db.commit()  # get_or_create may have inserted the workbench row
                     workbench_chat_id = str(_chat.id)
                     workbench_skipped_in = manifest["skipped"]
+                    workbench_lazy = manifest["lazy"]
                     workbench_input = {
                         "workbench_files": manifest["files"],
+                        "workbench_lazy": [
+                            {"path": e["path"]} for e in manifest["lazy"]
+                        ],
                         "workbench_limits": {
                             "max_file_bytes": settings.workbench_sync_max_file_bytes,
                             "max_total_bytes": settings.workbench_sync_max_total_bytes,
@@ -148,6 +153,26 @@ async def execute(
                     }
         except Exception as e:
             logger.error(f"Workbench copy-in failed for chat {chat_id}: {e}")
+
+    async def _fetch_workbench_file(path: str) -> dict[str, Any]:
+        """Serve a lazy-fetch request from the sandbox (pause-channel handler)."""
+        if workbench_chat_id is None:
+            return {"path": path, "error": "no workbench bound to this execution"}
+        try:
+            async with _SessionLocal() as _db:
+                _chat = (
+                    await _db.execute(_select(_Chat).where(_Chat.id == workbench_chat_id))
+                ).scalar_one_or_none()
+                if not _chat:
+                    return {"path": path, "error": "chat not found"}
+                return await workbench_service.fetch_file_bytes(
+                    _db, _chat, path, settings.workbench_lazy_fetch_max_bytes
+                )
+        except Exception as e:
+            logger.error(f"Workbench lazy fetch failed for chat {workbench_chat_id}: {e}")
+            return {"path": path, "error": f"fetch failed: {e}"}
+
+    fetch_handler = _fetch_workbench_file if chat_id else None
 
     async def _finalize_workbench(res: dict[str, Any]) -> dict[str, Any]:
         """Copy-out: persist created/changed files, strip the blob payload."""
@@ -178,6 +203,10 @@ async def execute(
                 info["error"] = f"Failed to persist workbench changes: {e}"
         if workbench_skipped_in:
             info["not_materialized"] = workbench_skipped_in
+        if workbench_lazy:
+            info["lazy"] = [
+                {"path": e["path"], "size_bytes": e["size_bytes"]} for e in workbench_lazy
+            ]
         if return_skipped:
             info["not_synced_back"] = return_skipped
         if info:
@@ -238,7 +267,7 @@ async def execute(
                 )
             try:
                 wire = await run_payload_in_pod(
-                    name, namespace, payload, effective_timeout
+                    name, namespace, payload, effective_timeout, fetch_handler=fetch_handler
                 )
                 return await _finalize_workbench(
                     _shape_code_result(wire, int((time.time() - start_time) * 1000))
@@ -264,7 +293,8 @@ async def execute(
             try:
                 return await _finalize_workbench(
                     await _run_code_payload(
-                        container, payload, execution_id, effective_timeout, start_time
+                        container, payload, execution_id, effective_timeout, start_time,
+                        fetch_handler=fetch_handler,
                     )
                 )
             finally:
@@ -281,7 +311,8 @@ async def execute(
     try:
         container = await asyncio.to_thread(container_pool.client.containers.get, pc.name)
         result = await _run_code_payload(
-            container, payload, execution_id, effective_timeout, start_time
+            container, payload, execution_id, effective_timeout, start_time,
+            fetch_handler=fetch_handler,
         )
         # Discard the container if the run errored (avoid handing leaked state on).
         if result.get("error") is not None:
@@ -294,96 +325,112 @@ async def execute(
         await asyncio.to_thread(container_pool.release, pc.name, tainted=tainted)
 
 
-async def _run_code_payload(
-    container,
-    payload: dict[str, Any],
-    execution_id: str,
-    effective_timeout: int,
-    start_time: float,
-) -> dict[str, Any]:
-    """Run a code-execution payload in `container` and parse the result.
-
-    Shared by the pooled and ephemeral code-execution paths; only the container
-    lifecycle around this call differs. Raises on Docker/infra errors (callers
-    convert those to an error result).
-    """
+def _write_file_into_container(container, path: str, data: bytes) -> None:
+    """Write bytes to a path inside the container via a stdin pipe (atomic:
+    written to a temp path, then renamed)."""
     import socket as _sock_mod
 
-    eid = execution_id
-    request_path = f"/tmp/exec_request_{eid}.json"
-    trigger_file = f"/tmp/exec_trigger_{eid}"
-    result_file = f"/tmp/exec_result_{eid}.json"
-
-    # Write the request into the container via a stdin pipe.
-    payload_bytes = json.dumps(payload).encode("utf-8")
     api = container.client.api
     exec_id = api.exec_create(
         container.id,
         [
             "python3", "-c",
-            f'import sys; open("{request_path}","wb").write(sys.stdin.buffer.read())',
+            f'import sys, os; open("{path}.tmp","wb").write(sys.stdin.buffer.read()); '
+            f'os.replace("{path}.tmp", "{path}")',
         ],
         stdin=True,
         stdout=True,
         stderr=True,
     )["Id"]
     sock = api.exec_start(exec_id, socket=True)
-    sock._sock.sendall(payload_bytes)
+    sock._sock.sendall(data)
     sock._sock.shutdown(_sock_mod.SHUT_WR)
     sock.read()
     sock.close()
 
-    exec_result = await asyncio.to_thread(
-        container.exec_run,
-        cmd=[
-            "python3",
-            "-c",
-            f"""
-import sys, json, time, os
-with open("{trigger_file}", "w") as f:
-    f.write("1")
-max_wait = {effective_timeout}
-start = time.time()
-while time.time() - start < max_wait:
-    if os.path.exists("{result_file}"):
-        with open("{result_file}", "r") as f:
-            data = json.load(f)
-        os.remove("{result_file}")
-        print(json.dumps(data))
-        sys.exit(0)
-    time.sleep(0.1)
-print(json.dumps({{"status": "failed", "error": "Execution timed out"}}))
-sys.exit(1)
-""",
-        ],
-        stdout=True,
-        stderr=True,
+
+async def _run_code_payload(
+    container,
+    payload: dict[str, Any],
+    execution_id: str,
+    effective_timeout: int,
+    start_time: float,
+    fetch_handler=None,
+) -> dict[str, Any]:
+    """Run a code-execution payload in `container` and parse the result.
+
+    Shared by the pooled and ephemeral code-execution paths; only the
+    container lifecycle around this call differs. While the execution runs,
+    the wrapper may request workbench files over the pause channel; each
+    request is served through `fetch_handler` and the wait re-entered.
+    Raises on Docker/infra errors (callers convert those to an error result).
+    """
+    from app.services.executor._wire import (
+        build_wait_script,
+        fetch_response_path,
+        parse_wait_output,
     )
 
-    duration_ms = int((time.time() - start_time) * 1000)
+    eid = execution_id
+    request_path = f"/tmp/exec_request_{eid}.json"
 
-    if exec_result.exit_code != 0:
-        stderr_output = exec_result.output.decode("utf-8", errors="replace") if exec_result.output else ""
-        return {
-            "stdout": "",
-            "stderr": stderr_output,
-            "result": None,
-            "duration_ms": duration_ms,
-            "error": "Code execution failed",
-        }
+    await asyncio.to_thread(
+        _write_file_into_container, container, request_path, json.dumps(payload).encode("utf-8")
+    )
 
-    raw_output = exec_result.output.decode("utf-8", errors="replace") if exec_result.output else "{}"
-    try:
-        result_data = json.loads(raw_output.strip())
-    except json.JSONDecodeError:
-        return {
-            "stdout": raw_output,
-            "stderr": "",
-            "result": None,
-            "duration_ms": duration_ms,
-        }
+    deadline = time.time() + effective_timeout
+    first_wait = True
+    fetches_served = 0
+    while True:
+        remaining = max(1.0, deadline - time.time())
+        exec_result = await asyncio.to_thread(
+            container.exec_run,
+            cmd=["python3", "-c", build_wait_script(eid, remaining, write_trigger=first_wait)],
+            stdout=True,
+            stderr=True,
+        )
+        first_wait = False
+        duration_ms = int((time.time() - start_time) * 1000)
+        raw_output = (
+            exec_result.output.decode("utf-8", errors="replace") if exec_result.output else ""
+        )
+        envelope = parse_wait_output(raw_output)
 
-    return _shape_code_result(result_data, duration_ms)
+        if envelope is None:
+            if exec_result.exit_code != 0:
+                return {
+                    "stdout": "",
+                    "stderr": raw_output,
+                    "result": None,
+                    "duration_ms": duration_ms,
+                    "error": "Code execution failed",
+                }
+            return {
+                "stdout": raw_output,
+                "stderr": "",
+                "result": None,
+                "duration_ms": duration_ms,
+            }
+
+        if envelope["kind"] == "fetch":
+            req = envelope.get("req") or {}
+            path = req.get("path", "")
+            fetches_served += 1
+            if fetch_handler is None:
+                resp: dict[str, Any] = {"path": path, "error": "lazy fetch is not available"}
+            elif fetches_served > settings.workbench_lazy_fetch_max_calls:
+                resp = {"path": path, "error": "lazy fetch call limit reached for this execution"}
+            else:
+                resp = await fetch_handler(path)
+            await asyncio.to_thread(
+                _write_file_into_container,
+                container,
+                fetch_response_path(eid),
+                json.dumps(resp).encode("utf-8"),
+            )
+            continue
+
+        return _shape_code_result(envelope["data"], duration_ms)
 
 
 def _shape_code_result(
@@ -424,10 +471,15 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
     workbench_teardown = ""
     if workbench:
         workbench_setup = '''
-    import os as _os, base64 as _b64, hashlib as _hashlib, shutil as _shutil, tempfile as _tempfile
+    import builtins as _builtins
+    import io as _io
+    import os as _os, base64 as _b64, hashlib as _hashlib, shutil as _shutil, tempfile as _tempfile, time as _time
     _wb_files = (input_data or {}).get("workbench_files") or []
+    _wb_lazy = (input_data or {}).get("workbench_lazy") or []
     _wb_limits = (input_data or {}).get("workbench_limits") or {}
+    _wb_eid = (context or {}).get("execution_id", "")
     _wb_hashes = {}
+    _wb_lazy_unfetched = set()
     _wb_root = _tempfile.mkdtemp(prefix="workbench_")
     _wb_old_cwd = _os.getcwd()
     for _f in _wb_files:
@@ -436,9 +488,79 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
         with open(_p, "wb") as _fh:
             _fh.write(_b64.b64decode(_f["content_b64"]))
         _wb_hashes[_f["path"]] = _f["sha256"]
+    for _f in _wb_lazy:
+        _p = _os.path.join(_wb_root, _f["path"])
+        _os.makedirs(_os.path.dirname(_p), exist_ok=True)
+        with open(_p, "wb"):
+            pass  # stub — real bytes arrive on first read via workbench_fetch
+        _wb_lazy_unfetched.add(_f["path"])
     _os.chdir(_wb_root)
+
+    def workbench_fetch(path, _timeout=120):
+        """Fetch a lazy workbench file's real bytes from the backend.
+
+        Reads of lazy files through open() call this automatically; call it
+        explicitly before handing a lazy path to native code (numpy.memmap,
+        database engines) that bypasses Python's open().
+        """
+        _rel = _os.path.relpath(_os.path.abspath(path), _wb_root).replace(_os.sep, "/")
+        if _rel not in _wb_lazy_unfetched:
+            return path
+        _req = "/tmp/wb_fetch_req_" + _wb_eid + ".json"
+        _resp = "/tmp/wb_fetch_resp_" + _wb_eid + ".json"
+        with open(_req + ".tmp", "w") as _fh:
+            json.dump({"path": _rel}, _fh)
+        _os.replace(_req + ".tmp", _req)
+        _deadline = _time.time() + _timeout
+        while _time.time() < _deadline:
+            if _os.path.exists(_resp):
+                try:
+                    with open(_resp) as _fh:
+                        _data = json.load(_fh)
+                except (ValueError, OSError):
+                    _time.sleep(0.05)
+                    continue
+                _os.remove(_resp)
+                if _data.get("error"):
+                    raise IOError("workbench fetch of '" + _rel + "' failed: " + str(_data["error"]))
+                _bytes = _b64.b64decode(_data.get("content_b64", ""))
+                _full = _os.path.join(_wb_root, _rel)
+                with open(_full + ".tmp", "wb") as _fh:
+                    _fh.write(_bytes)
+                _os.replace(_full + ".tmp", _full)
+                _wb_lazy_unfetched.discard(_rel)
+                _wb_hashes[_rel] = _data.get("sha256") or _hashlib.sha256(_bytes).hexdigest()
+                return path
+            _time.sleep(0.1)
+        raise TimeoutError("workbench fetch of '" + _rel + "' timed out")
+
+    _wb_real_open = _builtins.open
+
+    def _wb_open(file, *args, **kwargs):
+        _rel = None
+        if isinstance(file, (str, bytes, _os.PathLike)) and _wb_lazy_unfetched:
+            try:
+                _fp = _os.fsdecode(file)
+                _rel = _os.path.relpath(_os.path.abspath(_fp), _wb_root).replace(_os.sep, "/")
+            except (OSError, ValueError, TypeError):
+                _rel = None
+        if _rel is not None and _rel in _wb_lazy_unfetched:
+            _mode = args[0] if args else kwargs.get("mode", "r")
+            # A plain overwrite ("w"/"x") doesn't need the old bytes; any
+            # other mode must fetch first — and a failed fetch must raise,
+            # never fall through to the empty stub.
+            if any(_c in str(_mode) for _c in ("r", "a", "+")):
+                workbench_fetch(_fp)
+            else:
+                _wb_lazy_unfetched.discard(_rel)
+        return _wb_real_open(file, *args, **kwargs)
+
+    _builtins.open = _wb_open
+    _io.open = _wb_open
 '''
         workbench_teardown = '''
+    _builtins.open = _wb_real_open
+    _io.open = _wb_real_open
     _wb_changes = []
     _wb_return_skipped = []
     try:
@@ -451,6 +573,9 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
                 _full = _os.path.join(_dirpath, _fn)
                 _rel = _os.path.relpath(_full, _wb_root).replace(_os.sep, "/")
                 if _os.path.islink(_full):
+                    continue
+                if _rel in _wb_lazy_unfetched:
+                    # Still a stub — the empty bytes are not the file's state.
                     continue
                 _size = _os.path.getsize(_full)
                 if _size > _max_file or _total + _size > _max_total:

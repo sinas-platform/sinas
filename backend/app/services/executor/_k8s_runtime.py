@@ -367,59 +367,79 @@ async def run_payload_in_pod(
     namespace: str,
     payload: dict[str, Any],
     timeout: int,
+    fetch_handler=None,
 ) -> dict[str, Any]:
     """Run one execute_inline payload against the pod's executor daemon.
 
-    Same request/trigger/result-file protocol as the Docker runtimes. Returns
-    the parsed wire dict; raises on infra errors (exec failure, bad JSON).
+    Same request/trigger/result-file protocol as the Docker runtimes,
+    including the lazy-fetch extension: workbench file requests from the
+    wrapper are served through `fetch_handler` and the wait re-entered.
+    Returns the parsed wire dict; raises on infra errors (exec failure,
+    bad JSON).
     """
+    import time as _time
+
+    from app.core.config import settings
+    from app.services.executor._wire import (
+        build_wait_script,
+        fetch_response_path,
+        parse_wait_output,
+    )
+
     eid = payload["execution_id"]
     request_path = f"/tmp/exec_request_{eid}.json"
-    trigger_file = f"/tmp/exec_trigger_{eid}"
-    result_file = f"/tmp/exec_result_{eid}.json"
 
-    payload_json = json.dumps(payload)
-    writer = _STDIN_WRITER.format(path=request_path)
-    stdout, stderr, rc = await asyncio.to_thread(
-        _exec_blocking,
-        name,
-        namespace,
-        ["python3", "-c", writer],
-        stdin_payload=payload_json,
-        timeout=60,
-    )
-    expected = f"WROTE {len(payload_json.encode('utf-8'))}"
-    if expected not in stdout:
-        raise RuntimeError(
-            f"Failed to write request into sandbox pod {name}: "
-            f"rc={rc} stdout={stdout[-500:]!r} stderr={stderr[-500:]!r}"
+    async def _write_into_pod(path: str, data: str) -> None:
+        writer = _STDIN_WRITER.format(path=path)
+        stdout, stderr, rc = await asyncio.to_thread(
+            _exec_blocking,
+            name,
+            namespace,
+            ["python3", "-c", writer],
+            stdin_payload=data,
+            timeout=60,
         )
+        expected = f"WROTE {len(data.encode('utf-8'))}"
+        if expected not in stdout:
+            raise RuntimeError(
+                f"Failed to write {path} into sandbox pod {name}: "
+                f"rc={rc} stdout={stdout[-500:]!r} stderr={stderr[-500:]!r}"
+            )
 
-    poll_script = f"""
-import sys, json, time, os
-with open("{trigger_file}", "w") as f:
-    f.write("1")
-max_wait = {timeout}
-start = time.time()
-while time.time() - start < max_wait:
-    if os.path.exists("{result_file}"):
-        with open("{result_file}", "r") as f:
-            data = json.load(f)
-        print(json.dumps(data))
-        sys.exit(0)
-    time.sleep(0.1)
-print(json.dumps({{"status": "failed", "error": "Execution timeout after {timeout}s"}}))
-sys.exit(1)
-"""
-    stdout, stderr, rc = await asyncio.to_thread(
-        _exec_blocking,
-        name,
-        namespace,
-        ["python3", "-c", poll_script],
-        timeout=timeout + 30,
-    )
-    if not stdout.strip():
-        raise RuntimeError(
-            f"No result from sandbox pod {name}: rc={rc} stderr={stderr[-500:]!r}"
+    await _write_into_pod(request_path, json.dumps(payload))
+
+    deadline = _time.time() + timeout
+    first_wait = True
+    fetches_served = 0
+    while True:
+        remaining = max(1.0, deadline - _time.time())
+        stdout, stderr, rc = await asyncio.to_thread(
+            _exec_blocking,
+            name,
+            namespace,
+            ["python3", "-c", build_wait_script(eid, remaining, write_trigger=first_wait)],
+            timeout=remaining + 30,
         )
-    return json.loads(stdout.strip())
+        first_wait = False
+        if not stdout.strip():
+            raise RuntimeError(
+                f"No result from sandbox pod {name}: rc={rc} stderr={stderr[-500:]!r}"
+            )
+        envelope = parse_wait_output(stdout)
+        if envelope is None:
+            return json.loads(stdout.strip())
+
+        if envelope["kind"] == "fetch":
+            req = envelope.get("req") or {}
+            path = req.get("path", "")
+            fetches_served += 1
+            if fetch_handler is None:
+                resp: dict[str, Any] = {"path": path, "error": "lazy fetch is not available"}
+            elif fetches_served > settings.workbench_lazy_fetch_max_calls:
+                resp = {"path": path, "error": "lazy fetch call limit reached for this execution"}
+            else:
+                resp = await fetch_handler(path)
+            await _write_into_pod(fetch_response_path(eid), json.dumps(resp))
+            continue
+
+        return envelope["data"]

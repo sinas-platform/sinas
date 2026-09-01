@@ -305,6 +305,11 @@ class Settings(BaseSettings):
     # applied to workbench file uploads, mirroring collection content filters
     # (e.g. the sensitive-image filter). Unset = uploads are not filtered.
     workbench_content_filter_function: Optional[str] = None
+    # Lazy fetch: files above the eager cap materialize as stubs and are
+    # fetched on first read over the sandbox pause channel, bounded per fetch
+    # and per execution.
+    workbench_lazy_fetch_max_bytes: int = 64 * 1024 * 1024
+    workbench_lazy_fetch_max_calls: int = 100
 
     # Tool results above this many characters are truncated (structure-aware,
     # see services/tool_execution.truncate_tool_result) before they enter the

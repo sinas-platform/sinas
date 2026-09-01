@@ -341,7 +341,10 @@ async def get_available_tools(
             code_exec_tool["function"]["description"] += (
                 " The workbench files of this chat are materialized into the "
                 "working directory, and files you create or modify there are "
-                "persisted back to the workbench after the run."
+                "persisted back to the workbench after the run. Large files "
+                "appear as lazy stubs whose content loads automatically on "
+                "open(); call workbench_fetch(path) first when passing a lazy "
+                "file to native code that bypasses Python's open()."
             )
         tools.append(code_exec_tool)
     if has_system_tool(system_tools, "packageManagement"):
