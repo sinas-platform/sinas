@@ -79,6 +79,45 @@ we validate against traversal.
 Scope is **per-chat** in v1. A per-task/per-delegation scope can layer on
 later by keying the backing collection differently; don't design for it now.
 
+### Metadata and visibility
+
+Collections today gate access in two layers: a namespaced collection
+permission (`collection_tools.py:339-348`), then per-file `visibility`
+(`private` = owner-only for reads, hidden from others' search;
+`shared` = readable by anyone holding the collection permission —
+`collection_tools.py:378,490`). A workbench collapses this: the tree
+belongs to the chat, and the chat belongs to one user, so there is nothing
+for `shared` to mean inside it.
+
+- **Every workbench file is `visibility="private"`, `user_id` = the chat's
+  owner.** The workbench-bound tool path sets this unconditionally — note
+  the plain tool path defaults writes to `"shared"` today
+  (`collection_tools.py:619`), so this is an explicit override, not an
+  inherited default. With everything private, the existing per-file checks
+  already deny reads and hide search results for any other user who
+  reaches the backing collection through generic code paths.
+- **Authorization derives from chat access, not collection grants.** The
+  reserved `_workbench` namespace is excluded from wildcard collection
+  permission matching (`collections:*` must not sweep in other people's
+  workbenches) and from collection listings; the rule is: you can reach a
+  workbench iff you can reach its chat. Operator/support access to
+  workbench contents, if wanted, is its own explicit permission — never a
+  side effect of a broad collection grant. This is belt-and-braces on top
+  of the private-visibility guarantee, and it's the part to test
+  adversarially.
+- **`metadata_schema` / `file_metadata`:** backing collections carry no
+  metadata schema (free-form); `file_metadata` stays available and is where
+  workbench bookkeeping lives (e.g. `origin: upload | tool | execution`,
+  originating execution id).
+- **Nothing is inherited implicitly at promotion.** Promotion re-decides
+  visibility (default: private to the promoting user), validates
+  `file_metadata` against the target collection's `metadata_schema` — a
+  promotion can legitimately fail validation — and runs the target's hooks.
+- **Sync safety follows from single ownership:** the sandbox receives the
+  whole tree, which is fine only because every file in it is the chat
+  owner's. If multi-participant chats ever arrive, workbench visibility
+  semantics must be redesigned *before* those chats get workbench sync.
+
 ### Execution: sync first, mount later
 
 The design decision with teeth is mount vs sync. **Decide: copy-in/copy-out
