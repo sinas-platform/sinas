@@ -334,6 +334,12 @@ class WorkbenchTools:
             else:
                 checked_out.append({"filename": f.name, "source_version": version.version_number})
 
+        # Tool calls run in their own session that is discarded without a
+        # commit (the reused converter tools commit internally) — persist
+        # explicitly here.
+        if checked_out:
+            await db.commit()
+
         out: dict[str, Any] = {"collection": coll_ref, "checked_out": checked_out, "count": len(checked_out)}
         if errors:
             out["errors"] = errors
@@ -422,7 +428,7 @@ class WorkbenchTools:
                 new_meta = dict(wb_file.file_metadata or {})
                 new_meta[PROVENANCE_KEY] = {**provenance, "version": result["version"]}
                 wb_file.file_metadata = new_meta
-                await db.flush()
+                await db.commit()  # tool sessions are discarded uncommitted
                 return {**result, "collection": coll_ref, "updated_source": True}
             # Source file vanished — fall through to create-new.
 
@@ -446,6 +452,7 @@ class WorkbenchTools:
         )
         if "error" in result:
             return result
+        await db.commit()  # tool sessions are discarded uncommitted
         return {**result, "collection": coll_ref, "updated_source": False}
 
     # ── helpers ─────────────────────────────────────────────────────
