@@ -128,7 +128,8 @@ class AgentCreate(BaseModel):
             "Opt-in Sinas platform tools. Simple string for tools with no config, "
             "or {name, ...config} for tools that need parameters. "
             "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
-            "'databaseIntrospection' (requires connections list)."
+            "'databaseIntrospection' (requires connections list), 'workbench' "
+            "(per-chat persistent working tree)."
         ),
     )
 

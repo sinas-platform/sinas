@@ -115,6 +115,24 @@ export interface Chat {
   last_message_at: string | null;
 }
 
+export interface WorkbenchFile {
+  name: string;
+  content_type: string;
+  current_version: number;
+  size_bytes: number | null;
+  file_metadata: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkbenchFileContent {
+  name: string;
+  content_base64: string;
+  content_type: string;
+  version: number;
+  file_metadata: Record<string, any>;
+}
+
 export interface ChatCreate {
   title?: string;
   input?: Record<string, any>;
