@@ -781,6 +781,18 @@ async def execute_single_tool(
                     arguments=arguments,
                     create_chat_with_agent_fn=create_chat_with_agent_fn,
                 )
+            elif tool_metadata.get("tool_type", "").startswith("workbench_"):
+                start_time = time.time()
+                from app.services.workbench import WorkbenchTools
+
+                result = await WorkbenchTools().execute_tool(
+                    db=db,
+                    chat=chat,
+                    user_id=user_id,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                )
+                logger.debug(f"Workbench tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("tool_type", "").startswith("collection_"):
                 start_time = time.time()
                 result = await collection_converter.execute_tool(

@@ -346,6 +346,9 @@ async def get_available_tools(
     if has_system_tool(system_tools, "databaseIntrospection"):
         from app.services.db_introspection_tools import get_db_introspection_tool_definitions
         tools.extend(get_db_introspection_tool_definitions())
+    if has_system_tool(system_tools, "workbench"):
+        from app.services.workbench import get_workbench_tool_definitions
+        tools.extend(get_workbench_tool_definitions())
 
     # Check for paused executions belonging to this chat
     result = await db.execute(

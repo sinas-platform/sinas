@@ -1,6 +1,6 @@
 # ADR: Workbench — one mutable file tree under both file tools and code execution
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-01; `kind` discriminator confirmed, one workbench per chat — cross-chat sharing goes through collections via checkout/promote)
 - **Date:** 2026-09-01
 - **Authors:** Kjeld Oostra (with Claude)
 - **Related code:**

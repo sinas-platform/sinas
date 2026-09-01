@@ -109,14 +109,16 @@ class CollectionToolConverter:
                 continue
 
             if coll_ref == "*/*":
-                result = await db.execute(select(Collection))
+                result = await db.execute(select(Collection).where(Collection.kind == "collection"))
                 for c in result.scalars().all():
                     if c.id not in seen_ids:
                         seen_ids.add(c.id)
                         expanded_entries.append((f"{c.namespace}/{c.name}", access, c))
             elif coll_ref.endswith("/*"):
                 ns = coll_ref[:-2]
-                result = await db.execute(select(Collection).where(Collection.namespace == ns))
+                result = await db.execute(
+                    select(Collection).where(Collection.namespace == ns, Collection.kind == "collection")
+                )
                 for c in result.scalars().all():
                     if c.id not in seen_ids:
                         seen_ids.add(c.id)
@@ -571,8 +573,13 @@ class CollectionToolConverter:
         namespace: str,
         user_id: str,
         arguments: dict[str, Any],
+        visibility: str = "shared",
     ) -> dict[str, Any]:
-        """Write content to a file, creating a new version if it exists."""
+        """Write content to a file, creating a new version if it exists.
+
+        visibility applies to newly created files only ("shared" keeps the
+        historical tool behavior; workbench writes pass "private").
+        """
         import uuid as uuid_lib
         filename = arguments.get("filename")
         content = arguments.get("content")
@@ -616,7 +623,7 @@ class CollectionToolConverter:
                 content_type=content_type,
                 current_version=1,
                 file_metadata={},
-                visibility="shared",
+                visibility=visibility,
             )
             db.add(file_record)
             created = True
