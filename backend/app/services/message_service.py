@@ -368,10 +368,77 @@ class MessageService:
             "agent_label": f"{agent.namespace}/{agent.name}" if agent else None,
         }
 
+    async def inject_user_message(
+        self, chat_id: str, user_id: str, content: str
+    ) -> Optional[Message]:
+        """Steer a running agent loop: persist the user message so the loop's
+        next round boundary picks it up (the conversation is rebuilt from the
+        DB every round). Runs on_user_message hooks first — a blocked message
+        is not persisted and None is returned."""
+        result = await self.db.execute(
+            select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id)
+        )
+        chat = result.scalar_one_or_none()
+        if not chat:
+            raise ValueError("Chat not found")
+
+        agent = None
+        if chat.agent_id:
+            agent = (
+                await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
+            ).scalar_one_or_none()
+
+        final_content = content
+        if agent and agent.hooks and agent.hooks.get("on_user_message"):
+            hook_result = await run_hooks(
+                hooks=agent.hooks["on_user_message"],
+                message_content=content,
+                message_role="user",
+                chat_id=chat_id,
+                agent_namespace=agent.namespace,
+                agent_name=agent.name,
+                user_id=user_id,
+                session_key=getattr(chat, "session_key", None),
+            )
+            if hook_result.blocked:
+                return None
+            if hook_result.mutated_content:
+                final_content = hook_result.mutated_content
+
+        message = Message(
+            chat_id=chat_id, role="user", content=strip_base64_data(final_content)
+        )
+        self.db.add(message)
+        await self.db.commit()
+        await self.db.refresh(message)
+        return message
+
     async def send_message(
         self, chat_id: str, user_id: str, user_token: str, content: str
     ) -> Message:
-        """Send a message and get LLM response (non-streaming)."""
+        """Send a message and get LLM response (non-streaming).
+
+        One loop per chat: if another loop is already running this chat, the
+        message is injected into it (picked up at the next tool-round
+        boundary) instead of starting a concurrent loop.
+        """
+        from app.services import chat_steering
+
+        lock_token = await chat_steering.acquire_chat_lock(chat_id)
+        if lock_token is None:
+            injected = await self.inject_user_message(chat_id, user_id, content)
+            if injected is None:
+                raise ValueError("Message blocked by hook")
+            return injected
+        try:
+            await chat_steering.clear_interrupt(chat_id)
+            return await self._send_message_locked(chat_id, user_id, user_token, content)
+        finally:
+            await chat_steering.release_chat_lock(chat_id, lock_token)
+
+    async def _send_message_locked(
+        self, chat_id: str, user_id: str, user_token: str, content: str
+    ) -> Message:
         prep = await self._prepare_message_context(
             chat_id=chat_id,
             user_id=user_id,
@@ -532,7 +599,47 @@ class MessageService:
         user_token: str,
         content: str,
     ) -> AsyncIterator[dict[str, Any]]:
-        """Send a message and stream LLM response."""
+        """Send a message and stream LLM response.
+
+        One loop per chat: if a loop is already running this chat, the
+        message is injected into it (the running loop drains it at its next
+        tool-round boundary) and a single "injected" event is emitted
+        instead of starting a concurrent loop.
+        """
+        from app.services import chat_steering
+
+        lock_token = await chat_steering.acquire_chat_lock(chat_id)
+        if lock_token is None:
+            injected = await self.inject_user_message(chat_id, user_id, content)
+            if injected is None:
+                yield {"type": "error", "error": "Message blocked by hook"}
+            else:
+                yield {
+                    "type": "injected",
+                    "message_id": str(injected.id),
+                    "content": (
+                        "Message delivered into the running turn — the agent "
+                        "will see it at its next step."
+                    ),
+                }
+            yield {"type": "done", "status": "injected"}
+            return
+        try:
+            await chat_steering.clear_interrupt(chat_id)
+            async for chunk in self._send_message_stream_locked(
+                chat_id=chat_id, user_id=user_id, user_token=user_token, content=content
+            ):
+                yield chunk
+        finally:
+            await chat_steering.release_chat_lock(chat_id, lock_token)
+
+    async def _send_message_stream_locked(
+        self,
+        chat_id: str,
+        user_id: str,
+        user_token: str,
+        content: str,
+    ) -> AsyncIterator[dict[str, Any]]:
         prep = await self._prepare_message_context(
             chat_id=chat_id,
             user_id=user_id,
@@ -889,6 +996,31 @@ class MessageService:
         # Separate tool calls into parallel and sequential groups
         valid_tool_calls = [tc for tc in tool_calls if tc.get("id")]
 
+        # Cooperative interrupt (issue #142): boundary check before executing
+        # this round's tools. Synthetic tool results keep the transcript
+        # provider-valid — an assistant message with tool_calls must never be
+        # left without matching tool results.
+        from app.services import chat_steering
+
+        if await chat_steering.consume_interrupt(chat_id):
+            interrupted_result = json.dumps({"error": "Interrupted by operator before execution"})
+            for tc in valid_tool_calls:
+                self.db.add(
+                    Message(
+                        chat_id=chat_id,
+                        role="tool",
+                        content=interrupted_result,
+                        tool_call_id=tc["id"],
+                        name=tc["function"]["name"],
+                    )
+                )
+            self.db.add(
+                Message(chat_id=chat_id, role="system", content=chat_steering.INTERRUPT_MARKER)
+            )
+            await self.db.commit()
+            yield {"type": "interrupted", "content": chat_steering.INTERRUPT_MARKER}
+            return
+
         # Suspend-on-delegate (issue #90): in "suspend" mode, agent-delegation
         # tools are split off — they don't execute (and block) here. After the
         # regular tools finish, the children are enqueued and this generator
@@ -1160,7 +1292,22 @@ class MessageService:
         are persisted as Message rows. Called inline by _handle_tool_calls,
         and re-entered by execute_agent_delegate_resume_job once suspended
         sub-agents have reported back (issue #90).
+
+        This is the tool-round boundary: the conversation is rebuilt from
+        the DB here, which is also what makes mid-turn injection work — a
+        user message persisted while the round ran is picked up now. The
+        cooperative interrupt is checked at the same point.
         """
+        from app.services import chat_steering
+
+        if await chat_steering.consume_interrupt(chat_id):
+            self.db.add(
+                Message(chat_id=chat_id, role="system", content=chat_steering.INTERRUPT_MARKER)
+            )
+            await self.db.commit()
+            yield {"type": "interrupted", "content": chat_steering.INTERRUPT_MARKER}
+            return
+
         result_chat = await self.db.execute(select(Chat).where(Chat.id == chat_id))
         chat = result_chat.scalar_one_or_none()
 

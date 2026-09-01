@@ -997,6 +997,44 @@ async def update_chat(
     )
 
 
+@router.post("/chats/{chat_id}/interrupt")
+async def interrupt_chat(
+    chat_id: str,
+    http_request: Request,
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stop the chat's running agent loop without touching the transcript
+    (issue #142).
+
+    Arms a cooperative interrupt: the loop stops at its next tool-round
+    boundary and appends an 'interrupted by operator' system marker; queued
+    continuation jobs that start within the flag's TTL stop immediately.
+    The chat and its messages stay intact, and the next user message clears
+    the flag and starts a fresh turn.
+    """
+    user_id, permissions = current_user_data
+
+    result = await db.execute(select(Chat).where(Chat.id == chat_id, Chat.user_id == user_id))
+    chat = result.scalar_one_or_none()
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    if not check_permission(permissions, agent_chat_perm):
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+    set_permission_used(http_request, agent_chat_perm)
+
+    from app.services import chat_steering
+
+    was_running = await chat_steering.is_chat_locked(chat_id)
+    await chat_steering.request_interrupt(chat_id, requested_by=user_id)
+    return {"interrupted": True, "was_running": was_running}
+
+
 @router.delete("/chats/{chat_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chat(
     chat_id: str,
