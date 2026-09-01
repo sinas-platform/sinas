@@ -301,6 +301,10 @@ class Settings(BaseSettings):
     # than materialized; the total cap bounds one execution's transfer.
     workbench_sync_max_file_bytes: int = 2 * 1024 * 1024
     workbench_sync_max_total_bytes: int = 32 * 1024 * 1024
+    # Optional deployment-wide content filter ("namespace/name" of a Function)
+    # applied to workbench file uploads, mirroring collection content filters
+    # (e.g. the sensitive-image filter). Unset = uploads are not filtered.
+    workbench_content_filter_function: Optional[str] = None
 
     # Tool results above this many characters are truncated (structure-aware,
     # see services/tool_execution.truncate_tool_result) before they enter the

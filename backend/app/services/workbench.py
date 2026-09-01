@@ -385,8 +385,15 @@ class WorkbenchTools:
             return {"error": f"Failed to read '{filename}': {e}"}
 
         if target.content_filter_function:
-            filter_err = await self._run_content_filter(
-                db, target, namespace, name, filename, content, wb_file.content_type, user_id
+            filter_err = await run_content_filter(
+                db,
+                target.content_filter_function,
+                namespace=namespace,
+                collection_name=name,
+                filename=filename,
+                content=content,
+                content_type=wb_file.content_type,
+                user_id=user_id,
             )
             if filter_err:
                 return filter_err
@@ -484,68 +491,71 @@ class WorkbenchTools:
             }
         return None
 
-    async def _run_content_filter(
-        self,
-        db: AsyncSession,
-        target: Collection,
-        namespace: str,
-        name: str,
-        filename: str,
-        content: bytes,
-        content_type: str,
-        user_id: str,
-    ) -> Optional[dict[str, Any]]:
-        """Run the target collection's content filter; None means approved.
 
-        Same contract as the upload endpoint: the filter function receives
-        the candidate file and must return {"approved": true} for the write
-        to proceed.
-        """
-        import base64
 
-        from app.models.function import Function
-        from app.models.execution import TriggerType
-        from app.services.queue_service import queue_service
+async def run_content_filter(
+    db: AsyncSession,
+    function_ref: str,
+    *,
+    namespace: str,
+    collection_name: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    user_id: str,
+) -> Optional[dict[str, Any]]:
+    """Run a content filter function against candidate bytes; None = approved.
 
-        filter_namespace, filter_name = target.content_filter_function.split("/")
-        func_record = await Function.get_by_name(db, filter_namespace, filter_name)
-        if not func_record:
-            return {
-                "error": (
-                    f"Content filter function '{target.content_filter_function}' "
-                    f"configured on '{namespace}/{name}' was not found"
-                )
-            }
-        try:
-            filter_result = await queue_service.enqueue_and_wait(
-                function_namespace=filter_namespace,
-                function_name=filter_name,
-                input_data={
-                    "content_base64": base64.b64encode(content).decode(),
-                    "namespace": namespace,
-                    "collection": name,
-                    "filename": filename,
-                    "content_type": content_type,
-                    "size_bytes": len(content),
-                    "user_metadata": {},
-                    "user_id": user_id,
-                },
-                execution_id=str(uuid_lib.uuid4()),
-                trigger_type=TriggerType.MANUAL.value,
-                trigger_id=f"content_filter:{namespace}/{name}",
-                user_id=user_id,
+    Same contract as the collection upload endpoint: the filter receives the
+    candidate file and must return {"approved": true} for the write to
+    proceed. Used by workbench_promote (the target collection's filter) and
+    by workbench uploads (the deployment-wide workbench filter setting).
+    """
+    import base64
+
+    from app.models.execution import TriggerType
+    from app.models.function import Function
+    from app.services.queue_service import queue_service
+
+    filter_namespace, filter_name = function_ref.split("/")
+    func_record = await Function.get_by_name(db, filter_namespace, filter_name)
+    if not func_record:
+        return {
+            "error": (
+                f"Content filter function '{function_ref}' "
+                f"configured for '{namespace}/{collection_name}' was not found"
             )
-        except Exception as e:
-            return {"error": f"Content filter failed to run: {e}"}
-        if not (isinstance(filter_result, dict) and filter_result.get("approved")):
-            reason = ""
-            if isinstance(filter_result, dict):
-                reason = filter_result.get("reason") or filter_result.get("message") or ""
-            return {
-                "error": "Rejected by content filter",
-                "message": reason or f"'{namespace}/{name}' declined this file.",
-            }
-        return None
+        }
+    try:
+        filter_result = await queue_service.enqueue_and_wait(
+            function_namespace=filter_namespace,
+            function_name=filter_name,
+            input_data={
+                "content_base64": base64.b64encode(content).decode(),
+                "namespace": namespace,
+                "collection": collection_name,
+                "filename": filename,
+                "content_type": content_type,
+                "size_bytes": len(content),
+                "user_metadata": {},
+                "user_id": user_id,
+            },
+            execution_id=str(uuid_lib.uuid4()),
+            trigger_type=TriggerType.MANUAL.value,
+            trigger_id=f"content_filter:{namespace}/{collection_name}",
+            user_id=user_id,
+        )
+    except Exception as e:
+        return {"error": f"Content filter failed to run: {e}"}
+    if not (isinstance(filter_result, dict) and filter_result.get("approved")):
+        reason = ""
+        if isinstance(filter_result, dict):
+            reason = filter_result.get("reason") or filter_result.get("message") or ""
+        return {
+            "error": "Rejected by content filter",
+            "message": reason or f"'{namespace}/{collection_name}' declined this file.",
+        }
+    return None
 
 
 # ---------------------------------------------------------------------------

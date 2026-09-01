@@ -454,3 +454,82 @@ class TestSandboxSync:
         ns["handler"]({"workbench_files": [], "workbench_limits": {}}, {})
         after = set(glob.glob(os.path.join(tempfile.gettempdir(), "workbench_*")))
         assert after == before
+
+
+# ---------------------------------------------------------------------------
+# Runtime workbench API (chat uploads + browsing)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkbenchAPI:
+    @pytest.mark.asyncio
+    async def test_upload_list_read_delete_roundtrip(self, db, chat, client, test_user):
+        import base64
+
+        headers = auth_headers(test_user)
+        upload = {
+            "name": "data/report.csv",
+            "content_base64": base64.b64encode(b"a,b\n1,2\n").decode(),
+        }
+        resp = await client.post(f"/chats/{chat.id}/workbench/files", json=upload, headers=headers)
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["name"] == "data/report.csv"
+        assert body["content_type"] == "text/csv"
+        assert body["file_metadata"]["origin"] == "upload"
+
+        # The stored file is private and owned by the chat user
+        wb = await get_or_create_workbench(db, chat)
+        from sqlalchemy import select
+        f = (await db.execute(select(File).where(File.collection_id == wb.id))).scalar_one()
+        assert f.visibility == "private"
+
+        resp = await client.get(f"/chats/{chat.id}/workbench/files", headers=headers)
+        assert resp.status_code == 200
+        assert [e["name"] for e in resp.json()] == ["data/report.csv"]
+
+        resp = await client.get(
+            f"/chats/{chat.id}/workbench/files/data/report.csv", headers=headers
+        )
+        assert resp.status_code == 200
+        assert base64.b64decode(resp.json()["content_base64"]) == b"a,b\n1,2\n"
+
+        resp = await client.delete(
+            f"/chats/{chat.id}/workbench/files/data/report.csv", headers=headers
+        )
+        assert resp.status_code == 204
+        resp = await client.get(
+            f"/chats/{chat.id}/workbench/files/data/report.csv", headers=headers
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_other_users_chat_is_404(self, chat, client, admin_user):
+        resp = await client.get(f"/chats/{chat.id}/workbench/files", headers=auth_headers(admin_user))
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_traversal_upload_rejected(self, chat, client, test_user):
+        import base64
+
+        resp = await client.post(
+            f"/chats/{chat.id}/workbench/files",
+            json={"name": "../../etc/passwd", "content_base64": base64.b64encode(b"x").decode()},
+            headers=auth_headers(test_user),
+        )
+        assert resp.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_agent_tools_see_uploaded_file(self, db, chat, client, test_user):
+        import base64
+
+        resp = await client.post(
+            f"/chats/{chat.id}/workbench/files",
+            json={"name": "notes.md", "content_base64": base64.b64encode(b"# hi").decode()},
+            headers=auth_headers(test_user),
+        )
+        assert resp.status_code == 201
+        result = await WorkbenchTools().execute_tool(
+            db, chat, str(test_user.id), "workbench_read", {"filename": "notes.md"}
+        )
+        assert "# hi" in str(result)
