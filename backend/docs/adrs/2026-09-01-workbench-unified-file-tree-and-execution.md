@@ -48,7 +48,8 @@ Introduce the **Workbench**: a per-chat mutable file tree that
 
 ### Naming
 
-"Workspace" is out: it already informally means the whole tenant in this
+**Decided: Workbench** (2026-09-01). The shortlist below is kept for the
+record. "Workspace" is out: it already informally means the whole tenant in this
 codebase (`agent.py:29` — "NULL = workspace-wide") and collides with
 claude.ai/Slack workspace vocabulary. Candidates considered:
 
@@ -96,8 +97,30 @@ sandbox runtimes and changes nothing about the sandbox trust boundary:
 - **Deltas, not full trees:** `FileVersion` already stores a content hash;
   send only what the sandbox hasn't seen (matters for `docker_pool`, where a
   warm container can keep its tree and receive deltas keyed on chat_id).
-  Cap tree size and per-file size from settings; oversized files stay
-  tool-accessible but are listed, not materialized, in the sandbox.
+  Cap eager materialization by per-file and total-tree size from settings.
+
+**Oversized files: lazy fetch over the pause channel.** Files above the
+eager cap (and, by the same mechanism, any file when the tree as a whole is
+too big) are materialized as **stubs** — the path exists, a manifest marks
+it lazy. "The file is needed" is signaled by the sandbox trying to read it:
+
+- The wrapper patches Python-level reads (`builtins.open` / `Path.open` /
+  `os.open`) for paths under the workbench root; a read of a lazy path
+  triggers a fetch instead of returning stub bytes.
+- The fetch transport is the **pause/resume channel that already exists**:
+  the executor protocol's `AWAITING_INPUT` generalizes to typed pause
+  requests (`kind: "fetch_file"`) that the backend auto-completes with the
+  version's content instead of waiting on a human — the exact "pluggable
+  completers" generalization the deferred-tools design already calls for,
+  so this is convergent work, not a side quest. On resume the wrapper
+  writes the real bytes over the stub and the read proceeds; `docker_pool`
+  containers keep fetched blobs by content hash, so each is paid for once.
+- The Python-level hook can't see raw reads from C extensions (memmap,
+  DB engines opening files directly). For those the sandbox context gets an
+  explicit `workbench.fetch(path)` helper, and the lazy manifest is visible
+  to the agent, so the model knows which paths to fetch before handing them
+  to native code. Good enough for v1; a FUSE layer that makes laziness
+  fully transparent is a later option behind the same interface.
 
 A k8s RWX subpath mount is a **later optimization behind the same
 interface**, not the v1: it requires RWX in prod, punches the file-storage
@@ -111,6 +134,31 @@ mechanics; binding a pooled container to a chat for its lifetime is a cost/
 lifecycle problem to take on only after sync proves the experience. Sync
 makes warmth an optimization instead of a correctness requirement — pool
 affinity by `chat_id` gets most of the feel with none of the lifecycle risk.
+
+### Chat uploads land in the workbench
+
+Chat uploads currently target a collection directly, which conflates "hand
+the agent a file to work on" with "commit a document to the curated
+library". With workbenches, uploads default to the chat's workbench, and
+**promotion** to a real collection is an explicit action (agent tool +
+UI affordance) that copies the current version out.
+
+The safety property collections provide today — pre/post upload hooks, used
+e.g. to filter sensitive images so they are never stored — carries over for
+free, because a workbench **is** a collection: workbench backing collections
+carry a deployment-level (overridable per-agent) default hook chain, so an
+upload to the workbench passes the same pre-upload filter before any bytes
+persist. Promotion then runs the *target* collection's own hooks at
+promotion time, since its policy may be stricter.
+
+Explicitly rejected: two-way sync between a workbench and a collection.
+It turns every sandbox write into a potential mutation of a curated,
+shared collection, needs conflict resolution in both directions, and
+double-writes version history. One-way promotion keeps the mental model
+(bench = working copy, shelf = published) and the audit trail clean.
+Front-ends that want today's behavior can still upload straight to a
+collection — the runtime upload endpoint keeps accepting an explicit
+collection target.
 
 ### Enablement
 
@@ -150,17 +198,16 @@ gains the sync behavior. This flag is the **only** config-apply touchpoint.
 
 ## Open questions
 
-1. Final name — Workbench is the recommendation; decide before code lands.
-2. Concurrency: what happens when two executions in one chat overlap? The
+1. Concurrency: what happens when two executions in one chat overlap? The
    per-chat lock from the steering triad is the clean answer; until it
    lands, last-write-wins per file (each write is a version, so nothing is
    lost, merely shadowed).
-3. Binary/large files: v1 caps materialization size — is "listed but not
-   materialized" acceptable, or do we need lazy fetch from inside the
-   sandbox (implies a sandbox→backend channel we currently don't have and
-   may not want)?
-4. Does the workbench also become the default target for user file uploads
-   in chat? (Probably yes; out of scope here.)
+2. The eager/lazy size thresholds and the shape of the default workbench
+   hook chain (deployment-level only, or per-agent overridable from day
+   one?).
+3. Whether promotion preserves version history in the target collection
+   (copy current version only, or replay the workbench's versions?). v1
+   leans current-version-only.
 
 ## What we'd NOT do
 
@@ -168,6 +215,8 @@ gains the sync behavior. This flag is the **only** config-apply touchpoint.
 - No RWX mounts into sandboxes in v1.
 - No session-pinned warm sandboxes in v1 (pool affinity at most).
 - No per-task workbench scope in v1.
+- No two-way workbench↔collection sync — promotion is an explicit one-way
+  copy.
 - No config-apply resource for workbenches — runtime state only.
 
 ## Next steps
