@@ -668,3 +668,124 @@ class TestLazyFetchWrapper:
         import base64
         changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in output["workbench_changes"]}
         assert changes["size.txt"] == b"123"
+
+
+# ---------------------------------------------------------------------------
+# docker_pool delta sync + affinity
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaAndAffinity:
+    def test_wrapper_writes_and_reuses_blob_cache(self):
+        """First run ships bytes and populates /tmp/wb_cache; second run
+        ships a cached reference and the wrapper restores it from the cache."""
+        import base64
+        import hashlib
+        import os as _os
+        import uuid as _uuid
+
+        from app.services.code_execution import _build_wrapper
+
+        content = f"unique-{_uuid.uuid4().hex}".encode()
+        sha = hashlib.sha256(content).hexdigest()
+
+        wrapper = _build_wrapper("data = open('input.txt').read()\n", workbench=True)
+        ns: dict = {}
+        exec(wrapper, ns)
+        out = ns["handler"](
+            {
+                "workbench_files": [
+                    {"path": "input.txt", "content_b64": base64.b64encode(content).decode(), "sha256": sha}
+                ],
+                "workbench_limits": {},
+            },
+            {"execution_id": _uuid.uuid4().hex},
+        )
+        assert out["status"] == "completed", out
+        assert _os.path.exists(f"/tmp/wb_cache/{sha}")
+
+        # Second execution: cached reference only, no bytes.
+        wrapper2 = _build_wrapper(
+            "content = open('input.txt').read()\n"
+            "with open('echo.txt', 'w') as f:\n"
+            "    f.write(content)\n",
+            workbench=True,
+        )
+        ns2: dict = {}
+        exec(wrapper2, ns2)
+        out = ns2["handler"](
+            {
+                "workbench_files": [{"path": "input.txt", "sha256": sha, "cached": True}],
+                "workbench_limits": {},
+            },
+            {"execution_id": _uuid.uuid4().hex},
+        )
+        assert out["status"] == "completed", out
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in out["workbench_changes"]}
+        assert changes == {"echo.txt": content}
+
+    def test_cached_reference_with_cold_cache_degrades_to_lazy_fetch(self):
+        import base64
+        import hashlib
+        import threading
+        import uuid as _uuid
+
+        from app.services.code_execution import _build_wrapper
+
+        content = b"cold-cache-content"
+        sha = hashlib.sha256(b"never-cached-" + _uuid.uuid4().hex.encode()).hexdigest()
+        eid = _uuid.uuid4().hex
+
+        wrapper = _build_wrapper(
+            "data = open('cold.txt').read()\n"
+            "with open('copy.txt', 'w') as f:\n"
+            "    f.write(data)\n",
+            workbench=True,
+        )
+        ns: dict = {}
+        exec(wrapper, ns)
+        server = threading.Thread(
+            target=_serve_one_fetch, args=(eid, {"cold.txt": content}), daemon=True
+        )
+        server.start()
+        out = ns["handler"](
+            {
+                "workbench_files": [{"path": "cold.txt", "sha256": sha, "cached": True}],
+                "workbench_limits": {},
+            },
+            {"execution_id": eid},
+        )
+        server.join(timeout=5)
+        assert out["status"] == "completed", out
+        changes = {c["path"]: base64.b64decode(c["content_b64"]) for c in out["workbench_changes"]}
+        assert changes == {"copy.txt": content}
+
+    @pytest.mark.asyncio
+    async def test_pool_acquire_prefers_chat_affine_container(self):
+        from app.services.container_pool import ContainerPool, PooledContainer
+
+        pool = ContainerPool()
+
+        class _FakeContainers:
+            def get(self, name):
+                return object()
+
+        class _FakeClient:
+            containers = _FakeContainers()
+
+        pool._client = _FakeClient()
+        a = PooledContainer(name="sinas-sandbox-1", container_id="a")
+        b = PooledContainer(name="sinas-sandbox-2", container_id="b", last_chat_id="chat-42")
+        c = PooledContainer(name="sinas-sandbox-3", container_id="c")
+        pool.idle.extend([a, b, c])
+
+        got = await pool.acquire(timeout=1, chat_id="chat-42")
+        assert got is b
+
+        # Without affinity, FIFO order holds.
+        got = await pool.acquire(timeout=1)
+        assert got is a
+
+        # Affinity stamps the chat on whatever container was handed out.
+        got = await pool.acquire(timeout=1, chat_id="chat-7")
+        assert got is c and c.last_chat_id == "chat-7"

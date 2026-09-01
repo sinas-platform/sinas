@@ -305,15 +305,46 @@ async def execute(
     # Default: a reusable container from the warm pool.
     from app.services.container_pool import container_pool
 
-    pc = await container_pool.acquire()
+    pc = await container_pool.acquire(chat_id=chat_id)
     logger.info(f"Acquired sandbox container {pc.name} for code execution (chat={chat_id})")
+
+    # Delta copy-in: blobs this container has already seen ride as cached
+    # references instead of bytes (a wiped cache degrades to lazy fetch in
+    # the wrapper, so this is purely an optimization).
+    shipped_hashes: set[str] = set()
+    eager_files = workbench_input.get("workbench_files") or []
+    if eager_files:
+        delta_files = []
+        for entry in eager_files:
+            sha = entry.get("sha256")
+            if sha:
+                shipped_hashes.add(sha)
+            if sha and sha in pc.known_hashes:
+                delta_files.append({"path": entry["path"], "sha256": sha, "cached": True})
+            else:
+                delta_files.append(entry)
+        payload["input_data"] = {**workbench_input, "workbench_files": delta_files}
+
+    pool_fetch_handler = fetch_handler
+    if fetch_handler is not None:
+
+        async def pool_fetch_handler(path: str) -> dict[str, Any]:
+            resp = await fetch_handler(path)
+            # The wrapper caches fetched blobs too — remember them so the
+            # next execution on this container ships a reference.
+            if resp.get("sha256"):
+                pc.known_hashes.add(resp["sha256"])
+            return resp
+
     tainted = False
     try:
         container = await asyncio.to_thread(container_pool.client.containers.get, pc.name)
         result = await _run_code_payload(
             container, payload, execution_id, effective_timeout, start_time,
-            fetch_handler=fetch_handler,
+            fetch_handler=pool_fetch_handler,
         )
+        if result.get("error") is None:
+            pc.known_hashes.update(shipped_hashes)
         # Discard the container if the run errored (avoid handing leaked state on).
         if result.get("error") is not None:
             tainted = True
@@ -482,16 +513,55 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
     _wb_lazy_unfetched = set()
     _wb_root = _tempfile.mkdtemp(prefix="workbench_")
     _wb_old_cwd = _os.getcwd()
+    _wb_cache_dir = "/tmp/wb_cache"
+
+    def _wb_cache_put(sha, data):
+        try:
+            _os.makedirs(_wb_cache_dir, exist_ok=True)
+            _cp = _os.path.join(_wb_cache_dir, sha)
+            if not _os.path.exists(_cp):
+                with _wb_real_open(_cp + ".tmp", "wb") as _fh:
+                    _fh.write(data)
+                _os.replace(_cp + ".tmp", _cp)
+            # Bounded cache: drop oldest blobs beyond 256 entries.
+            _entries = sorted(
+                (_os.path.join(_wb_cache_dir, _n) for _n in _os.listdir(_wb_cache_dir)),
+                key=lambda _e: _os.path.getmtime(_e),
+            )
+            for _old in _entries[:-256]:
+                try:
+                    _os.remove(_old)
+                except OSError:
+                    pass
+        except OSError:
+            pass  # cache is an optimization; never fail the run over it
+
+    _wb_real_open = _builtins.open
     for _f in _wb_files:
         _p = _os.path.join(_wb_root, _f["path"])
         _os.makedirs(_os.path.dirname(_p), exist_ok=True)
-        with open(_p, "wb") as _fh:
-            _fh.write(_b64.b64decode(_f["content_b64"]))
-        _wb_hashes[_f["path"]] = _f["sha256"]
+        if _f.get("cached"):
+            # Delta copy-in: the backend believes this container already
+            # holds the blob. A cache miss (restarted/wiped container)
+            # degrades to a lazy stub — fetched on first read.
+            _cp = _os.path.join(_wb_cache_dir, _f["sha256"])
+            if _os.path.exists(_cp):
+                _shutil.copyfile(_cp, _p)
+                _wb_hashes[_f["path"]] = _f["sha256"]
+            else:
+                with _wb_real_open(_p, "wb"):
+                    pass
+                _wb_lazy_unfetched.add(_f["path"])
+        else:
+            _data = _b64.b64decode(_f["content_b64"])
+            with _wb_real_open(_p, "wb") as _fh:
+                _fh.write(_data)
+            _wb_hashes[_f["path"]] = _f["sha256"]
+            _wb_cache_put(_f["sha256"], _data)
     for _f in _wb_lazy:
         _p = _os.path.join(_wb_root, _f["path"])
         _os.makedirs(_os.path.dirname(_p), exist_ok=True)
-        with open(_p, "wb"):
+        with _wb_real_open(_p, "wb"):
             pass  # stub — real bytes arrive on first read via workbench_fetch
         _wb_lazy_unfetched.add(_f["path"])
     _os.chdir(_wb_root)
@@ -529,12 +599,12 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
                     _fh.write(_bytes)
                 _os.replace(_full + ".tmp", _full)
                 _wb_lazy_unfetched.discard(_rel)
-                _wb_hashes[_rel] = _data.get("sha256") or _hashlib.sha256(_bytes).hexdigest()
+                _wb_sha = _data.get("sha256") or _hashlib.sha256(_bytes).hexdigest()
+                _wb_hashes[_rel] = _wb_sha
+                _wb_cache_put(_wb_sha, _bytes)
                 return path
             _time.sleep(0.1)
         raise TimeoutError("workbench fetch of '" + _rel + "' timed out")
-
-    _wb_real_open = _builtins.open
 
     def _wb_open(file, *args, **kwargs):
         _rel = None
