@@ -46,6 +46,13 @@ Introduce the **Workbench**: a per-chat mutable file tree that
 2. is synchronized into that chat's sandbox executions (both directions), and
 3. persists across turns with the versioning Collections already have.
 
+The workbench is deliberately multi-purpose: it is the agent's scratchpad
+(intermediate results, working notes — cheap to write, versioned anyway)
+**and** the artifact surface — a deliverable (report, chart, generated
+document) is just a workbench file the chat UI renders or offers for
+download, and promotes to a collection when it should outlive the chat.
+No separate artifact concept is needed.
+
 ### Naming
 
 **Decided: Workbench** (2026-09-01). The shortlist below is kept for the
@@ -81,6 +88,31 @@ via `/chats/{id}/workbench`, authorized by chat access. Lifecycle follows
 the chat (archived/deleted with it). New alongside `kind`: relative-path
 filenames (`src/app.py`) — `File.name` is a 255-char string today, so
 nested paths fit; we validate against traversal.
+
+**Backward compatibility:** `kind` gets a `server_default='collection'`
+in the migration; existing rows, API request/response shapes, and config
+round-trips are untouched — the field is additive and clients never need
+to send it.
+
+**Alternative considered (open for review): no `kind`, plain collections
+plus careful permissioning.** Workbenches could be ordinary collections
+gated purely by grants. What tips it toward `kind` is not reachability
+but **grant compatibility**: existing deployments hold `collections:*`
+wildcard grants today, and without a discriminator those grants would
+silently widen to cover every chat's working files the day workbenches
+ship — the permission-level analogue of an API break. Secondary: without
+`kind`, each workbench needs a synthetic namespace/name (the reserved-
+namespace convention returns through the back door), and listings/config
+export need to filter them — that filter *is* a kind column. The audit
+argument does not require plain collections either: auditing follows the
+chat, which runtime access control already treats as the unit (strict
+owner check at `chats.py`), so a management/audit-level chat-read
+permission naturally covers `/chats/{id}/workbench` — the conversation
+and its files audit together, which is better audit semantics than
+reading working files detached from their transcript. What plain
+collections *would* buy is ACL-based workbench sharing for free; if
+sharing a workbench with a colleague ever becomes a requirement, revisit
+then.
 
 Scope is **per-chat** in v1. A per-task/per-delegation scope can layer on
 later by keying the backing collection differently; don't design for it now.
@@ -197,12 +229,29 @@ collections are remotes:
 - **Read via existing tools, unchanged:** the collection file tools keep
   working in workbench-enabled chats, with their existing permission and
   visibility checks. Browsing a collection doesn't require pulling it in.
-- **Checkout (v1):** an explicit `workbench_checkout(collection, path)`
-  tool copies a file (or prefix) into the workbench. The copy records
-  provenance in `file_metadata` (source collection, file id, version), so
-  promotion back to the source can be offered as an *update* — and can
-  detect that the source moved on since checkout and surface a conflict
-  instead of silently clobbering.
+- **Checkout (v1), single file or bulk:** an explicit
+  `workbench_checkout(collection, path_or_glob)` tool copies a file, a
+  prefix, a glob, or the whole collection into the workbench. Bulk is
+  permission-aware by construction: the collection permission gates the
+  call, and the file query applies the same visibility filter as search —
+  the caller's own private files plus `shared` ones; other users' private
+  files are never candidates. Bulk should also be **cheap**: `FileVersion`
+  stores a content hash, so checkout creates new `File`/`FileVersion` rows
+  that reference the existing stored blob instead of copying bytes —
+  copy-on-write, since any edit writes a new version anyway. (This needs
+  the `storage_path` unique constraint relaxed into a shared-blob
+  arrangement — a deliberate part of the checkout PR, with delete-time
+  refcounting to match.) Eager-sync caps still apply: a huge checked-out
+  dataset lands as lazy stubs in the sandbox and fetches on read.
+  Every checkout records provenance in `file_metadata` (source collection,
+  file id, version).
+- **Promote is the reverse of checkout** — the same round trip, outbound:
+  copy a workbench file into a target collection, running the target's
+  hooks and metadata validation. Where checkout provenance exists,
+  promote offers *update the source file* (and detects that the source
+  moved on since checkout, surfacing a conflict instead of clobbering);
+  without provenance — a file born in the workbench — promote creates a
+  new file in the target.
 - **Read-only lazy mount (v1.5):** selected collections can appear in the
   sandbox under a read-only root (e.g. `/collections/<name>/`) using the
   same stub + `fetch_file` pause channel as oversized workbench files —
@@ -286,6 +335,10 @@ gains the sync behavior. This flag is the **only** config-apply touchpoint.
 3. Whether promotion preserves version history in the target collection
    (copy current version only, or replay the workbench's versions?). v1
    leans current-version-only.
+4. `kind` column vs. plain collections with permission discipline — see
+   the alternative in Storage. Current lean: keep `kind` (grant
+   compatibility, no synthetic naming); revisit if workbench *sharing*
+   becomes a requirement.
 
 ## What we'd NOT do
 
