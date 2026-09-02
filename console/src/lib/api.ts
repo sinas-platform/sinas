@@ -84,14 +84,23 @@ import type {
   PipelineRunOutcome,
 } from '../types';
 
-// Auto-detect API base URL based on environment
-// VITE_API_URL overrides (useful for pointing a dev console at any backend)
-// Local: http://localhost:8000
-// Production: https://yourdomain.com (same domain as console, port 443)
+// Auto-detect API base URL based on environment.
+// - VITE_API_URL overrides (point a dev console at any backend)
+// - localhost on the console's own ports (Vite dev, nginx :51245) → the
+//   conventional backend at :8000
+// - localhost on ANY OTHER port → same origin: the backend itself served
+//   the console (lite profile, kubectl port-forward). Blanket-routing all
+//   of localhost to :8000 sent a lite console's API calls to whatever
+//   other instance held that port — silently the wrong deployment.
+// - real domains → same hostname, default port (console may sit on its
+//   own port behind Caddy while the API is on 443)
+const CONSOLE_OWN_PORTS = ['51245', ''];
 export const API_BASE_URL = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL
   : window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
+    ? (import.meta.env.DEV || CONSOLE_OWN_PORTS.includes(window.location.port)
+        ? 'http://localhost:8000'
+        : window.location.origin)
     : `${window.location.protocol}//${window.location.hostname}`;
 
 /**
