@@ -78,7 +78,7 @@ export function Login() {
         {/* Logo and title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <Logo className="h-16 w-auto" />
+            <Logo className="h-12 w-auto" />
           </div>
           <h1 className="text-xl font-semibold text-gray-100 mb-2">Management Console</h1>
           <p className="text-gray-400">Sovereign Infrastructure for Native Agentic Systems</p>

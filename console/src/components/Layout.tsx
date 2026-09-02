@@ -124,7 +124,7 @@ export function Layout() {
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-line-soft">
-            <Logo className="h-8 w-auto" />
+            <Logo className="h-7 w-auto" />
             <button
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden text-gray-400 hover:text-gray-200"
