@@ -314,3 +314,13 @@ select.input:disabled {
 .animate-slide-in-right {
   animation: slide-in-right 0.3s ease-out;
 }
+
+/* Logo mark: fade from the theme's text color to brand orange on mount.
+   Lives on the inline <Logo> component — <img>-embedded SVG animations are
+   frozen by some Chrome builds. */
+@keyframes sinas-markfade {
+  0%, 25% { stroke: currentColor; }
+}
+.sinas-logo path[stroke] {
+  animation: sinas-markfade 1.6s ease-out;
+}

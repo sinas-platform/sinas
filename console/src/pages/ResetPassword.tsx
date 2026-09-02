@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Logo } from '../components/Logo';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient } from '../lib/api';
 import { KeyRound, Loader2, CheckCircle2 } from 'lucide-react';
@@ -53,7 +54,7 @@ export function ResetPassword() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <><img src={`${import.meta.env.BASE_URL}sinas-logo.svg`} alt="sinas" className="h-16 light:hidden" /><img src={`${import.meta.env.BASE_URL}sinas-logo-light.svg`} alt="sinas" className="h-16 hidden light:block" /></>
+            <Logo className="h-16 w-auto" />
           </div>
           <h1 className="text-xl font-semibold text-gray-100 mb-2">Reset password</h1>
           <p className="text-gray-400">Use the one-time link from your administrator</p>
