@@ -54,7 +54,7 @@ export function ResetPassword() {
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <Logo className="h-16 w-auto" />
+            <Logo className="h-12 w-auto" />
           </div>
           <h1 className="text-xl font-semibold text-gray-100 mb-2">Reset password</h1>
           <p className="text-gray-400">Use the one-time link from your administrator</p>
