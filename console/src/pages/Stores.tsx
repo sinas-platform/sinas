@@ -254,6 +254,10 @@ function StoreStatesPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['store-states', namespace, name] });
     },
+    onError: (err: any) => {
+      // A silent failure here reads as "the button does nothing"
+      alert(`Failed to delete state: ${err?.response?.data?.detail || err?.message || err}`);
+    },
   });
 
   const handleDeleteState = (state: any) => {
