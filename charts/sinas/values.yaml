@@ -1,7 +1,9 @@
 ## Image — the sinas backend image (also used by workers, scheduler, cdc).
 image:
   registry: ghcr.io/sinas-platform/sinas
-  tag: latest
+  ## Empty = the chart's appVersion (stamped from the release tag), so a
+  ## versioned install pulls matching images. Set explicitly to override.
+  tag: ""
   pullPolicy: IfNotPresent
 
 ## Routing
@@ -68,7 +70,9 @@ executor:
   ## (Dependency table) are pip-installed into each pod at create time; bake
   ## them into a custom image and set installDependencies: false to skip that
   ## cold-start cost.
-  image: "ghcr.io/sinas-platform/sinas/executor:latest"
+  ## Empty = <image.registry>/executor:<image tag or appVersion> — keeps the
+  ## sandbox image in lockstep with the release. Set to pin a custom image.
+  image: ""
   installDependencies: true
   podReadyTimeout: 120
 
