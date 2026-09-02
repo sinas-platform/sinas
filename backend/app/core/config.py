@@ -346,6 +346,21 @@ class Settings(BaseSettings):
     agent_max_delegation_depth: int = 5
     agent_delegate_mode: str = "block"
 
+    # Deferred tool rounds (pending completions) — expiry deadlines, in
+    # seconds; 0 disables expiry for that kind (the entry waits forever).
+    # - ask_user_timeout_seconds: how long an ask_user question stays open
+    #   before the round resumes with a timeout error as the tool result.
+    # - tool_approval_timeout_seconds: how long a pending tool approval stays
+    #   open before it is auto-rejected. Default 0 keeps today's ask-forever
+    #   behavior.
+    # - agent_delegate_suspend_timeout_seconds: deadline for suspend-mode
+    #   delegations (a child that dies without reporting back). Default 0
+    #   keeps today's wait-forever behavior; block mode has its own
+    #   agent_delegate_timeout above.
+    ask_user_timeout_seconds: int = 86400
+    tool_approval_timeout_seconds: int = 0
+    agent_delegate_suspend_timeout_seconds: int = 0
+
     # Encryption
     encryption_key: Optional[str] = None  # Fernet key for encrypting sensitive data
 

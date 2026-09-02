@@ -4,6 +4,7 @@ import logging
 import time
 import traceback
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 from opentelemetry import trace
@@ -407,6 +408,9 @@ async def check_approval_requirements(
         })
 
         # Create PendingToolApproval record
+        from app.services.deferred_completions import deadline_from_now
+
+        approval_deadline = deadline_from_now(settings.tool_approval_timeout_seconds)
         pending_approval = PendingToolApproval(
             chat_id=chat_id,
             message_id=message_id,
@@ -415,6 +419,9 @@ async def check_approval_requirements(
             function_namespace=namespace,
             function_name=name,
             arguments=parsed_args,
+            expires_at=(
+                datetime.fromisoformat(approval_deadline) if approval_deadline else None
+            ),
             all_tool_calls=tool_calls,
             conversation_context={
                 "provider": provider,
@@ -734,6 +741,18 @@ async def execute_single_tool(
                         "available_tool_call_ids": available,
                     }
 
+            elif tool_name == "ask_user":
+                # Deferred tool: in queued/streamed chats the round suspends
+                # on it before execution (message_service splits it off), so
+                # reaching this branch means a synchronous path with no
+                # stream channel — there is nobody to wait for.
+                result = {
+                    "error": (
+                        "ask_user is unavailable in this synchronous context "
+                        "— there is no live conversation to pause. Answer "
+                        "with the information you have."
+                    )
+                }
             elif tool_name == "continue_execution":
                 result = await fn_executor.resume_execution(
                     execution_id=arguments["execution_id"],

@@ -498,11 +498,22 @@ class WorkerSettings:
 
 
 # Import agent jobs for combined worker
+from arq.cron import cron
+
 from app.queue.agent_jobs import (
     execute_agent_delegate_resume_job,
     execute_agent_message_job,
     execute_agent_resume_job,
 )
+
+
+async def sweep_deferred_expiry_job(ctx: dict) -> int:
+    """Resolve pending completions/approvals whose deadline passed, so a
+    suspended tool round can never hang forever (the expired entries get
+    timeout-error tool results and the round resumes)."""
+    from app.services import deferred_completions
+
+    return await deferred_completions.expire_due()
 
 
 class AgentWorkerSettings:
@@ -513,6 +524,10 @@ class AgentWorkerSettings:
         execute_agent_resume_job,
         execute_agent_delegate_resume_job,
     ]
+    # Deferred-round expiry sweep: minutely, deduplicated across workers
+    # (arq cron unique=True). Runs here — not on the sub-agent worker — so
+    # exactly one worker class owns it.
+    cron_jobs = [cron(sweep_deferred_expiry_job, second=0, unique=True)]
     on_startup = agent_worker_startup
     on_shutdown = shutdown
     redis_settings = get_redis_settings()

@@ -986,32 +986,40 @@ class MessageService:
             yield {"type": "interrupted", "content": chat_steering.INTERRUPT_MARKER}
             return
 
-        # Suspend-on-delegate (issue #90): in "suspend" mode, agent-delegation
-        # tools are split off — they don't execute (and block) here. After the
-        # regular tools finish, the children are enqueued and this generator
-        # ends, freeing the worker slot; a delegate-resume job continues the
-        # conversation when the last child reports back. Requires a job
-        # channel (current_channel_id) — direct/synchronous paths still block.
+        # Deferred calls are split off — they don't execute (and block) here.
+        # After the regular tools finish, this generator suspends the round
+        # (deferred_completions checkpoint) and ends, freeing the worker
+        # slot; a resume job continues the conversation when the last
+        # completion lands. Requires a job channel (current_channel_id).
+        # Two kinds today:
+        # - agent delegation in "suspend" mode (issue #90) — completed by
+        #   the child job's terminal handler;
+        # - ask_user (human_input) — completed by the user's answer over
+        #   the API. Always deferred when a channel exists; the
+        #   direct/synchronous path returns an error result instead (see
+        #   execute_single_tool).
         from app.services.delegation import current_channel_id
 
         delegate_calls: list[dict[str, Any]] = []
+        ask_user_calls: list[dict[str, Any]] = []
         _meta_by_name: dict[str, dict[str, Any]] = {}
-        if (
-            settings.agent_delegate_mode == "suspend"
-            and current_channel_id.get() is not None
-        ):
+        if current_channel_id.get() is not None:
             _meta_by_name = (
                 {t["function"]["name"]: t["function"].get("_metadata", {}) for t in tools}
                 if tools
                 else {}
             )
-            non_delegate_calls = []
+            suspend_delegates = settings.agent_delegate_mode == "suspend"
+            executable_calls = []
             for tc in valid_tool_calls:
-                if _meta_by_name.get(tc["function"]["name"], {}).get("agent_id"):
+                meta = _meta_by_name.get(tc["function"]["name"], {})
+                if suspend_delegates and meta.get("agent_id"):
                     delegate_calls.append(tc)
+                elif meta.get("deferred_completer") == "human_input":
+                    ask_user_calls.append(tc)
                 else:
-                    non_delegate_calls.append(tc)
-            valid_tool_calls = non_delegate_calls
+                    executable_calls.append(tc)
+            valid_tool_calls = executable_calls
 
         parallel_calls = []
         sequential_calls = []
@@ -1134,15 +1142,24 @@ class MessageService:
                 pass
         asyncio.create_task(_persist_results())
 
-        # Suspend on the delegated calls (issue #90): enqueue children and end
-        # this generator instead of blocking a worker slot on their streams.
-        if delegate_calls:
+        # Suspend the round on the deferred calls: checkpoint them as pending
+        # completions and end this generator instead of blocking a worker
+        # slot; the resume job continues once the last completion lands.
+        if delegate_calls or ask_user_calls:
+            from app.services import deferred_completions
             from app.services.delegation import (
                 current_delegation_depth,
-                suspend_delegations,
+                current_job_meta,
+                delegation_entry,
+                enqueue_delegation_children,
             )
             from app.services.tool_execution import prepare_agent_delegation
 
+            entries: dict[str, dict[str, Any]] = {}
+
+            # Delegations (issue #90): resolve targets and create sub-chats
+            # before suspending; a failed prepare (unknown agent, permissions,
+            # depth bound) records an immediate error result instead.
             prepared: list[dict[str, Any]] = []
             for tc in delegate_calls:
                 args = safe_parse_arguments(tc["function"].get("arguments", ""))
@@ -1158,33 +1175,70 @@ class MessageService:
                     self.db, user_id, meta.get("agent_id"), args
                 )
                 if "error" in prep:
-                    # Failed before enqueue (unknown agent, permissions, depth
-                    # bound) — record as an immediate tool result instead.
                     error_content = json.dumps(prep)
                     tool_results[tc["id"]] = (tc["id"], tc["function"]["name"], error_content)
                     self.db.add(Message(chat_id=chat_id, role="tool", content=error_content, tool_call_id=tc["id"], name=tc["function"]["name"]))
                     await self.db.commit()
                     yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": error_content}
                 else:
-                    prepared.append(
-                        {
-                            "tool_call_id": tc["id"],
-                            "sub_chat_id": str(prep["sub_chat"].id),
-                            "agent": f"{prep['agent'].namespace}/{prep['agent'].name}",
-                            "content": prep["content"],
-                        }
-                    )
+                    delegation = {
+                        "tool_call_id": tc["id"],
+                        "sub_chat_id": str(prep["sub_chat"].id),
+                        "agent": f"{prep['agent'].namespace}/{prep['agent'].name}",
+                        "content": prep["content"],
+                    }
+                    prepared.append(delegation)
+                    entries[tc["id"]] = delegation_entry(delegation)
 
-            if prepared:
-                from app.services.delegation import current_job_meta
+            # ask_user questions: a malformed call (no question) fails
+            # immediately — never park the round on a question nobody can see.
+            ask_events: list[dict[str, Any]] = []
+            for tc in ask_user_calls:
+                args = safe_parse_arguments(tc["function"].get("arguments", ""))
+                question = args.get("question")
+                yield {
+                    "type": "tool_start",
+                    "tool_call_id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "arguments": tc["function"].get("arguments", "{}"),
+                    "description": build_tool_status(tc["function"]["name"], args, status_templates),
+                }
+                if not question or not isinstance(question, str):
+                    error_content = json.dumps({"error": "ask_user requires a non-empty 'question' string"})
+                    tool_results[tc["id"]] = (tc["id"], tc["function"]["name"], error_content)
+                    self.db.add(Message(chat_id=chat_id, role="tool", content=error_content, tool_call_id=tc["id"], name=tc["function"]["name"]))
+                    await self.db.commit()
+                    yield {"type": "tool_end", "tool_call_id": tc["id"], "name": tc["function"]["name"], "result": error_content}
+                    continue
+                options = args.get("options")
+                if not (isinstance(options, list) and all(isinstance(o, str) for o in options)):
+                    options = None
+                entry: dict[str, Any] = {
+                    "completer": deferred_completions.HUMAN_INPUT,
+                    "question": question,
+                    "options": options,
+                }
+                deadline = deferred_completions.deadline_from_now(
+                    settings.ask_user_timeout_seconds
+                )
+                if deadline:
+                    entry["expires_at"] = deadline
+                entries[tc["id"]] = entry
+                ask_events.append({
+                    "type": "input_required",
+                    "tool_call_id": tc["id"],
+                    "question": question,
+                    "options": options,
+                    "expires_at": deadline,
+                })
 
-                await suspend_delegations(
+            if entries:
+                row = await deferred_completions.suspend_round(
                     self.db,
                     chat_id=chat_id,
                     user_id=user_id,
-                    user_token=user_token,
                     channel_id=current_channel_id.get(),
-                    delegations=prepared,
+                    entries=entries,
                     conversation_context={
                         "provider": provider,
                         "model": model,
@@ -1202,13 +1256,32 @@ class MessageService:
                         **current_job_meta.get(),
                     },
                 )
+                # Children only after the checkpoint exists — a fast child
+                # must never report against a row that isn't there yet.
+                if prepared:
+                    await enqueue_delegation_children(
+                        pending_completion_id=str(row.id),
+                        delegations=prepared,
+                        user_id=user_id,
+                        user_token=user_token,
+                        delegation_depth=current_delegation_depth.get(),
+                    )
+                for event in ask_events:
+                    yield {**event, "pending_completion_id": str(row.id)}
+                if prepared:
+                    # Kept for stream consumers that predate the unification.
+                    yield {
+                        "type": "delegation_pending",
+                        "tool_call_ids": [d["tool_call_id"] for d in prepared],
+                    }
                 yield {
-                    "type": "delegation_pending",
-                    "tool_call_ids": [d["tool_call_id"] for d in prepared],
+                    "type": deferred_completions.ROUND_SUSPENDED,
+                    "pending_completion_id": str(row.id),
+                    "tool_call_ids": list(entries),
                 }
                 return
-            # All delegations failed at prepare — fall through to the regular
-            # follow-up turn with their error results.
+            # Every deferred call failed before suspending — fall through to
+            # the regular follow-up turn with their error results.
 
         # Follow-up LLM turn — extracted so the delegate-resume job (issue
         # #90) can re-enter the tool round from persisted state.
