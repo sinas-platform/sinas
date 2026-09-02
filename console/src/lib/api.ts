@@ -510,35 +510,10 @@ class APIClient {
     return response.data;
   }
 
-  // State Store (Runtime API - formerly Context Store)
-  async listStates(params?: {
-    namespace?: string;
-    visibility?: string;
-    skip?: number;
-    limit?: number;
-  }): Promise<any[]> {
-    const response = await this.runtimeClient.get('/states', { params });
-    return response.data;
-  }
 
-  async getState(stateId: string): Promise<any> {
-    const response = await this.runtimeClient.get(`/states/${stateId}`);
-    return response.data;
-  }
 
-  async createState(data: any): Promise<any> {
-    const response = await this.runtimeClient.post('/states', data);
-    return response.data;
-  }
 
-  async updateState(stateId: string, data: any): Promise<any> {
-    const response = await this.runtimeClient.put(`/states/${stateId}`, data);
-    return response.data;
-  }
 
-  async deleteState(stateId: string): Promise<void> {
-    await this.runtimeClient.delete(`/states/${stateId}`);
-  }
 
   // Secrets
   async listSecrets(): Promise<any[]> {
