@@ -22,7 +22,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.builder) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: builder
-          image: {{ .Values.image.registry }}/builder:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/builder:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 3000

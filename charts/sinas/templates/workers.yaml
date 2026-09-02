@@ -24,7 +24,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-worker
-          image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "arq", "app.queue.worker.WorkerSettings"]
           env:
@@ -63,7 +63,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgent) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-agent
-          image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "arq", "app.queue.worker.AgentWorkerSettings"]
           env:
@@ -102,7 +102,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.scheduler) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: scheduler
-          image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "app.scheduler.service"]
           env:
@@ -140,7 +140,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.cdcWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: cdc-worker
-          image: {{ .Values.image.registry }}/backend:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["python", "-m", "app.cdc.service"]
           env:

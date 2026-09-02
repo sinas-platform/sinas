@@ -33,6 +33,16 @@ ServiceAccount names
 {{- end }}
 
 {{/*
+Image tag: explicit .Values.image.tag wins; empty falls back to the chart's
+appVersion, which CI stamps from the release tag — so a versioned install
+pulls that version's images instead of whatever `latest` points at (or, for
+images only built on tags, an ImagePullBackOff).
+*/}}
+{{- define "sinas.imageTag" -}}
+{{- .Values.image.tag | default .Chart.AppVersion -}}
+{{- end }}
+
+{{/*
 Image pull secret reference — shared by all sinas deployments.
 */}}
 {{- define "sinas.imagePullSecrets" -}}
@@ -147,10 +157,11 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ .Values.executor.sandbox | quote }}
 - name: TRUSTED_EXECUTOR
   value: {{ .Values.executor.trusted | quote }}
+{{- $executorImage := .Values.executor.image | default (printf "%s/executor:%s" .Values.image.registry (include "sinas.imageTag" .)) }}
 - name: FUNCTION_CONTAINER_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_SERVICE_ACCOUNT
   value: {{ include "sinas.sandboxSA" . | quote }}
 - name: K8S_SANDBOX_INSTALL_DEPENDENCIES

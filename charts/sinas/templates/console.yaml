@@ -22,7 +22,7 @@ spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.console) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: console
-          image: {{ .Values.image.registry }}/console:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/console:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 80
