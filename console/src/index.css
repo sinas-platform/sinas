@@ -319,8 +319,13 @@ select.input:disabled {
    Lives on the inline <Logo> component — <img>-embedded SVG animations are
    frozen by some Chrome builds. */
 @keyframes sinas-markfade {
-  0%, 25% { stroke: currentColor; }
-}
+  0%, 18% { stroke: currentColor; } /* hold in the theme color */
+  55%     { stroke: #ff8f1f; }      /* overshoot, brighter + hotter */
+  76%     { stroke: #d76300; }      /* swing back under */
+  90%     { stroke: #f58414; }      /* small rebound */
+}                                    /* settle on brand #E97203 (attr) */
 .sinas-logo path[stroke] {
-  animation: sinas-markfade 1.6s ease-out;
+  /* Damped color bounce: ~0.7s hold, glide up past the brand orange,
+     oscillate, settle. Plays once per mount. */
+  animation: sinas-markfade 3.8s ease-in-out;
 }
