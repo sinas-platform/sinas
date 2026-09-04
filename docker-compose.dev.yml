@@ -100,6 +100,7 @@ services:
       context: ./console
       args:
         USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
+        VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "51245:80"
 

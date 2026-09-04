@@ -333,7 +333,7 @@ class ConfigApplyService:
                     await self.flush_notifications()
 
             return ConfigApplyResponse(
-                success=True,
+                success=len(self.errors) == 0,
                 summary=self.summary,
                 changes=self.changes,
                 errors=self.errors,

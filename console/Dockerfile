@@ -4,6 +4,10 @@ FROM node:20-alpine AS builder
 # Set to "true" to use a locally built @sinas/sdk instead of npm
 ARG USE_LOCAL_PACKAGES=false
 
+# Backend URL baked into the build (skips the same-origin auto-detect fallback)
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+
 WORKDIR /app
 
 # Copy package.json only (lockfile has file: paths that get rewritten)
