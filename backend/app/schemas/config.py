@@ -3,7 +3,7 @@ Pydantic schemas for declarative configuration
 """
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, validator
 
 
 class ConfigMetadata(BaseModel):
@@ -326,6 +326,17 @@ class ManifestConfig(BaseModel):
     optionalPermissions: list[str] = Field(default_factory=list)
     exposedNamespaces: dict[str, list[str]] = Field(default_factory=dict)
     storeDependencies: list[dict] = Field(default_factory=list)
+    # Published on the unauthenticated GET /info under services[namespace].
+    # Package variables substitute into it, so an installer can supply e.g.
+    # the browser-reachable URL of the service this manifest describes.
+    publicInfo: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("publicInfo")
+    @classmethod
+    def _validate_public_info(cls, v: dict[str, Any]) -> dict[str, Any]:
+        from app.schemas.manifest import validate_public_info
+
+        return validate_public_info(v)
 
 
 class CollectionConfig(BaseModel):
