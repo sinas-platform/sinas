@@ -858,6 +858,7 @@ async def apply_manifests(
                     "exposed_namespaces": {
                         k: sorted(v) for k, v in sorted(manifest_config.exposedNamespaces.items())
                     },
+                    "public_info": manifest_config.publicInfo,
                 }
             )
 
@@ -874,6 +875,7 @@ async def apply_manifests(
                     existing.required_permissions = manifest_config.requiredPermissions
                     existing.optional_permissions = manifest_config.optionalPermissions
                     existing.exposed_namespaces = manifest_config.exposedNamespaces
+                    existing.public_info = manifest_config.publicInfo
                     existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
@@ -893,6 +895,7 @@ async def apply_manifests(
                         required_permissions=manifest_config.requiredPermissions,
                         optional_permissions=manifest_config.optionalPermissions,
                         exposed_namespaces=manifest_config.exposedNamespaces,
+                        public_info=manifest_config.publicInfo,
                         user_id=owner_user_id,
                         is_active=True,
                         managed_by=managed_by,

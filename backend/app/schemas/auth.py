@@ -56,6 +56,10 @@ class InfoResponse(BaseModel):
     auth_mode: Literal["otp", "password", "password+otp"]
     version: str
     features: dict[str, bool] = Field(default_factory=dict)
+    # What installed apps publish about themselves, keyed by manifest
+    # namespace: the merged public_info of every active manifest in that
+    # namespace. Absent namespace = not installed here.
+    services: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class ChangePasswordRequest(BaseModel):

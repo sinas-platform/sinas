@@ -17,6 +17,7 @@ Manifests are application declarations that describe what resources, permissions
 | `optional_permissions` | Optional permissions for extended features |
 | `exposed_namespaces` | Namespace filter per resource type (e.g., `{"agents": ["support"]}`) |
 | `store_dependencies` | Stores the application expects: `[{"store": "ns/name", "key": "optional_key"}]` |
+| `public_info` | Small JSON object the manifest publishes on the unauthenticated `GET /info` under `services[namespace]`, e.g. `{"url": "https://cellar.example.com"}`. Identifier keys, at most 4 KB, never secrets. |
 
 **Endpoints:**
 
@@ -35,3 +36,31 @@ GET    /api/runtime/manifests/{namespace}/{name}/status   # Validate dependencie
 ```
 
 Returns `ready: true/false` with details on satisfied/missing resources, granted/missing permissions, and existing/missing store dependencies.
+
+## Publishing on `/info`
+
+An installed app often needs to be found by other clients before anyone logs in: One, for instance, has to learn that a sibling service such as Cassis or Cellar is deployed next to this instance, and where the browser can reach it. A connector's `baseUrl` is the address the backend uses and may be internal, and an environment variable on Sinas would need a restart for something outside Sinas. So the manifest carries it:
+
+```yaml
+spec:
+  variables:
+    - name: CELLAR_PUBLIC_URL
+      type: text
+      description: Browser-reachable URL of Cellar
+      required: true
+  manifests:
+    - namespace: cellar
+      name: cellar
+      requiredResources:
+        - { type: connector, namespace: cellar, name: main }
+      publicInfo:
+        url: "${{ vars.CELLAR_PUBLIC_URL }}"
+```
+
+Every active manifest's `publicInfo` is merged per namespace into `services` on `GET /info`:
+
+```json
+{ "auth_mode": "otp", "version": "0.4.0", "features": {...}, "services": { "cellar": { "url": "https://cellar.example.com" } } }
+```
+
+Installing or updating the package changes `/info` at once; nothing on Sinas restarts. Whether the *caller* may use the app is a separate, authenticated question: the manifest status endpoint above answers it.
