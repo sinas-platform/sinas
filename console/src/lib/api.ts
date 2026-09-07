@@ -804,13 +804,13 @@ class APIClient {
     return response.data;
   }
 
-  async installPackage(source: string, variables?: Record<string, any>): Promise<any> {
-    const response = await this.configClient.post('/packages/install', { source, variables });
+  async installPackage(source: string, variables?: Record<string, any>, instance?: string): Promise<any> {
+    const response = await this.configClient.post('/packages/install', { source, variables, instance });
     return response.data;
   }
 
-  async previewPackage(source: string, variables?: Record<string, any>): Promise<any> {
-    const response = await this.configClient.post('/packages/preview', { source, variables });
+  async previewPackage(source: string, variables?: Record<string, any>, instance?: string): Promise<any> {
+    const response = await this.configClient.post('/packages/preview', { source, variables, instance });
     return response.data;
   }
 

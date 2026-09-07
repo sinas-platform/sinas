@@ -15,13 +15,17 @@ class Package(Base):
 
     Packages bundle agents, functions, skills, apps, components, queries,
     collections, and webhooks into a single distributable YAML file.
-    Resources created by a package have managed_by = "pkg:<name>".
+    Resources created by a package have managed_by = "pkg:<name>", where
+    name is the install name: the declared package name by default, or the
+    instance name a multi-instance package was installed under. package_name
+    keeps the declared name so an instance can be traced to its package.
     """
 
     __tablename__ = "packages"
 
     id: Mapped[uuid_pk]
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    package_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
     version: Mapped[str] = mapped_column(String(50), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     author: Mapped[Optional[str]] = mapped_column(String(255))

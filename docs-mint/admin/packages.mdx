@@ -51,6 +51,48 @@ spec:
 - **Excluded types**: Packages cannot include roles, users, LLM providers, or database connections (these are environment-specific)
 - **Dependencies**: Packages can declare Python dependencies — these are recorded in the database and installed in containers on worker restart
 
+## Installing a package more than once
+
+Some packages describe a service that an instance may run several of: two Google Drive accounts, a work and a personal records store. Such a package declares `multiInstance: true` and uses `${{ install.name }}` wherever uniqueness matters — namespaces, role names, permission keys, published info:
+
+```yaml
+package:
+  name: records
+  version: "0.1.0"
+  multiInstance: true
+spec:
+  variables:
+    - { name: RECORDS_URL, type: text, required: true }
+  connectors:
+    - namespace: ${{ install.name }}
+      name: api
+      baseUrl: "${{ vars.RECORDS_URL }}"
+  roles:
+    - name: ${{ install.name }}-reader
+      permissions:
+        - { key: "${{ install.name }}.*.read:all", value: true }
+  manifests:
+    - namespace: ${{ install.name }}
+      name: ${{ install.name }}
+```
+
+Install it under an install name (`instance`); `${{ install.name }}` is substituted before anything else, so it may also appear inside variable defaults:
+
+```bash
+POST /api/v1/packages/install   { "source": "...", "instance": "records-personal", "variables": {...} }
+```
+
+Each install is its own package record, named after the install name and tagged `managed_by: "pkg:<install name>"`, so upgrade (re-install under the same name) and uninstall work per instance. `package_name` keeps the declared package name. Without `instance` the package installs under its own name, exactly as a single-instance package does.
+
+Guard rails:
+
+- A package without `multiInstance: true` refuses any `instance` other than its own name.
+- A `multiInstance` package that never uses `${{ install.name }}` refuses a second name, because both installs would create the same resources and take them over from each other.
+- An install name already used by a different package is refused.
+- Install names are lowercase letters, digits and dashes.
+
+The console shows an *Install as* field on the preview of a multi-instance package; the package agent tools (`sinas_package_preview`, `sinas_package_install`) take `instance` the same way.
+
 ## Install-time Variables
 
 Packages can declare typed variables that are prompted during installation. Variables are substituted into the YAML before resources are persisted — the resulting resources contain literal values, no runtime template evaluation.
