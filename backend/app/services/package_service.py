@@ -138,6 +138,60 @@ def detach_if_package_managed(resource) -> bool:
     return False
 
 
+_INSTALL_NAME_PATTERN = re.compile(r"\$\{\{\s*install\.name\s*\}\}")
+_INSTANCE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
+def _declared_package(yaml_content: str) -> tuple[Optional[str], bool]:
+    """(package.name, package.multiInstance) from the raw YAML, before any
+    substitution. Malformed YAML yields (None, False); full validation
+    happens later in parse_and_validate with a proper error."""
+    try:
+        doc = yaml.safe_load(yaml_content)
+    except Exception:
+        return None, False
+    if not isinstance(doc, dict) or not isinstance(doc.get("package"), dict):
+        return None, False
+    meta = doc["package"]
+    name = meta.get("name")
+    return (name if isinstance(name, str) else None), bool(meta.get("multiInstance", False))
+
+
+def resolve_install_name(yaml_content: str, instance: Optional[str]) -> tuple[str, str, Optional[str], bool]:
+    """Decide the install name and substitute ${{ install.name }}.
+
+    Returns (install_name, substituted_yaml, declared_name, multi_instance).
+
+    The install name is the declared package name unless `instance` is given.
+    A different name is only allowed when the package declares
+    package.multiInstance: true AND references ${{ install.name }} at least
+    once — without that, two installs would create the same namespaced
+    resources and each would take over the other's.
+    """
+    declared, multi = _declared_package(yaml_content)
+    install_name = instance or declared or ""
+    if instance and not _INSTANCE_NAME_RE.match(instance):
+        raise ValueError(
+            f"Instance name '{instance}' is invalid: lowercase letters, digits and dashes only"
+        )
+    if instance and declared and instance != declared:
+        if not multi:
+            raise ValueError(
+                f"Package '{declared}' does not support multiple instances; "
+                "it must declare package.multiInstance: true to be installed as "
+                f"'{instance}'"
+            )
+        if not _INSTALL_NAME_PATTERN.search(yaml_content):
+            raise ValueError(
+                f"Package '{declared}' declares multiInstance but never uses "
+                "${{ install.name }}, so a second install would share resources "
+                "with the first. Use ${{ install.name }} in namespaces, role "
+                "names and permission keys."
+            )
+    substituted = _INSTALL_NAME_PATTERN.sub(install_name, yaml_content) if install_name else yaml_content
+    return install_name, substituted, declared, multi
+
+
 class PackageService:
     """Service for managing installable integration packages."""
 
@@ -150,6 +204,7 @@ class PackageService:
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
         allow_broad_role_permissions: bool = False,
+        instance: Optional[str] = None,
     ) -> tuple[Package, ConfigApplyResponse]:
         """
         Install a package from YAML content.
@@ -160,10 +215,15 @@ class PackageService:
             variables: Install-time variable values (keyed by variable name)
             allow_broad_role_permissions: accept package roles whose granted
                 permissions reach outside the package's own namespaces
+            instance: install name for a multi-instance package (defaults to
+                the package name); substituted for ${{ install.name }}
 
         Returns:
             Tuple of (Package record, ConfigApplyResponse)
         """
+        # The install name first: it may appear inside variable defaults too.
+        install_name, yaml_content, declared_name, _ = resolve_install_name(yaml_content, instance)
+
         # Substitute variables before parsing if provided
         yaml_content, resolved_values = await self._resolve_variables(
             yaml_content, variables or {}, user_id
@@ -181,7 +241,8 @@ class PackageService:
         if not config.package:
             raise ValueError("Package metadata is required for SinasPackage")
 
-        pkg_name = config.package.name
+        declared_name = config.package.name
+        pkg_name = install_name or declared_name   # resources and the record carry the install name
         managed_by = f"pkg:{pkg_name}"
 
         hard, broad, role_advisories = package_role_violations(config)
@@ -199,6 +260,12 @@ class PackageService:
             select(Package).where(Package.name == pkg_name)
         )
         existing_package = existing_result.scalar_one_or_none()
+        if existing_package and (existing_package.package_name or existing_package.name) != declared_name:
+            raise ValueError(
+                f"'{pkg_name}' is already installed from package "
+                f"'{existing_package.package_name or existing_package.name}', not '{declared_name}'; "
+                "pick another instance name or uninstall it first"
+            )
 
         # Apply config with package managed_by, skip environment-specific types, no auto-commit
         apply_service = ConfigApplyService(
@@ -225,6 +292,7 @@ class PackageService:
 
         # Create or update package record
         if existing_package:
+            existing_package.package_name = declared_name
             existing_package.version = config.package.version
             existing_package.description = config.package.description
             existing_package.author = config.package.author
@@ -235,6 +303,7 @@ class PackageService:
         else:
             package = Package(
                 name=pkg_name,
+                package_name=declared_name,
                 version=config.package.version,
                 description=config.package.description,
                 author=config.package.author,
@@ -260,13 +329,18 @@ class PackageService:
         yaml_content: str,
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
-    ) -> tuple[ConfigApplyResponse, list[dict], bool]:
+        instance: Optional[str] = None,
+    ) -> tuple[ConfigApplyResponse, list[dict], bool, dict[str, Any]]:
         """
         Preview a package install (dry run).
 
         Returns:
-            Tuple of (ConfigApplyResponse, variable_declarations, requires_input)
+            Tuple of (ConfigApplyResponse, variable_declarations, requires_input, install_info)
+            where install_info is {"instance", "package_name", "multi_instance"}.
         """
+        install_name, yaml_content, declared_name, multi = resolve_install_name(yaml_content, instance)
+        install_info = {"instance": install_name, "package_name": declared_name, "multi_instance": multi}
+
         # Parse first to extract variable declarations (before substitution)
         variable_declarations = self._extract_variable_declarations(yaml_content)
         requires_input = any(v.get("required", True) and v.get("default") is None for v in variable_declarations)
@@ -290,7 +364,7 @@ class PackageService:
         if not config.package:
             raise ValueError("Package metadata is required for SinasPackage")
 
-        pkg_name = config.package.name
+        pkg_name = install_name or config.package.name
         managed_by = f"pkg:{pkg_name}"
 
         apply_service = ConfigApplyService(
@@ -304,6 +378,11 @@ class PackageService:
 
         result = await apply_service.apply_config(config, dry_run=True)
         result.warnings.extend(validation.warnings)
+        if multi and install_name == config.package.name:
+            result.warnings.append(
+                "This package supports multiple instances: pass `instance` to install "
+                "it under another name next to this one."
+            )
 
         hard, broad, role_advisories = package_role_violations(config)
         for violation in hard:
@@ -315,7 +394,7 @@ class PackageService:
             )
         result.warnings.extend(role_advisories)
 
-        return result, variable_declarations, requires_input
+        return result, variable_declarations, requires_input, install_info
 
     async def uninstall(self, package_name: str) -> dict:
         """
