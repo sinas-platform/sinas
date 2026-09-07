@@ -79,6 +79,10 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "object",
                         "description": "Install-time variable values (keyed by variable name). Pass these if the package declares spec.variables.",
                     },
+                    "instance": {
+                        "type": "string",
+                        "description": "Install name for a package declaring package.multiInstance: true (lowercase, dashes), so it can be installed more than once. Defaults to the package name.",
+                    },
                 },
             },
             "_metadata": {"system_tool": "packageManagement"},
@@ -108,6 +112,10 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "variables": {
                         "type": "object",
                         "description": "Install-time variable values (keyed by variable name).",
+                    },
+                    "instance": {
+                        "type": "string",
+                        "description": "Install name for a package declaring package.multiInstance: true (lowercase, dashes), so it can be installed more than once. Defaults to the package name.",
                     },
                 },
             },
@@ -339,13 +347,14 @@ async def _preview(db, arguments, user_id, permissions):
     variables = arguments.get("variables")
 
     service = PackageService(db)
-    result, variable_declarations, requires_input = await service.preview(
-        yaml_content, user_id, variables=variables
+    result, variable_declarations, requires_input, install_info = await service.preview(
+        yaml_content, user_id, variables=variables, instance=arguments.get("instance")
     )
     response = _apply_response_to_dict(result)
     if variable_declarations:
         response["variables"] = variable_declarations
         response["requires_input"] = requires_input
+    response.update(install_info)
     return response
 
 
@@ -357,10 +366,13 @@ async def _install(db, arguments, user_id, permissions):
     variables = arguments.get("variables")
 
     service = PackageService(db)
-    package, result = await service.install(yaml_content, user_id, variables=variables)
+    package, result = await service.install(
+        yaml_content, user_id, variables=variables, instance=arguments.get("instance")
+    )
     return {
         "package": {
             "name": package.name,
+            "package_name": package.package_name,
             "version": package.version,
             "description": package.description,
             "author": package.author,
