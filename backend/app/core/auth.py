@@ -868,10 +868,21 @@ async def initialize_superadmin(db: AsyncSession):
 
     - Creates the user and grants Admins membership only when no other admins exist
       (prevents accidental auto-creation after manual setup).
-    - When the user already exists, ensures Admins membership and (when auth_mode
-      includes password) syncs password_hash from SUPERADMIN_PASSWORD. This doubles
-      as the "admin lost their password" escape hatch: change SUPERADMIN_PASSWORD
-      and restart.
+    - When the user already exists, ensures Admins membership.
+
+    Password bootstrap, when auth_mode includes "password" — two modes:
+
+    - SUPERADMIN_PASSWORD set: the env var is authoritative. password_hash is synced
+      to it on every boot (written only on mismatch), so a password changed in the
+      UI reverts on restart while the var is set. This doubles as the "admin lost
+      their password" escape hatch: change SUPERADMIN_PASSWORD and restart.
+    - SUPERADMIN_PASSWORD unset: the superadmin owns their password. Nothing is
+      touched once one is set. Until then, every boot issues a one-time setup link
+      (a standard password-reset token) and logs it — the operator opens it from
+      the pod/container logs. Anyone who can read those logs can claim a fresh
+      instance, which is the same trust boundary as Jenkins' initial admin
+      password; it beats the alternative of an unauthenticated "set password"
+      endpoint that the first scanner to find the host could use.
     """
     import logging
 
@@ -922,14 +933,69 @@ async def initialize_superadmin(db: AsyncSession):
         db.add(membership)
         await db.commit()
 
-    if auth_mode_includes_password and settings.superadmin_password:
+    if not auth_mode_includes_password:
+        return
+
+    if settings.superadmin_password:
         needs_update = not user.password_hash or not verify_password(
             settings.superadmin_password, user.password_hash
         )
         if needs_update:
+            reverted = bool(user.password_hash)
             user.password_hash = hash_password(settings.superadmin_password)
             await db.commit()
-            logger.info(
-                "Superadmin password set/updated from SUPERADMIN_PASSWORD env var "
-                f"for {email}"
-            )
+            if reverted:
+                logger.warning(
+                    f"Superadmin password for {email} differed from SUPERADMIN_PASSWORD "
+                    "and was reset to it. The env var is authoritative while set; "
+                    "unset it to let the superadmin manage their own password."
+                )
+            else:
+                logger.info(
+                    f"Superadmin password set from SUPERADMIN_PASSWORD env var for {email}"
+                )
+        return
+
+    if user.password_hash:
+        return  # self-managed; never touch an existing password
+
+    await _issue_superadmin_setup_link(db, user, logger)
+
+
+# Sibling uvicorn workers run the lifespan concurrently. A token this young and
+# still unused was minted by one of them a moment ago — don't issue another.
+_SETUP_LINK_DEDUP_WINDOW = timedelta(seconds=60)
+
+
+async def _issue_superadmin_setup_link(db: AsyncSession, user: User, logger) -> None:
+    """Mint a one-time password-reset token for a password-less superadmin and
+    log the link. Only ever called when the account has NO password; an account
+    that has one is never re-issued a link this way (that would be a takeover
+    vector for anyone with log access)."""
+    now = datetime.now(UTC)
+    recent = await db.execute(
+        select(PasswordResetToken.id).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+            PasswordResetToken.created_at > now - _SETUP_LINK_DEDUP_WINDOW,
+        )
+    )
+    if recent.first():
+        return
+
+    plain_token, _ = await create_password_reset_token(db, str(user.id))
+    url = f"{settings.public_base_url}/ui/reset-password?token={plain_token}"
+    logger.warning(
+        "\n"
+        "==================== SUPERADMIN SETUP ====================\n"
+        f"  {user.email} has no password yet. Set one via this one-time link\n"
+        f"  (valid {PASSWORD_RESET_TOKEN_EXPIRY_HOURS}h; restart to get a fresh one):\n"
+        "\n"
+        f"    {url}\n"
+        "\n"
+        "  If the console is served from another origin, open\n"
+        f"  <console-origin>/ui/reset-password?token={plain_token}\n"
+        "  To pin the password from config instead, set SUPERADMIN_PASSWORD.\n"
+        "==========================================================="
+    )

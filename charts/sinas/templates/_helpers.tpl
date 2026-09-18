@@ -193,9 +193,17 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
       name: {{ .Release.Name }}-secrets
       key: clickhouse-password
 {{- end }}
+{{/*
+Auto auth mode. OTP needs SMTP (codes arrive by email); without SMTP the
+only way in is a password. With no superadminPassword either, the backend
+issues a one-time setup link in its logs on boot (see NOTES.txt).
+*/}}
+{{- $hasSmtp := ne (.Values.smtp.host | default "") "" }}
 {{- $auto := "otp" }}
 {{- if .Values.superadminPassword }}
-{{- $auto = ternary "password+otp" "password" (ne .Values.smtp.host "") }}
+{{- $auto = ternary "password+otp" "password" $hasSmtp }}
+{{- else if not $hasSmtp }}
+{{- $auto = "password" }}
 {{- end }}
 ## Paren-safe: `helm upgrade --reuse-values` from a pre-auth release has no
 ## `auth` key at all, and a bare .Values.auth.mode nil-pointers there.
