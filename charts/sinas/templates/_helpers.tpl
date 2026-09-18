@@ -241,6 +241,15 @@ issues a one-time setup link in its logs on boot (see NOTES.txt).
 {{- end }}
 - name: BACKEND_PORT
   value: "8000"
+{{/* public_base_url (setup link, OAuth callback, public file URLs) derives
+     from DOMAIN; without it the backend assumes http://localhost:8000. Skip
+     when extraEnv sets it explicitly so the container spec has no duplicate. */}}
+{{- $domainInExtra := false }}
+{{- range .Values.extraEnv }}{{- if eq .name "DOMAIN" }}{{- $domainInExtra = true }}{{- end }}{{- end }}
+{{- if and .Values.domain (not $domainInExtra) }}
+- name: DOMAIN
+  value: {{ .Values.domain | quote }}
+{{- end }}
 {{- with .Values.extraEnv }}
 {{ toYaml . }}
 {{- end }}

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
     consume_password_reset_token,
+    create_password_reset_token,
     hash_password,
     initialize_default_roles,
     initialize_superadmin,
@@ -156,6 +157,27 @@ class TestEnvPinnedMode:
             await initialize_superadmin(db)
         assert (await _superadmin(db)).password_hash == before
         assert not [r for r in caplog.records if "SUPERADMIN_PASSWORD" in r.getMessage()]
+
+
+class TestRedeemKillsSiblings:
+    async def test_redeeming_one_link_invalidates_the_others(self, db: AsyncSession, client):
+        """Two replicas racing the dedup window can each log a link. Once the
+        operator uses one, the other must not stay redeemable for 24h."""
+        await initialize_superadmin(db)
+        user = await _superadmin(db)
+        first, _ = await create_password_reset_token(db, str(user.id))
+        second, _ = await create_password_reset_token(db, str(user.id))
+
+        r = await client.post(
+            "/auth/password-reset", json={"reset_token": first, "new_password": "operator-chosen"}
+        )
+        assert r.status_code == 204, r.text
+        r = await client.post(
+            "/auth/password-reset", json={"reset_token": second, "new_password": "attacker-chosen"}
+        )
+        assert r.status_code == 400
+        assert verify_password("operator-chosen", (await _superadmin(db)).password_hash)
+        assert all(t.used_at is not None for t in await _tokens(db, user))
 
 
 class TestOtpMode:

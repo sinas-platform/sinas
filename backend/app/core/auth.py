@@ -110,6 +110,22 @@ async def consume_password_reset_token(
     return record
 
 
+async def revoke_outstanding_password_reset_tokens(db: AsyncSession, user_id) -> int:
+    """Mark every unused reset token for a user as used. Called once a token is
+    redeemed: any sibling link (two admins issuing one each, or the boot-time
+    setup link minted by more than one replica) must not stay redeemable for
+    up to 24h after the account already has its password."""
+    from sqlalchemy import update
+
+    result = await db.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user_id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def warn_if_users_lack_passwords(db: AsyncSession) -> None:
     """
     When AUTH_MODE includes password, log a warning listing how many users have
