@@ -17,6 +17,17 @@ Untrusted code runs in ephemeral hardened Pods created in this namespace
   kubectl get pods -n {{ .Release.Namespace }} -l sinas.type=sandbox-executor -w
 {{- end }}
 
+{{- $mode := (.Values.auth).mode | default "" }}
+{{- $setupLink := and .Values.superadminEmail (not .Values.superadminPassword) (or (contains "password" $mode) (and (not $mode) (not .Values.smtp.host))) }}
+{{- if $setupLink }}
+
+First login: password auth with no superadminPassword, so the backend prints a
+one-time setup link for {{ .Values.superadminEmail }} in its logs on boot
+(valid 24h; restart the backend for a fresh one):
+
+  kubectl logs -n {{ .Release.Namespace }} deploy/backend | grep -A6 'SUPERADMIN SETUP'
+{{- end }}
+
 Check rollout:
 
   kubectl get pods -n {{ .Release.Namespace }}
