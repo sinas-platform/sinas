@@ -171,21 +171,85 @@ def truncate_tool_result(result_content: str, max_size: int) -> str:
     return _clean_text_cut(result_content, max_size)
 
 
+def accumulate_tool_call_delta(tool_calls_list: list[dict[str, Any]], tc: dict[str, Any]) -> None:
+    """Merge one streamed tool-call delta into the per-step list, in place.
+
+    Deltas are keyed by `index` (OpenAI-style streaming); providers that omit
+    it are matched by id, else appended. The id is set ONCE per slot: only the
+    first delta of a call carries it, and a later delta must never replace it
+    (issue #195 — a provider-side fallback id on argument fragments used to
+    overwrite every call's real id with the same literal).
+    """
+    tc_index = tc.get("index")
+
+    if tc_index is None and tc.get("id"):
+        for idx, existing_tc in enumerate(tool_calls_list):
+            if existing_tc.get("id") == tc["id"]:
+                tc_index = idx
+                break
+        if tc_index is None:
+            tc_index = len(tool_calls_list)
+
+    if tc_index is None:
+        tc_index = 0
+
+    while len(tool_calls_list) <= tc_index:
+        tool_calls_list.append(
+            {
+                "id": None,
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
+        )
+
+    slot = tool_calls_list[tc_index]
+    if tc.get("id") and not slot.get("id"):
+        slot["id"] = tc["id"]
+    if tc.get("type"):
+        slot["type"] = tc["type"]
+    if tc.get("function", {}).get("name"):
+        slot["function"]["name"] = tc["function"]["name"]
+    if tc.get("function", {}).get("arguments"):
+        slot["function"]["arguments"] += tc["function"]["arguments"]
+    # Preserve any extra per-call fields (e.g. Gemini's thought_signature) —
+    # providers can require them round-tripped in the follow-up history.
+    for key, value in tc.items():
+        if key in ("id", "type", "function", "index") or value is None:
+            continue
+        slot[key] = value
+    for key, value in (tc.get("function") or {}).items():
+        if key in ("name", "arguments") or value is None:
+            continue
+        slot["function"][key] = value
+
+
 def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate tool calls and filter out corrupted ones.
 
-    Returns only valid tool calls.
+    Returns only valid tool calls. Ids are made present and unique within the
+    step: a call that streamed without one (some OpenAI-compatible gateways
+    never send ids) gets `call_<position>`, and a duplicate gets a positional
+    suffix. Every tool result is matched to its call by this id, so two calls
+    sharing one would make the second result unanswerable at the provider
+    (issue #195) and overwrite the first in the results cache.
     """
     if not tool_calls:
         return []
 
+    seen_ids: set[str] = set()
     valid_tool_calls = []
-    for tc in tool_calls:
+    for position, tc in enumerate(tool_calls):
         try:
-            # Check required fields
-            if not tc.get("id") or not tc.get("function", {}).get("name"):
-                print(f"\u26a0\ufe0f Skipping tool call without id or name: {tc}")
+            if not tc.get("function", {}).get("name"):
+                print(f"\u26a0\ufe0f Skipping tool call without name: {tc}")
                 continue
+            if not tc.get("id"):
+                tc["id"] = f"call_{position}"
+            if tc["id"] in seen_ids:
+                renamed = f"{tc['id']}_{position}"
+                print(f"\u26a0\ufe0f Duplicate tool call id {tc['id']!r} in one step; renamed to {renamed!r}")
+                tc["id"] = renamed
+            seen_ids.add(tc["id"])
 
             # Validate arguments is valid JSON
             args_str = tc.get("function", {}).get("arguments", "")

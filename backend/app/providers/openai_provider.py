@@ -155,8 +155,17 @@ class OpenAIProvider(BaseLLMProvider):
         formatted = []
 
         for idx, tc in enumerate(tool_calls):
-            # Get ID or generate fallback
-            call_id = tc.id if hasattr(tc, "id") and tc.id else f"call_{idx}"
+            call_id = tc.id if hasattr(tc, "id") and tc.id else None
+            if call_id is None and not hasattr(tc, "index"):
+                # Non-streaming shape with no id: synthesise one per position.
+                # Streaming deltas (they carry `index`) get NO fallback: only the
+                # first delta of a call has the id, every argument fragment after
+                # it has id=None, and a fallback here would be the same literal
+                # for every call in the step — the accumulator then wrote that
+                # over the real ids and N parallel calls collapsed onto one id
+                # (issue #195). Missing ids are filled once, per slot, after the
+                # stream ends (validate_tool_calls).
+                call_id = f"call_{idx}"
 
             tool_call_dict = {
                 "id": call_id,
