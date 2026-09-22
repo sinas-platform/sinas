@@ -246,8 +246,11 @@ def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]
             if not tc.get("id"):
                 tc["id"] = f"call_{position}"
             if tc["id"] in seen_ids:
-                renamed = f"{tc['id']}_{position}"
-                print(f"\u26a0\ufe0f Duplicate tool call id {tc['id']!r} in one step; renamed to {renamed!r}")
+                original = tc["id"]
+                renamed = f"{original}_{position}"
+                while renamed in seen_ids:  # the suffixed form can itself be taken
+                    renamed += "_"
+                print(f"\u26a0\ufe0f Duplicate tool call id {original!r} in one step; renamed to {renamed!r}")
                 tc["id"] = renamed
             seen_ids.add(tc["id"])
 

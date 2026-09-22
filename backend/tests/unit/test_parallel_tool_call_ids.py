@@ -120,6 +120,17 @@ class TestValidateToolCalls:
         assert out[0]["id"] == "call_0"
         assert out[1]["id"] == "call_0_1"
 
+    def test_renamed_id_cannot_collide_with_a_later_real_id(self):
+        out = validate_tool_calls(
+            [
+                {"id": "x", "function": {"name": "a", "arguments": "{}"}},
+                {"id": "x_2", "function": {"name": "b", "arguments": "{}"}},
+                {"id": "x", "function": {"name": "c", "arguments": "{}"}},
+            ]
+        )
+        ids = [tc["id"] for tc in out]
+        assert len(ids) == 3 and len(set(ids)) == 3, ids
+
     def test_distinct_ids_untouched(self):
         calls = [
             {"id": "call_ABC", "function": {"name": "a", "arguments": "{}"}},
