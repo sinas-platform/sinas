@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, update
+from sqlalchemy import delete, event, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -147,3 +147,153 @@ class TestAuthStillWorks:
         await db.execute(update(User).where(User.id == user.id).values(is_active=False))
         await db.flush()
         assert await validate_api_key(db, plain) is None
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_shared_engine():
+    """The app engine is module-level and binds to the loop that first uses
+    it; each test gets a fresh loop. The concurrency test below drives it
+    directly, so drop its pooled connections afterwards."""
+    yield
+    from app.core.database import async_engine
+
+    await async_engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def committed_service_key():
+    """A user and key that really exist, so independent sessions can see them.
+
+    The rolled-back `db` fixture is invisible to other sessions, and the point
+    of these tests is what separate concurrent requests do to the same row.
+    """
+    from app.core.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as setup:
+        role = Role(name=f"conc-{uuid.uuid4().hex[:8]}")
+        setup.add(role)
+        await setup.flush()
+        setup.add(
+            RolePermission(
+                role_id=role.id,
+                permission_key="sinas.agents/*/*.read:own",
+                permission_value=True,
+            )
+        )
+        user = User(email=f"conc-{uuid.uuid4().hex[:8]}@example.com")
+        setup.add(user)
+        await setup.flush()
+        setup.add(UserRole(role_id=role.id, user_id=user.id, active=True))
+        await setup.flush()
+        api_key, plain = await create_api_key(
+            setup, user, "concurrent", {"sinas.agents/*/*.read:own": True}
+        )
+        await setup.commit()
+        ids = (user.id, api_key.id, role.id)
+
+    try:
+        yield ids, plain
+    finally:
+        user_id, key_id, role_id = ids
+        async with AsyncSessionLocal() as cleanup:
+            await cleanup.execute(delete(UserRole).where(UserRole.role_id == role_id))
+            await cleanup.execute(
+                delete(RolePermission).where(RolePermission.role_id == role_id)
+            )
+            await cleanup.execute(delete(APIKey).where(APIKey.id == key_id))
+            await cleanup.execute(delete(Role).where(Role.id == role_id))
+            await cleanup.execute(delete(User).where(User.id == user_id))
+            await cleanup.commit()
+
+
+class _StampWriteCounter:
+    """Counts the statements that actually reach the database."""
+
+    def __init__(self):
+        self.api_keys = 0
+        self.users = 0
+
+    def __enter__(self):
+        from app.core.database import async_engine
+
+        self._engine = async_engine.sync_engine
+        event.listen(self._engine, "before_cursor_execute", self._on)
+        return self
+
+    def __exit__(self, *exc):
+        event.remove(self._engine, "before_cursor_execute", self._on)
+
+    def _on(self, conn, cursor, statement, params, context, executemany):
+        normalised = " ".join(statement.split()).lower()
+        if normalised.startswith("update api_keys"):
+            self.api_keys += 1
+        elif normalised.startswith("update users"):
+            self.users += 1
+
+
+class TestConcurrentRequests:
+    """What separate requests do to the same row at the same moment.
+
+    Each call gets its own session, as each HTTP request does. Sequential
+    calls on one session cannot show this: they never contend.
+    """
+
+    CONCURRENCY = 24
+
+    async def _burst(self, plain: str, n: int) -> None:
+        from app.core.database import AsyncSessionLocal
+
+        async def one():
+            async with AsyncSessionLocal() as session:
+                assert await validate_api_key(session, plain) is not None
+
+        await asyncio.gather(*[one() for _ in range(n)])
+
+    async def test_a_burst_inside_the_window_writes_nothing(
+        self, committed_service_key
+    ):
+        """The steady state, and the one that used to cost a write per
+        request: a key already in use, hit by many requests at once."""
+        _, plain = committed_service_key
+        await self._burst(plain, 2)  # establish a fresh stamp
+
+        with _StampWriteCounter() as writes:
+            await self._burst(plain, self.CONCURRENCY)
+
+        assert writes.api_keys == 0
+        assert writes.users == 0
+
+    async def test_a_burst_on_a_stale_row_collapses_to_few_writes(
+        self, committed_service_key
+    ):
+        """The herd at window expiry. A caller that blocks on the row
+        re-evaluates the WHERE after the winner commits, finds the stamp
+        fresh and writes nothing — so this must not scale with the burst."""
+        ids, plain = committed_service_key
+        user_id, key_id, _ = ids
+        from app.core.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as s:
+            past = datetime.now(UTC) - USAGE_STAMP_MAX_AGE * 5
+            await s.execute(
+                update(APIKey).where(APIKey.id == key_id).values(last_used_at=past)
+            )
+            await s.execute(
+                update(User).where(User.id == user_id).values(last_login_at=past)
+            )
+            await s.commit()
+
+        with _StampWriteCounter() as writes:
+            await self._burst(plain, self.CONCURRENCY)
+
+        assert writes.api_keys < self.CONCURRENCY, (
+            "every concurrent request wrote — the staleness gate is not holding"
+        )
+        assert writes.users < self.CONCURRENCY
+
+        # And the row did get refreshed exactly once, to one value
+        async with AsyncSessionLocal() as s:
+            stamp = (
+                await s.execute(select(APIKey.last_used_at).where(APIKey.id == key_id))
+            ).scalar_one()
+        assert stamp > past
