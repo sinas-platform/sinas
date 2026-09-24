@@ -11,7 +11,7 @@ import bcrypt
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -451,19 +451,15 @@ async def validate_refresh_token(db: AsyncSession, plain_token: str) -> Optional
     if refresh_token.expires_at < datetime.now(UTC):
         return None
 
-    # Update last used timestamp
-    refresh_token.last_used_at = datetime.now(UTC)
-
-    # Get user and update last_login
     result = await db.execute(select(User).where(User.id == refresh_token.user_id))
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
         return None
 
-    # Update last login timestamp
-    user.last_login_at = datetime.now(UTC)
-    await db.commit()
+    await _refresh_usage_stamps(
+        db, datetime.now(UTC), refresh_token=refresh_token, user=user
+    )
 
     return str(user.id), user.email
 
@@ -610,6 +606,93 @@ async def resolve_api_key_permissions(
     return {k: v for k, v in perms.items() if not v or check_permission(owner_perms, k)}
 
 
+# How stale a usage stamp may get before it is rewritten.
+#
+# last_used_at / last_login_at are observability, not authorisation, and
+# nothing reads them at sub-minute resolution. Stamping them on EVERY
+# authenticated request made the auth path serialise: a service calling Sinas
+# uses one API key, so every concurrent request needed a row lock on that one
+# api_keys row — and on the one users row behind it — so effective concurrency
+# on authentication fell to one. Under sustained load that queue becomes
+# self-sustaining: observed on a local stack as 33 concurrent
+# `UPDATE api_keys SET last_used_at` all waiting on transactionid, the oldest
+# for 643 seconds, while uploads timed out and even /health took six seconds.
+USAGE_STAMP_MAX_AGE = timedelta(minutes=1)
+
+
+def _stamp_is_stale(stamp: Optional[datetime], now: datetime) -> bool:
+    if stamp is None:
+        return True
+    if stamp.tzinfo is None:  # legacy rows written before tz-aware stamps
+        stamp = stamp.replace(tzinfo=UTC)
+    return (now - stamp) >= USAGE_STAMP_MAX_AGE
+
+
+async def _refresh_usage_stamps(
+    db: AsyncSession,
+    now: datetime,
+    *,
+    api_key: Optional[APIKey] = None,
+    refresh_token: Optional[RefreshToken] = None,
+    user: Optional[User] = None,
+) -> None:
+    """Rewrite usage stamps that have gone stale, and nothing else.
+
+    Two things keep this off the hot path. The in-memory check skips the
+    statement entirely for the ~all requests that arrive inside the window.
+    When one does fire it is a CONDITIONAL update, so a concurrent caller that
+    blocks on the row re-evaluates the WHERE after the winner commits, finds
+    the stamp already fresh, matches no rows and takes no lock of its own —
+    a thundering herd at window expiry resolves after a single write instead
+    of queueing one per request.
+
+    Core UPDATEs, deliberately: assigning to the ORM objects would leave them
+    dirty and flush again later in the request, reopening the contention this
+    exists to remove.
+    """
+    cutoff = now - USAGE_STAMP_MAX_AGE
+    wrote = False
+
+    if api_key is not None and _stamp_is_stale(api_key.last_used_at, now):
+        await db.execute(
+            update(APIKey)
+            .where(
+                APIKey.id == api_key.id,
+                or_(APIKey.last_used_at.is_(None), APIKey.last_used_at < cutoff),
+            )
+            .values(last_used_at=now)
+        )
+        wrote = True
+
+    if refresh_token is not None and _stamp_is_stale(refresh_token.last_used_at, now):
+        await db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.id == refresh_token.id,
+                or_(
+                    RefreshToken.last_used_at.is_(None),
+                    RefreshToken.last_used_at < cutoff,
+                ),
+            )
+            .values(last_used_at=now)
+        )
+        wrote = True
+
+    if user is not None and _stamp_is_stale(user.last_login_at, now):
+        await db.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+            )
+            .values(last_login_at=now)
+        )
+        wrote = True
+
+    if wrote:
+        await db.commit()
+
+
 async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, dict[str, bool]]]:
     """
     Validate an API key and return the user and permissions.
@@ -636,19 +719,13 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, d
     if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         return None
 
-    # Update last used timestamp
-    api_key.last_used_at = datetime.now(UTC)
-
-    # Get user and update last_login
     result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
         return None
 
-    # Update last login timestamp
-    user.last_login_at = datetime.now(UTC)
-    await db.commit()
+    await _refresh_usage_stamps(db, datetime.now(UTC), api_key=api_key, user=user)
 
     return user, await resolve_api_key_permissions(db, api_key, user)
 
