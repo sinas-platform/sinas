@@ -37,6 +37,34 @@ const permissionKeysFor = (
     : [flat];
 };
 
+const REGISTRY_KEY = /^sinas\.([^./]+)(\/\*\/\*)?\.([^.:]+):(own|all)$/;
+
+/**
+ * Both halves of a registry grant, given either half.
+ *
+ * A registry button grants a namespaced action as a pair, so removing its
+ * chip has to undo the pair — otherwise dropping the flat half leaves the
+ * path-form grant live while the button reads as unselected, which is the
+ * more dangerous direction of that mismatch.
+ *
+ * A key that is not one half of a registry pair — a concrete path, an
+ * unknown resource, anything typed into the custom field — is returned
+ * alone and stays individually removable.
+ */
+const pairedKeys = (perm: string, registry: PermissionRegistryEntry[]): string[] => {
+  const match = REGISTRY_KEY.exec(perm);
+  if (!match) return [perm];
+  const [, resource, path, action, scope] = match;
+  const entry = registry.find((e) => e.resource === resource);
+  if (!entry?.namespaced || !entry.actions.includes(action)) return [perm];
+  return [
+    perm,
+    path
+      ? `sinas.${resource}.${action}:${scope}`
+      : `sinas.${resource}/*/*.${action}:${scope}`,
+  ];
+};
+
 /**
  * Reusable permission editor with registry reference and custom input.
  *
@@ -121,7 +149,6 @@ export function PermissionEditor(props: PermissionEditorProps) {
   };
 
   const addPermission = (perm: string) => addPermissions([perm]);
-  const removePermission = (perm: string) => removePermissions([perm]);
 
   const togglePermissions = (perms: string[]) => {
     if (perms.every(isSelected)) {
@@ -163,7 +190,14 @@ export function PermissionEditor(props: PermissionEditorProps) {
                 {permission}
                 <button
                   type="button"
-                  onClick={() => removePermission(permission)}
+                  onClick={() =>
+                    removePermissions(
+                      pairedKeys(
+                        permission,
+                        (permissionRegistry as PermissionRegistryEntry[]) || []
+                      )
+                    )
+                  }
                   className="hover:text-blue-100"
                 >
                   <X className="w-3 h-3" />

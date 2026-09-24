@@ -113,16 +113,30 @@ async def update_database_connection(
             detail=f"Database connection '{connection_id}' not found",
         )
 
-    # The built-in connection's target and credentials are owned by the
-    # platform (they come from the deployment's own DATABASE_* settings).
+    # The built-in connection's identity, target and credentials are owned by
+    # the platform (they come from the deployment's own DATABASE_* settings).
     # Editing them through the API used to "succeed" and leave the connection
     # permanently broken, recoverable only by deleting the row directly in
     # Postgres or reading the password off the host — neither available to an
     # operator with console access alone (#76).
+    #
+    # `name` is locked for a second reason: it is an identifier, not a label.
+    # Agents reach this connection by name ("built-in") through the database
+    # introspection tool, and the scheduler resolves it by that name on every
+    # boot — so a rename silently breaks introspection AND makes the next
+    # restart create a duplicate built-in connection beside the renamed one.
     if connection.managed_by == "system":
         locked = [
             field
-            for field in ("host", "port", "database", "username", "password", "connection_type")
+            for field in (
+                "name",
+                "host",
+                "port",
+                "database",
+                "username",
+                "password",
+                "connection_type",
+            )
             if getattr(request, field, None) is not None
         ]
         if locked:
@@ -131,8 +145,9 @@ async def update_database_connection(
                 detail=(
                     f"The built-in database connection is managed by Sinas; "
                     f"{', '.join(locked)} cannot be changed here. It follows the "
-                    f"deployment's own database settings. Name, active state, "
-                    f"read-only and pool config remain editable."
+                    f"deployment's own database settings, and is resolved by the "
+                    f"name 'built-in'. Active state, read-only and pool config "
+                    f"remain editable."
                 ),
             )
 
