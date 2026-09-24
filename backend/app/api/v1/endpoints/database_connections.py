@@ -113,6 +113,29 @@ async def update_database_connection(
             detail=f"Database connection '{connection_id}' not found",
         )
 
+    # The built-in connection's target and credentials are owned by the
+    # platform (they come from the deployment's own DATABASE_* settings).
+    # Editing them through the API used to "succeed" and leave the connection
+    # permanently broken, recoverable only by deleting the row directly in
+    # Postgres or reading the password off the host — neither available to an
+    # operator with console access alone (#76).
+    if connection.managed_by == "system":
+        locked = [
+            field
+            for field in ("host", "port", "database", "username", "password", "connection_type")
+            if getattr(request, field, None) is not None
+        ]
+        if locked:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"The built-in database connection is managed by Sinas; "
+                    f"{', '.join(locked)} cannot be changed here. It follows the "
+                    f"deployment's own database settings. Name, active state, "
+                    f"read-only and pool config remain editable."
+                ),
+            )
+
     if request.name is not None:
         name_check = await db.execute(
             select(DatabaseConnection).where(
