@@ -12,6 +12,60 @@ interface PermissionRegistryEntry {
 }
 
 /**
+ * The permission keys one granted action must carry.
+ *
+ * Namespaced resources are checked against a concrete path where they are
+ * used — `sinas.functions/acme/send_email.execute:own` — and a flat
+ * `sinas.functions.execute:all` does not match that (a pattern without a path
+ * never matches a concrete one with a path). A key granted only the flat form
+ * was therefore refused by every resource-level check, while the same user's
+ * console session worked, because the session carries the role's own
+ * path-form keys (#77).
+ *
+ * Both forms are granted together rather than swapping one for the other: a
+ * few actions on namespaced resources are still checked flat (`create`,
+ * `functions.shared_pool`), so neither form alone covers a whole resource.
+ */
+const permissionKeysFor = (
+  entry: PermissionRegistryEntry,
+  action: string,
+  scope: string
+): string[] => {
+  const flat = `sinas.${entry.resource}.${action}:${scope}`;
+  return entry.namespaced
+    ? [flat, `sinas.${entry.resource}/*/*.${action}:${scope}`]
+    : [flat];
+};
+
+const REGISTRY_KEY = /^sinas\.([^./]+)(\/\*\/\*)?\.([^.:]+):(own|all)$/;
+
+/**
+ * Both halves of a registry grant, given either half.
+ *
+ * A registry button grants a namespaced action as a pair, so removing its
+ * chip has to undo the pair — otherwise dropping the flat half leaves the
+ * path-form grant live while the button reads as unselected, which is the
+ * more dangerous direction of that mismatch.
+ *
+ * A key that is not one half of a registry pair — a concrete path, an
+ * unknown resource, anything typed into the custom field — is returned
+ * alone and stays individually removable.
+ */
+const pairedKeys = (perm: string, registry: PermissionRegistryEntry[]): string[] => {
+  const match = REGISTRY_KEY.exec(perm);
+  if (!match) return [perm];
+  const [, resource, path, action, scope] = match;
+  const entry = registry.find((e) => e.resource === resource);
+  if (!entry?.namespaced || !entry.actions.includes(action)) return [perm];
+  return [
+    perm,
+    path
+      ? `sinas.${resource}.${action}:${scope}`
+      : `sinas.${resource}/*/*.${action}:${scope}`,
+  ];
+};
+
+/**
  * Reusable permission editor with registry reference and custom input.
  *
  * Supports two value formats:
@@ -67,31 +121,40 @@ export function PermissionEditor(props: PermissionEditorProps) {
     return props.value.includes(perm);
   };
 
-  const addPermission = (perm: string) => {
+  const addPermissions = (perms: string[]) => {
     if (mode === 'dict') {
-      props.onChange({ ...props.value, [perm]: true });
+      const next = { ...props.value };
+      perms.forEach((perm) => {
+        next[perm] = true;
+      });
+      props.onChange(next);
     } else {
-      if (!props.value.includes(perm)) {
-        props.onChange([...props.value, perm]);
+      const missing = perms.filter((perm) => !props.value.includes(perm));
+      if (missing.length > 0) {
+        props.onChange([...props.value, ...missing]);
       }
     }
   };
 
-  const removePermission = (perm: string) => {
+  const removePermissions = (perms: string[]) => {
     if (mode === 'dict') {
       const next = { ...props.value };
-      delete next[perm];
+      perms.forEach((perm) => {
+        delete next[perm];
+      });
       props.onChange(next);
     } else {
-      props.onChange(props.value.filter((p) => p !== perm));
+      props.onChange(props.value.filter((p) => !perms.includes(p)));
     }
   };
 
-  const togglePermission = (perm: string) => {
-    if (isSelected(perm)) {
-      removePermission(perm);
+  const addPermission = (perm: string) => addPermissions([perm]);
+
+  const togglePermissions = (perms: string[]) => {
+    if (perms.every(isSelected)) {
+      removePermissions(perms);
     } else {
-      addPermission(perm);
+      addPermissions(perms);
     }
   };
 
@@ -127,7 +190,14 @@ export function PermissionEditor(props: PermissionEditorProps) {
                 {permission}
                 <button
                   type="button"
-                  onClick={() => removePermission(permission)}
+                  onClick={() =>
+                    removePermissions(
+                      pairedKeys(
+                        permission,
+                        (permissionRegistry as PermissionRegistryEntry[]) || []
+                      )
+                    )
+                  }
                   className="hover:text-blue-100"
                 >
                   <X className="w-3 h-3" />
@@ -215,19 +285,19 @@ export function PermissionEditor(props: PermissionEditorProps) {
                   <div className="flex flex-wrap gap-1 flex-1">
                     {entry.actions.map((action) => {
                       const scope = entry.adminOnly ? 'all' : permScope;
-                      const permKey = `sinas.${entry.resource}.${action}:${scope}`;
-                      const selected = isSelected(permKey);
+                      const permKeys = permissionKeysFor(entry, action, scope);
+                      const selected = permKeys.every(isSelected);
                       return (
                         <button
                           key={action}
                           type="button"
-                          onClick={() => togglePermission(permKey)}
+                          onClick={() => togglePermissions(permKeys)}
                           className={`px-1.5 py-0.5 text-[11px] rounded font-mono transition-colors ${
                             selected
                               ? 'bg-blue-900/30 text-blue-300'
                               : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
                           }`}
-                          title={permKey}
+                          title={permKeys.join('\n')}
                         >
                           {action}
                         </button>

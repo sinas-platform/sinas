@@ -6,16 +6,17 @@ import re
 from typing import Any, Optional
 
 import yaml
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.chat import Chat
 from app.models.connector import Connector
 from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
-from app.models.function import Function
+from app.models.function import Function, FunctionVersion
 from app.models.package import Package
 from app.models.query import Query
 from app.models.schedule import ScheduledJob
@@ -351,6 +352,23 @@ class PackageService:
             Template: "templates",
             Webhook: "webhooks",
         }
+
+        # Children whose FK has no ON DELETE rule must be cleared first. The
+        # loop below issues Core bulk deletes, which bypass the ORM's
+        # delete-orphan cascades entirely, so a package whose functions had
+        # ever been versioned (or whose agents had ever been chatted with)
+        # failed the whole uninstall on a ForeignKeyViolationError (#63).
+        # Every other child of these tables already cascades at the DB level.
+        function_ids = select(Function.id).where(Function.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            delete(FunctionVersion).where(FunctionVersion.function_id.in_(function_ids))
+        )
+        # Chats outlive the package: a conversation is the user's, not the
+        # package's, so only the link to the vanishing agent is cleared.
+        agent_ids = select(Agent.id).where(Agent.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
+        )
 
         for model, type_name in model_names.items():
             stmt = delete(model).where(model.managed_by == managed_by)

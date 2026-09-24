@@ -254,7 +254,7 @@ curl -X POST ${API_BASE_URL}/agents/${agent.namespace}/${agent.name}/invoke \\
 client = SinasClient(base_url="${API_BASE_URL}", api_key="sk-...")
 
 # Simple invoke (one request, one response)
-result = client.agents.invoke("${agent.namespace}", "${agent.name}",
+result = client.chats.invoke("${agent.namespace}", "${agent.name}",
     message="Hello"${
   agent.input_schema && Object.keys(agent.input_schema.properties || {}).length > 0
     ? `,\n    input={${Object.keys(agent.input_schema.properties || {}).map(k => `"${k}": "..."`).join(', ')}}`
@@ -262,7 +262,7 @@ result = client.agents.invoke("${agent.namespace}", "${agent.name}",
 print(result["reply"])
 
 # With session key (maintains conversation across calls)
-result = client.agents.invoke("${agent.namespace}", "${agent.name}",
+result = client.chats.invoke("${agent.namespace}", "${agent.name}",
     message="What was my last question?",
     session_key="slack:U09ABC123")
 
