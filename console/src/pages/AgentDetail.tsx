@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../lib/api';
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Save, Trash2, Loader2, Bot } from 'lucide-react';
-import type { AgentUpdate } from '../types';
+import type { AgentUpdate, EffortLevel } from '../types';
 import { JSONSchemaEditor } from '../components/JSONSchemaEditor';
 import { ApiUsage } from '../components/ApiUsage';
 import { useAuth } from '../lib/auth-context';
@@ -641,6 +641,37 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 Override the provider's prompt-caching setting for this agent.
                 Caching pays off for agents with large, reused system prompts;
                 one-shot agents may be cheaper without it.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="effort" className="block text-sm font-medium text-gray-300 mb-2">
+                Effort (Anthropic)
+              </label>
+              <select
+                id="effort"
+                className="input"
+                value={(formData.provider_overrides ?? agent.provider_overrides ?? {}).effort ?? 'inherit'}
+                onChange={(e) => {
+                  const current = { ...(formData.provider_overrides ?? agent.provider_overrides ?? {}) };
+                  if (e.target.value === 'inherit') delete current.effort;
+                  else current.effort = e.target.value as EffortLevel;
+                  setFormData({ ...formData, provider_overrides: current });
+                }}
+              >
+                <option value="inherit">Model default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+                <option value="max">Max</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                How much the model thinks and spends. Current Claude models think
+                by default, and this is the only way to turn that down; Low suits
+                routing, extraction and simple tool calls. Claude Haiku 4.5 and
+                Sonnet 4.5 reject this setting, and Extra high needs Opus 4.7 or
+                Sonnet 5 and later. Ignored by non-Anthropic providers.
               </p>
             </div>
           </div>

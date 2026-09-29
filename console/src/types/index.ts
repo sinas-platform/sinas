@@ -1,3 +1,16 @@
+/**
+ * Per-agent provider behaviour overrides. Absent key = inherit the provider's
+ * setting. The backend validates keys and values (providers/factory.py
+ * AGENT_OVERRIDABLE); anything else is rejected.
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface ProviderOverrides {
+  prompt_caching?: boolean;
+  /** Anthropic `output_config.effort` — how much the model thinks and spends. */
+  effort?: EffortLevel;
+}
+
 // Authentication
 export interface User {
   id: string;
@@ -242,7 +255,7 @@ export interface Agent {
   name: string;
   description: string | null;
   llm_provider_id: string | null;
-  provider_overrides?: Record<string, boolean> | null;
+  provider_overrides?: ProviderOverrides | null;
   model: string | null;
   temperature: number;
   max_tokens: number | null;
@@ -280,7 +293,7 @@ export interface AgentCreate {
   name: string;
   description?: string;
   llm_provider_id?: string;
-  provider_overrides?: Record<string, boolean>;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -311,7 +324,7 @@ export interface AgentUpdate {
   name?: string;
   description?: string;
   llm_provider_id?: string;
-  provider_overrides?: Record<string, boolean>;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;

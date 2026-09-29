@@ -21,6 +21,10 @@ class AnthropicProvider(BaseLLMProvider):
         super().__init__(api_key, base_url)
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self.enable_prompt_caching = enable_prompt_caching
+        # output_config.effort, set per agent through provider_overrides
+        # (see AGENT_OVERRIDABLE in factory.py). None sends nothing and the
+        # model runs at its own default effort.
+        self.effort: Optional[str] = None
 
     async def complete(
         self,
@@ -71,6 +75,8 @@ class AnthropicProvider(BaseLLMProvider):
             }
             params["tools"] = [structured_tool]
             params["tool_choice"] = {"type": "tool", "name": structured_tool["name"]}
+
+        self._apply_output_config(params)
 
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
@@ -156,6 +162,8 @@ class AnthropicProvider(BaseLLMProvider):
 
         if tools:
             params["tools"] = self._convert_tools_to_anthropic(tools)
+
+        self._apply_output_config(params)
 
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
@@ -260,6 +268,15 @@ class AnthropicProvider(BaseLLMProvider):
                     }
 
                 yield chunk_data
+
+    def _apply_output_config(self, params: dict[str, Any]) -> None:
+        """Merge this provider's output_config settings into a request.
+
+        Merged, not assigned: output_config also carries the structured-output
+        `format`, and one must never erase the other.
+        """
+        if self.effort:
+            params.setdefault("output_config", {})["effort"] = self.effort
 
     def _apply_cache_control(self, params: dict[str, Any]) -> None:
         """Mark prompt-cache breakpoints on the request (in place).
@@ -549,6 +566,7 @@ class AnthropicProvider(BaseLLMProvider):
         }
         if system_message:
             params["system"] = system_message
+        self._apply_output_config(params)
         if self.enable_prompt_caching:
             # Batch requests sharing an agent's system prompt can still land
             # opportunistic cache hits — the discounts stack.
