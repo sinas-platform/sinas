@@ -126,8 +126,7 @@ async def apply_agents(
                 else []
             )
 
-            config_hash = calculate_hash(
-                {
+            hash_payload = {
                     "namespace": agent_config.namespace,
                     "name": agent_config.name,
                     "description": agent_config.description,
@@ -180,7 +179,16 @@ async def apply_agents(
                     "default_keep_alive": agent_config.defaultKeepAlive,
                     "system_tools": agent_config.systemTools,
                 }
-            )
+            # Provider overrides (effort, prompt_caching) are part of what an
+            # agent IS: without them in the hash, a config changing only
+            # `providerOverrides.effort` hashed identically, was skipped as
+            # unchanged, and left the old value in effect — a silent no-op for
+            # exactly the teams that manage agents as config. Included only
+            # when set, so agents without overrides keep their existing hash
+            # and an upgrade doesn't re-apply every config-managed agent at once.
+            if agent_config.providerOverrides:
+                hash_payload["provider_overrides"] = agent_config.providerOverrides
+            config_hash = calculate_hash(hash_payload)
 
             if existing:
                 if should_skip_existing(

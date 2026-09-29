@@ -274,6 +274,9 @@ def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
         "defaultJobTimeout": agent.default_job_timeout,
         "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
         "systemTools": agent.system_tools if agent.system_tools else None,
+        # Round-trips through export/import; without it an exported agent
+        # re-imported at model-default effort and caching.
+        "providerOverrides": agent.provider_overrides or None,
     })
 
 
