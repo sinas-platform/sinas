@@ -1,10 +1,87 @@
 """Anthropic LLM provider implementation."""
+import copy
+import json
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
 from anthropic import AsyncAnthropic
 
 from .base import BaseLLMProvider
+
+
+class UnsupportedOutputSchema(ValueError):
+    """An agent output schema that Claude's native structured outputs can't
+    express. Raised before any request is sent, with the offending path."""
+
+
+_SUBSCHEMA_MAPS = ("properties", "$defs", "definitions")
+_SUBSCHEMA_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+_SUBSCHEMA_SINGLE = ("not", "if", "then", "else", "contains")
+
+
+def _is_object_schema(schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "object" or (isinstance(kind, list) and "object" in kind):
+        return True
+    return "properties" in schema and "type" not in schema
+
+
+def close_object_schemas(schema: Any, path: str = "$") -> Any:
+    """Return a copy of `schema` that native structured outputs will accept.
+
+    The one rule the API enforces on hand-written schemas: EVERY object,
+    nested ones included, must set `additionalProperties: false` (verified
+    live — a top-level-only fix still 400s on a nested object). `required`
+    is not needed, so optional fields stay optional and are left alone.
+
+    Unset -> filled in. An object that explicitly allows extra keys (`true`,
+    or a schema, i.e. a free-form map) can't be expressed at all, and forcing
+    `false` would silently turn the map into an always-empty object — that is
+    an error naming the path instead of a changed contract.
+
+    Always a deep copy: callers pass schemas that are still attached to the
+    agent's stored output_schema, and editing them in place would write
+    through to the ORM object.
+    """
+    if isinstance(schema, list):
+        return [close_object_schemas(item, f"{path}[{i}]") for i, item in enumerate(schema)]
+    if not isinstance(schema, dict):
+        return schema
+
+    out = {key: copy.deepcopy(value) for key, value in schema.items()}
+
+    if _is_object_schema(out):
+        extra = out.get("additionalProperties", None)
+        if extra is None:
+            out["additionalProperties"] = False
+        elif extra is not False:
+            raise UnsupportedOutputSchema(
+                f"Output schema object at {path} allows arbitrary extra keys "
+                f"(additionalProperties: {json.dumps(extra)}), which Claude's "
+                f"native structured outputs cannot express. Give it explicit "
+                f"properties, or model the map as an array of "
+                f"{{key, value}} objects."
+            )
+
+    for key in _SUBSCHEMA_MAPS:
+        if isinstance(out.get(key), dict):
+            out[key] = {
+                name: close_object_schemas(sub, f"{path}.{key}.{name}" if key != "properties" else f"{path}.{name}")
+                for name, sub in out[key].items()
+            }
+    for key in _SUBSCHEMA_LISTS:
+        if isinstance(out.get(key), list):
+            out[key] = [
+                close_object_schemas(sub, f"{path}.{key}[{i}]")
+                for i, sub in enumerate(out[key])
+            ]
+    for key in _SUBSCHEMA_SINGLE:
+        if isinstance(out.get(key), dict):
+            out[key] = close_object_schemas(out[key], f"{path}.{key}")
+    if isinstance(out.get("items"), (dict, list)):
+        out["items"] = close_object_schemas(out["items"], f"{path}[]")
+
+    return out
 
 
 class AnthropicProvider(BaseLLMProvider):
@@ -56,25 +133,21 @@ class AnthropicProvider(BaseLLMProvider):
             # Convert OpenAI tool format to Anthropic format
             params["tools"] = self._convert_tools_to_anthropic(tools)
 
-        # Structured outputs: Anthropic has no response_format param; its
-        # structured-output path is forced tool use. Only when the request
-        # carries no real tools — forcing a tool_choice would otherwise
-        # stop the agent's actual tool loop, and tool-using agents already
-        # get the schema instruction in their system prompt.
-        structured_tool = None
+        # Structured outputs: native `output_config.format`, which guarantees
+        # the answer is a text block of JSON matching the schema. This
+        # replaced forced tool use (`tool_choice: {type: "tool"}`), which
+        # Claude Opus 5.5 / Sonnet 5.5 / Fable 5.1 reject with a 400; native
+        # structured outputs work on every current model (verified live
+        # across Haiku 4.5 through Opus 5.5). Only when the request carries
+        # no real tools — tool-using agents keep the prompt-based instruction.
         response_format = kwargs.get("response_format")
         if response_format and not tools and response_format.get("type") == "json_schema":
-            js = response_format.get("json_schema") or {}
-            structured_tool = {
-                "name": (js.get("name") or "structured_response")[:64],
-                "description": (
-                    "Deliver the final response in the required JSON shape. "
-                    "Call exactly once with the complete answer."
-                ),
-                "input_schema": js.get("schema") or {"type": "object"},
-            }
-            params["tools"] = [structured_tool]
-            params["tool_choice"] = {"type": "tool", "name": structured_tool["name"]}
+            schema = (response_format.get("json_schema") or {}).get("schema")
+            if schema:
+                params.setdefault("output_config", {})["format"] = {
+                    "type": "json_schema",
+                    "schema": close_object_schemas(schema),
+                }
 
         self._apply_output_config(params)
 
@@ -92,21 +165,6 @@ class AnthropicProvider(BaseLLMProvider):
                 raise
             async with self.client.messages.stream(**params) as s:
                 response = await s.get_final_message()
-
-        if structured_tool is not None:
-            # The forced tool call IS the answer: return its input as the
-            # message content so downstream parses one clean JSON document.
-            for block in response.content:
-                if block.type == "tool_use" and block.name == structured_tool["name"]:
-                    return {
-                        "content": self._serialize_args(block.input),
-                        "tool_calls": None,
-                        "usage": self.extract_usage(response),
-                        # stop_reason is "tool_use" mechanically; semantically
-                        # this is a completed final answer.
-                        "finish_reason": "stop",
-                    }
-            # Model refused the tool (rare) — fall through to normal parsing.
 
         # Extract content (Anthropic returns list of content blocks)
         content = ""
