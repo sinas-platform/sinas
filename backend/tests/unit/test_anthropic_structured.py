@@ -231,6 +231,15 @@ class TestCloseObjectSchemas:
         assert "$.outer.inner" in str(exc.value)
         assert "additionalProperties" in str(exc.value)
 
+    def test_an_untyped_map_is_refused_too(self):
+        """A map written as bare additionalProperties, no type or properties."""
+        schema = {"type": "object", "properties": {"labels": {"additionalProperties": {"type": "string"}}}}
+        with pytest.raises(UnsupportedOutputSchema, match=r"\$\.labels"):
+            close_object_schemas(schema)
+
+    def test_an_untyped_closed_object_is_kept(self):
+        assert close_object_schemas({"additionalProperties": False}) == {"additionalProperties": False}
+
     def test_the_callers_schema_is_never_mutated(self):
         """message_service passes a SHALLOW copy of agent.output_schema, so
         nested dicts are the agent's own — editing them would write through

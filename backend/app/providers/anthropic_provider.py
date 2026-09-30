@@ -23,7 +23,12 @@ def _is_object_schema(schema: dict[str, Any]) -> bool:
     kind = schema.get("type")
     if kind == "object" or (isinstance(kind, list) and "object" in kind):
         return True
-    return "properties" in schema and "type" not in schema
+    # Untyped schemas still describe objects when they carry object keywords;
+    # a bare `{"additionalProperties": {...}}` is a map and must be caught here,
+    # not sent to the API to 400 without a path.
+    return "type" not in schema and (
+        "properties" in schema or "additionalProperties" in schema
+    )
 
 
 def close_object_schemas(schema: Any, path: str = "$") -> Any:
