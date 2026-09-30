@@ -10,6 +10,13 @@ class PackageInstallRequest(BaseModel):
     """Request to install a package from YAML content."""
     source: str = Field(..., description="YAML content of the SinasPackage")
     variables: Optional[dict[str, Any]] = Field(None, description="Install-time variable values")
+    allowBroadRolePermissions: bool = Field(
+        False,
+        description=(
+            "Accept package roles whose granted permissions reach outside the "
+            "package's own namespaces (listed by preview). Off by default."
+        ),
+    )
 
 
 class PackagePreviewRequest(BaseModel):

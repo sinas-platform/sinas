@@ -1,0 +1,11 @@
+{
+  "schema": "opensaas.metering-response/v1",
+  "accepted": false,
+  "disposition": "period_mismatch",
+  "period": {
+    "id": "01J5PERIODNEXT",
+    "start": "2026-08-14T00:00:00Z",
+    "end": "2026-09-14T00:00:00Z"
+  },
+  "server_time": "2026-09-01T00:05:00Z"
+}

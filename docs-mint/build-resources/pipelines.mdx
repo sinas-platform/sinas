@@ -1,0 +1,162 @@
+---
+title: "Pipelines"
+description: "Linear typed step sequences: poll, transform, invoke agents, load data"
+---
+
+Pipelines are named, **linear** sequences of typed steps — deliberately not a DAG.
+They capture the recurring integration shape *poll or receive from a source →
+transform → optionally invoke an agent → act deterministically on its output*,
+as one declarative resource fired by the existing trigger resources (webhooks,
+schedules, database triggers) or invoked manually / as an agent tool.
+
+```yaml
+pipelines:
+  - namespace: gmail
+    name: inbox-triage
+    description: Poll Gmail history and triage new messages
+    perUser:
+      connector: google/gmail      # one run per connected user
+      disableAfterFailures: 5
+    steps:
+      - name: fetch
+        type: connector
+        connector: google/gmail
+        operation: list-history
+        input:
+          userId: me
+        cursor:
+          param: startHistoryId    # cursor injected here
+          path: body.historyId     # new high-water mark read here
+        retry: { maxAttempts: 3, backoff: exponential }
+
+      - name: extract
+        type: function
+        function: gmail/extract-messages
+        input.$: steps.fetch.output.body
+
+      - name: triage
+        type: agent
+        agent: gmail/triage
+        input.$: steps.extract.output
+
+      - name: land
+        type: load
+        connection: reporting
+        table: inbox_messages
+        primaryKey.$: item.id
+        items.$: steps.triage.output.messages
+```
+
+## Step types
+
+| Type | Executes | Output (in the run context) |
+|---|---|---|
+| `connector` | A connector operation in-process (auth incl. per-user OAuth, retries reused) | `{statusCode, body, elapsedMs}` — non-2xx fails the step unless listed in `allowStatuses` |
+| `function` | A function through the normal runtime | The function's return value |
+| `agent` | An agent with a fresh chat; the JSON reply is validated against the agent's `outputSchema` | Parsed structured output (or raw text without a schema) |
+| `query` | A saved query | `{rows, rowCount, affectedRows}` |
+| `load` | Idempotent JSONB upsert into a database connection | `{upserted, table}` |
+
+## Data mapping
+
+One convention everywhere, based on [JMESPath](https://jmespath.org):
+
+- `key: value` — literal, passed through.
+- `key.$: <expression>` — evaluated against the run context, bound to `key`.
+- A step's whole input can be one expression: `input.$: steps.fetch.output.body`.
+
+The run context:
+
+```json
+{
+  "input":  { },                        // trigger payload / tool args / run body
+  "steps":  { "fetch": { "output": … } },
+  "cursor": "…",                        // committed cursor for this run scope
+  "run":    { "id", "triggerType", "firedAt", "userId" }
+}
+```
+
+Missing paths resolve to `null`; invalid expressions are rejected when the
+pipeline is saved. The mapping layer is for projection and selection — real
+computation (format conversion, embeddings, MIME building) belongs in a
+`function` step.
+
+## Cursors and delivery semantics
+
+A step may declare `cursor: {param, path, initial?}`. The committed cursor is
+injected into the step's input and the new high-water mark is read from its
+output — but it **commits only when the whole run succeeds**. Failed runs hold
+the cursor, so the next firing re-reads from the same position: **at-least-once
+delivery**. This is safe because `load` steps are idempotent upserts; agent
+steps should tolerate occasional duplicate runs. An empty poll (cursor path
+resolves to `null`) leaves the bookmark unchanged.
+
+Runs are single-flight per pipeline (per user for `perUser` pipelines): a
+trigger firing during a run is coalesced into one follow-up run; manual sync
+runs return `409` instead of queueing. Cursor-less pipelines default to
+`concurrency: parallel`.
+
+## Per-user pipelines
+
+`perUser: {connector: ns/name}` fans a trigger firing out to **one run per
+connected user** — users with a stored OAuth token for the connector
+(`oauth2_authorization_code`), or a private Secret override for secret-based
+auth types. Each run executes as that user (their tokens, their permissions),
+with its own cursor and failure isolation: one user's revoked credential never
+blocks other users. With `disableAfterFailures: N`, a user is skipped after N
+consecutive failures until they reconnect or update their secret.
+
+`load` steps in perUser pipelines write a `user_id` column and upsert on
+`(user_id, pk)`, since source IDs are only unique per account.
+
+## Triggers and manual runs
+
+Pipelines don't embed trigger config. Instead:
+
+- **Schedules**: `scheduleType: pipeline` + `pipelineName: ns/name` — the
+  standard way to poll ("every 2 minutes, run the Gmail pipeline").
+- **Webhooks**: `targetType: pipeline` + `pipelineName` — the request payload
+  (merged over `defaultValues`) becomes the pipeline input, running as the
+  webhook's owner. `responseMode: sync` waits and returns
+  `{success, run_id, output}`; `async` returns `202 {run_id}`. `raw` stays
+  function-only. Webhook events are single occurrences, so perUser pipelines
+  do **not** fan out here — the event runs once, as the owner.
+- **Database triggers (CDC)**: `targetType: pipeline` + `pipelineName` — the
+  changed rows become the pipeline input.
+- **Manual / API**:
+
+```bash
+POST /pipelines/{ns}/{name}/run            # {"input": {...}, "mode": "sync"|"async"}
+GET  /pipelines/{ns}/{name}/runs           # run history (the dead-letter record)
+GET  /pipelines/runs/{run_id}
+POST /pipelines/runs/{run_id}/replay       # re-enqueue a failed run's stored input
+```
+
+Sync runs (and tool invocations) are bounded by `syncTimeoutSeconds` (default
+120). On timeout, completed steps have already had their side effects — the run
+record shows exactly which.
+
+## Pipelines as agent tools
+
+`asTool: true` (plus `inputSchema` and a description) exposes the pipeline as
+one semantic tool; agents opt in via `enabledPipelines: ["ns/name"]`. This
+replaces chains of individual tool calls — e.g. *embed the query text → run a
+vector query → shape the rows* becomes a single `pipeline_search__similar-docs`
+call. Keep agent steps out of `asTool` pipelines unless seconds-to-minutes of
+tool latency is acceptable.
+
+## Failure semantics
+
+- Per-step `retry: {maxAttempts, backoff}` (agent steps are never auto-retried).
+- The first step to exhaust retries fails the run; later steps are skipped and
+  the cursor is held.
+- The run record stores the input, per-step summaries (with linked execution or
+  chat IDs), and the error — replayable via the API.
+- `disableAfterFailures: N` at the pipeline level deactivates a persistently
+  failing shared pipeline; the perUser variant skips only the affected user.
+
+## Permissions
+
+`sinas.pipelines/{ns}/{name}` with actions `create/read/update/delete/run`.
+Users get `read:own` + `run:own` by default; creating and updating pipelines
+is admin-granted.

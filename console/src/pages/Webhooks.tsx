@@ -52,9 +52,15 @@ export function Webhooks() {
                     </div>
                     <p className="text-sm text-gray-400 mt-1">{webhook.description || 'No description'}</p>
                     <div className="flex items-center gap-4 mt-1">
-                      <p className="text-xs text-gray-500">
-                        Function: <span className="font-mono">{webhook.function_namespace}/{webhook.function_name}</span>
-                      </p>
+                      {webhook.target_type === 'agent' ? (
+                        <p className="text-xs text-gray-500">
+                          Agent: <span className="font-mono">{webhook.agent_namespace}/{webhook.agent_name}</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-500">
+                          Function: <span className="font-mono">{webhook.function_namespace}/{webhook.function_name}</span>
+                        </p>
+                      )}
                       {webhook.requires_auth && (
                         <span className="text-xs text-green-600 font-medium">🔒 Auth Required</span>
                       )}

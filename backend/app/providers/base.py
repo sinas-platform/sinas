@@ -7,6 +7,10 @@ from typing import Any, Optional
 class BaseLLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
+    # Whether this provider implements the batch API methods below
+    # (submit_batch / get_batch_status / fetch_batch_results / cancel_batch).
+    supports_batch: bool = False
+
     def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
         """
         Initialize the provider.
@@ -118,3 +122,28 @@ class BaseLLMProvider(ABC):
             }
         """
         pass
+
+    # ── Provider batch API (opt-in; see supports_batch) ──────────────────
+    #
+    # Request item shape (input to submit_batch):
+    #   {"custom_id": str, "messages": [...openai-style...], "model": str,
+    #    "temperature": float, "max_tokens": Optional[int]}
+    # Result item shape (output of fetch_batch_results):
+    #   {"custom_id": str, "status": "succeeded"|"errored"|"cancelled"|"expired",
+    #    "content": Optional[str], "usage": Optional[dict], "error": Optional[str]}
+
+    async def submit_batch(self, requests: list[dict[str, Any]]) -> str:
+        """Submit requests to the provider's batch API; returns the provider batch id."""
+        raise NotImplementedError(f"{type(self).__name__} does not support batch submission")
+
+    async def get_batch_status(self, provider_batch_id: str) -> dict[str, Any]:
+        """Return {"status": <raw provider status>, "ended": bool}."""
+        raise NotImplementedError(f"{type(self).__name__} does not support batch submission")
+
+    async def fetch_batch_results(self, provider_batch_id: str) -> list[dict[str, Any]]:
+        """Return one result item per request (see shape above). Only valid once ended."""
+        raise NotImplementedError(f"{type(self).__name__} does not support batch submission")
+
+    async def cancel_batch(self, provider_batch_id: str) -> None:
+        """Best-effort cancellation of an in-flight provider batch."""
+        raise NotImplementedError(f"{type(self).__name__} does not support batch submission")

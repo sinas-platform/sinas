@@ -31,6 +31,26 @@ async def _notify_cdc(action: str, trigger_id: str) -> None:
     await redis.publish(CDC_CHANNEL, json.dumps({"action": action, "trigger_id": trigger_id}))
 
 
+
+async def _resolve_trigger(db: AsyncSession, name: str, user_id, has_all: bool):
+    """Resolve a trigger by name for this caller.
+
+    Trigger names are unique per (user_id, name), NOT globally — so selecting on
+    the name alone raised MultipleResultsFound (a 500) the moment two users
+    picked the same name, e.g. "daily-sync". Scope to the caller unless they
+    hold the :all permission, and prefer their own row when several exist.
+    Scoping also means another user's trigger reads as 404 rather than 403, so
+    the endpoint stops disclosing which names exist.
+    """
+    query = select(DatabaseTrigger).where(DatabaseTrigger.name == name)
+    if not has_all:
+        query = query.where(DatabaseTrigger.user_id == user_id)
+    rows = (await db.execute(query)).scalars().all()
+    if not rows:
+        return None
+    return next((t for t in rows if str(t.user_id) == str(user_id)), rows[0])
+
+
 @router.post("", response_model=DatabaseTriggerResponse, status_code=status.HTTP_201_CREATED)
 async def create_database_trigger(
     request: Request,
@@ -70,15 +90,27 @@ async def create_database_trigger(
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Database connection not found or inactive")
 
-    # Validate function exists
-    target_func = await Function.get_by_name(
-        db, trigger_data.function_namespace, trigger_data.function_name, user_id
-    )
-    if not target_func:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Function '{trigger_data.function_namespace}/{trigger_data.function_name}' not found",
+    # Validate the target exists
+    if trigger_data.target_type == "pipeline":
+        from app.models.pipeline import Pipeline
+
+        target_pipeline = await Pipeline.get_by_name(
+            db, trigger_data.pipeline_namespace, trigger_data.pipeline_name
         )
+        if not target_pipeline:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{trigger_data.pipeline_namespace}/{trigger_data.pipeline_name}' not found",
+            )
+    else:
+        target_func = await Function.get_by_name(
+            db, trigger_data.function_namespace, trigger_data.function_name, user_id
+        )
+        if not target_func:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Function '{trigger_data.function_namespace}/{trigger_data.function_name}' not found",
+            )
 
     trigger = DatabaseTrigger(
         user_id=user_id,
@@ -87,8 +119,11 @@ async def create_database_trigger(
         schema_name=trigger_data.schema_name,
         table_name=trigger_data.table_name,
         operations=trigger_data.operations,
+        target_type=trigger_data.target_type,
         function_namespace=trigger_data.function_namespace,
         function_name=trigger_data.function_name,
+        pipeline_namespace=trigger_data.pipeline_namespace if trigger_data.target_type == "pipeline" else None,
+        pipeline_name=trigger_data.pipeline_name,
         poll_column=trigger_data.poll_column,
         poll_interval_seconds=trigger_data.poll_interval_seconds,
         batch_size=trigger_data.batch_size,
@@ -138,8 +173,8 @@ async def get_database_trigger(
     """Get a specific database trigger by name."""
     user_id, permissions = current_user_data
 
-    result = await db.execute(select(DatabaseTrigger).where(DatabaseTrigger.name == name))
-    trigger = result.scalar_one_or_none()
+    has_all = check_permission(permissions, "sinas.database_triggers.read:all")
+    trigger = await _resolve_trigger(db, name, user_id, has_all)
 
     if not trigger:
         raise HTTPException(status_code=404, detail=f"Database trigger '{name}' not found")
@@ -166,8 +201,8 @@ async def update_database_trigger(
     """Update a database trigger."""
     user_id, permissions = current_user_data
 
-    result = await db.execute(select(DatabaseTrigger).where(DatabaseTrigger.name == name))
-    trigger = result.scalar_one_or_none()
+    has_all = check_permission(permissions, "sinas.database_triggers.update:all")
+    trigger = await _resolve_trigger(db, name, user_id, has_all)
 
     if not trigger:
         raise HTTPException(status_code=404, detail=f"Database trigger '{name}' not found")
@@ -186,10 +221,20 @@ async def update_database_trigger(
         trigger.name = trigger_data.name
     if trigger_data.operations is not None:
         trigger.operations = trigger_data.operations
+    if trigger_data.target_type is not None:
+        trigger.target_type = trigger_data.target_type
     if trigger_data.function_namespace is not None:
         trigger.function_namespace = trigger_data.function_namespace
     if trigger_data.function_name is not None:
         trigger.function_name = trigger_data.function_name
+    if trigger_data.pipeline_namespace is not None:
+        trigger.pipeline_namespace = trigger_data.pipeline_namespace
+    if trigger_data.pipeline_name is not None:
+        trigger.pipeline_name = trigger_data.pipeline_name
+    if trigger.target_type == "pipeline" and not trigger.pipeline_name:
+        raise HTTPException(status_code=400, detail="pipeline_name is required for pipeline-target triggers")
+    if trigger.target_type == "function" and not trigger.function_name:
+        raise HTTPException(status_code=400, detail="function_name is required for function-target triggers")
     if trigger_data.poll_column is not None:
         trigger.poll_column = trigger_data.poll_column
     if trigger_data.poll_interval_seconds is not None:
@@ -217,8 +262,8 @@ async def delete_database_trigger(
     """Delete a database trigger."""
     user_id, permissions = current_user_data
 
-    result = await db.execute(select(DatabaseTrigger).where(DatabaseTrigger.name == name))
-    trigger = result.scalar_one_or_none()
+    has_all = check_permission(permissions, "sinas.database_triggers.delete:all")
+    trigger = await _resolve_trigger(db, name, user_id, has_all)
 
     if not trigger:
         raise HTTPException(status_code=404, detail=f"Database trigger '{name}' not found")

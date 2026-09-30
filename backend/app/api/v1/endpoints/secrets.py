@@ -50,6 +50,10 @@ async def create_or_update_secret(
             existing.description = secret_data.description
         await db.flush()
         await db.refresh(existing)
+        if existing.visibility == "private":
+            from app.services.pipeline_runner import reset_user_failure_state
+
+            await reset_user_failure_state(db, str(user_id), secret_name=existing.name)
         return SecretResponse.model_validate(existing)
 
     secret = Secret(
@@ -173,6 +177,11 @@ async def update_secret(
 
     await db.flush()
     await db.refresh(secret)
+    if secret_data.value is not None and secret.visibility == "private":
+        # Re-credentialing recovery point for perUser pipelines (skip-until-re-credential).
+        from app.services.pipeline_runner import reset_user_failure_state
+
+        await reset_user_failure_state(db, str(user_id), secret_name=secret.name)
     return SecretResponse.model_validate(secret)
 
 

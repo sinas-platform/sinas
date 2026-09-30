@@ -265,6 +265,38 @@ services:
     deploy:
       replicas: ${QUEUE_AGENT_SUB_REPLICAS:-2}
 
+  # Pipeline runner worker — own queue so long pipeline runs never starve
+  # function workers. Runs are await-heavy orchestration (high concurrency).
+  queue-pipeline:
+    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - file_storage:/var/sinas/files
+    env_file:
+      - .env
+    environment:
+      DATABASE_USER: ${DATABASE_USER:-postgres}
+      DATABASE_HOST: pgbouncer
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: ${DATABASE_NAME:-sinas}
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-clickhouse}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-8123}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-sinas}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
+    command: python -m arq app.queue.worker.PipelineWorkerSettings
+    deploy:
+      replicas: ${QUEUE_PIPELINE_REPLICAS:-1}
+
   scheduler:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped

@@ -19,17 +19,21 @@ from .dependency import Dependency
 from .package import Package
 from .query import Query
 from .pending_approval import PendingToolApproval
+from .pipeline import Pipeline, PipelineCursor, PipelineRun
 from .pending_delegation import PendingDelegation
 from .schedule import ScheduledJob
 from .secret import Secret
+from .signing_key import JWTSigningKey
 from .skill import Skill
 from .state import State
 from .store import Store
 from .table_annotation import TableAnnotation
 from .template import Template
 from .tool_call_result import ToolCallResult
+from .usage import MeteringPlatformPeriod, UsagePeriod
 from .user import (
     APIKey,
+    APIKeyRole,
     OTPSession,
     PasswordResetToken,
     RefreshToken,
@@ -60,6 +64,7 @@ __all__ = [
     "RolePermission",
     "OTPSession",
     "APIKey",
+    "APIKeyRole",
     "RefreshToken",
     "PasswordResetToken",
     "Chat",
@@ -88,4 +93,7 @@ __all__ = [
     "ContentFilterEvaluation",
     "TableAnnotation",
     "ToolCallResult",
+    "JWTSigningKey",
+    "MeteringPlatformPeriod",
+    "UsagePeriod",
 ]

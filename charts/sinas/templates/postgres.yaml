@@ -1,3 +1,4 @@
+{{- if not ((.Values.postgres).external).host }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -18,9 +19,14 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: postgres
     spec:
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.postgres) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: postgres
           image: postgres:16-alpine
+          {{- with (.Values.postgres).resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: POSTGRES_USER
               value: {{ .Values.postgres.user | quote }}
@@ -70,3 +76,4 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
+{{- end }}

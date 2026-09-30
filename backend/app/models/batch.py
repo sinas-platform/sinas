@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from .base import Base, uuid_pk
+from .base import GUID, Base, uuid_pk
 
 
 class BatchKind(str, enum.Enum):
@@ -50,6 +50,16 @@ class Batch(Base):
     # Aggregate-callback delivery status (null = no batch_callback_url set).
     callback_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     callback_response_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Provider-native batch mode. "queue" = children run through the internal
+    # queue (default); "provider" = the whole batch was submitted to the LLM
+    # provider's batch API (agent batches without tools only) and a scheduler
+    # job polls it to completion.
+    execution_mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="queue", server_default="queue"
+    )
+    provider_batch_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    llm_provider_id: Mapped[Optional[uuid_lib.UUID]] = mapped_column(GUID(), nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship("User")

@@ -23,9 +23,13 @@ async def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> 
         await redis.expire(redis_key, window_seconds)
 
     if count > max_requests:
+        # Retry-After lets automation back off intelligently instead of
+        # hammering into the same window. TTL of the window key = seconds left.
+        ttl = await redis.ttl(redis_key)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests. Please try again later.",
+            headers={"Retry-After": str(ttl if ttl and ttl > 0 else window_seconds)},
         )
 
 

@@ -11,12 +11,13 @@ import bcrypt
 from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import get_db
 from app.core.email import send_otp_email_async
+from app.core.token_signing import decode_access_token, get_signing_context
 from app.core.permissions import (
     DEFAULT_ROLE_PERMISSIONS,
     check_permission,
@@ -24,6 +25,7 @@ from app.core.permissions import (
 )
 from app.models import (
     APIKey,
+    APIKeyRole,
     OTPSession,
     PasswordResetToken,
     RefreshToken,
@@ -106,6 +108,22 @@ async def consume_password_reset_token(
     record.used_at = datetime.now(UTC)
     await db.commit()
     return record
+
+
+async def revoke_outstanding_password_reset_tokens(db: AsyncSession, user_id) -> int:
+    """Mark every unused reset token for a user as used. Called once a token is
+    redeemed: any sibling link (two admins issuing one each, or the boot-time
+    setup link minted by more than one replica) must not stay redeemable for
+    up to 24h after the account already has its password."""
+    from sqlalchemy import update
+
+    result = await db.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user_id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+    )
+    await db.commit()
+    return result.rowcount or 0
 
 
 async def warn_if_users_lack_passwords(db: AsyncSession) -> None:
@@ -328,8 +346,17 @@ def create_access_token(
         # Absent on real user/app tokens (treated as top-level callers).
         to_encode["execution_depth"] = execution_depth
 
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
-    return encoded_jwt
+    ctx = get_signing_context()
+    headers = None
+    if ctx.algorithm == "RS256":
+        # iss/aud only under RS256: adding them to HS256 tokens would break
+        # any existing consumer whose JWT library auto-verifies aud when the
+        # claim is present. kid lets JWKS verifiers pick the right key.
+        to_encode["iss"] = settings.token_issuer
+        to_encode["aud"] = settings.jwt_audience
+        headers = {"kid": ctx.kid}
+
+    return jwt.encode(to_encode, ctx.sign_key, algorithm=ctx.algorithm, headers=headers)
 
 
 def get_execution_depth_from_request(request) -> Optional[int]:
@@ -344,7 +371,7 @@ def get_execution_depth_from_request(request) -> Optional[int]:
         return None
     token = auth_header[7:].strip()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = decode_access_token(token)
     except Exception:
         return None
     depth = payload.get("execution_depth")
@@ -424,19 +451,15 @@ async def validate_refresh_token(db: AsyncSession, plain_token: str) -> Optional
     if refresh_token.expires_at < datetime.now(UTC):
         return None
 
-    # Update last used timestamp
-    refresh_token.last_used_at = datetime.now(UTC)
-
-    # Get user and update last_login
     result = await db.execute(select(User).where(User.id == refresh_token.user_id))
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
         return None
 
-    # Update last login timestamp
-    user.last_login_at = datetime.now(UTC)
-    await db.commit()
+    await _refresh_usage_stamps(
+        db, datetime.now(UTC), refresh_token=refresh_token, user=user
+    )
 
     return str(user.id), user.email
 
@@ -548,6 +571,128 @@ async def create_api_key(
     return api_key, plain_key
 
 
+async def resolve_api_key_permissions(
+    db: AsyncSession, api_key: APIKey, user: User
+) -> dict[str, bool]:
+    """
+    Effective permissions for an API key at request time.
+
+    Union of the linked roles' permissions, overlaid with the key's explicit
+    grants, then capped by the owner's LIVE role permissions: a granted entry
+    survives only while the owner currently holds it. Keys therefore track
+    role edits and owner demotions instead of freezing a mint-time snapshot —
+    revoking a permission from a role or user revokes it from their keys too.
+    """
+    perms: dict[str, bool] = {}
+
+    # Union of linked roles' permissions (same OR logic as user roles)
+    result = await db.execute(
+        select(RolePermission)
+        .join(APIKeyRole, APIKeyRole.role_id == RolePermission.role_id)
+        .where(APIKeyRole.api_key_id == api_key.id)
+    )
+    for perm in result.scalars().all():
+        if perm.permission_value or perm.permission_key not in perms:
+            perms[perm.permission_key] = perm.permission_value
+
+    # Explicit grants override role-derived entries (an explicit False is a
+    # deliberate denial on this key)
+    perms.update(api_key.permissions or {})
+
+    if not any(perms.values()):
+        return perms
+
+    owner_perms = await get_user_permissions(db, str(user.id))
+    return {k: v for k, v in perms.items() if not v or check_permission(owner_perms, k)}
+
+
+# How stale a usage stamp may get before it is rewritten.
+#
+# last_used_at / last_login_at are observability, not authorisation, and
+# nothing reads them at sub-minute resolution. Stamping them on EVERY
+# authenticated request made the auth path serialise: a service calling Sinas
+# uses one API key, so every concurrent request needed a row lock on that one
+# api_keys row — and on the one users row behind it — so effective concurrency
+# on authentication fell to one. Under sustained load that queue becomes
+# self-sustaining: observed on a local stack as 33 concurrent
+# `UPDATE api_keys SET last_used_at` all waiting on transactionid, the oldest
+# for 643 seconds, while uploads timed out and even /health took six seconds.
+USAGE_STAMP_MAX_AGE = timedelta(minutes=1)
+
+
+def _stamp_is_stale(stamp: Optional[datetime], now: datetime) -> bool:
+    if stamp is None:
+        return True
+    if stamp.tzinfo is None:  # legacy rows written before tz-aware stamps
+        stamp = stamp.replace(tzinfo=UTC)
+    return (now - stamp) >= USAGE_STAMP_MAX_AGE
+
+
+async def _refresh_usage_stamps(
+    db: AsyncSession,
+    now: datetime,
+    *,
+    api_key: Optional[APIKey] = None,
+    refresh_token: Optional[RefreshToken] = None,
+    user: Optional[User] = None,
+) -> None:
+    """Rewrite usage stamps that have gone stale, and nothing else.
+
+    Two things keep this off the hot path. The in-memory check skips the
+    statement entirely for the ~all requests that arrive inside the window.
+    When one does fire it is a CONDITIONAL update, so a concurrent caller that
+    blocks on the row re-evaluates the WHERE after the winner commits, finds
+    the stamp already fresh, matches no rows and takes no lock of its own —
+    a thundering herd at window expiry resolves after a single write instead
+    of queueing one per request.
+
+    Core UPDATEs, deliberately: assigning to the ORM objects would leave them
+    dirty and flush again later in the request, reopening the contention this
+    exists to remove.
+    """
+    cutoff = now - USAGE_STAMP_MAX_AGE
+    wrote = False
+
+    if api_key is not None and _stamp_is_stale(api_key.last_used_at, now):
+        await db.execute(
+            update(APIKey)
+            .where(
+                APIKey.id == api_key.id,
+                or_(APIKey.last_used_at.is_(None), APIKey.last_used_at < cutoff),
+            )
+            .values(last_used_at=now)
+        )
+        wrote = True
+
+    if refresh_token is not None and _stamp_is_stale(refresh_token.last_used_at, now):
+        await db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.id == refresh_token.id,
+                or_(
+                    RefreshToken.last_used_at.is_(None),
+                    RefreshToken.last_used_at < cutoff,
+                ),
+            )
+            .values(last_used_at=now)
+        )
+        wrote = True
+
+    if user is not None and _stamp_is_stale(user.last_login_at, now):
+        await db.execute(
+            update(User)
+            .where(
+                User.id == user.id,
+                or_(User.last_login_at.is_(None), User.last_login_at < cutoff),
+            )
+            .values(last_login_at=now)
+        )
+        wrote = True
+
+    if wrote:
+        await db.commit()
+
+
 async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, dict[str, bool]]]:
     """
     Validate an API key and return the user and permissions.
@@ -574,21 +719,15 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, d
     if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
         return None
 
-    # Update last used timestamp
-    api_key.last_used_at = datetime.now(UTC)
-
-    # Get user and update last_login
     result = await db.execute(select(User).where(User.id == api_key.user_id))
     user = result.scalar_one_or_none()
 
     if not user or not user.is_active:
         return None
 
-    # Update last login timestamp
-    user.last_login_at = datetime.now(UTC)
-    await db.commit()
+    await _refresh_usage_stamps(db, datetime.now(UTC), api_key=api_key, user=user)
 
-    return user, api_key.permissions
+    return user, await resolve_api_key_permissions(db, api_key, user)
 
 
 # Authentication Dependencies
@@ -631,7 +770,7 @@ async def verify_jwt_or_api_key(
 
     # Try JWT first
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = decode_access_token(token)
         user_id = payload.get("sub")
         email = payload.get("email")
 
@@ -724,32 +863,6 @@ async def get_current_user(
     request.state.user_email = email
 
     return user_id
-
-
-async def get_current_user_optional(
-    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer)
-) -> Optional[str]:
-    """
-    Get current authenticated user ID if auth header provided, otherwise return None.
-    Used for optional authentication on runtime endpoints.
-
-    Returns:
-        user_id or None
-    """
-    if not credentials:
-        return None
-
-    try:
-        async with AsyncSessionLocal() as db:
-            user_id, email, _ = await verify_jwt_or_api_key(credentials, db)
-            await db.commit()
-            # Store user info in request state for logging
-            request.state.user_id = user_id
-            request.state.user_email = email
-            return user_id
-    except Exception:
-        # Return None on auth failure for optional auth
-        return None
 
 
 async def get_current_user_with_permissions(
@@ -848,10 +961,21 @@ async def initialize_superadmin(db: AsyncSession):
 
     - Creates the user and grants Admins membership only when no other admins exist
       (prevents accidental auto-creation after manual setup).
-    - When the user already exists, ensures Admins membership and (when auth_mode
-      includes password) syncs password_hash from SUPERADMIN_PASSWORD. This doubles
-      as the "admin lost their password" escape hatch: change SUPERADMIN_PASSWORD
-      and restart.
+    - When the user already exists, ensures Admins membership.
+
+    Password bootstrap, when auth_mode includes "password" — two modes:
+
+    - SUPERADMIN_PASSWORD set: the env var is authoritative. password_hash is synced
+      to it on every boot (written only on mismatch), so a password changed in the
+      UI reverts on restart while the var is set. This doubles as the "admin lost
+      their password" escape hatch: change SUPERADMIN_PASSWORD and restart.
+    - SUPERADMIN_PASSWORD unset: the superadmin owns their password. Nothing is
+      touched once one is set. Until then, every boot issues a one-time setup link
+      (a standard password-reset token) and logs it — the operator opens it from
+      the pod/container logs. Anyone who can read those logs can claim a fresh
+      instance, which is the same trust boundary as Jenkins' initial admin
+      password; it beats the alternative of an unauthenticated "set password"
+      endpoint that the first scanner to find the host could use.
     """
     import logging
 
@@ -902,14 +1026,69 @@ async def initialize_superadmin(db: AsyncSession):
         db.add(membership)
         await db.commit()
 
-    if auth_mode_includes_password and settings.superadmin_password:
+    if not auth_mode_includes_password:
+        return
+
+    if settings.superadmin_password:
         needs_update = not user.password_hash or not verify_password(
             settings.superadmin_password, user.password_hash
         )
         if needs_update:
+            reverted = bool(user.password_hash)
             user.password_hash = hash_password(settings.superadmin_password)
             await db.commit()
-            logger.info(
-                "Superadmin password set/updated from SUPERADMIN_PASSWORD env var "
-                f"for {email}"
-            )
+            if reverted:
+                logger.warning(
+                    f"Superadmin password for {email} differed from SUPERADMIN_PASSWORD "
+                    "and was reset to it. The env var is authoritative while set; "
+                    "unset it to let the superadmin manage their own password."
+                )
+            else:
+                logger.info(
+                    f"Superadmin password set from SUPERADMIN_PASSWORD env var for {email}"
+                )
+        return
+
+    if user.password_hash:
+        return  # self-managed; never touch an existing password
+
+    await _issue_superadmin_setup_link(db, user, logger)
+
+
+# Sibling uvicorn workers run the lifespan concurrently. A token this young and
+# still unused was minted by one of them a moment ago — don't issue another.
+_SETUP_LINK_DEDUP_WINDOW = timedelta(seconds=60)
+
+
+async def _issue_superadmin_setup_link(db: AsyncSession, user: User, logger) -> None:
+    """Mint a one-time password-reset token for a password-less superadmin and
+    log the link. Only ever called when the account has NO password; an account
+    that has one is never re-issued a link this way (that would be a takeover
+    vector for anyone with log access)."""
+    now = datetime.now(UTC)
+    recent = await db.execute(
+        select(PasswordResetToken.id).where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+            PasswordResetToken.expires_at > now,
+            PasswordResetToken.created_at > now - _SETUP_LINK_DEDUP_WINDOW,
+        )
+    )
+    if recent.first():
+        return
+
+    plain_token, _ = await create_password_reset_token(db, str(user.id))
+    url = f"{settings.public_base_url}/ui/reset-password?token={plain_token}"
+    logger.warning(
+        "\n"
+        "==================== SUPERADMIN SETUP ====================\n"
+        f"  {user.email} has no password yet. Set one via this one-time link\n"
+        f"  (valid {PASSWORD_RESET_TOKEN_EXPIRY_HOURS}h; restart to get a fresh one):\n"
+        "\n"
+        f"    {url}\n"
+        "\n"
+        "  If the console is served from another origin, open\n"
+        f"  <console-origin>/ui/reset-password?token={plain_token}\n"
+        "  To pin the password from config instead, set SUPERADMIN_PASSWORD.\n"
+        "==========================================================="
+    )

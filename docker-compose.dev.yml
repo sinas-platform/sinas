@@ -69,6 +69,14 @@ services:
     environment:
       FUNCTION_CONTAINER_IMAGE: sinas-executor
 
+  queue-pipeline:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    volumes:
+      - ./backend:/app
+      - file_storage:/var/sinas/files
+
   scheduler:
     build:
       context: ./backend

@@ -207,7 +207,7 @@ export function Permissions() {
   const isLoading = rolesLoading || permissionQueries.isLoading;
 
   const stateStyle: Record<PermState, string> = {
-    none: 'bg-white/[0.04] text-gray-500',
+    none: 'bg-hover text-gray-500',
     own: 'bg-emerald-950 text-emerald-400',
     all: 'bg-blue-950 text-blue-400',
   };
@@ -262,8 +262,8 @@ export function Permissions() {
   const PermissionRow = ({ resource, path, label, actions, indent }: {
     resource: string; path: string | null; label: string; actions: string[]; indent?: boolean;
   }) => (
-    <tr className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-      <td className={`py-2 px-4 sticky left-0 bg-[#161616] z-10 ${indent ? 'pl-10' : ''}`}>
+    <tr className="border-b border-line-soft hover:bg-hover">
+      <td className={`py-2 px-4 sticky left-0 bg-surface-1 z-10 ${indent ? 'pl-10' : ''}`}>
         <span className={`text-sm font-mono ${indent ? 'text-gray-400' : 'text-gray-200'}`}>{label}</span>
       </td>
       {editableRoles.map((role) => (
@@ -303,8 +303,8 @@ export function Permissions() {
     return (
       <tbody key={entry.resource}>
         {/* Main wildcard row */}
-        <tr className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-          <td className="py-2 px-4 sticky left-0 bg-[#161616] z-10">
+        <tr className="border-b border-line-soft hover:bg-hover">
+          <td className="py-2 px-4 sticky left-0 bg-surface-1 z-10">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-gray-100">{entry.description}</span>
               <span className="text-[11px] text-gray-500 font-mono">{entry.resource}</span>
@@ -348,8 +348,8 @@ export function Permissions() {
             ))}
 
             {/* Add override input */}
-            <tr className="border-b border-white/[0.04]">
-              <td className="py-1.5 px-4 pl-10 sticky left-0 bg-[#161616] z-10" colSpan={editableRoles.length + 2}>
+            <tr className="border-b border-line-soft">
+              <td className="py-1.5 px-4 pl-10 sticky left-0 bg-surface-1 z-10" colSpan={editableRoles.length + 2}>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -391,7 +391,7 @@ export function Permissions() {
     const collapsed = collapsedGroups.has(categoryKey);
     return (
       <tbody key={categoryKey}>
-        <tr className="cursor-pointer hover:bg-white/[0.02]" onClick={() => toggleCollapse(categoryKey)}>
+        <tr className="cursor-pointer hover:bg-hover" onClick={() => toggleCollapse(categoryKey)}>
           <td colSpan={editableRoles.length + 2} className="py-2 px-4">
             <div className="flex items-center gap-2">
               {collapsed ? <ChevronRight className="w-4 h-4 text-gray-500" /> : <ChevronDown className="w-4 h-4 text-gray-500" />}
@@ -447,16 +447,16 @@ export function Permissions() {
         <div className="card overflow-x-auto p-0">
           <table className="w-full">
             <thead>
-              <tr className="border-b border-white/[0.06]">
-                <th className="text-left py-3 px-4 font-semibold text-gray-300 bg-[#0d0d0d] sticky left-0 z-10 min-w-[220px]">
+              <tr className="border-b border-line-soft">
+                <th className="text-left py-3 px-4 font-semibold text-gray-300 bg-surface-0 sticky left-0 z-10 min-w-[220px]">
                   Resource
                 </th>
                 {editableRoles.map((role) => (
-                  <th key={role.id} className="text-left py-3 px-3 font-semibold text-gray-300 bg-[#0d0d0d] min-w-[200px]">
+                  <th key={role.id} className="text-left py-3 px-3 font-semibold text-gray-300 bg-surface-0 min-w-[200px]">
                     {role.name}
                   </th>
                 ))}
-                <th className="bg-[#0d0d0d] w-[40px]"></th>
+                <th className="bg-surface-0 w-[40px]"></th>
               </tr>
             </thead>
             {renderCategoryGroup('Resources', registryCategories.core, 'core')}
@@ -466,7 +466,7 @@ export function Permissions() {
             <tbody>
 
               {/* Custom permissions */}
-              <tr className="hover:bg-white/[0.02]">
+              <tr className="hover:bg-hover">
                 <td colSpan={editableRoles.length + 2} className="py-2 px-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 cursor-pointer" onClick={() => toggleCollapse('custom')}>
@@ -484,8 +484,8 @@ export function Permissions() {
                 </td>
               </tr>
               {!collapsedGroups.has('custom') && customPermissions.map((key) => (
-                <tr key={key} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                  <td className="py-2 px-4 sticky left-0 bg-[#161616] z-10">
+                <tr key={key} className="border-b border-line-soft hover:bg-hover">
+                  <td className="py-2 px-4 sticky left-0 bg-surface-1 z-10">
                     <span className="text-sm font-mono text-gray-400">{key}</span>
                   </td>
                   {editableRoles.map((role) => {
@@ -501,7 +501,7 @@ export function Permissions() {
                             n.set(`${role.name}:${key}`, { groupName: role.name, permissionKey: key, value: !enabled });
                             setPendingChanges(n);
                           }}
-                          className={`w-4 h-4 rounded border-white/10 text-emerald-600 focus:ring-emerald-500 cursor-pointer ${changed ? 'ring-1 ring-yellow-400' : ''}`}
+                          className={`w-4 h-4 rounded border-line text-emerald-600 focus:ring-emerald-500 cursor-pointer ${changed ? 'ring-1 ring-yellow-400' : ''}`}
                         />
                       </td>
                     );
@@ -528,7 +528,7 @@ export function Permissions() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => { setShowAddPermissionModal(false); setNewPermissions([]); }} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 pointer-events-auto">
+            <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 pointer-events-auto">
               <h2 className="text-xl font-semibold text-gray-100 mb-2">Add Custom Permission</h2>
               <p className="text-sm text-gray-500 mb-4">
                 Add permissions not covered by the built-in resource types. Use the format <code className="text-gray-400">sinas.resource.action:scope</code> or any custom key for application-specific permissions.
@@ -538,7 +538,7 @@ export function Permissions() {
               {newPermissions.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-1.5">
                   {newPermissions.map((p) => (
-                    <span key={p} className="inline-flex items-center gap-1 px-2 py-1 bg-white/[0.06] text-gray-300 text-xs rounded font-mono">
+                    <span key={p} className="inline-flex items-center gap-1 px-2 py-1 bg-hover-strong text-gray-300 text-xs rounded font-mono">
                       {p}
                       <button onClick={() => setNewPermissions(prev => prev.filter(x => x !== p))} className="text-gray-500 hover:text-gray-300">
                         &times;

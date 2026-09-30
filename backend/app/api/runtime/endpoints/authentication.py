@@ -23,6 +23,7 @@ from app.core.auth import (
     hash_password,
     normalize_email,
     revoke_all_refresh_tokens,
+    revoke_outstanding_password_reset_tokens,
     revoke_refresh_token,
     set_permission_used,
     validate_refresh_token,
@@ -389,6 +390,8 @@ async def redeem_password_reset(
     user.password_hash = hash_password(request.new_password)
     await db.commit()
 
+    # Any other outstanding link for this account dies with this one.
+    await revoke_outstanding_password_reset_tokens(db, user.id)
     await revoke_all_refresh_tokens(db, str(user.id))
     return None
 
@@ -428,6 +431,8 @@ async def change_password(
     user.password_hash = hash_password(request.new_password)
     await db.commit()
 
+    # Any other outstanding link for this account dies with this one.
+    await revoke_outstanding_password_reset_tokens(db, user.id)
     await revoke_all_refresh_tokens(db, str(user.id))
     return None
 
@@ -559,6 +564,12 @@ async def connector_oauth_callback(
     ok = await connector_service.exchange_authorization_code(
         db=db, connector=connector, user_id=ctx["user_id"], code=code, code_verifier=ctx["code_verifier"],
     )
+    if ok:
+        # Re-credentialing is the recovery point for perUser pipelines that
+        # skip-listed this user after consecutive failures.
+        from app.services.pipeline_runner import reset_user_failure_state
+
+        await reset_user_failure_state(db, ctx["user_id"], connector_id=connector.id)
     result = _oauth_result_page(
         ok,
         f"Connected {connector.namespace}/{connector.name}." if ok

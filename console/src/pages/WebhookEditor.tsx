@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient, API_BASE_URL } from '../lib/api';
+import { apiClient, API_BASE_URL, getApiErrorMessage } from '../lib/api';
 import { ArrowLeft, Save, Trash2 } from 'lucide-react';
 import { ApiUsage } from '../components/ApiUsage';
 
@@ -13,7 +13,12 @@ export function WebhookEditor() {
 
   const [formData, setFormData] = useState({
     path: '',
+    target_type: 'function' as 'function' | 'agent' | 'pipeline',
     function_name: '',
+    agent_name: '',
+    pipeline_name: '',
+    message_template: '',
+    session_key_template: '',
     http_method: 'POST',
     description: '',
     default_values: {} as Record<string, any>,
@@ -38,9 +43,18 @@ export function WebhookEditor() {
     if (webhook && !isNew) {
       setFormData({
         path: webhook.path || '',
+        target_type: webhook.target_type || 'function',
         function_name: webhook.function_namespace && webhook.function_name
           ? `${webhook.function_namespace}/${webhook.function_name}`
           : '',
+        pipeline_name: webhook.pipeline_namespace && webhook.pipeline_name
+          ? `${webhook.pipeline_namespace}/${webhook.pipeline_name}`
+          : '',
+        agent_name: webhook.agent_namespace && webhook.agent_name
+          ? `${webhook.agent_namespace}/${webhook.agent_name}`
+          : '',
+        message_template: webhook.message_template || '',
+        session_key_template: webhook.session_key_template || '',
         http_method: webhook.http_method || 'POST',
         description: webhook.description || '',
         default_values: webhook.default_values || {},
@@ -53,27 +67,53 @@ export function WebhookEditor() {
     }
   }, [webhook, isNew]);
 
-  // Fetch available functions for dropdown
+  // Fetch available functions and agents for dropdowns
   const { data: functions } = useQuery({
     queryKey: ['functions'],
     queryFn: () => apiClient.listFunctions(),
     retry: false,
   });
 
+  const { data: pipelines } = useQuery({
+    queryKey: ['pipelines'],
+    queryFn: () => apiClient.listPipelines(),
+  });
+
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: () => apiClient.listAgents(),
+    retry: false,
+  });
+
   const saveMutation = useMutation({
     mutationFn: (data: any) => {
-      // Split function_name into namespace and name
-      const [namespace, name] = data.function_name.split('/');
       const payload: any = {
-        ...data,
-        function_namespace: namespace,
-        function_name: name,
+        path: data.path,
+        target_type: data.target_type,
+        http_method: data.http_method,
+        description: data.description,
+        default_values: data.default_values,
+        requires_auth: data.requires_auth,
         response_mode: data.response_mode,
         dedup: data.dedup_enabled ? { key: data.dedup_key, ttl_seconds: data.dedup_ttl } : null,
       };
-      delete payload.dedup_enabled;
-      delete payload.dedup_key;
-      delete payload.dedup_ttl;
+      if (data.target_type === 'agent') {
+        const [agentNamespace, agentName] = data.agent_name.split('/');
+        payload.agent_namespace = agentNamespace;
+        payload.agent_name = agentName;
+        payload.message_template = data.message_template;
+        // '' rather than null: the API treats null as 'leave unchanged',
+        // so sending null made clearing the field a silent no-op.
+        payload.session_key_template = data.session_key_template || '';
+      } else if (data.target_type === 'pipeline') {
+        const [pipelineNamespace, pipelineName] = data.pipeline_name.split('/');
+        payload.pipeline_namespace = pipelineNamespace;
+        payload.pipeline_name = pipelineName;
+      } else {
+        const [namespace, name] = data.function_name.split('/');
+        payload.function_namespace = namespace;
+        payload.function_name = name;
+      }
       return isNew
         ? apiClient.createWebhook(payload)
         : apiClient.updateWebhook(webhookPath!, payload);
@@ -148,7 +188,7 @@ export function WebhookEditor() {
               {isNew ? 'New Webhook' : formData.path || 'Edit Webhook'}
             </h1>
             <p className="text-gray-400 mt-1">
-              {isNew ? 'Create a web-accessible endpoint to trigger a function' : 'Edit webhook endpoint configuration'}
+              {isNew ? 'Create a web-accessible endpoint to trigger a function or agent' : 'Edit webhook endpoint configuration'}
             </p>
           </div>
         </div>
@@ -214,42 +254,186 @@ print(result["execution_id"], result["result"])`,
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Webhook Configuration</h2>
           <div className="space-y-4">
+            {/* Target Type Toggle */}
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Function to Execute *
-              </label>
-              <select
-                value={formData.function_name}
-                onChange={(e) => {
-                  const selectedFunc = functions?.find((f: any) => `${f.namespace}/${f.name}` === e.target.value);
-                  setFormData({
+              <label className="block text-sm font-medium text-gray-300 mb-2">Target</label>
+              <div className="flex rounded-lg border border-line overflow-hidden w-fit">
+                <button type="button"
+                  onClick={() => setFormData({
                     ...formData,
-                    function_name: e.target.value,
-                    path: formData.path || (selectedFunc ? selectedFunc.name : ''),
-                    description: formData.description || selectedFunc?.description || '',
-                  });
-                }}
-                required
-                className="input"
-              >
-                <option value="">Select a function...</option>
-                {functions?.map((func: any) => (
-                  <option key={func.id} value={`${func.namespace}/${func.name}`}>
-                    {func.namespace}/{func.name} {func.description ? `- ${func.description}` : ''}
-                  </option>
-                ))}
-              </select>
+                    target_type: 'function',
+                    agent_name: '',
+                    message_template: '',
+                    session_key_template: '',
+                  })}
+                  className={`px-4 py-2 text-sm font-medium ${
+                    formData.target_type === 'function'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
+                  Function
+                </button>
+                <button type="button"
+                  onClick={() => setFormData({
+                    ...formData,
+                    target_type: 'agent',
+                    function_name: '',
+                    // raw is function-only
+                    response_mode: formData.response_mode === 'raw' ? 'sync' : formData.response_mode,
+                  })}
+                  className={`px-4 py-2 text-sm font-medium border-l border-line ${
+                    formData.target_type === 'agent'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
+                  Agent
+                </button>
+                <button type="button"
+                  onClick={() => setFormData({
+                    ...formData,
+                    target_type: 'pipeline',
+                    function_name: '',
+                    agent_name: '',
+                    message_template: '',
+                    session_key_template: '',
+                    // raw is function-only
+                    response_mode: formData.response_mode === 'raw' ? 'sync' : formData.response_mode,
+                  })}
+                  className={`px-4 py-2 text-sm font-medium border-l border-line ${
+                    formData.target_type === 'pipeline'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
+                  Pipeline
+                </button>
+              </div>
               <p className="text-xs text-gray-500 mt-1">
-                The function that will be called when this webhook is triggered
+                Execute a function, send a message to an agent, or fire a pipeline
               </p>
             </div>
+
+            {formData.target_type === 'pipeline' ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Pipeline to Fire *
+                </label>
+                <select
+                  value={formData.pipeline_name}
+                  onChange={(e) => setFormData({ ...formData, pipeline_name: e.target.value })}
+                  required
+                  className="input"
+                >
+                  <option value="">Select a pipeline...</option>
+                  {pipelines?.map((p: any) => (
+                    <option key={p.id} value={`${p.namespace}/${p.name}`}>
+                      {p.namespace}/{p.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  The webhook payload becomes the run input
+                </p>
+              </div>
+            ) : formData.target_type === 'function' ? (
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Function to Execute *
+                </label>
+                <select
+                  value={formData.function_name}
+                  onChange={(e) => {
+                    const selectedFunc = functions?.find((f: any) => `${f.namespace}/${f.name}` === e.target.value);
+                    setFormData({
+                      ...formData,
+                      function_name: e.target.value,
+                      path: formData.path || (selectedFunc ? selectedFunc.name : ''),
+                      description: formData.description || selectedFunc?.description || '',
+                    });
+                  }}
+                  required
+                  className="input"
+                >
+                  <option value="">Select a function...</option>
+                  {functions?.map((func: any) => (
+                    <option key={func.id} value={`${func.namespace}/${func.name}`}>
+                      {func.namespace}/{func.name} {func.description ? `- ${func.description}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  The function that will be called when this webhook is triggered
+                </p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Agent to Trigger *
+                  </label>
+                  <select
+                    value={formData.agent_name}
+                    onChange={(e) => {
+                      const selectedAgent = agents?.find((a: any) => `${a.namespace}/${a.name}` === e.target.value);
+                      setFormData({
+                        ...formData,
+                        agent_name: e.target.value,
+                        path: formData.path || (selectedAgent ? selectedAgent.name : ''),
+                        description: formData.description || selectedAgent?.description || '',
+                      });
+                    }}
+                    required
+                    className="input"
+                  >
+                    <option value="">Select an agent...</option>
+                    {agents?.map((agent: any) => (
+                      <option key={agent.id} value={`${agent.namespace}/${agent.name}`}>
+                        {agent.namespace}/{agent.name} {agent.description ? `- ${agent.description}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The agent that will receive a message when this webhook is triggered
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Message Template *
+                  </label>
+                  <textarea
+                    value={formData.message_template}
+                    onChange={(e) => setFormData({ ...formData, message_template: e.target.value })}
+                    placeholder={'New issue {{ issue.key }}: {{ issue.fields.summary }}'}
+                    rows={4}
+                    required
+                    className="input font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Jinja2 template rendered against the request payload — the result is sent to the agent as the user message
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Session Key Template
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.session_key_template}
+                    onChange={(e) => setFormData({ ...formData, session_key_template: e.target.value })}
+                    placeholder={'jira-{{ issue.key }}'}
+                    className="input font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Optional Jinja2 template — events rendering the same key continue the same conversation
+                  </p>
+                </div>
+              </>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
                 URL Path *
               </label>
               <div className="flex items-stretch">
-                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-white/10 bg-[#0d0d0d] text-gray-500 text-sm font-mono">
+                <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-line bg-surface-0 text-gray-500 text-sm font-mono">
                   /h/
                 </span>
                 <input
@@ -304,7 +488,7 @@ print(result["execution_id"], result["result"])`,
                 id="requires_auth"
                 checked={formData.requires_auth}
                 onChange={(e) => setFormData({ ...formData, requires_auth: e.target.checked })}
-                className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500"
+                className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
               />
               <label htmlFor="requires_auth" className="ml-2 text-sm text-gray-300">
                 Requires Authentication
@@ -334,16 +518,28 @@ print(result["execution_id"], result["result"])`,
                     <p className="text-xs text-gray-500">Return 202 immediately, run in background</p>
                   </div>
                 </label>
+                {formData.target_type === 'function' && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="response_mode" value="raw"
+                      checked={formData.response_mode === 'raw'}
+                      onChange={() => setFormData({ ...formData, response_mode: 'raw' })}
+                      className="text-primary-600" />
+                    <div>
+                      <span className="text-sm text-gray-200">Raw</span>
+                      <p className="text-xs text-gray-500">Function return value becomes the response body</p>
+                    </div>
+                  </label>
+                )}
               </div>
             </div>
 
-            <div className="border border-white/[0.06] rounded-lg p-4 space-y-3">
+            <div className="border border-line-soft rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium text-gray-300">Deduplication</label>
                 <input type="checkbox"
                   checked={formData.dedup_enabled}
                   onChange={(e) => setFormData({ ...formData, dedup_enabled: e.target.checked })}
-                  className="w-4 h-4 text-primary-600 border-white/10 rounded focus:ring-primary-500" />
+                  className="w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500" />
               </div>
               {formData.dedup_enabled && (
                 <div className="space-y-3">
@@ -406,7 +602,7 @@ print(result["execution_id"], result["result"])`,
               {Object.entries(formData.default_values).map(([key, value]) => (
                 <div
                   key={key}
-                  className="flex items-center justify-between p-3 bg-[#0d0d0d] rounded"
+                  className="flex items-center justify-between p-3 bg-surface-0 rounded"
                 >
                   <div className="flex-1">
                     <span className="font-mono text-sm font-medium">{key}</span>
@@ -428,7 +624,7 @@ print(result["execution_id"], result["result"])`,
 
         {saveMutation.isError && (
           <div className="p-4 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-            Failed to save webhook. Please check your configuration.
+            {getApiErrorMessage(saveMutation.error, 'Failed to save webhook. Please check your configuration.')}
           </div>
         )}
 

@@ -95,10 +95,6 @@ class ConfigParser:
 
         # Add warnings for SinasPackage with environment-specific resources
         if config.kind == "SinasPackage":
-            if config.spec.roles:
-                validation.warnings.append(
-                    "SinasPackage includes roles — these are environment-specific and will be skipped during install"
-                )
             if config.spec.users:
                 validation.warnings.append(
                     "SinasPackage includes users — these are environment-specific and will be skipped during install"
@@ -432,31 +428,91 @@ class ConfigParser:
                         )
                     )
 
+        # Pipeline names (config + database) for webhook/schedule/trigger target checks
+        pipeline_names = {
+            f"{p.get('namespace', 'default')}/{p['name']}" for p in spec.get("pipelines", [])
+        }
+        db_pipeline_names: set[str] = set()
+        if db:
+            from app.models.pipeline import Pipeline as PipelineModel
+
+            result = await db.execute(select(PipelineModel.namespace, PipelineModel.name))
+            db_pipeline_names = {f"{namespace}/{name}" for (namespace, name) in result.fetchall()}
+        all_pipeline_names = pipeline_names | db_pipeline_names
+
         # Validate webhook references
         for i, webhook in enumerate(spec.get("webhooks", [])):
-            # Build function reference as namespace/name
-            func_namespace = webhook.get("functionNamespace", "default")
-            func_name = webhook["functionName"]
-            func_ref = f"{func_namespace}/{func_name}"
-            if not _ref_matches_any(func_ref, all_function_names):
-                errors.append(
-                    ConfigValidationError(
-                        path=f"spec.webhooks[{i}].functionName",
-                        message=f"Referenced function '{func_ref}' not defined",
+            webhook_target = webhook.get("targetType", "function")
+            if webhook_target == "pipeline":
+                pipeline_ref = webhook.get("pipelineName") or ""
+                if "/" not in pipeline_ref:
+                    pipeline_ref = f"default/{pipeline_ref}"
+                if not _ref_matches_any(pipeline_ref, all_pipeline_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.webhooks[{i}].pipelineName",
+                            message=f"Referenced pipeline '{pipeline_ref}' not defined",
+                        )
                     )
-                )
+            elif webhook_target == "agent":
+                agent_ref = webhook.get("agentName") or ""
+                if "/" not in agent_ref:
+                    agent_ref = f"default/{agent_ref}"
+                if not _ref_matches_any(agent_ref, all_agent_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.webhooks[{i}].agentName",
+                            message=f"Referenced agent '{agent_ref}' not defined",
+                        )
+                    )
+            else:
+                # functionName may be "namespace/name" or a bare name
+                func_ref = webhook.get("functionName") or ""
+                if "/" not in func_ref:
+                    func_ref = f"{webhook.get('functionNamespace', 'default')}/{func_ref}"
+                if not _ref_matches_any(func_ref, all_function_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.webhooks[{i}].functionName",
+                            message=f"Referenced function '{func_ref}' not defined",
+                        )
+                    )
 
-        # Validate schedule references
+        # Validate schedule references (target depends on scheduleType)
         for i, schedule in enumerate(spec.get("schedules", [])):
-            # Build function reference as namespace/name
-            func_namespace = schedule.get("functionNamespace", "default")
-            func_name = schedule["functionName"]
-            func_ref = f"{func_namespace}/{func_name}"
-            if not _ref_matches_any(func_ref, all_function_names):
-                errors.append(
-                    ConfigValidationError(
-                        path=f"spec.schedules[{i}].functionName",
-                        message=f"Referenced function '{func_ref}' not defined",
+            schedule_type = schedule.get("scheduleType", "function")
+            if schedule_type == "pipeline":
+                pipeline_ref = schedule.get("pipelineName") or ""
+                if "/" not in pipeline_ref:
+                    pipeline_ref = f"default/{pipeline_ref}"
+                if not _ref_matches_any(pipeline_ref, all_pipeline_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.schedules[{i}].pipelineName",
+                            message=f"Referenced pipeline '{pipeline_ref}' not defined",
+                        )
                     )
-                )
+            elif schedule_type == "agent":
+                agent_ref = schedule.get("agentName") or ""
+                if "/" not in agent_ref:
+                    agent_ref = f"default/{agent_ref}"
+                if not _ref_matches_any(agent_ref, all_agent_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.schedules[{i}].agentName",
+                            message=f"Referenced agent '{agent_ref}' not defined",
+                        )
+                    )
+            else:
+                # functionName may be "namespace/name" or a bare name
+                func_ref = schedule.get("functionName") or ""
+                if "/" not in func_ref:
+                    func_ref = f"{schedule.get('functionNamespace', 'default')}/{func_ref}"
+                if not _ref_matches_any(func_ref, all_function_names):
+                    errors.append(
+                        ConfigValidationError(
+                            path=f"spec.schedules[{i}].functionName",
+                            message=f"Referenced function '{func_ref}' not defined",
+                        )
+                    )
 

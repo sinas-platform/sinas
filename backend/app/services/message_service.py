@@ -25,7 +25,10 @@ from app.utils.schema import validate_with_coercion
 from app.services.content_tokens import strip_base64_data, refresh_message_tokens  # noqa: F401 — re-exported
 from app.services.hook_service import run_hooks, HookResult
 from app.services.tool_result_store import save_tool_result
-from app.services.conversation_history import build_conversation_history
+from app.services.conversation_history import (
+    build_agent_system_content,
+    build_conversation_history,
+)
 from app.services.function_tools import FunctionToolConverter
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -42,6 +45,7 @@ from app.services.tool_execution import (
     execute_single_tool,
     is_sequential_tool,
     safe_parse_arguments,
+    accumulate_tool_call_delta,
     validate_tool_calls,
 )
 from opentelemetry import trace
@@ -313,6 +317,7 @@ class MessageService:
                 "agent": f"{agent.namespace}/{agent.name}" if agent else None,
                 "source": "chat",
             },
+            overrides=agent.provider_overrides if agent else None,
         )
 
         # If no model specified, use the provider's default model
@@ -383,6 +388,11 @@ class MessageService:
         # User hook blocked the pipeline
         if prep.get("blocked"):
             return prep["block_message"]
+
+        # Metering leaf: one agent invocation per (unblocked) user message
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.AGENT)
 
         agent_label = prep.get("agent_label")
         _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
@@ -542,6 +552,11 @@ class MessageService:
             yield {"type": "done", "status": "blocked"}
             return
 
+        # Metering leaf: one agent invocation per (unblocked) user message
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.AGENT)
+
         agent_label = prep.get("agent_label")
         _labels = json.dumps([f"agent:{agent_label}"]) if agent_label else "[]"
 
@@ -629,38 +644,7 @@ class MessageService:
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    tc_index = tc.get("index")
-
-                    if tc_index is None and tc.get("id"):
-                        for idx, existing_tc in enumerate(tool_calls_list):
-                            if existing_tc.get("id") == tc["id"]:
-                                tc_index = idx
-                                break
-                        if tc_index is None:
-                            tc_index = len(tool_calls_list)
-
-                    if tc_index is None:
-                        tc_index = 0
-
-                    while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append(
-                            {
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        )
-
-                    if tc.get("id"):
-                        tool_calls_list[tc_index]["id"] = tc["id"]
-                    if tc.get("type"):
-                        tool_calls_list[tc_index]["type"] = tc["type"]
-                    if tc.get("function", {}).get("name"):
-                        tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-                    if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
-                            "arguments"
-                        ]
+                    accumulate_tool_call_delta(tool_calls_list, tc)
 
             yield chunk
 
@@ -1140,25 +1124,20 @@ class MessageService:
         chat = result_chat.scalar_one_or_none()
 
         updated_messages = []
+        agent = None
 
         if chat and chat.agent_id:
             result_agent = await self.db.execute(select(Agent).where(Agent.id == chat.agent_id))
             agent = result_agent.scalar_one_or_none()
-            if agent and agent.system_prompt:
-                system_content = agent.system_prompt
+            if agent:
+                template_vars = None
                 if chat.chat_metadata and "agent_input" in chat.chat_metadata:
-                    try:
-                        system_content = render_template(
-                            agent.system_prompt, chat.chat_metadata["agent_input"]
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to render system prompt template: {e}")
-
-                if agent.output_schema and agent.output_schema.get("properties"):
-                    schema_instruction = f"\n\nIMPORTANT: You must respond with valid JSON matching this exact schema:\n```json\n{json.dumps(agent.output_schema, indent=2)}\n```\nDo not include any text outside the JSON object."
-                    system_content += schema_instruction
-
-                updated_messages.append({"role": "system", "content": system_content})
+                    template_vars = chat.chat_metadata["agent_input"]
+                system_content = await build_agent_system_content(
+                    self.db, agent, self.skill_converter, template_vars
+                )
+                if system_content:
+                    updated_messages.append({"role": "system", "content": system_content})
 
         result = await self.db.execute(
             select(Message).where(Message.chat_id == chat_id).order_by(Message.created_at)
@@ -1198,6 +1177,7 @@ class MessageService:
                 "agent": _agent_label,
                 "source": "chat",
             },
+            overrides=agent.provider_overrides if agent else None,
         )
 
         clean_tools = strip_tool_metadata(tools)
@@ -1221,38 +1201,7 @@ class MessageService:
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    tc_index = tc.get("index")
-
-                    if tc_index is None and tc.get("id"):
-                        for idx, existing_tc in enumerate(tool_calls_list):
-                            if existing_tc.get("id") == tc["id"]:
-                                tc_index = idx
-                                break
-                        if tc_index is None:
-                            tc_index = len(tool_calls_list)
-
-                    if tc_index is None:
-                        tc_index = 0
-
-                    while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append(
-                            {
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        )
-
-                    if tc.get("id"):
-                        tool_calls_list[tc_index]["id"] = tc["id"]
-                    if tc.get("type"):
-                        tool_calls_list[tc_index]["type"] = tc["type"]
-                    if tc.get("function", {}).get("name"):
-                        tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-                    if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
-                            "arguments"
-                        ]
+                    accumulate_tool_call_delta(tool_calls_list, tc)
 
             yield chunk
 

@@ -98,6 +98,22 @@ async def execute(
     """
     effective_timeout = timeout or settings.code_execution_timeout
     execution_id = str(uuid.uuid4())
+
+    # Metering leaf: one op per codeExecution tool call
+    from app.services import metering
+
+    await metering.record(metering.OperationKind.CODE)
+
+    if not settings.code_execution_enabled:
+        # Belt and braces: the tool isn't advertised when disabled, but a model
+        # can still emit a call for a tool it saw earlier in the conversation.
+        return {
+            "stdout": "",
+            "stderr": "Code execution is disabled on this deployment.",
+            "result": None,
+            "duration_ms": 0,
+            "error": "Code execution is disabled on this deployment.",
+        }
     start_time = time.time()
 
     # Wrap the user code so we capture stdout and the last expression result.

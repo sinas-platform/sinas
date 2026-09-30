@@ -164,7 +164,7 @@ export function Templates() {
                         <span className="text-gray-500">{template.namespace}/</span>{template.name}
                       </h3>
                       {!template.is_active && (
-                        <span className="px-2 py-0.5 text-xs bg-[#1e1e1e] text-gray-400 rounded">Inactive</span>
+                        <span className="px-2 py-0.5 text-xs bg-surface-2 text-gray-400 rounded">Inactive</span>
                       )}
                       {template.managed_by && (
                         <Code2 className="w-4 h-4 text-blue-500" />
@@ -212,7 +212,7 @@ export function Templates() {
           ))}
         </div>
       ) : (
-        <div className="text-center py-12 bg-[#0d0d0d] rounded-lg border-2 border-dashed border-white/10">
+        <div className="text-center py-12 bg-surface-0 rounded-lg border-2 border-dashed border-line">
           <FileText className="w-16 h-16 text-gray-500 mx-auto mb-4" />
           <h3 className="text-lg font-medium text-gray-100 mb-2">No templates</h3>
           <p className="text-gray-400 mb-4">Get started by creating your first template</p>
@@ -234,7 +234,7 @@ export function Templates() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-2xl font-bold mb-6">Create Template</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -358,7 +358,7 @@ export function Templates() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-7xl w-full h-[90vh] overflow-hidden flex flex-col p-6 pointer-events-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-7xl w-full h-[90vh] overflow-hidden flex flex-col p-6 pointer-events-auto" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold">Edit Template: <span className="text-gray-500">{selectedTemplate.namespace}/</span>{selectedTemplate.name}</h2>
               <div className="flex gap-2">
@@ -490,7 +490,7 @@ export function Templates() {
               {/* Right: Live Preview */}
               <div className="border-l pl-6 flex flex-col overflow-hidden">
                 <h3 className="font-semibold text-gray-100 mb-3">Live Preview</h3>
-                <div className="flex-1 border rounded-lg overflow-hidden bg-[#161616]">
+                <div className="flex-1 border rounded-lg overflow-hidden bg-surface-1">
                   <iframe
                     srcDoc={editFormData.html_content || '<p class="p-4 text-gray-500">Start typing to see preview...</p>'}
                     className="w-full h-full"
@@ -499,7 +499,7 @@ export function Templates() {
                   />
                 </div>
                 {editFormData.title && (
-                  <div className="mt-3 p-3 bg-[#0d0d0d] rounded border">
+                  <div className="mt-3 p-3 bg-surface-0 rounded border">
                     <p className="text-xs text-gray-400 mb-1">Title/Subject:</p>
                     <p className="font-medium text-gray-100">{editFormData.title}</p>
                   </div>
@@ -516,7 +516,7 @@ export function Templates() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowPreviewModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-2xl font-bold mb-6">Preview Template: <span className="text-gray-500">{selectedTemplate.namespace}/</span>{selectedTemplate.name}</h2>
             <form onSubmit={handlePreview} className="space-y-4">
               <div>
@@ -555,14 +555,14 @@ export function Templates() {
                   {previewResult.title && (
                     <div>
                       <h3 className="font-semibold text-gray-100 mb-2">Title:</h3>
-                      <div className="p-3 bg-[#0d0d0d] rounded border">{previewResult.title}</div>
+                      <div className="p-3 bg-surface-0 rounded border">{previewResult.title}</div>
                     </div>
                   )}
 
                   <div>
                     <h3 className="font-semibold text-gray-100 mb-2">HTML Preview:</h3>
                     <div
-                      className="p-4 bg-[#161616] rounded border"
+                      className="p-4 bg-surface-1 rounded border"
                       dangerouslySetInnerHTML={{ __html: previewResult.html_content }}
                     />
                   </div>
@@ -570,7 +570,7 @@ export function Templates() {
                   {previewResult.text_content && (
                     <div>
                       <h3 className="font-semibold text-gray-100 mb-2">Text Content:</h3>
-                      <pre className="p-3 bg-[#0d0d0d] rounded border text-sm whitespace-pre-wrap">
+                      <pre className="p-3 bg-surface-0 rounded border text-sm whitespace-pre-wrap">
                         {previewResult.text_content}
                       </pre>
                     </div>

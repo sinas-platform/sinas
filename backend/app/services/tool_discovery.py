@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_user_permissions
+from app.core.config import settings
 from app.core.permissions import check_permission
 from app.models import Agent, Chat
 from app.models.execution import Execution, ExecutionStatus
@@ -283,6 +284,16 @@ async def get_available_tools(
         )
         tools.extend(connector_tools)
 
+    # Get pipeline tools (only if list has items - opt-in)
+    enabled_pipelines = getattr(agent, "enabled_pipelines", None) or []
+    if enabled_pipelines:
+        from app.services.pipeline_tools import PipelineToolConverter
+
+        pipeline_tools = await PipelineToolConverter().get_available_pipelines(
+            db=db, user_id=user_id, enabled_pipelines=enabled_pipelines
+        )
+        tools.extend(pipeline_tools)
+
     # Add built-in retrieve_tool_result tool (always available).
     # The description is deliberately strict: agents (especially Claude) tend
     # to invent ids if the description is vague, then the result lookup
@@ -322,7 +333,9 @@ async def get_available_tools(
     # Bind Sinas system tools (opt-in platform capabilities)
     from app.services.system_tool_helpers import has_system_tool
     system_tools = agent.system_tools or []
-    if has_system_tool(system_tools, "codeExecution"):
+    # Not advertised when disabled: offering a tool the platform will refuse
+    # wastes context and invites retry loops when the model keeps trying it.
+    if has_system_tool(system_tools, "codeExecution") and settings.code_execution_enabled:
         tools.append(await get_code_exec_tool_definition(db))
     if has_system_tool(system_tools, "packageManagement"):
         from app.services.package_tools import get_package_tool_definitions

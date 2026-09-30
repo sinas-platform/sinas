@@ -22,6 +22,24 @@ from app.services.config_apply.normalizers import (
 logger = logging.getLogger(__name__)
 
 
+def _validated_overrides(agent_config, errors: list[str]):
+    """Whitelist-check providerOverrides; invalid entries become apply errors
+    (same fail-loudly posture as unresolvable provider names)."""
+    overrides = getattr(agent_config, "providerOverrides", None)
+    if not overrides:
+        return None
+    from app.providers.factory import validate_provider_overrides
+
+    problems = validate_provider_overrides(overrides)
+    if problems:
+        errors.extend(
+            f"Agent '{agent_config.namespace}/{agent_config.name}': {p}"
+            for p in problems
+        )
+        return None
+    return overrides
+
+
 async def _resolve_llm_provider_id(
     db: AsyncSession,
     provider_name: str | None,
@@ -108,8 +126,7 @@ async def apply_agents(
                 else []
             )
 
-            config_hash = calculate_hash(
-                {
+            hash_payload = {
                     "namespace": agent_config.namespace,
                     "name": agent_config.name,
                     "description": agent_config.description,
@@ -149,6 +166,9 @@ async def apply_agents(
                     "enabled_connectors": agent_config.enabledConnectors
                     if agent_config.enabledConnectors
                     else [],
+                    "enabled_pipelines": sorted(agent_config.enabledPipelines)
+                    if agent_config.enabledPipelines
+                    else [],
                     "input_schema": agent_config.inputSchema or {},
                     "output_schema": agent_config.outputSchema or {},
                     "initial_messages": agent_config.initialMessages or [],
@@ -159,7 +179,16 @@ async def apply_agents(
                     "default_keep_alive": agent_config.defaultKeepAlive,
                     "system_tools": agent_config.systemTools,
                 }
-            )
+            # Provider overrides (effort, prompt_caching) are part of what an
+            # agent IS: without them in the hash, a config changing only
+            # `providerOverrides.effort` hashed identically, was skipped as
+            # unchanged, and left the old value in effect — a silent no-op for
+            # exactly the teams that manage agents as config. Included only
+            # when set, so agents without overrides keep their existing hash
+            # and an upgrade doesn't re-apply every config-managed agent at once.
+            if agent_config.providerOverrides:
+                hash_payload["provider_overrides"] = agent_config.providerOverrides
+            config_hash = calculate_hash(hash_payload)
 
             if existing:
                 if should_skip_existing(
@@ -185,6 +214,9 @@ async def apply_agents(
 
                     existing.description = agent_config.description
                     existing.model = agent_config.model
+                    existing.provider_overrides = _validated_overrides(
+                        agent_config, errors
+                    )
                     existing.temperature = agent_config.temperature
                     existing.max_tokens = agent_config.maxTokens
                     existing.system_prompt = agent_config.systemPrompt
@@ -199,6 +231,7 @@ async def apply_agents(
                     existing.enabled_collections = normalized_collections
                     existing.enabled_components = agent_config.enabledComponents
                     existing.enabled_connectors = agent_config.enabledConnectors
+                    existing.enabled_pipelines = agent_config.enabledPipelines
                     existing.input_schema = agent_config.inputSchema or {}
                     existing.output_schema = agent_config.outputSchema or {}
                     existing.initial_messages = agent_config.initialMessages
@@ -243,6 +276,7 @@ async def apply_agents(
                         description=agent_config.description,
                         llm_provider_id=llm_provider_id,
                         model=agent_config.model,
+                        provider_overrides=_validated_overrides(agent_config, errors),
                         temperature=agent_config.temperature,
                         max_tokens=agent_config.maxTokens,
                         system_prompt=agent_config.systemPrompt,
@@ -260,6 +294,7 @@ async def apply_agents(
                         enabled_collections=normalized_collections,
                         enabled_components=agent_config.enabledComponents,
                         enabled_connectors=agent_config.enabledConnectors,
+                        enabled_pipelines=agent_config.enabledPipelines,
                         hooks=agent_config.hooks,
                         icon=agent_config.icon,
                         is_default=agent_config.isDefault,

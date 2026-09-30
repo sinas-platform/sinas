@@ -5,7 +5,21 @@ Used by both config_export.py (full config export) and package_service.py
 """
 from typing import Any, Optional
 
-from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP
+from app.schemas.config import (
+    CONNECTOR_AUTH_FIELD_MAP,
+    TOKEN_RESPONSE_PATH_FIELD_MAP,
+)
+
+
+def _camelize_token_response_paths(paths: Any) -> Optional[dict]:
+    """snake_case stored token-response paths → camelCase config keys."""
+    if not isinstance(paths, dict):
+        return None
+    return {
+        camel: paths.get(snake)
+        for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
+        if paths.get(snake) is not None
+    } or None
 
 
 def _remove_none_values(d: dict) -> dict:
@@ -118,16 +132,49 @@ def serialize_template(template) -> dict:
 
 
 def serialize_webhook(webhook) -> dict:
+    target_type = getattr(webhook, "target_type", "function") or "function"
     return _remove_none_values({
         "path": webhook.path,
-        "functionName": f"{webhook.function_namespace}/{webhook.function_name}",
+        # Omitted for function targets so legacy exports stay unchanged
+        "targetType": target_type if target_type != "function" else None,
+        "functionName": f"{webhook.function_namespace}/{webhook.function_name}"
+        if target_type == "function"
+        else None,
+        "agentName": f"{webhook.agent_namespace}/{webhook.agent_name}"
+        if target_type == "agent"
+        else None,
+        "pipelineName": f"{webhook.pipeline_namespace or 'default'}/{webhook.pipeline_name}"
+        if target_type == "pipeline"
+        else None,
+        "messageTemplate": webhook.message_template if target_type == "agent" else None,
+        "sessionKeyTemplate": webhook.session_key_template if target_type == "agent" else None,
         "httpMethod": webhook.http_method,
         "requiresAuth": webhook.requires_auth,
         "description": webhook.description,
         "defaultValues": webhook.default_values or None,
         "responseMode": getattr(webhook, "response_mode", None),
-        "dedup": getattr(webhook, "dedup", None) or None,
+        "dedup": _serialize_dedup(getattr(webhook, "dedup", None)),
     })
+
+
+def _serialize_dedup(dedup: Optional[dict]) -> Optional[dict]:
+    """Export a stored dedup blob in the config schema's camelCase shape.
+
+    Storage is snake_case (`ttl_seconds`); the config schema expects
+    `ttlSeconds`. Exporting the raw blob emitted the snake_case key, which
+    WebhookDedupConfig then ignored on re-apply — silently resetting the TTL to
+    its default on a no-op round-trip. Older rows may still hold `ttlSeconds`,
+    so accept either on the way out.
+    """
+    if not dedup:
+        return None
+    ttl = dedup.get("ttl_seconds")
+    if not isinstance(ttl, int) or isinstance(ttl, bool):
+        ttl = dedup.get("ttlSeconds")
+    out: dict[str, Any] = {"key": dedup.get("key")}
+    if isinstance(ttl, int) and not isinstance(ttl, bool):
+        out["ttlSeconds"] = ttl
+    return out
 
 
 def serialize_schedule(schedule) -> dict:
@@ -139,6 +186,9 @@ def serialize_schedule(schedule) -> dict:
         else None,
         "agentName": f"{schedule.target_namespace}/{schedule.target_name}"
         if schedule.schedule_type == "agent"
+        else None,
+        "pipelineName": f"{schedule.target_namespace}/{schedule.target_name}"
+        if schedule.schedule_type == "pipeline"
         else None,
         "content": schedule.content,
         "cronExpression": schedule.cron_expression,
@@ -173,6 +223,10 @@ def serialize_connector(conn) -> dict:
         "auth": _remove_none_values({
             **{camel: auth.get(snake) for camel, snake in CONNECTOR_AUTH_FIELD_MAP},
             "type": auth.get("type", "none"),  # type always present in export
+            # Nested object: its inner keys need their own camelization.
+            "tokenResponsePaths": _camelize_token_response_paths(
+                auth.get("token_response_paths")
+            ),
         }),
         "headers": conn.headers if conn.headers else None,
         "retry": _remove_none_values({
@@ -213,12 +267,16 @@ def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
         "enabledCollections": agent.enabled_collections or None,
         "enabledComponents": agent.enabled_components or None,
         "enabledConnectors": agent.enabled_connectors or None,
+        "enabledPipelines": agent.enabled_pipelines or None,
         "hooks": agent.hooks or None,
         "icon": agent.icon,
         "isDefault": agent.is_default if agent.is_default else None,
         "defaultJobTimeout": agent.default_job_timeout,
         "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
         "systemTools": agent.system_tools if agent.system_tools else None,
+        # Round-trips through export/import; without it an exported agent
+        # re-imported at model-default effort and caching.
+        "providerOverrides": agent.provider_overrides or None,
     })
 
 
@@ -244,9 +302,41 @@ def serialize_database_trigger(trigger, connection_name: Optional[str] = None) -
         "schemaName": trigger.schema_name,
         "tableName": trigger.table_name,
         "operations": trigger.operations,
-        "functionName": f"{trigger.function_namespace}/{trigger.function_name}",
+        "targetType": trigger.target_type if trigger.target_type != "function" else None,
+        "functionName": f"{trigger.function_namespace}/{trigger.function_name}"
+        if trigger.function_name
+        else None,
+        "pipelineName": f"{trigger.pipeline_namespace or 'default'}/{trigger.pipeline_name}"
+        if trigger.pipeline_name
+        else None,
         "pollColumn": trigger.poll_column,
         "pollIntervalSeconds": trigger.poll_interval_seconds,
         "batchSize": trigger.batch_size,
         "isActive": trigger.is_active,
     })
+
+
+def serialize_pipeline(pipeline) -> dict:
+    """Export a pipeline. cursor_value / error_message / failure counters are
+    runtime state, not config — deliberately not exported. Steps/perUser are
+    stored verbatim (camelCase, `.$` keys intact) and pass straight through."""
+    out = {
+        "namespace": pipeline.namespace,
+        "name": pipeline.name,
+        "description": pipeline.description,
+        "inputSchema": pipeline.input_schema or None,
+        "steps": pipeline.steps,
+        "perUser": pipeline.per_user,
+        "asTool": pipeline.as_tool or None,
+        "toolDescription": pipeline.tool_description,
+        "syncTimeoutSeconds": pipeline.sync_timeout_seconds if pipeline.sync_timeout_seconds != 120 else None,
+        "concurrency": pipeline.concurrency,
+        "disableAfterFailures": pipeline.disable_after_failures,
+        "isActive": pipeline.is_active,
+    }
+    mapping = pipeline.output_mapping or {}
+    if "output.$" in mapping:
+        out["output.$"] = mapping["output.$"]
+    elif "output" in mapping:
+        out["output"] = mapping["output"]
+    return _remove_none_values(out)

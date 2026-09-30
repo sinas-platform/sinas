@@ -1,6 +1,8 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Logo } from './Logo';
 import { useAuth } from '../lib/auth-context';
 import { apiClient } from '../lib/api';
+import ThemeToggle from './ThemeToggle';
 import {
   LayoutDashboard,
   MessageSquare,
@@ -29,6 +31,7 @@ import {
   HardDrive,
   KeyRound,
   Plug,
+  Workflow,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -56,6 +59,7 @@ const navigationSections = [
       { name: 'Databases', href: '/database-connections', icon: Cable },
       { name: 'Templates', href: '/templates', icon: FileText },
       { name: 'Connectors', href: '/connectors', icon: Plug },
+      { name: 'Pipelines', href: '/pipelines', icon: Workflow },
       { name: 'Secrets', href: '/secrets', icon: KeyRound },
     ],
   },
@@ -102,7 +106,7 @@ export function Layout() {
   };
 
   return (
-    <div className="min-h-screen bg-[#090909]">
+    <div className="min-h-screen bg-surface-page">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
@@ -113,14 +117,14 @@ export function Layout() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#111111] border-r border-white/[0.06] transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 w-64 bg-surface-input border-r border-line-soft transform transition-transform duration-300 ease-in-out lg:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
         <div className="flex flex-col h-full">
           {/* Logo */}
-          <div className="flex items-center justify-between h-16 px-6 border-b border-white/[0.06]">
-            <img src="/sinas-logo.svg" alt="sinas" className="h-8" />
+          <div className="flex items-center justify-between h-16 px-6 border-b border-line-soft">
+            <Logo className="h-7 w-auto" />
             <button
               onClick={() => setSidebarOpen(false)}
               className="lg:hidden text-gray-400 hover:text-gray-200"
@@ -151,7 +155,7 @@ export function Layout() {
                         className={`flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                           isActive
                             ? 'bg-primary-900/30 text-primary-400'
-                            : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'
+                            : 'text-gray-400 hover:bg-hover hover:text-gray-200'
                         }`}
                       >
                         <item.icon className="w-5 h-5 mr-3" />
@@ -169,7 +173,7 @@ export function Layout() {
             <Link
               to="/chats"
               onClick={() => setSidebarOpen(false)}
-              className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-md transition-colors"
+              className="flex items-center px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 hover:bg-hover rounded-md transition-colors"
             >
               <MessageSquare className="w-4 h-4 mr-2" />
               Chat History
@@ -177,18 +181,18 @@ export function Layout() {
           </div>
 
           {/* User menu */}
-          <div className="p-4 border-t border-white/[0.06]">
+          <div className="p-4 border-t border-line-soft">
             <div className="flex items-center">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-100 truncate">
                   {user?.email}
                 </p>
-                <p className="text-xs text-gray-500">Administrator</p>
               </div>
+              <ThemeToggle />
               {passwordEnabled && (
                 <button
                   onClick={() => setShowChangePassword(true)}
-                  className="ml-1 p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-md"
+                  className="ml-1 p-2 text-gray-400 hover:text-gray-200 hover:bg-hover rounded-md"
                   title="Change password"
                 >
                   <KeyRound className="w-5 h-5" />
@@ -196,7 +200,7 @@ export function Layout() {
               )}
               <button
                 onClick={handleLogout}
-                className="ml-1 p-2 text-gray-400 hover:text-gray-200 hover:bg-white/5 rounded-md"
+                className="ml-1 p-2 text-gray-400 hover:text-gray-200 hover:bg-hover rounded-md"
                 title="Logout"
               >
                 <LogOut className="w-5 h-5" />
@@ -209,7 +213,7 @@ export function Layout() {
       {/* Main content */}
       <div className="lg:pl-64">
         {/* Top bar */}
-        <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-6 bg-[#111111] border-b border-white/[0.06]">
+        <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-6 bg-surface-input border-b border-line-soft">
           <button
             onClick={() => setSidebarOpen(true)}
             className="lg:hidden text-gray-400 hover:text-gray-200"
@@ -279,7 +283,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-[#161616] rounded-2xl p-6 border border-white/[0.06] w-full max-w-md">
+      <div className="bg-surface-1 rounded-2xl p-6 border border-line-soft w-full max-w-md">
         <div className="flex items-start justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-100">Change password</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-200">
@@ -296,7 +300,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => setCurrentPassword(e.target.value)}
               autoComplete="current-password"
               required
-              className="w-full px-3 py-2 bg-[#111111] border border-white/10 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 bg-surface-input border border-line rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div>
@@ -308,7 +312,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
               autoComplete="new-password"
               required
               minLength={8}
-              className="w-full px-3 py-2 bg-[#111111] border border-white/10 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 bg-surface-input border border-line rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div>
@@ -320,7 +324,7 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
               autoComplete="new-password"
               required
               minLength={8}
-              className="w-full px-3 py-2 bg-[#111111] border border-white/10 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 bg-surface-input border border-line rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
             />
           </div>
 

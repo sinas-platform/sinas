@@ -4,7 +4,7 @@ description: "Inbound HTTP webhook handlers"
 ---
 
 
-Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook path, Sinas executes the linked function with the request data.
+Webhooks expose functions and agents as HTTP endpoints. When a request arrives at a webhook path, Sinas either executes the linked function with the request data, or renders a message from the request payload and sends it to the linked agent.
 
 **Key properties:**
 
@@ -12,9 +12,15 @@ Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook
 |---|---|
 | `path` | URL path (e.g., `stripe/payment-webhook`) |
 | `http_method` | GET, POST, PUT, DELETE, or PATCH |
-| `function_namespace` / `function_name` | Target function |
-| `requires_auth` | Whether the caller must provide a Bearer token |
+| `target_type` | `function` (default) or `agent` |
+| `function_namespace` / `function_name` | Target function (function targets) |
+| `agent_namespace` / `agent_name` | Target agent (agent targets) |
+| `message_template` | Jinja2 template rendered against the request payload; the result is sent to the agent as the user message (agent targets) |
+| `session_key_template` | Optional Jinja2 template; events rendering the same key continue the same conversation (agent targets) |
+| `requires_auth` | Whether the caller must provide a Bearer token or API key |
 | `default_values` | Default parameters merged with request data (request takes priority) |
+| `response_mode` | `sync` (default), `async`, or `raw` (function targets only) |
+| `dedup` | Optional deduplication: `{key, ttl_seconds}` where key is a JSONPath (`$.event.id`) or `header:X-Header-Name` |
 
 **How input is extracted:**
 
@@ -22,7 +28,82 @@ Webhooks expose functions as HTTP endpoints. When a request arrives at a webhook
 - `GET` → query parameters become the input
 - Default values are merged underneath (request data overrides)
 
-**Example:**
+## Response modes
+
+| Mode | Behavior |
+|---|---|
+| `sync` | Wait for the result and return it wrapped in an envelope: `{"success": true, "execution_id": ..., "result": ...}` (function targets) or `{"success": true, "chat_id": ..., "reply": ...}` (agent targets) |
+| `async` | Return `202` immediately with an identifier; execution continues in the background. Recommended for provider webhooks with delivery timeouts. |
+| `raw` | Function targets only. Wait for the result and return the function's return value as the **literal HTTP response body** — no envelope. |
+
+### Raw mode
+
+In raw mode the function's return value becomes the response body: a dict or list is returned as JSON, a string as `text/plain`. This is required for providers that expect a specific response body, e.g. Slack's Events API `url_verification` handshake:
+
+```python
+def handler(input):
+    if input.get("type") == "url_verification":
+        return {"challenge": input["challenge"]}
+    # ... handle other events
+    return {"ok": True}
+```
+
+For full control over status code and headers, return a dict using the reserved keys `_status`, `_headers`, and `_body`:
+
+```python
+return {"_status": 201, "_headers": {"X-Request-Id": "abc"}, "_body": {"ok": True}}
+```
+
+## Agent targets
+
+A webhook can trigger an agent directly, without a bridge function. The request payload is rendered through `message_template` (Jinja2) and sent to the agent as a user message. Undefined template variables render as empty strings — an unexpected payload shape never fails the webhook. If any variable was undefined, the rendered message is delivered with the full raw payload appended (so the agent keeps both your instructions and the data); a template that renders fully empty falls back to the raw payload alone. For multi-event sources (e.g. GitHub issues + PRs + comments), reference only fields present in every payload variant, or guard with `{% if x is defined %}`.
+
+With a `session_key_template`, repeated events that render the same key continue the same conversation (like the `session_key` on `POST /agents/{ns}/{name}/invoke`) — e.g. all events for one Jira issue or one Slack thread share a chat. Without it, each delivery starts a fresh chat.
+
+- `sync` waits for the agent's reply and returns `{"success": true, "chat_id": ..., "reply": "..."}`
+- `async` returns `202` with `{"chat_id": ..., "job_id": ...}` — use this for provider webhooks
+- For authenticated webhooks the caller needs chat permission on the target agent (`sinas.agents/{ns}/{name}.chat`); unauthenticated webhooks run as the webhook owner
+- Deduplication works identically for both target types
+
+**Declarative config (YAML):**
+
+```yaml
+webhooks:
+  - path: jira/issue-created
+    targetType: agent
+    agentName: jira/triage
+    messageTemplate: |
+      New issue {{ issue.key }}: {{ issue.fields.summary }}
+    sessionKeyTemplate: "jira-{{ issue.key }}"
+    responseMode: async
+    requiresAuth: false
+    dedup:
+      key: "header:X-Atlassian-Webhook-Identifier"
+      ttlSeconds: 3600
+```
+
+Function-target webhooks in YAML are unchanged (`functionName: namespace/name`); `responseMode: raw` is available for them as well.
+
+## Pipeline targets
+
+A webhook can fire a [pipeline](/build-resources/pipelines): the request payload (merged over `defaultValues`) becomes the pipeline's run input, executed as the webhook's owner.
+
+- `sync` runs the pipeline inline (bounded by the pipeline's `syncTimeoutSeconds`) and returns `{"success": true, "run_id": ..., "output": ...}`; a failed run returns `500` with the `run_id` of the replayable run record
+- `async` returns `202` with `{"run_id": ...}` — use this for provider webhooks and slow pipelines (e.g. ones containing agent steps)
+- `raw` is not supported for pipeline targets
+- For authenticated webhooks the caller must own the webhook and hold `sinas.pipelines/{ns}/{name}.run`
+- A webhook event is a single occurrence, so `perUser` pipelines do **not** fan out here — that behavior belongs to schedules and manual `?allUsers=true` runs
+
+```yaml
+webhooks:
+  - path: crm/contact-updated
+    targetType: pipeline
+    pipelineName: crm/upsert-contact
+    responseMode: async
+    requiresAuth: false
+```
+
+**Example (function target):**
 
 ```bash
 # Create a webhook
@@ -44,6 +125,24 @@ curl -X POST https://yourdomain.com/webhooks/stripe/payment \
   -d '{"event": "charge.succeeded", "amount": 1000}'
 
 # Function receives: {"source": "stripe", "event": "charge.succeeded", "amount": 1000}
+```
+
+**Example (agent target):**
+
+```bash
+curl -X POST https://yourdomain.com/api/v1/webhooks \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path": "jira/issue-created",
+    "target_type": "agent",
+    "agent_namespace": "jira",
+    "agent_name": "triage",
+    "message_template": "New issue {{ issue.key }}: {{ issue.fields.summary }}",
+    "session_key_template": "jira-{{ issue.key }}",
+    "response_mode": "async",
+    "requires_auth": false
+  }'
 ```
 
 **Endpoints:**

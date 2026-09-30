@@ -72,6 +72,20 @@ class AgentCreate(BaseModel):
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None  # NULL = use default provider
     model: Optional[str] = None  # NULL = use provider's default model
+    # Whitelisted provider behavior overrides (e.g. {"prompt_caching": false});
+    # absent key = inherit provider setting. See providers.factory.AGENT_OVERRIDABLE.
+    provider_overrides: Optional[dict[str, Any]] = None
+
+    @field_validator("provider_overrides")
+    @classmethod
+    def _check_provider_overrides(cls, v):
+        from app.providers.factory import validate_provider_overrides
+
+        errors = validate_provider_overrides(v)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return v
+
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None  # NULL = use provider's default
     system_prompt: Optional[str] = None
@@ -100,6 +114,7 @@ class AgentCreate(BaseModel):
     enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    enabled_pipelines: Optional[list[str]] = None  # List of "namespace/name" pipeline references (asTool)
     hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_default: Optional[bool] = False
@@ -128,6 +143,18 @@ class AgentUpdate(BaseModel):
     description: Optional[str] = None
     llm_provider_id: Optional[uuid.UUID] = None
     model: Optional[str] = None
+    provider_overrides: Optional[dict[str, Any]] = None
+
+    @field_validator("provider_overrides")
+    @classmethod
+    def _check_provider_overrides(cls, v):
+        from app.providers.factory import validate_provider_overrides
+
+        errors = validate_provider_overrides(v)
+        if errors:
+            raise ValueError("; ".join(errors))
+        return v
+
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
@@ -156,6 +183,7 @@ class AgentUpdate(BaseModel):
     enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    enabled_pipelines: Optional[list[str]] = None  # List of "namespace/name" pipeline references (asTool)
     hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
     is_active: Optional[bool] = None
@@ -175,6 +203,7 @@ class AgentResponse(BaseModel):
     description: Optional[str]
     llm_provider_id: Optional[uuid.UUID]
     model: Optional[str]
+    provider_overrides: Optional[dict[str, Any]] = None
     temperature: float
     max_tokens: Optional[int]
     system_prompt: Optional[str]
@@ -192,6 +221,7 @@ class AgentResponse(BaseModel):
     enabled_collections: list[EnabledCollectionConfig] = []
     enabled_components: list[str] = []
     enabled_connectors: list[dict[str, Any]] = []
+    enabled_pipelines: list[str] = []
     hooks: Optional[dict[str, Any]] = None
     icon: Optional[str] = None
     icon_url: Optional[str] = None

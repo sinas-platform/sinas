@@ -41,7 +41,7 @@ function EnumValuesEditor({ type, values, onChange }: { type: string; values: an
       <label className="block text-xs text-gray-500">Enum values (optional)</label>
       <div className="flex flex-wrap gap-1.5 min-h-[28px]">
         {values.map((v, i) => (
-          <span key={i} className="inline-flex items-center gap-1 bg-[#0d0d0d] border border-white/[0.06] rounded px-2 py-0.5 text-xs text-gray-300">
+          <span key={i} className="inline-flex items-center gap-1 bg-surface-0 border border-line-soft rounded px-2 py-0.5 text-xs text-gray-300">
             {String(v)}
             <button
               type="button"
@@ -206,7 +206,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
     const isComplex = propType === 'object' || propType === 'array';
 
     return (
-      <div className="border border-white/[0.06] rounded-lg p-3 bg-[#161616]">
+      <div className="border border-line-soft rounded-lg p-3 bg-surface-1">
         <div className="flex items-start gap-2">
           {isComplex && (
             <button
@@ -291,7 +291,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
 
             {/* Type-specific fields */}
             {propType === 'array' && isExpanded && (
-              <div className="ml-4 pl-4 border-l-2 border-white/[0.06] space-y-2">
+              <div className="ml-4 pl-4 border-l-2 border-line-soft space-y-2">
                 <label className="block text-xs font-medium text-gray-300">Array Item Type</label>
                 <select
                   value={(prop.items as any)?.type || 'string'}
@@ -313,7 +313,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
             )}
 
             {propType === 'object' && isExpanded && (
-              <div className="ml-4 pl-4 border-l-2 border-white/[0.06]">
+              <div className="ml-4 pl-4 border-l-2 border-line-soft">
                 <div className="text-xs font-medium text-gray-300 mb-2">Nested Properties</div>
                 <div className="space-y-2">
                   {Object.entries(prop.properties || {}).map(([nestedKey, nestedProp], nestedIndex) => {
@@ -417,8 +417,8 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           onClick={() => handleModeSwitch('guided')}
           className={`flex items-center px-3 py-1.5 text-sm rounded-md ${
             mode === 'guided'
-              ? 'bg-primary-100 text-primary-700 font-medium'
-              : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
+              ? 'bg-primary-900/30 text-primary-400 font-medium'
+              : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
           }`}
         >
           <Layout className="w-4 h-4 mr-1.5" />
@@ -429,8 +429,8 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           onClick={() => handleModeSwitch('raw')}
           className={`flex items-center px-3 py-1.5 text-sm rounded-md ${
             mode === 'raw'
-              ? 'bg-primary-100 text-primary-700 font-medium'
-              : 'bg-[#161616] text-gray-400 hover:bg-[#1e1e1e]'
+              ? 'bg-primary-900/30 text-primary-400 font-medium'
+              : 'bg-surface-1 text-gray-400 hover:bg-surface-2'
           }`}
         >
           <Code className="w-4 h-4 mr-1.5" />
@@ -465,7 +465,7 @@ export function JSONSchemaEditor({ value, onChange, className = '', label, descr
           </button>
 
           {Object.keys(value?.properties || {}).length === 0 && (
-            <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-white/10 rounded-lg">
+            <div className="text-center py-8 text-gray-500 text-sm border-2 border-dashed border-line rounded-lg">
               No properties defined. Click "Add Property" to get started.
             </div>
           )}

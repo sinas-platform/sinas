@@ -1,7 +1,7 @@
 """Runtime API - Data Plane for execution, authentication, and runtime state."""
 from fastapi import APIRouter
 
-from app.api.runtime.endpoints import batches, manifests, authentication, chats, components, discovery, executions, files, functions, info, queries, stores, templates, webhooks
+from app.api.runtime.endpoints import batches, manifests, authentication, chats, components, discovery, executions, files, functions, info, oidc, pipelines, queries, stores, templates, webhooks
 
 runtime_router = APIRouter()
 
@@ -11,6 +11,9 @@ runtime_router.include_router(info.router, tags=["runtime-info"])
 
 # Auth - OTP, tokens, API keys
 runtime_router.include_router(authentication.router, prefix="/auth", tags=["runtime-auth"])
+
+# OIDC-compatible verification - JWKS (root-level .well-known) + userinfo
+runtime_router.include_router(oidc.router, tags=["runtime-oidc"])
 
 # Chats - agent chat creation, message execution, and chat management
 runtime_router.include_router(chats.router, tags=["runtime-chats"])
@@ -23,6 +26,9 @@ runtime_router.include_router(webhooks.router, prefix="/webhooks", tags=["runtim
 
 # Queries - query execution
 runtime_router.include_router(queries.router, tags=["runtime-queries"])
+
+# Pipelines - manual runs, run history, replay
+runtime_router.include_router(pipelines.router, tags=["runtime-pipelines"])
 
 # Executions - function execution history and status
 runtime_router.include_router(executions.router, tags=["runtime-executions"])

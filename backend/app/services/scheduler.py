@@ -145,6 +145,34 @@ async def _execute_scheduled_agent(
         )
 
 
+async def _execute_scheduled_pipeline(
+    job_id: str,
+    target_namespace: str,
+    target_name: str,
+    input_data: dict[str, Any],
+):
+    """Enqueue a pipeline fire for a scheduled run. The fire job expands perUser
+    pipelines to one run per connected user (see pipeline_runner.fire_pipeline)."""
+    from app.services.queue_service import queue_service
+
+    try:
+        logger.info(
+            f"Enqueuing scheduled pipeline: {target_namespace}/{target_name} (job: {job_id})"
+        )
+        await _update_job_last_run(job_id)
+        await queue_service.enqueue_pipeline_fire(
+            namespace=target_namespace,
+            name=target_name,
+            run_input=input_data or {},
+            trigger_type="SCHEDULE",
+            trigger_id=job_id,
+        )
+    except Exception as e:
+        logger.error(
+            f"Scheduled pipeline {target_namespace}/{target_name} enqueue failed: {e}"
+        )
+
+
 async def _update_job_last_run(job_id: str):
     """Update the last_run and next_run timestamps for a scheduled job."""
     async with AsyncSessionLocal() as db:
@@ -217,7 +245,23 @@ class FunctionScheduler:
         try:
             cron_params = self._parse_cron_expression(job.cron_expression)
 
-            if job.schedule_type == "agent":
+            if job.schedule_type == "pipeline":
+                self.scheduler.add_job(
+                    func=_execute_scheduled_pipeline,
+                    trigger="cron",
+                    args=[
+                        str(job.id),
+                        job.target_namespace,
+                        job.target_name,
+                        job.input_data,
+                    ],
+                    id=str(job.id),
+                    name=job.name,
+                    timezone=job.timezone,
+                    **cron_params,
+                    replace_existing=True,
+                )
+            elif job.schedule_type == "agent":
                 self.scheduler.add_job(
                     func=_execute_scheduled_agent,
                     trigger="cron",

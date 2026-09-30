@@ -77,16 +77,30 @@ import type {
   QueryCreate,
   QueryUpdate,
   QueryExecuteResponse,
+  Pipeline,
+  PipelineCreate,
+  PipelineUpdate,
+  PipelineRun,
+  PipelineRunOutcome,
 } from '../types';
 
-// Auto-detect API base URL based on environment
-// VITE_API_URL overrides (useful for pointing a dev console at any backend)
-// Local: http://localhost:8000
-// Production: https://yourdomain.com (same domain as console, port 443)
+// Auto-detect API base URL based on environment.
+// - VITE_API_URL overrides (point a dev console at any backend)
+// - localhost on the console's own ports (Vite dev, nginx :51245) → the
+//   conventional backend at :8000
+// - localhost on ANY OTHER port → same origin: the backend itself served
+//   the console (lite profile, kubectl port-forward). Blanket-routing all
+//   of localhost to :8000 sent a lite console's API calls to whatever
+//   other instance held that port — silently the wrong deployment.
+// - real domains → same hostname, default port (console may sit on its
+//   own port behind Caddy while the API is on 443)
+const CONSOLE_OWN_PORTS = ['51245', ''];
 export const API_BASE_URL = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL
   : window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
+    ? (import.meta.env.DEV || CONSOLE_OWN_PORTS.includes(window.location.port)
+        ? 'http://localhost:8000'
+        : window.location.origin)
     : `${window.location.protocol}//${window.location.hostname}`;
 
 /**
@@ -239,7 +253,7 @@ class APIClient {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
-    window.location.href = '/login';
+    window.location.href = `${import.meta.env.BASE_URL}login`;
   }
 
   setErrorHandler(handler: (message: string) => void) {
@@ -496,35 +510,10 @@ class APIClient {
     return response.data;
   }
 
-  // State Store (Runtime API - formerly Context Store)
-  async listStates(params?: {
-    namespace?: string;
-    visibility?: string;
-    skip?: number;
-    limit?: number;
-  }): Promise<any[]> {
-    const response = await this.runtimeClient.get('/states', { params });
-    return response.data;
-  }
 
-  async getState(stateId: string): Promise<any> {
-    const response = await this.runtimeClient.get(`/states/${stateId}`);
-    return response.data;
-  }
 
-  async createState(data: any): Promise<any> {
-    const response = await this.runtimeClient.post('/states', data);
-    return response.data;
-  }
 
-  async updateState(stateId: string, data: any): Promise<any> {
-    const response = await this.runtimeClient.put(`/states/${stateId}`, data);
-    return response.data;
-  }
 
-  async deleteState(stateId: string): Promise<void> {
-    await this.runtimeClient.delete(`/states/${stateId}`);
-  }
 
   // Secrets
   async listSecrets(): Promise<any[]> {
@@ -1002,6 +991,51 @@ class APIClient {
 
   async executeQuery(namespace: string, name: string, input: Record<string, any> = {}): Promise<QueryExecuteResponse> {
     const response = await this.configClient.post(`/queries/${namespace}/${name}/execute`, { input });
+    return response.data;
+  }
+
+  // Pipelines
+  async listPipelines(): Promise<Pipeline[]> {
+    const response = await this.configClient.get('/pipelines');
+    return response.data;
+  }
+
+  async getPipeline(namespace: string, name: string): Promise<Pipeline> {
+    const response = await this.configClient.get(`/pipelines/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createPipeline(data: PipelineCreate): Promise<Pipeline> {
+    const response = await this.configClient.post('/pipelines', data);
+    return response.data;
+  }
+
+  async updatePipeline(namespace: string, name: string, data: PipelineUpdate): Promise<Pipeline> {
+    const response = await this.configClient.put(`/pipelines/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deletePipeline(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/pipelines/${namespace}/${name}`);
+  }
+
+  async runPipeline(
+    namespace: string,
+    name: string,
+    input: Record<string, any> = {},
+    mode: 'sync' | 'async' = 'sync'
+  ): Promise<PipelineRunOutcome> {
+    const response = await this.runtimeClient.post(`/pipelines/${namespace}/${name}/run`, { input, mode });
+    return response.data;
+  }
+
+  async listPipelineRuns(namespace: string, name: string, limit: number = 50): Promise<PipelineRun[]> {
+    const response = await this.runtimeClient.get(`/pipelines/${namespace}/${name}/runs`, { params: { limit } });
+    return response.data;
+  }
+
+  async replayPipelineRun(runId: string): Promise<{ run_id: string; status: string }> {
+    const response = await this.runtimeClient.post(`/pipelines/runs/${runId}/replay`);
     return response.data;
   }
 

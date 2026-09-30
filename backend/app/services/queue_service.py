@@ -17,6 +17,8 @@ JOB_STATUS_PREFIX = "sinas:job:status:"
 AGENT_QUEUE = "sinas:queue:agents"
 # Dedicated queue for delegated (agent-to-agent) jobs — see issue #90.
 SUB_AGENT_QUEUE = "sinas:queue:agents:sub"
+# Pipeline runs — own queue so long runs never starve function workers.
+PIPELINE_QUEUE = "sinas:queue:pipelines"
 JOB_RESULT_PREFIX = "sinas:job:result:"
 JOB_DONE_CHANNEL_PREFIX = "sinas:job:done:"
 DLQ_KEY = "sinas:queue:dlq"
@@ -103,6 +105,68 @@ class QueueService:
             f"(execution_id={execution_id})"
         )
         return execution_id
+
+    async def enqueue_pipeline_run(
+        self,
+        pipeline_id: str,
+        run_input: Optional[dict[str, Any]],
+        trigger_type: str,
+        trigger_id: Optional[str],
+        user_id: str,
+    ) -> str:
+        """Enqueue one pipeline run for one user scope. Returns the job id.
+
+        The worker mints the run user's JWT itself — no tokens in job payloads.
+        """
+        pool = await get_arq_pool()
+        job_id = str(uuid.uuid4())
+        # Pre-allocate the RUN id and return that, not the job id: callers
+        # poll GET /pipelines/runs/{run_id} with what we hand back, and the
+        # job id never appears in pipeline_runs. (The run row itself is
+        # created when the worker starts executing.)
+        run_id = str(uuid.uuid4())
+        await pool.enqueue_job(
+            "execute_pipeline_run_job",
+            job_id=job_id,
+            run_id=run_id,
+            pipeline_id=pipeline_id,
+            run_input=run_input,
+            trigger_type=trigger_type,
+            trigger_id=trigger_id,
+            user_id=user_id,
+            trace_context=inject_trace_context(),
+            _job_id=job_id,
+            _queue_name=PIPELINE_QUEUE,
+        )
+        logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
+        return run_id
+
+    async def enqueue_pipeline_fire(
+        self,
+        namespace: str,
+        name: str,
+        run_input: Optional[dict[str, Any]],
+        trigger_type: str,
+        trigger_id: Optional[str],
+    ) -> str:
+        """Enqueue a pipeline *fire* (trigger firing). The fire job expands to one
+        run per user for perUser pipelines — triggers stay dumb."""
+        pool = await get_arq_pool()
+        job_id = str(uuid.uuid4())
+        await pool.enqueue_job(
+            "execute_pipeline_fire_job",
+            job_id=job_id,
+            namespace=namespace,
+            name=name,
+            run_input=run_input,
+            trigger_type=trigger_type,
+            trigger_id=trigger_id,
+            trace_context=inject_trace_context(),
+            _job_id=job_id,
+            _queue_name=PIPELINE_QUEUE,
+        )
+        logger.info(f"Enqueued pipeline fire job {job_id} ({namespace}/{name}, {trigger_type})")
+        return job_id
 
     async def get_job_status(self, job_id: str) -> Optional[dict[str, Any]]:
         """Get job status from Redis."""

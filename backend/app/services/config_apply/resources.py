@@ -24,7 +24,7 @@ from app.models.secret import Secret
 from app.models.skill import Skill
 from app.models.store import Store
 
-from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP
+from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP, TOKEN_RESPONSE_PATH_FIELD_MAP
 from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,15 @@ async def apply_connectors(
                 snake: getattr(conn_config.auth, camel)
                 for camel, snake in CONNECTOR_AUTH_FIELD_MAP
             }
+            # Nested paths object: camelize-in-reverse its inner keys too, so
+            # the stored shape matches what the REST path stores.
+            if auth.get("token_response_paths") is not None:
+                trp = auth["token_response_paths"]
+                auth["token_response_paths"] = {
+                    snake: getattr(trp, camel)
+                    for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
+                    if getattr(trp, camel) is not None
+                } or None
             # Remove None values from auth
             auth = {k: v for k, v in auth.items() if v is not None}
 
@@ -150,7 +159,16 @@ async def apply_secrets(
     for secret_config in secrets:
         resource_name = secret_config.name
         try:
-            stmt = select(Secret).where(Secret.name == secret_config.name)
+            # Scope to shared secrets. Config declares platform-level secrets,
+            # while `private` rows are per-user overrides (see
+            # connector_service._resolve_secret_value). Matching on name alone
+            # could select — and then overwrite the value of — another user's
+            # private secret. Shared names are globally unique (partial unique
+            # index on name where visibility='shared'), so this stays a
+            # single-row lookup.
+            stmt = select(Secret).where(
+                Secret.name == secret_config.name, Secret.visibility == "shared"
+            )
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()
 
@@ -198,6 +216,10 @@ async def apply_secrets(
                     secret = Secret(
                         user_id=owner_user_id,
                         name=secret_config.name,
+                        # Explicit rather than relying on the model default:
+                        # visibility decides who can read this, so it should be
+                        # stated at the point of creation, not inherited.
+                        visibility="shared",
                         encrypted_value=encryption_service.encrypt(secret_config.value),
                         description=secret_config.description,
                         managed_by=managed_by,
@@ -359,6 +381,17 @@ async def apply_functions(
                     continue
 
                 if not dry_run:
+                    # Decide BEFORE overwriting: a version snapshot is only
+                    # warranted when the executable surface (code/schemas)
+                    # changes. Description/icon/timeout tweaks previously
+                    # minted a new FunctionVersion on every apply — churn
+                    # that made version history useless.
+                    code_changed = (
+                        existing.code != func_config.code
+                        or (existing.input_schema or {}) != (func_config.inputSchema or {})
+                        or (existing.output_schema or {}) != (func_config.outputSchema or {})
+                    )
+
                     existing.description = func_config.description
                     existing.code = func_config.code
                     existing.input_schema = func_config.inputSchema or {}
@@ -373,22 +406,22 @@ async def apply_functions(
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
-                    # Create new version if code changed
-                    from sqlalchemy import func
-                    max_ver_result = await db.execute(
-                        select(func.coalesce(func.max(FunctionVersion.version), 0))
-                        .where(FunctionVersion.function_id == existing.id)
-                    )
-                    max_ver = max_ver_result.scalar() or 0
-                    version = FunctionVersion(
-                        function_id=existing.id,
-                        version=max_ver + 1,
-                        code=func_config.code,
-                        input_schema=func_config.inputSchema or {},
-                        output_schema=func_config.outputSchema or {},
-                        created_by=existing.user_id,
-                    )
-                    db.add(version)
+                    if code_changed:
+                        from sqlalchemy import func
+                        max_ver_result = await db.execute(
+                            select(func.coalesce(func.max(FunctionVersion.version), 0))
+                            .where(FunctionVersion.function_id == existing.id)
+                        )
+                        max_ver = max_ver_result.scalar() or 0
+                        version = FunctionVersion(
+                            function_id=existing.id,
+                            version=max_ver + 1,
+                            code=func_config.code,
+                            input_schema=func_config.inputSchema or {},
+                            output_schema=func_config.outputSchema or {},
+                            created_by=existing.user_id,
+                        )
+                        db.add(version)
 
                 track_change("update", "functions", f"{func_config.namespace}/{func_config.name}")
                 function_ids[func_config.name] = str(existing.id)
@@ -517,8 +550,15 @@ async def apply_components(
     track_change: Any,
     errors: list[str],
     warnings: list[str],
+    notify_compile: Any = None,
 ) -> None:
-    """Apply component configurations"""
+    """Apply component configurations.
+
+    `notify_compile(component_id)` is called for every component whose source
+    was created/changed, so the caller can trigger compilation post-commit —
+    without it, config-applied components sat at compile_status="pending"
+    forever (only the REST path ever compiled).
+    """
     for comp_config in components:
         resource_name = f"{comp_config.namespace}/{comp_config.name}"
         try:
@@ -573,6 +613,8 @@ async def apply_components(
                         existing.source_map = None
                         existing.compile_errors = None
                         existing.version += 1
+                        if notify_compile:
+                            notify_compile(existing.id)
 
                 track_change("update", "components", resource_name)
 
@@ -600,6 +642,9 @@ async def apply_components(
                         compile_status="pending",
                     )
                     db.add(new_component)
+                    if notify_compile:
+                        await db.flush()  # assign the id for the compile queue
+                        notify_compile(new_component.id)
 
                 track_change("create", "components", resource_name)
 
@@ -916,3 +961,123 @@ async def apply_dependencies(
 
         except Exception as e:
             errors.append(f"Error applying dependency '{package_name}': {str(e)}")
+
+
+async def apply_pipelines(
+    db: AsyncSession,
+    pipelines: list,
+    dry_run: bool,
+    managed_by: str,
+    config_name: str,
+    owner_user_id: str,
+    calculate_hash: Any,
+    track_change: Any,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """Apply pipeline configurations.
+
+    Shape validation runs here (steps, mapping expressions, perUser, asTool);
+    cross-resource references (connectors/functions/agents/queries) are NOT
+    checked — install order means they may not exist yet. Missing targets fail
+    at run time with a clear error.
+    """
+    from app.models.pipeline import Pipeline
+    from app.services.pipeline_validation import validate_pipeline_definition
+
+    for pipe_config in pipelines:
+        resource_name = f"{pipe_config.namespace}/{pipe_config.name}"
+        try:
+            output_mapping = pipe_config.output_mapping()
+            validation_errors = validate_pipeline_definition(
+                pipe_config.steps,
+                per_user=pipe_config.perUser,
+                as_tool=pipe_config.asTool,
+                input_schema=pipe_config.inputSchema,
+                description=pipe_config.description,
+                tool_description=pipe_config.toolDescription,
+                concurrency=pipe_config.concurrency,
+                output_mapping=output_mapping,
+            )
+            if validation_errors:
+                errors.append(
+                    f"Invalid pipeline '{resource_name}': " + "; ".join(validation_errors)
+                )
+                continue
+
+            stmt = select(Pipeline).where(
+                Pipeline.namespace == pipe_config.namespace,
+                Pipeline.name == pipe_config.name,
+            )
+            result = await db.execute(stmt)
+            existing = result.scalar_one_or_none()
+
+            config_hash = calculate_hash({
+                "namespace": pipe_config.namespace,
+                "name": pipe_config.name,
+                "description": pipe_config.description,
+                "input_schema": pipe_config.inputSchema or {},
+                "steps": pipe_config.steps,
+                "per_user": pipe_config.perUser,
+                "as_tool": pipe_config.asTool,
+                "tool_description": pipe_config.toolDescription,
+                "sync_timeout_seconds": pipe_config.syncTimeoutSeconds,
+                "concurrency": pipe_config.concurrency,
+                "disable_after_failures": pipe_config.disableAfterFailures,
+                "output_mapping": output_mapping,
+                "is_active": pipe_config.isActive,
+            })
+
+            if existing:
+                if should_skip_existing(existing, managed_by, config_name, config_hash, "pipelines", resource_name, track_change, warnings):
+                    continue
+
+                if not dry_run:
+                    existing.description = pipe_config.description
+                    existing.input_schema = pipe_config.inputSchema or {}
+                    existing.steps = pipe_config.steps
+                    existing.per_user = pipe_config.perUser
+                    existing.as_tool = pipe_config.asTool
+                    existing.tool_description = pipe_config.toolDescription
+                    existing.sync_timeout_seconds = pipe_config.syncTimeoutSeconds
+                    existing.concurrency = pipe_config.concurrency
+                    existing.disable_after_failures = pipe_config.disableAfterFailures
+                    existing.output_mapping = output_mapping
+                    existing.is_active = pipe_config.isActive
+                    if pipe_config.isActive:
+                        # Reactivation clears the auto-disable state (cursor is kept).
+                        existing.consecutive_failures = 0
+                        existing.error_message = None
+                    existing.managed_by = managed_by
+                    existing.config_name = config_name
+                    existing.config_checksum = config_hash
+
+                track_change("update", "pipelines", resource_name)
+            else:
+                if not dry_run:
+                    pipeline = Pipeline(
+                        user_id=owner_user_id,
+                        namespace=pipe_config.namespace,
+                        name=pipe_config.name,
+                        description=pipe_config.description,
+                        input_schema=pipe_config.inputSchema or {},
+                        steps=pipe_config.steps,
+                        per_user=pipe_config.perUser,
+                        as_tool=pipe_config.asTool,
+                        tool_description=pipe_config.toolDescription,
+                        sync_timeout_seconds=pipe_config.syncTimeoutSeconds,
+                        concurrency=pipe_config.concurrency,
+                        disable_after_failures=pipe_config.disableAfterFailures,
+                        output_mapping=output_mapping,
+                        is_active=pipe_config.isActive,
+                        managed_by=managed_by,
+                        config_name=config_name,
+                        config_checksum=config_hash,
+                    )
+                    db.add(pipeline)
+
+                track_change("create", "pipelines", resource_name)
+
+        except Exception as e:
+            errors.append(f"Failed to apply pipeline '{resource_name}': {e}")
+            logger.exception(f"Error applying pipeline '{resource_name}'")

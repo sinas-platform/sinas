@@ -129,6 +129,11 @@ class DatabasePoolManager:
 
         Converts :param_name syntax to $N positional params for asyncpg.
         """
+        # Metering leaf: the single path for agent-tool AND runtime-API queries
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.QUERY)
+
         pool = await self.get_pool(db, connection_id)
 
         # Convert :param_name to $N positional params

@@ -19,6 +19,7 @@ from .endpoints import (
     messages,
     dependencies,
     packages,
+    pipelines,
     queries,
     queue,
     request_logs,
@@ -48,6 +49,7 @@ router.include_router(llm_providers.router, prefix="/llm-providers", tags=["llm-
 router.include_router(database_connections.router, prefix="/database-connections", tags=["database-connections"])
 router.include_router(database_schema.router, prefix="/database-connections", tags=["database-schema"])
 router.include_router(queries.router)
+router.include_router(pipelines.router)
 
 router.include_router(roles.router)
 router.include_router(users.router)

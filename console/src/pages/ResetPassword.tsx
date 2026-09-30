@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Logo } from '../components/Logo';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiClient } from '../lib/api';
 import { KeyRound, Loader2, CheckCircle2 } from 'lucide-react';
@@ -49,17 +50,17 @@ export function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen bg-[#090909] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-surface-page flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center mb-4">
-            <img src="/sinas-logo.svg" alt="sinas" className="h-16" />
+            <Logo className="h-12 w-auto" />
           </div>
           <h1 className="text-xl font-semibold text-gray-100 mb-2">Reset password</h1>
           <p className="text-gray-400">Use the one-time link from your administrator</p>
         </div>
 
-        <div className="bg-[#161616] rounded-2xl p-8 border border-white/[0.06]">
+        <div className="bg-surface-1 rounded-2xl p-8 border border-line-soft">
           {done ? (
             <div className="text-center space-y-4">
               <CheckCircle2 className="w-12 h-12 text-green-400 mx-auto" />
@@ -80,7 +81,7 @@ export function ResetPassword() {
                     onChange={(e) => setResetToken(e.target.value)}
                     placeholder="Paste the token your admin sent you"
                     required
-                    className="w-full pl-10 pr-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent font-mono text-sm"
+                    className="w-full pl-10 pr-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 placeholder-gray-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent font-mono text-sm"
                   />
                 </div>
               </div>
@@ -97,7 +98,7 @@ export function ResetPassword() {
                   autoComplete="new-password"
                   required
                   minLength={8}
-                  className="w-full px-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
 
@@ -113,7 +114,7 @@ export function ResetPassword() {
                   autoComplete="new-password"
                   required
                   minLength={8}
-                  className="w-full px-4 py-3 bg-[#111111] border border-white/10 rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-4 py-3 bg-surface-input border border-line rounded-lg text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                 />
               </div>
 

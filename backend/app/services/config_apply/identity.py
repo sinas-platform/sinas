@@ -34,12 +34,18 @@ async def apply_roles(
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()
 
-            # Calculate hash
+            # Calculate hash. Permissions are part of it: without them, a
+            # permission-only change hits the checksum-unchanged `continue`
+            # below and is silently never applied (package upgrades are
+            # mostly permission changes).
             config_hash = calculate_hash(
                 {
                     "name": role_config.name,
                     "description": role_config.description,
                     "email_domain": role_config.emailDomain,
+                    "permissions": sorted(
+                        (p.key, p.value) for p in (role_config.permissions or [])
+                    ),
                 }
             )
 

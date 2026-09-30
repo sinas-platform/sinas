@@ -13,6 +13,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `namespace` / `name` | Unique identifier (e.g., `support/ticket-agent`) |
 | `llm_provider_id` | LLM provider to use (null = system default) |
 | `model` | Model override (null = provider's default) |
+| `provider_overrides` | Per-agent overrides of provider behavior settings, e.g. `{"prompt_caching": false}`. Absent key = inherit the provider's setting. Only whitelisted behavior keys are accepted; connection settings can't be overridden. Config key: `providerOverrides`. |
 | `system_prompt` | Jinja2 template for the system message |
 | `temperature` | Sampling temperature (default: 0.7) |
 | `max_tokens` | Max token limit for responses |
@@ -28,6 +29,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `enabled_collections` | File collections the agent can access. Plain string (readonly) or `{"collection": "namespace/name", "access": "readonly\|readwrite"}`. Supports wildcards. Readwrite enables write/edit/delete file tools. |
 | `enabled_stores` | Stores the agent can access. List of `{"store": "namespace/name", "access": "readonly"}` or `{"store": "namespace/name", "access": "readwrite"}` |
 | `enabled_connectors` | Connectors available as tools. List of `{"connector": "namespace/name", "operations": [...], "parameters": {"op_name": {"param": "value"}}}`. Parameters support Jinja2 templates and are locked (hidden from LLM). |
+| `enabled_pipelines` | [Pipelines](/build-resources/pipelines) available as tools — only those marked `asTool`. Supports wildcards. Each becomes one semantic tool whose parameters are the pipeline's `inputSchema`. |
 | `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
 | `system_tools` | Platform capabilities. List of strings or config objects. See [System Tools](#system-tools). |
 | `icon` | Icon reference (see [Icons](#icons)) |
@@ -46,6 +48,8 @@ enabledFunctions:
   - shared/utils     # one specific function
 enabledQueries:
   - "*/*"            # all queries (quote wildcards in YAML)
+enabledPipelines:
+  - search/semantic  # an asTool pipeline, exposed as one tool
 enabledCollections:
   - collection: "docs/*"
     access: readonly

@@ -21,5 +21,8 @@ async def get_info() -> InfoResponse:
         features={
             "clickhouse": bool(settings.clickhouse_host),
             "smtp": bool(settings.smtp_host),
+            # Master toggle for all user-code execution — the console greys
+            # out function execution and the codeExecution tool when false.
+            "code_execution": settings.code_execution_enabled,
         },
     )

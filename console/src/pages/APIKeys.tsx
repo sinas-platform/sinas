@@ -24,6 +24,15 @@ export function APIKeys() {
     retry: false,
   });
 
+  // For the linked-roles picker; non-admins may lack roles.read — degrade to
+  // explicit permissions only.
+  const { data: roles } = useQuery({
+    queryKey: ['roles'],
+    queryFn: () => apiClient.listRoles(),
+    retry: false,
+    enabled: showCreateModal,
+  });
+
   const filteredApiKeys = apiKeys?.filter(key => showInactive || key.is_active);
 
   const formatDate = (dateString: string) => {
@@ -50,7 +59,7 @@ export function APIKeys() {
       queryClient.invalidateQueries({ queryKey: ['apiKeys'] });
       setCreatedKey({ id: data.id, key: data.key });
       setShowCreateModal(false);
-      setFormData({ name: '', permissions: {} });
+      setFormData({ name: '', permissions: {}, role_ids: [] });
     },
   });
 
@@ -90,7 +99,7 @@ export function APIKeys() {
               type="checkbox"
               checked={showInactive}
               onChange={(e) => setShowInactive(e.target.checked)}
-              className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+              className="rounded border-line text-primary-600 focus:ring-primary-500"
             />
             Show inactive
           </label>
@@ -146,6 +155,19 @@ export function APIKeys() {
                         </>
                       )}
                     </div>
+                    {key.roles && key.roles.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                        <span className="text-xs text-gray-500">Roles:</span>
+                        {key.roles.map((role) => (
+                          <span
+                            key={role.id}
+                            className="px-2 py-0.5 bg-purple-900/30 text-purple-300 text-xs rounded"
+                          >
+                            {role.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {key.permissions && Object.keys(key.permissions).length > 0 && (
                       <div className="mt-2">
                         <details className="text-xs">
@@ -184,7 +206,7 @@ export function APIKeys() {
                     className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap ${
                       key.is_active
                         ? 'bg-green-900/30 text-green-300'
-                        : 'bg-[#161616] text-gray-200'
+                        : 'bg-surface-1 text-gray-200'
                     }`}
                   >
                     {key.is_active ? 'Active' : 'Inactive'}
@@ -233,18 +255,18 @@ export function APIKeys() {
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50"
             onClick={() => {
               setShowCreateModal(false);
-              setFormData({ name: '', permissions: {} });
+              setFormData({ name: '', permissions: {}, role_ids: [] });
             }}
           />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto">
-            <div className="sticky top-0 bg-[#161616] border-b border-white/[0.06] p-6">
+            <div className="bg-surface-1 rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto pointer-events-auto">
+            <div className="sticky top-0 bg-surface-1 border-b border-line-soft p-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-semibold text-gray-100">Create API Key</h2>
                 <button
                   onClick={() => {
                     setShowCreateModal(false);
-                    setFormData({ name: '', permissions: {} });
+                    setFormData({ name: '', permissions: {}, role_ids: [] });
                   }}
                   className="text-gray-500 hover:text-gray-400"
                 >
@@ -290,6 +312,45 @@ export function APIKeys() {
                 </p>
               </div>
 
+              {roles && roles.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Linked Roles (Optional)
+                  </label>
+                  <div className="max-h-40 overflow-y-auto border border-line rounded-lg divide-y divide-line-soft">
+                    {roles.map((role) => (
+                      <label
+                        key={role.id}
+                        className="flex items-center gap-2 px-3 py-2 text-sm text-gray-300 cursor-pointer hover:bg-surface-0"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={formData.role_ids?.includes(role.id) ?? false}
+                          onChange={(e) => {
+                            const current = formData.role_ids ?? [];
+                            setFormData({
+                              ...formData,
+                              role_ids: e.target.checked
+                                ? [...current, role.id]
+                                : current.filter((id) => id !== role.id),
+                            });
+                          }}
+                          className="rounded border-line text-primary-600 focus:ring-primary-500"
+                        />
+                        <span>{role.name}</span>
+                        {role.description && (
+                          <span className="text-xs text-gray-500 truncate">{role.description}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    The key follows linked roles as they change (no re-minting), always capped by
+                    your own live permissions.
+                  </p>
+                </div>
+              )}
+
               <PermissionEditor
                 mode="dict"
                 label="Permissions"
@@ -299,16 +360,17 @@ export function APIKeys() {
 
               {createMutation.isError && (
                 <div className="p-3 bg-red-900/20 border border-red-800/30 rounded-lg text-sm text-red-400">
-                  Failed to create API key. Please try again.
+                  {(createMutation.error as { response?: { data?: { detail?: string } } })?.response
+                    ?.data?.detail || 'Failed to create API key. Please try again.'}
                 </div>
               )}
 
-              <div className="flex justify-end space-x-3 pt-4 border-t border-white/[0.06]">
+              <div className="flex justify-end space-x-3 pt-4 border-t border-line-soft">
                 <button
                   type="button"
                   onClick={() => {
                     setShowCreateModal(false);
-                    setFormData({ name: '', permissions: {} });
+                    setFormData({ name: '', permissions: {}, role_ids: [] });
                   }}
                   className="btn btn-secondary"
                   disabled={createMutation.isPending}
@@ -334,7 +396,7 @@ export function APIKeys() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setCreatedKey(null)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 pointer-events-auto">
+            <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 pointer-events-auto">
             <div className="text-center mb-6">
               <div className="inline-flex items-center justify-center w-12 h-12 bg-green-900/30 rounded-full mb-4">
                 <Check className="w-6 h-6 text-green-600" />
@@ -345,10 +407,10 @@ export function APIKeys() {
               </p>
             </div>
 
-            <div className="bg-[#0d0d0d] rounded-lg p-4 mb-6">
+            <div className="bg-surface-0 rounded-lg p-4 mb-6">
               <label className="block text-xs font-medium text-gray-300 mb-2">Your API Key</label>
               <div className="flex items-center gap-2">
-                <code className="flex-1 px-3 py-2 bg-[#161616] border border-white/10 rounded text-sm font-mono break-all">
+                <code className="flex-1 px-3 py-2 bg-surface-1 border border-line rounded text-sm font-mono break-all">
                   {createdKey.key}
                 </code>
                 <button

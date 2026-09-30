@@ -109,4 +109,8 @@ Behavior details:
 
 The exchange endpoint trusts the caller to assert identities — treat keys with `sinas.auth.exchange:all` like any other admin credential.
 
+## Verifying Tokens From Your Own Services
+
+The reverse direction — your services validating Sinas tokens — works with standard JWT middleware once `JWT_ALGORITHM=RS256` is set: public keys at `/.well-known/jwks.json`, profile claims at `/userinfo`. See [Verifying Sinas Tokens](/platform/verifying-tokens).
+
 ---

@@ -233,7 +233,7 @@ export function Packages() {
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button
                     onClick={() => handleExport(pkg.name)}
-                    className="p-2 text-gray-500 hover:text-primary-400 hover:bg-white/10 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-400 hover:bg-hover-strong rounded-md transition-colors"
                     title="Export YAML"
                   >
                     <Download className="w-4 h-4" />
@@ -244,7 +244,7 @@ export function Packages() {
                         uninstallMutation.mutate(pkg.name);
                       }
                     }}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-white/10 rounded-md transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-hover-strong rounded-md transition-colors"
                     disabled={uninstallMutation.isPending}
                     title="Uninstall"
                   >
@@ -270,7 +270,7 @@ export function Packages() {
       {/* Install Modal */}
       {showInstallModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-100">Install Package</h2>
               <button onClick={closeInstallModal} className="p-1 text-gray-500 hover:text-gray-400">
@@ -353,7 +353,7 @@ export function Packages() {
 
                 {/* Variable form (if package requires input) */}
                 {previewResult.variables && previewResult.variables.length > 0 && (
-                  <div className="p-3 bg-[#1a1a1a] border border-white/[0.06] rounded">
+                  <div className="p-3 bg-surface-2 border border-line-soft rounded">
                     <h3 className="text-sm font-medium text-gray-200 mb-3">Configuration</h3>
                     <div className="space-y-3">
                       {previewResult.variables.map((v: any) => (
@@ -369,7 +369,7 @@ export function Packages() {
                                 type="checkbox"
                                 checked={variableValues[v.name] ?? v.default ?? false}
                                 onChange={(e) => setVariableValues(prev => ({ ...prev, [v.name]: e.target.checked }))}
-                                className="w-4 h-4 text-primary-600 border-white/10 rounded"
+                                className="w-4 h-4 text-primary-600 border-line rounded"
                               />
                               <span className="text-sm text-gray-300 font-mono">{v.name}</span>
                             </label>
@@ -377,7 +377,7 @@ export function Packages() {
                             <select
                               value={variableValues[v.name] ?? v.default ?? ''}
                               onChange={(e) => setVariableValues(prev => ({ ...prev, [v.name]: e.target.value }))}
-                              className="w-full px-2.5 py-1.5 text-sm bg-[#0d0d0d] border border-white/10 rounded text-gray-200"
+                              className="w-full px-2.5 py-1.5 text-sm bg-surface-0 border border-line rounded text-gray-200"
                             >
                               <option value="">Select...</option>
                               {v.choices.map((c: string) => (
@@ -400,7 +400,7 @@ export function Packages() {
                               value={variableValues[v.name] ?? v.default ?? ''}
                               placeholder={v.example || `Enter ${v.name}`}
                               onChange={(e) => setVariableValues(prev => ({ ...prev, [v.name]: e.target.value }))}
-                              className="w-full px-2.5 py-1.5 text-sm font-mono bg-[#0d0d0d] border border-white/10 rounded text-gray-200 placeholder-gray-600"
+                              className="w-full px-2.5 py-1.5 text-sm font-mono bg-surface-0 border border-line rounded text-gray-200 placeholder-gray-600"
                             />
                           )}
                         </div>
@@ -479,7 +479,7 @@ export function Packages() {
       {/* Create Package Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-3xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold text-gray-100">Create Package</h2>
               <button onClick={closeCreateModal} className="p-1 text-gray-500 hover:text-gray-400">
@@ -537,7 +537,7 @@ export function Packages() {
                 </div>
 
                 {/* Resource Picker */}
-                <div className="border-t border-white/[0.06] pt-4">
+                <div className="border-t border-line-soft pt-4">
                   <h3 className="text-sm font-medium text-gray-300 mb-3">
                     Select Resources ({selectedResources.length} selected)
                   </h3>
@@ -555,7 +555,7 @@ export function Packages() {
                                 className={`px-3 py-1.5 rounded text-sm font-mono transition-colors ${
                                   selected
                                     ? 'bg-primary-900/30 text-primary-300 border border-primary-700'
-                                    : 'bg-[#0d0d0d] text-gray-400 border border-white/[0.06] hover:border-white/[0.12]'
+                                    : 'bg-surface-0 text-gray-400 border border-line-soft hover:border-line'
                                 }`}
                               >
                                 {item.namespace}/{item.name}
@@ -630,7 +630,7 @@ function LLMProviderSelect({ value, onChange }: { value: string; onChange: (v: s
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full px-2.5 py-1.5 text-sm bg-[#0d0d0d] border border-white/10 rounded text-gray-200"
+      className="w-full px-2.5 py-1.5 text-sm bg-surface-0 border border-line rounded text-gray-200"
     >
       <option value="">Select LLM provider...</option>
       {(providers || []).map((p: any) => (
@@ -651,7 +651,7 @@ function DatabaseConnectionSelect({ value, onChange }: { value: string; onChange
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full px-2.5 py-1.5 text-sm bg-[#0d0d0d] border border-white/10 rounded text-gray-200"
+      className="w-full px-2.5 py-1.5 text-sm bg-surface-0 border border-line rounded text-gray-200"
     >
       <option value="">Select database connection...</option>
       {(connections || []).map((c: any) => (

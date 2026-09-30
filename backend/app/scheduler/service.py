@@ -25,16 +25,13 @@ from app.models.database_connection import DatabaseConnection
 from app.models.schedule import ScheduledJob
 from app.models.user import Role, User, UserRole
 from app.scheduler.jobs.cleanup_expired_chats import cleanup_expired_chats
+from app.scheduler.jobs.poll_provider_batches import poll_provider_batches
 from app.services.config_apply import ConfigApplyService
 from app.services.config_parser import ConfigParser
 from app.services.container_pool import container_pool
 from app.services.scheduler import scheduler
 from app.services.shared_worker_manager import shared_worker_manager
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [scheduler] %(levelname)s %(name)s: %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
@@ -52,6 +49,17 @@ async def _maintain_tool_result_partitions() -> None:
 
 async def _initialize_builtin_database() -> None:
     """Ensure the sinas_data database and its Database Connection record exist."""
+    if not settings.builtin_database_enabled:
+        # Operators who bring their own connections shouldn't have a data store
+        # provisioned for them. Only creation is skipped — an already-created
+        # sinas_data database and its record are left untouched, so toggling
+        # this off is not destructive and can be reversed.
+        logger.info(
+            "Built-in database disabled (BUILTIN_DATABASE_ENABLED=false) — "
+            "not creating sinas_data or its Database Connection"
+        )
+        return
+
     direct_host = settings.database_direct_host or settings.database_host
     try:
         conn = await asyncpg.connect(
@@ -157,7 +165,13 @@ async def _listen_for_job_changes(stop_event: asyncio.Event) -> None:
         await pubsub.aclose()
 
 
-async def main() -> None:
+async def run(stop_event: asyncio.Event) -> None:
+    """Scheduler service body: startup, run until stop_event, graceful stop.
+
+    Factored out of main() so the all-in-one profile can run it as a task
+    inside the API process. Owns everything except signal handling and the
+    shared Redis client's lifecycle (the caller closes that).
+    """
     # --- Redis ---
     redis = await get_redis()
     await redis.ping()
@@ -200,7 +214,9 @@ async def main() -> None:
                     config_yaml, db=db, strict=False
                 )
 
-                if not validation.valid:
+                # `is_valid`, not `valid`: the wrong name raised AttributeError
+                # here, so AUTO_APPLY_CONFIG=true crashed on every boot.
+                if not validation.is_valid:
                     logger.error("❌ Config validation failed:")
                     for error in validation.errors:
                         logger.error(f"  - {error.path}: {error.message}")
@@ -208,8 +224,10 @@ async def main() -> None:
 
                 if validation.warnings:
                     logger.warning("⚠️  Config validation warnings:")
+                    # warnings are plain strings (errors are the objects with
+                    # .path/.message) — treating them as objects also crashed.
                     for warning in validation.warnings:
-                        logger.warning(f"  - {warning.path}: {warning.message}")
+                        logger.warning(f"  - {warning}")
 
                 apply_service = ConfigApplyService(
                     db, config.metadata.name, owner_user_id=owner_user_id
@@ -241,25 +259,42 @@ async def main() -> None:
     await _initialize_builtin_database()
 
     # --- Sandbox containers ---
-    async with AsyncSessionLocal() as db:
-        if settings.sandbox_executor == "docker_pool":
-            await container_pool.initialize(db)
-        elif settings.sandbox_executor == "docker_ephemeral":
-            # No warm pool — untrusted code runs in a fresh container per
-            # execution. Pre-build the baked sandbox image so the first
-            # execution doesn't pay the build (it self-corrects otherwise).
-            from app.services.sandbox_image import build_sandbox_image
+    # Skipped entirely when code execution is off: no warm pool, no baked image
+    # build, no shared workers. This is where the footprint saving actually
+    # comes from — the executors are the heavy part, not the API process.
+    if not settings.code_execution_enabled:
+        logger.info(
+            "Code execution disabled (CODE_EXECUTION_ENABLED=false) — "
+            "skipping sandbox and shared-worker initialization"
+        )
+    else:
+        async with AsyncSessionLocal() as db:
+            if settings.sandbox_executor == "docker_pool":
+                await container_pool.initialize(db)
+            elif settings.sandbox_executor == "docker_ephemeral":
+                # No warm pool — untrusted code runs in a fresh container per
+                # execution. Pre-build the baked sandbox image so the first
+                # execution doesn't pay the build (it self-corrects otherwise).
+                from app.services.sandbox_image import build_sandbox_image
 
-            try:
-                await build_sandbox_image(db)
-            except Exception as e:
-                logger.warning(
-                    "Sandbox image pre-build failed (will build on demand): %s", e
-                )
+                try:
+                    await build_sandbox_image(db)
+                except Exception as e:
+                    logger.warning(
+                        "Sandbox image pre-build failed (will build on demand): %s", e
+                    )
 
-    # --- Shared containers ---
-    if settings.trusted_executor == "docker_shared":
-        await shared_worker_manager.initialize()
+        # --- Shared containers ---
+        if settings.trusted_executor == "docker_shared":
+            await shared_worker_manager.initialize()
+        elif settings.trusted_executor == "k8s_shared":
+            # Pre-warm the trusted worker pods so the first shared-pool
+            # execution doesn't pay a pod cold-start (dispatch self-heals
+            # missing pods, so this is latency, not correctness).
+            from app.services.executor.k8s_shared_trusted import ensure_trusted_pool
+
+            async with AsyncSessionLocal() as db:
+                await ensure_trusted_pool(db)
 
     # --- APScheduler ---
     await scheduler.start()
@@ -275,6 +310,16 @@ async def main() -> None:
     )
     logger.info("Registered system job: cleanup_expired_chats (every 1h)")
 
+    scheduler.scheduler.add_job(
+        func=poll_provider_batches,
+        trigger="interval",
+        minutes=1,
+        id="system:poll_provider_batches",
+        name="Poll provider-native LLM batches",
+        replace_existing=True,
+    )
+    logger.info("Registered system job: poll_provider_batches (every 1m)")
+
     # Ensure tool_call_results partitions exist
     await _maintain_tool_result_partitions()
 
@@ -288,16 +333,69 @@ async def main() -> None:
     )
     logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
 
+    # --- Operations metering (managed SaaS, default-off) ---
+    if settings.metering_enabled:
+        from datetime import UTC as _UTC
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+
+        from app.services import metering
+        from app.services.metering import (
+            push_jitter_seconds,
+            run_push_cycle,
+            run_snapshot_cycle,
+            seed_redis_from_db,
+        )
+
+        if settings.trusted_executor == "inprocess":
+            # §6 invariant: no process that runs client code may hold meter
+            # write access. inprocess runs trusted functions inside THIS
+            # credential-bearing process, so the count is forgeable. Managed
+            # instances must use docker_shared.
+            logger.warning(
+                "METERING_ENABLED with TRUSTED_EXECUTOR=inprocess: trusted "
+                "functions run inside a credential-bearing process, so the "
+                "meter is NOT tamper-resistant. Use docker_shared for "
+                "billable instances."
+            )
+
+        # Restore the live counter after a Redis restart (max of both sides)
+        async with AsyncSessionLocal() as db:
+            await seed_redis_from_db(db)
+
+        snap_min = max(1, settings.metering_snapshot_minutes)
+        scheduler.scheduler.add_job(
+            func=run_snapshot_cycle,
+            trigger="interval",
+            minutes=snap_min,
+            id="system:metering_snapshot",
+            name="Snapshot usage counters",
+            replace_existing=True,
+        )
+
+        # Per-instance start offset + trigger jitter so a fleet of instances
+        # never pushes in sync (design doc §5a).
+        push_min = max(1, settings.metering_push_minutes)
+        offset = push_jitter_seconds(push_min)
+        scheduler.scheduler.add_job(
+            func=run_push_cycle,
+            trigger="interval",
+            minutes=push_min,
+            jitter=30,
+            start_date=_dt.now(_UTC) + _td(seconds=offset),
+            id="system:metering_push",
+            name="Push usage heartbeat",
+            replace_existing=True,
+        )
+        logger.info(
+            f"Registered metering jobs: snapshot every {snap_min}m, push every "
+            f"{push_min}m (start offset {offset}s, instance={metering.instance_id()})"
+        )
+
     # --- Pub/sub listener for live job changes ---
-    stop_event = asyncio.Event()
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))
 
-    print("🚀 Scheduler service running — press Ctrl+C or send SIGTERM to stop")
-
-    # Block until shutdown signal
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    print("🚀 Scheduler service running")
     await stop_event.wait()
 
     # --- Graceful shutdown ---
@@ -309,8 +407,24 @@ async def main() -> None:
         pass
     await scheduler.stop()
     await container_pool.shutdown()
-    await close_redis()
     print("👋 Scheduler service stopped")
+
+
+async def main() -> None:
+    # Standalone process only — embedded (all-in-one) mode inherits the API
+    # process's logging config instead of installing this one at import time.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [scheduler] %(levelname)s %(name)s: %(message)s",
+    )
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+    try:
+        await run(stop_event)
+    finally:
+        await close_redis()
 
 
 if __name__ == "__main__":

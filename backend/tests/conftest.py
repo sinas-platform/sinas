@@ -105,6 +105,10 @@ async def test_role(db: AsyncSession) -> Role:
         "sinas.agents/*/*.read:all",
         "sinas.agents/*/*.update:own",
         "sinas.agents/*/*.delete:own",
+        # Matches DEFAULT_ROLE_PERMISSIONS: every real user can chat with any
+        # agent. Without it this fixture models a user who cannot use agents at
+        # all, which silently hides permission regressions on agent paths.
+        "sinas.agents/*/*.chat:all",
         "sinas.functions.create:own",
         "sinas.functions/*/*.read:all",
         "sinas.functions/*/*.update:own",

@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient, API_BASE_URL } from '../lib/api';
 import { ArrowLeft, Loader2, Bot } from 'lucide-react';
-import { Chat } from '@sinas/ui';
+import { Chat } from '../components/chat/Chat';
 
 export function ChatDetail() {
   const { chatId } = useParams<{ chatId: string }>();
@@ -44,7 +44,7 @@ export function ChatDetail() {
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)]">
       {/* Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-white/[0.06]">
+      <div className="flex items-center justify-between pb-4 border-b border-line-soft">
         <div className="flex items-center">
           <Link to="/chats" className="mr-4 text-gray-400 hover:text-gray-100">
             <ArrowLeft className="w-5 h-5" />

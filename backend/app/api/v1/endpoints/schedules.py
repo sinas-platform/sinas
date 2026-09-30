@@ -65,6 +65,23 @@ async def create_schedule(
                 status_code=404,
                 detail=f"Function '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
             )
+    elif schedule_data.schedule_type == "pipeline":
+        from app.models import Pipeline
+
+        result = await db.execute(
+            select(Pipeline).where(
+                and_(
+                    Pipeline.namespace == schedule_data.target_namespace,
+                    Pipeline.name == schedule_data.target_name,
+                    Pipeline.is_active == True,
+                )
+            )
+        )
+        if not result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pipeline '{schedule_data.target_namespace}/{schedule_data.target_name}' not found or inactive",
+            )
     else:
         result = await db.execute(
             select(Agent).where(

@@ -33,6 +33,16 @@ ServiceAccount names
 {{- end }}
 
 {{/*
+Image tag: explicit .Values.image.tag wins; empty falls back to the chart's
+appVersion, which CI stamps from the release tag — so a versioned install
+pulls that version's images instead of whatever `latest` points at (or, for
+images only built on tags, an ImagePullBackOff).
+*/}}
+{{- define "sinas.imageTag" -}}
+{{- .Values.image.tag | default .Chart.AppVersion -}}
+{{- end }}
+
+{{/*
 Image pull secret reference — shared by all sinas deployments.
 */}}
 {{- define "sinas.imagePullSecrets" -}}
@@ -43,14 +53,65 @@ imagePullSecrets:
 {{- end }}
 
 {{/*
+Scheduling — nodeSelector / tolerations / affinity for one workload.
+
+Call with: (dict "values" (.Values.backend) "root" . "inherit" true)
+
+inherit=true  — stateless Deployments. Falls back to the global
+                .Values.scheduling defaults when the workload sets nothing,
+                so operators can move the whole stateless tier onto Spot /
+                preemptible capacity with one setting.
+inherit=false — StatefulSets (postgres / redis / clickhouse). Per-workload
+                settings ONLY: the global default must never reach them
+                implicitly. These sit on single-attach ReadWriteOnce
+                volumes, where a preemption is a database restart with a
+                volume reattach — not a rolling handoff. Placing them
+                deliberately requires setting postgres.nodeSelector (etc.)
+                by name.
+
+tolerations matter beyond Autopilot: GKE Autopilot injects the Spot
+toleration for you, GKE Standard and self-managed clusters do not.
+*/}}
+{{- define "sinas.scheduling" -}}
+{{- $w := .values | default dict }}
+{{- $g := ternary ((.root.Values).scheduling | default dict) dict .inherit }}
+{{- with ($w.nodeSelector | default $g.nodeSelector) }}
+nodeSelector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with ($w.tolerations | default $g.tolerations) }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with ($w.affinity | default $g.affinity) }}
+affinity:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
+Database password secretKeyRef body — release secret by default, or the
+operator's pre-created secret when postgres.external.existingSecret is set.
+Shared by backendEnv and pgbouncer.
+*/}}
+{{- define "sinas.dbPasswordRef" -}}
+{{- if ((.Values.postgres).external).existingSecret -}}
+name: {{ .Values.postgres.external.existingSecret }}
+key: {{ .Values.postgres.external.existingSecretKey | default "password" }}
+{{- else -}}
+name: {{ .Release.Name }}-secrets
+key: database-password
+{{- end }}
+{{- end }}
+
+{{/*
 Backend environment — shared by backend, all workers, scheduler, cdc-worker
 */}}
 {{- define "sinas.backendEnv" -}}
 - name: DATABASE_PASSWORD
   valueFrom:
     secretKeyRef:
-      name: {{ .Release.Name }}-secrets
-      key: database-password
+      {{- include "sinas.dbPasswordRef" . | nindent 6 }}
 - name: DATABASE_USER
   value: {{ .Values.postgres.user | quote }}
 - name: DATABASE_HOST
@@ -62,7 +123,7 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: DATABASE_URL
   value: "postgresql://{{ .Values.postgres.user }}:$(DATABASE_PASSWORD)@pgbouncer:5432/{{ .Values.postgres.database }}"
 - name: DATABASE_DIRECT_HOST
-  value: postgres
+  value: {{ ((.Values.postgres).external).host | default "postgres" | quote }}
 {{- if .Values.clickhouse.enabled }}
 - name: CLICKHOUSE_HOST
   value: clickhouse
@@ -80,22 +141,35 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 {{- end }}
 - name: REDIS_URL
   value: "redis://redis:6379/0"
+{{/* `| default true` can't express default-on booleans (false is "empty"), hence hasKey. */}}
+{{- if or (not (hasKey (.Values.builder | default dict) "enabled")) .Values.builder.enabled }}
 - name: BUILDER_URL
   value: "http://builder:3000"
+{{- else }}
+## Builder disabled: point at a shared builder (builder.url) or leave empty —
+## Component builds then fail with a clear connect error, everything else works.
+- name: BUILDER_URL
+  value: {{ (.Values.builder).url | default "" | quote }}
+{{- end }}
 ## Executor selection — k8s-native: sandbox code runs in ephemeral pods
 ## created via the Kubernetes API (no Docker socket anywhere).
 - name: SANDBOX_EXECUTOR
   value: {{ .Values.executor.sandbox | quote }}
 - name: TRUSTED_EXECUTOR
   value: {{ .Values.executor.trusted | quote }}
+{{- $executorImage := .Values.executor.image | default (printf "%s/executor:%s" .Values.image.registry (include "sinas.imageTag" .)) }}
 - name: FUNCTION_CONTAINER_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_SERVICE_ACCOUNT
   value: {{ include "sinas.sandboxSA" . | quote }}
 - name: K8S_SANDBOX_INSTALL_DEPENDENCIES
   value: {{ .Values.executor.installDependencies | quote }}
+- name: K8S_RELEASE_NAME
+  value: {{ .Release.Name | quote }}
+- name: K8S_TRUSTED_WORKERS
+  value: {{ .Values.executor.trustedWorkers | default 2 | quote }}
 - name: K8S_SANDBOX_POD_READY_TIMEOUT
   value: {{ .Values.executor.podReadyTimeout | quote }}
 - name: POD_NAMESPACE
@@ -119,8 +193,63 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
       name: {{ .Release.Name }}-secrets
       key: clickhouse-password
 {{- end }}
+{{/*
+Auto auth mode. OTP needs SMTP (codes arrive by email); without SMTP the
+only way in is a password. With no superadminPassword either, the backend
+issues a one-time setup link in its logs on boot (see NOTES.txt).
+*/}}
+{{- $hasSmtp := ne (.Values.smtp.host | default "") "" }}
+{{- $auto := "otp" }}
+{{- if .Values.superadminPassword }}
+{{- $auto = ternary "password+otp" "password" $hasSmtp }}
+{{- else if not $hasSmtp }}
+{{- $auto = "password" }}
+{{- end }}
+## Paren-safe: `helm upgrade --reuse-values` from a pre-auth release has no
+## `auth` key at all, and a bare .Values.auth.mode nil-pointers there.
+- name: AUTH_MODE
+  value: {{ (.Values.auth).mode | default $auto | quote }}
+{{- if .Values.superadminPassword }}
+- name: SUPERADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Release.Name }}-secrets
+      key: superadmin-password
+{{- end }}
+- name: CODE_EXECUTION_ENABLED
+  value: {{ .Values.features.codeExecution | quote }}
+- name: BUILTIN_DATABASE_ENABLED
+  value: {{ .Values.features.builtinDatabase | quote }}
+{{- with (.Values.jwt).algorithm }}
+- name: JWT_ALGORITHM
+  value: {{ . | quote }}
+{{- end }}
+{{- with (.Values.jwt).issuer }}
+- name: JWT_ISSUER
+  value: {{ . | quote }}
+{{- end }}
+{{- with (.Values.jwt).audience }}
+- name: JWT_AUDIENCE
+  value: {{ . | quote }}
+{{- end }}
+{{- if (.Values.jwt).existingSecret }}
+- name: JWT_PRIVATE_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.jwt.existingSecret }}
+      key: {{ .Values.jwt.existingSecretKey | default "jwt-private-key" }}
+{{- end }}
 - name: BACKEND_PORT
   value: "8000"
+{{/* public_base_url (setup link, OAuth callback, public file URLs) derives
+     from DOMAIN; without it the backend assumes http://localhost:8000. Skip
+     when extraEnv sets it explicitly so the container spec has no duplicate. */}}
+{{- $domainInExtra := false }}
+{{- range .Values.extraEnv }}{{- if eq .name "DOMAIN" }}{{- $domainInExtra = true }}{{- end }}{{- end }}
+{{- if and .Values.domain (not $domainInExtra) }}
+- name: DOMAIN
+  value: {{ .Values.domain | quote }}
+{{- end }}
 {{- with .Values.extraEnv }}
 {{ toYaml . }}
 {{- end }}

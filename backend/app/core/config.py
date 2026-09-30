@@ -45,7 +45,24 @@ class Settings(BaseSettings):
     # Application
     debug: bool = False
     secret_key: str = "your-secret-key-change-in-production"
+    # Deprecated: superseded by jwt_algorithm below. Kept so existing
+    # ALGORITHM=HS256 env entries don't fail settings validation; internal
+    # purpose tokens (file serve, component render) are pinned to HS256.
     algorithm: str = "HS256"
+    # Access-token signing (#101). Default HS256 keeps tokens verifiable
+    # exactly as before (shared secret_key). RS256 signs with an RSA keypair
+    # so external services can verify Sinas tokens offline with standard JWT
+    # middleware via GET /.well-known/jwks.json.
+    jwt_algorithm: str = "HS256"  # HS256 | RS256
+    # RS256 access tokens carry iss + aud claims. Issuer defaults to
+    # public_base_url (see token_issuer property).
+    jwt_issuer: str = ""
+    jwt_audience: str = "sinas"
+    # RS256 private key resolution order: JWT_PRIVATE_KEY (PEM content) →
+    # JWT_PRIVATE_KEY_FILE (path) → auto-generated and persisted encrypted in
+    # the database (shared by all processes).
+    jwt_private_key: str = ""
+    jwt_private_key_file: str = ""
     uvicorn_workers: int = 4  # Number of Uvicorn worker processes
     # JWT Token Configuration (Best Practice)
     access_token_expire_minutes: int = 15  # Short-lived access tokens
@@ -97,7 +114,12 @@ class Settings(BaseSettings):
     #     "disabled"         — sandbox features rejected; deploy is trusted-only
     # - trusted_executor: backend for admin-approved code (Function.shared_pool=True).
     #     "docker_shared" — dedicated long-lived Docker workers (current default)
-    #     "inprocess"     — run inside the calling process; no Docker socket needed
+    #     "k8s_shared"    — dedicated long-lived k8s pods (for k8s deploys;
+    #                       credential-free, meter-integrity safe)
+    #     "inprocess"     — run inside the calling process; no Docker socket
+    #                       needed. NOT meter-integrity safe: trusted code runs
+    #                       in a credential-bearing process.
+    #     "disabled"      — shared_pool executions rejected with a clear error
     sandbox_executor: str = "docker_pool"
     trusted_executor: str = "docker_shared"
 
@@ -130,6 +152,8 @@ class Settings(BaseSettings):
     # All empty/no-op by default — matches today's behavior on generic
     # clusters with no per-client scheduling policy.
     k8s_release_name: str = ""
+    # k8s_shared trusted executor: number of warm trusted worker pods.
+    k8s_trusted_workers: int = 2
     k8s_sandbox_node_selector: str = "{}"  # JSON object, e.g. {"role": "shared"}
     k8s_sandbox_tolerations: str = "[]"  # JSON list of Toleration dicts
     k8s_sandbox_affinity: str = "{}"  # JSON k8s Affinity object (podAffinity/podAntiAffinity/nodeAffinity)
@@ -191,6 +215,22 @@ class Settings(BaseSettings):
     sandbox_max_executions: int = 100  # Recycle container after this many executions
     sandbox_acquire_timeout: int = 30  # Seconds to wait for a container
 
+    # Optional platform features. Both default to on (no change for existing
+    # deployments); turning them off removes capability rather than hiding it,
+    # so the affected endpoints reject explicitly instead of failing oddly.
+    #
+    # code_execution_enabled=False disables ALL execution of user-supplied code:
+    # Functions and the agent `codeExecution` tool. Pair it with
+    # SANDBOX_EXECUTOR=disabled for the lightest deployment — no sandbox pool,
+    # no per-execution pods, no executor image needed.
+    code_execution_enabled: bool = True
+    # builtin_database_enabled=False skips creating the `sinas_data` database
+    # and its default DatabaseConnection record on startup. This is about not
+    # provisioning a data store the operator never asked for (they bring their
+    # own connections); it does NOT affect the platform's own Postgres, and an
+    # already-created record is left alone.
+    builtin_database_enabled: bool = True
+
     # Package management
     allow_package_installation: bool = True
     allowed_packages: Optional[str] = None  # Comma-separated whitelist, None = all allowed
@@ -204,6 +244,10 @@ class Settings(BaseSettings):
     docker_network: str = "auto"  # Docker network for containers (auto-detect or specify)
     sandbox_network: str = "sinas-sandbox"  # Isolated network for executor containers (internet only, no access to internal services)
     default_worker_count: int = 4  # Number of workers to start on backend startup
+    # Memory limit per shared worker container (Docker size string). Was
+    # hardcoded to 1g; heavier post-processing functions (document parsing,
+    # embedding prep) legitimately need more.
+    worker_memory_limit: str = "1g"
 
     # Message history
     max_history_messages: int = 100  # Max messages to load for conversation history
@@ -214,6 +258,18 @@ class Settings(BaseSettings):
     tool_result_max_inline: int = int(os.getenv("TOOL_RESULT_MAX_INLINE", "5"))  # Last N results kept inline
     tool_result_max_size: int = int(os.getenv("TOOL_RESULT_MAX_SIZE", "102400"))  # 100KB truncation limit
 
+    # All-in-one ("lite") deployment. When enabled, the API process also runs
+    # the queue workers, scheduler and CDC poller as asyncio tasks — one
+    # container instead of five. The scheduler and CDC loops are singletons,
+    # so this REQUIRES a single uvicorn worker (UVICORN_WORKERS=1) and a
+    # single backend replica.
+    all_in_one: bool = False
+    # Serve the console SPA from console_dist_path at /ui, replacing the
+    # separate console container. Independent of all_in_one; skipped with a
+    # warning when the directory doesn't exist.
+    serve_console: bool = False
+    console_dist_path: str = "/app/console-dist"
+
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"
     queue_function_concurrency: int = 10
@@ -221,7 +277,20 @@ class Settings(BaseSettings):
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker
     queue_default_timeout: int = 300
     queue_max_retries: int = 3
+    # Saturation backpressure: how long a function job may wait in the queue
+    # (deferred retries, backoff capped at 30s) for a shared-pool slot before
+    # it becomes a real failure. The queue IS the waiting room — bulk ingest
+    # (thousands of uploads onto a small pool) is expected to drain over
+    # hours. The bound exists only so a permanently wedged pool eventually
+    # fails loudly instead of spinning forever. 0 = wait forever.
+    queue_saturation_timeout_seconds: int = 21600  # 6 hours
     queue_retry_delay: int = 10
+
+    # Pipeline runs (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
+    # Runs are await-heavy orchestration → high concurrency is cheap.
+    queue_pipeline_concurrency: int = 50
+    pipeline_job_timeout: int = 1800  # hard ceiling for one queued run (incl. agent steps)
+    pipeline_run_retention_days: int = 30  # pipeline_runs rows older than this are pruned
 
     # Agent job settings
     agent_job_timeout: int = 600  # Default timeout for agent jobs (10 minutes)
@@ -312,6 +381,28 @@ class Settings(BaseSettings):
         if not domain or domain.lower() in ("localhost", "127.0.0.1"):
             return f"http://localhost:{self.backend_port}"
         return f"https://{domain}"
+
+    @property
+    def token_issuer(self) -> str:
+        """`iss` claim on RS256 access tokens; what verifiers configure as issuer."""
+        return self.jwt_issuer.strip() or self.public_base_url
+
+    # Operations metering (managed SaaS). Default-off; when enabled, every
+    # operation (function/code/query/agent/upload/tool) increments a Redis
+    # counter, the scheduler snapshots it to usage_periods, and a heartbeat
+    # POSTs the CUMULATIVE period total to the Platform (sinas.metering/v2).
+    # The Platform is the period authority: period id and boundaries arrive
+    # exclusively in POST responses (no context endpoint) — first report is
+    # sent under canonical_period_id "init". Pure emission: nothing is
+    # enforced on the instance and nothing is pulled down. A dead endpoint
+    # or Redis blip never affects platform behavior. With the platform
+    # settings unset, counting stays local and no report is ever attempted.
+    metering_enabled: bool = False
+    platform_report_url: str = ""  # e.g. https://platform.example.com/api/sinas/metering/v1/reports
+    platform_api_key: str = ""  # opaque instance token, sent as Authorization: Bearer — never logged
+    metering_instance_id: str = ""  # defaults to `domain`; set explicitly in SaaS
+    metering_snapshot_minutes: int = 5  # Redis -> usage_periods cadence
+    metering_push_minutes: int = 15  # heartbeat cadence (jittered per instance)
 
     # Component builder
     builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service

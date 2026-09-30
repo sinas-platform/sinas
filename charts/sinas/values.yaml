@@ -1,7 +1,9 @@
 ## Image — the sinas backend image (also used by workers, scheduler, cdc).
 image:
   registry: ghcr.io/sinas-platform/sinas
-  tag: latest
+  ## Empty = the chart's appVersion (stamped from the release tag), so a
+  ## versioned install pulls matching images. Set explicitly to override.
+  tag: ""
   pullPolicy: IfNotPresent
 
 ## Routing
@@ -17,13 +19,39 @@ ingress:
     enabled: false
     secretName: ""  # existing TLS secret; leave empty when using cert-manager annotations
 
+## All-in-one ("lite") profile. When true, the queue workers, scheduler and
+## CDC poller run inside the backend process (as asyncio tasks), the console
+## SPA is served by the backend at /ui, and the queue-worker, queue-agent,
+## scheduler, cdc-worker and console Deployments are not rendered. The
+## backend is pinned to 1 replica / 1 uvicorn worker (the embedded
+## scheduler/CDC loops are singletons) and uses the `lite` image (backend +
+## console build). Pair with values-lite.yaml for the full small-footprint
+## preset (no ClickHouse, no builder, small resource requests).
+allInOne: false
+
 ## Secrets (required — provide via --set or a secrets values file)
 secrets:
   secretKey: ""
   encryptionKey: ""
 
-## Superadmin
+## Superadmin. How the first login works depends on what else is set:
+##   smtp.* configured          -> "otp": login codes arrive by email.
+##   superadminPassword set     -> "password" (+otp with SMTP). The value is
+##                                 authoritative: a password changed in the
+##                                 UI reverts to it on every restart.
+##   neither                    -> "password"; the backend prints a one-time
+##                                 setup link in its logs on boot. The
+##                                 superadmin then owns their password.
+##                                 (kubectl logs deploy/backend
+##                                  | grep -A6 'SUPERADMIN SETUP')
+## Override the auto-selection with auth.mode.
 superadminEmail: ""
+superadminPassword: ""
+
+## Authentication mode: "otp", "password", or "password+otp".
+## Empty = auto (see superadmin comment above).
+auth:
+  mode: ""
 
 ## Executor — how sinas runs user/agent code.
 ##
@@ -31,17 +59,25 @@ superadminEmail: ""
 ##   "k8s_pod"  — one ephemeral hardened Pod per execution (default).
 ##   "disabled" — reject sandbox executions (trusted-only deployment).
 ## trusted: admin-approved code (Function.shared_pool=true).
-##   "inprocess" — runs inside the queue-worker process (default).
-##                 Note: shares the worker's credentials; approve shared_pool
-##                 functions accordingly.
+##   "k8s_shared" — warm long-lived credential-free pods (default). Trusted
+##                  code cannot reach platform credentials or the usage
+##                  meter; paired with the trusted-isolation NetworkPolicy.
+##   "inprocess"  — runs inside the queue-worker process. Smallest footprint
+##                  (no warm pods), but trusted code shares the worker's
+##                  credentials — do not use on metered/billable instances.
+##   "disabled"   — reject shared_pool executions with a clear error.
 executor:
   sandbox: "k8s_pod"
-  trusted: "inprocess"
+  trusted: "k8s_shared"
+  ## Number of warm trusted worker pods (k8s_shared only).
+  trustedWorkers: 2
   ## Image for sandbox pods. Must be pullable by the cluster. Extra packages
   ## (Dependency table) are pip-installed into each pod at create time; bake
   ## them into a custom image and set installDependencies: false to skip that
   ## cold-start cost.
-  image: "ghcr.io/sinas-platform/sinas/executor:latest"
+  ## Empty = <image.registry>/executor:<image tag or appVersion> — keeps the
+  ## sandbox image in lockstep with the release. Set to pin a custom image.
+  image: ""
   installDependencies: true
   podReadyTimeout: 120
 
@@ -56,13 +92,48 @@ registry:
 postgres:
   user: postgres
   database: sinas
-  password: ""
+  password: ""  # required — install fails if empty (unless external.existingSecret)
+  ## External PostgreSQL (Cloud SQL, RDS, ...). Setting external.host skips
+  ## the in-cluster postgres pod and its PVC entirely; pgbouncer STAYS
+  ## in-cluster and pools against the external instance (managed databases
+  ## have hard connection limits — keep it in the path). The standard port
+  ## 5432 is assumed. Password comes from postgres.password as usual, or
+  ## point existingSecret at a pre-created Secret (key existingSecretKey) to
+  ## keep it out of values. The database and user must already exist; the
+  ## user needs CREATEDB unless features.builtinDatabase=false.
+  ## NOTE: private-IP instances live in RFC1918 space, which the default
+  ## NetworkPolicy blocks. When host is an IPv4 literal the chart
+  ## auto-allows egress to it on 5432; a DNS hostname resolving to a
+  ## private IP needs its range allowlisted in networkPolicy.egressCidrs,
+  ## or connections will TIME OUT, not be refused.
+  ## TLS: connections are negotiated opportunistically ("prefer" semantics
+  ## in pgbouncer and the drivers), which satisfies encrypt-only instances
+  ## (e.g. Cloud SQL ENCRYPTED_ONLY). Instances requiring CLIENT
+  ## CERTIFICATES are not supported.
+  external:
+    host: ""
+    existingSecret: ""
+    existingSecretKey: "password"
   storage: 5Gi
+  ## Compute requests matter: without them, GKE Autopilot bills its platform
+  ## default (0.5 vCPU / 2Gi PER POD) and standard clusters give the database
+  ## BestEffort QoS (first evicted under pressure). Requests below are sized
+  ## for an idle/small instance — raise for production load. Limits are
+  ## deliberately not set by default (an undersized memory limit OOM-kills
+  ## your database); add resources.limits here if you want a ceiling.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
 
 ## Redis
 redis:
   maxmemory: "256mb"
   storage: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 320Mi  # headroom over maxmemory
 
 ## ClickHouse
 clickhouse:
@@ -82,6 +153,10 @@ pgbouncer:
   defaultPoolSize: 50
   minPoolSize: 10
   reservePoolSize: 10
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
 
 ## File storage — shared volume for uploaded files (/var/sinas/files).
 ## Mounted into backend, queue-worker, queue-agent, scheduler.
@@ -96,9 +171,63 @@ fileStorage:
 networkPolicy:
   enabled: true
   ingressNamespace: ""
+  ## Cross-namespace EGRESS is denied by default (private ranges are excluded
+  ## from the internet rule, and only same-namespace pods are allowed) — calls
+  ## to companion services in other namespaces will TIME OUT, not be refused.
+  ## Allowlist them here; ports optional (all ports when omitted):
+  ##   egressNamespaces:
+  ##     - namespace: sgr
+  ##       ports: [8080]
+  egressNamespaces: []
+  ## Private-IP (RFC1918) egress allowlist by CIDR, for destinations OUTSIDE
+  ## the cluster — e.g. a Cloud SQL or Memorystore private IP (see
+  ## postgres.external). Applies to the sinas services only, never sandbox
+  ## pods. ports optional (all ports when omitted):
+  ##   egressCidrs:
+  ##     - cidr: 10.23.96.3/32
+  ##       ports: [5432]
+  egressCidrs: []
 
-## Builder (Node.js esbuild server)
+## Scheduling — where the STATELESS workloads run (backend, builder,
+## console, pgbouncer, queue-worker, queue-agent, scheduler, cdc-worker).
+## The single biggest cost lever on managed Kubernetes: moving these onto
+## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
+## and they tolerate preemption (they restart and resume).
+##
+##   scheduling:
+##     nodeSelector:
+##       cloud.google.com/gke-spot: "true"
+##     tolerations:
+##       - key: cloud.google.com/gke-spot
+##         operator: Equal
+##         value: "true"
+##         effect: NoSchedule
+##
+## tolerations are needed on GKE Standard and self-managed clusters; GKE
+## Autopilot injects the Spot toleration itself.
+##
+## IMPORTANT: these defaults deliberately do NOT reach postgres, redis or
+## clickhouse. Those are StatefulSets on single-attach ReadWriteOnce
+## volumes, where a preemption is a database restart with a volume
+## reattach rather than a rolling handoff — never put them on preemptible
+## capacity by accident. To place them, set their own keys explicitly
+## (postgres.nodeSelector / .tolerations / .affinity).
+##
+## Every workload accepts its own nodeSelector / tolerations / affinity
+## (e.g. queueAgent.nodeSelector), which REPLACES the global default for
+## that workload rather than merging with it.
+scheduling:
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## Builder (Node.js esbuild server). enabled=false skips the Deployment;
+## set url to a shared builder to keep Component builds working, or leave it
+## empty to have builds fail with a clear connect error (nothing else is
+## affected — the builder is only used when someone builds a Component).
 builder:
+  enabled: true
+  url: ""
   resources:
     requests:
       cpu: "50m"
@@ -185,6 +314,36 @@ smtp:
   password: ""
   domain: ""
   ipv4: ""
+
+## Optional platform features. Both default on — turning one off removes the
+## capability (endpoints reject explicitly rather than failing oddly).
+features:
+  ## false disables ALL user-code execution: Functions and the agent
+  ## codeExecution tool. Also skips sandbox/shared-worker startup entirely, so
+  ## no pool, no per-execution pods, and no executor image is needed — the
+  ## biggest single footprint saving available.
+  codeExecution: true
+  ## false skips creating the `sinas_data` database and its default Database
+  ## Connection on startup, for operators who only use their own connections.
+  ## Does NOT affect the platform's own Postgres, and leaves an already-created
+  ## record untouched.
+  builtinDatabase: true
+
+## Access-token signing (OIDC-compatible verification).
+## algorithm "RS256" signs access tokens with an RSA keypair and publishes the
+## public key at /.well-known/jwks.json so external services can verify Sinas
+## tokens offline with standard JWT middleware. Default "" keeps HS256.
+jwt:
+  algorithm: ""
+  ## Optional: bring your own RS256 private key via an existing Secret.
+  ## When unset, Sinas auto-generates a keypair on first boot and stores it
+  ## encrypted in the database (shared by all processes) — no key management
+  ## needed.
+  existingSecret: ""
+  existingSecretKey: "jwt-private-key"
+  ## iss / aud claims on RS256 tokens; issuer defaults to the instance URL.
+  issuer: ""
+  audience: ""
 
 ## Extra environment variables appended to every sinas service (backend,
 ## queue workers, scheduler, cdc-worker). Any backend Settings knob

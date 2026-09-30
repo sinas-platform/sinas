@@ -234,7 +234,7 @@ export function Collections() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Create Collection</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -381,14 +381,14 @@ export function Collections() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Edit Collection</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
                 <label className="label">Namespace</label>
                 <input
                   type="text"
-                  className="input bg-[#161616]"
+                  className="input bg-surface-1"
                   value={selectedCollection.namespace}
                   disabled
                 />
@@ -398,7 +398,7 @@ export function Collections() {
                 <label className="label">Name</label>
                 <input
                   type="text"
-                  className="input bg-[#161616]"
+                  className="input bg-surface-1"
                   value={selectedCollection.name}
                   disabled
                 />

@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI):
     # endpoints can report accurate state.  The workers/pool are *created* by
     # the arq worker process or explicit scale calls; here we only discover.
     # Skipped entirely for non-Docker executors (k8s / single-container).
-    if settings.sandbox_executor == "docker_pool":
+    if settings.code_execution_enabled and settings.sandbox_executor == "docker_pool":
         try:
             from app.services.container_pool import container_pool
 
@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"⚠️  Container pool discovery skipped: {e}")
 
-    if settings.trusted_executor == "docker_shared":
+    if settings.code_execution_enabled and settings.trusted_executor == "docker_shared":
         try:
             from app.services.shared_worker_manager import shared_worker_manager
 
@@ -103,9 +103,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  ClickHouse storage migration skipped: {e}")
 
+    # All-in-one ("lite") profile: run queue workers, scheduler and CDC as
+    # tasks in this process instead of dedicated containers. Requires a
+    # single uvicorn worker and a single replica (singleton loops).
+    if settings.all_in_one:
+        from app.core.allinone import runtime as allinone_runtime
+
+        await allinone_runtime.start()
+
     yield
 
     # Shutdown
+    if settings.all_in_one:
+        from app.core.allinone import runtime as allinone_runtime
+
+        await allinone_runtime.stop()
+
     from app.services.database_pool import DatabasePoolManager
 
     await DatabasePoolManager.get_instance().close_all()
@@ -134,6 +147,16 @@ app.add_middleware(
 
 # Add request logging middleware
 app.add_middleware(RequestLoggerMiddleware)
+
+
+@app.middleware("http")
+async def add_version_header(request, call_next):
+    """Stamp every response with the platform version — registered on the
+    root app so mounted sub-apps (/api/v1, adapters) inherit it. Lets
+    clients and operators confirm which build answered without /info."""
+    response = await call_next(request)
+    response.headers["X-Sinas-Version"] = __version__
+    return response
 
 _servers = [
     {"url": "/", "description": "Runtime API"},
@@ -184,6 +207,28 @@ app.mount("/adapters/openai", adapters_openai_app)
 
 # Include runtime API routes (root level)
 app.include_router(runtime_router)
+
+# Console SPA served from this process (lite profile — replaces the console
+# container). app.frontend() is only consulted when no API route matched, so
+# the runtime routes above keep priority; the console owning exactly the /ui
+# prefix (Vite base '/ui/', see #169) is what makes cohabitation safe.
+if settings.serve_console:
+    from pathlib import Path
+
+    from fastapi.responses import RedirectResponse
+
+    if Path(settings.console_dist_path).is_dir():
+        app.frontend("/ui", directory=settings.console_dist_path)
+
+        @app.get("/", include_in_schema=False)
+        async def _console_redirect():
+            # Same behavior as the console nginx: bare domain → /ui/
+            return RedirectResponse(url="/ui/", status_code=302)
+    else:
+        logger.warning(
+            "SERVE_CONSOLE=true but %s does not exist — console not served",
+            settings.console_dist_path,
+        )
 
 
 # Dynamic OpenAPI endpoint for runtime API

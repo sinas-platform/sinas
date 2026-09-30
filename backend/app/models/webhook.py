@@ -24,8 +24,20 @@ class Webhook(Base):
     id: Mapped[uuid_pk]
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     path: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    # Target: "function" (default), "agent", or "pipeline"
+    target_type: Mapped[str] = mapped_column(
+        String(10), default="function", server_default="function", nullable=False
+    )
     function_namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    function_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    function_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Agent target fields (target_type == "agent")
+    agent_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    agent_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Pipeline target fields (target_type == "pipeline")
+    pipeline_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    pipeline_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    message_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    session_key_template: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     http_method: Mapped[HTTPMethod] = mapped_column(
         Enum(HTTPMethod), default=HTTPMethod.POST, nullable=False
     )

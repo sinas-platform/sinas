@@ -161,7 +161,7 @@ export function ConfigManager() {
           if (total === 0) return null;
 
           return (
-            <div key={title} className="bg-[#161616] p-4 rounded-lg border border-white/[0.06]">
+            <div key={title} className="bg-surface-1 p-4 rounded-lg border border-line-soft">
               <h4 className={`font-semibold ${color} mb-2`}>{title}</h4>
               <div className="text-2xl font-bold">{total}</div>
               {Object.entries(data).map(([type, count]) => (
@@ -184,13 +184,13 @@ export function ConfigManager() {
         <h1 className="text-2xl font-bold text-gray-100">Configuration Manager</h1>
         <button
           onClick={handleExport}
-          className="px-4 py-2 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
+          className="px-4 py-2 border border-line rounded-lg text-sm font-medium text-gray-300 bg-surface-1 hover:bg-hover"
         >
           Export Current Config
         </button>
       </div>
 
-      <div className="bg-[#161616] rounded-lg border border-white/[0.06] p-6">
+      <div className="bg-surface-1 rounded-lg border border-line-soft p-6">
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <label className="block text-sm font-medium text-gray-300">
@@ -206,7 +206,7 @@ export function ConfigManager() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-1.5 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
+                className="px-3 py-1.5 border border-line rounded-lg text-sm font-medium text-gray-300 bg-surface-1 hover:bg-hover"
               >
                 Upload File
               </button>
@@ -216,7 +216,7 @@ export function ConfigManager() {
                   setValidationResult(null);
                   setDryRunResult(null);
                 }}
-                className="px-3 py-1.5 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
+                className="px-3 py-1.5 border border-line rounded-lg text-sm font-medium text-gray-300 bg-surface-1 hover:bg-hover"
               >
                 Clear
               </button>
@@ -231,28 +231,28 @@ export function ConfigManager() {
             }}
             disabled={currentStep !== 'edit'}
             placeholder="Paste your YAML configuration here or upload a file..."
-            className="w-full h-96 px-3 py-2 border border-white/10 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-[#0d0d0d] disabled:text-gray-400"
+            className="w-full h-96 px-3 py-2 border border-line rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:bg-surface-0 disabled:text-gray-400"
           />
 
           {/* Step indicator */}
           <div className="flex items-center gap-2 text-sm">
             <div className={`flex items-center gap-2 ${currentStep === 'edit' ? 'text-blue-600 font-medium' : 'text-gray-500'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'edit' ? 'bg-blue-600 text-white' : 'bg-[#1e1e1e]'}`}>1</div>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'edit' ? 'bg-blue-600 text-white' : 'bg-surface-2'}`}>1</div>
               <span>Edit</span>
             </div>
-            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className="flex-1 h-0.5 bg-surface-2"></div>
             <div className={`flex items-center gap-2 ${currentStep === 'validating' ? 'text-blue-600 font-medium' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'validating' ? 'bg-blue-600 text-white' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>2</div>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'validating' ? 'bg-blue-600 text-white' : currentStep === 'dryrun' || currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-surface-2'}`}>2</div>
               <span>Validate</span>
             </div>
-            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className="flex-1 h-0.5 bg-surface-2"></div>
             <div className={`flex items-center gap-2 ${currentStep === 'dryrun' ? 'text-blue-600 font-medium' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'dryrun' ? 'bg-blue-600 text-white' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>3</div>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'dryrun' ? 'bg-blue-600 text-white' : currentStep === 'confirm' || currentStep === 'applying' || currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-surface-2'}`}>3</div>
               <span>Dry Run</span>
             </div>
-            <div className="flex-1 h-0.5 bg-[#1e1e1e]"></div>
+            <div className="flex-1 h-0.5 bg-surface-2"></div>
             <div className={`flex items-center gap-2 ${currentStep === 'confirm' || currentStep === 'applying' ? 'text-blue-600 font-medium' : currentStep === 'complete' ? 'text-green-600' : 'text-gray-500'}`}>
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'confirm' || currentStep === 'applying' ? 'bg-blue-600 text-white' : currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-[#1e1e1e]'}`}>4</div>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center ${currentStep === 'confirm' || currentStep === 'applying' ? 'bg-blue-600 text-white' : currentStep === 'complete' ? 'bg-green-600 text-white' : 'bg-surface-2'}`}>4</div>
               <span>Confirm</span>
             </div>
           </div>
@@ -287,7 +287,7 @@ export function ConfigManager() {
                 </button>
                 <button
                   onClick={handleReject}
-                  className="px-6 py-2 border border-white/10 rounded-lg text-sm font-medium text-gray-300 bg-[#161616] hover:bg-white/5"
+                  className="px-6 py-2 border border-line rounded-lg text-sm font-medium text-gray-300 bg-surface-1 hover:bg-hover"
                 >
                   Reject
                 </button>
@@ -315,7 +315,7 @@ export function ConfigManager() {
 
       {/* Validation Results */}
       {validationResult && (
-        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${validationResult.valid ? 'border-green-800/40' : 'border-red-800/40'}`}>
+        <div className={`bg-surface-1 rounded-lg border border-line-soft p-6 ${validationResult.valid ? 'border-green-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">
             {validationResult.valid ? '✓ Validation Passed' : '✗ Validation Failed'}
           </h2>
@@ -356,7 +356,7 @@ export function ConfigManager() {
 
       {/* Dry Run Results */}
       {dryRunResult && currentStep === 'confirm' && (
-        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${dryRunResult.success ? 'border-blue-800/40' : 'border-red-800/40'}`}>
+        <div className={`bg-surface-1 rounded-lg border border-line-soft p-6 ${dryRunResult.success ? 'border-blue-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">Dry Run Results - Review Changes</h2>
 
           {renderSummary(dryRunResult.summary)}
@@ -394,13 +394,13 @@ export function ConfigManager() {
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {dryRunResult.changes.map((change, idx) => (
-                  <div key={idx} className="bg-[#0d0d0d] border border-white/[0.06] rounded p-3">
+                  <div key={idx} className="bg-surface-0 border border-line-soft rounded p-3">
                     <div className="flex items-start gap-3">
                       <span className={`px-2 py-1 rounded text-xs font-semibold uppercase whitespace-nowrap ${
                         change.action === 'create' ? 'bg-green-900/30 text-green-300' :
                         change.action === 'update' ? 'bg-blue-900/30 text-blue-300' :
                         change.action === 'delete' ? 'bg-red-900/30 text-red-300' :
-                        'bg-[#161616] text-gray-200'
+                        'bg-surface-1 text-gray-200'
                       }`}>
                         {change.action}
                       </span>
@@ -420,7 +420,7 @@ export function ConfigManager() {
                               <summary className="cursor-pointer text-blue-600 hover:text-blue-400 font-medium">
                                 View changes
                               </summary>
-                              <pre className="text-xs text-gray-300 mt-2 bg-[#161616] p-2 rounded overflow-x-auto border border-white/[0.06]">
+                              <pre className="text-xs text-gray-300 mt-2 bg-surface-1 p-2 rounded overflow-x-auto border border-line-soft">
                                 {JSON.stringify(change.changes, null, 2)}
                               </pre>
                             </details>
@@ -438,7 +438,7 @@ export function ConfigManager() {
 
       {/* Apply Results */}
       {applyResult && currentStep === 'complete' && (
-        <div className={`bg-[#161616] rounded-lg border border-white/[0.06] p-6 ${applyResult.success ? 'border-green-800/40' : 'border-red-800/40'}`}>
+        <div className={`bg-surface-1 rounded-lg border border-line-soft p-6 ${applyResult.success ? 'border-green-800/40' : 'border-red-800/40'}`}>
           <h2 className="text-lg font-semibold mb-4">
             {applyResult.success ? '✓ Configuration Applied Successfully' : '✗ Configuration Applied with Errors'}
           </h2>
@@ -478,13 +478,13 @@ export function ConfigManager() {
               </h3>
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {applyResult.changes.map((change, idx) => (
-                  <div key={idx} className="bg-[#0d0d0d] border border-white/[0.06] rounded p-3">
+                  <div key={idx} className="bg-surface-0 border border-line-soft rounded p-3">
                     <div className="flex items-start gap-3">
                       <span className={`px-2 py-1 rounded text-xs font-semibold uppercase whitespace-nowrap ${
                         change.action === 'create' ? 'bg-green-900/30 text-green-300' :
                         change.action === 'update' ? 'bg-blue-900/30 text-blue-300' :
                         change.action === 'delete' ? 'bg-red-900/30 text-red-300' :
-                        'bg-[#161616] text-gray-200'
+                        'bg-surface-1 text-gray-200'
                       }`}>
                         {change.action}
                       </span>
@@ -504,7 +504,7 @@ export function ConfigManager() {
                               <summary className="cursor-pointer text-blue-600 hover:text-blue-400 font-medium">
                                 View changes
                               </summary>
-                              <pre className="text-xs text-gray-300 mt-2 bg-[#161616] p-2 rounded overflow-x-auto border border-white/[0.06]">
+                              <pre className="text-xs text-gray-300 mt-2 bg-surface-1 p-2 rounded overflow-x-auto border border-line-soft">
                                 {JSON.stringify(change.changes, null, 2)}
                               </pre>
                             </details>

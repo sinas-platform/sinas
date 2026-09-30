@@ -344,7 +344,8 @@ class ConnectorService:
                 data.update({k: str(v) for k, v in token_params.items()})
 
             payload = await self._post_token_request(
-                token_url, data, client_id, client_secret, client_auth_method
+                token_url, data, client_id, client_secret, client_auth_method,
+                response_paths=auth_config.get("token_response_paths"),
             )
             if not payload:
                 return None
@@ -399,11 +400,84 @@ class ConnectorService:
         sep = "&" if "?" in authorize_url else "?"
         return f"{authorize_url}{sep}{urlencode(params)}"
 
+    @staticmethod
+    def _dig(payload: Any, path: str) -> Any:
+        """Simple dot-path lookup into a dict tree ("authed_user.access_token").
+
+        No JSONPath engine by design — nesting is the only quirk providers
+        actually have. Returns None on any miss."""
+        node = payload
+        for part in path.split("."):
+            if not isinstance(node, dict):
+                return None
+            node = node.get(part)
+        return node
+
+    # Response fields a provider may relocate, and the configured path key
+    # (snake_case, as stored on the auth config) that points at each.
+    _TOKEN_PATH_FIELDS = (
+        ("access_token", "access_token"),
+        ("refresh_token", "refresh_token"),
+        ("expires_in", "expires_in"),
+        ("scope", "scope"),
+    )
+
+    def _apply_token_response_paths(
+        self, payload: dict[str, Any], response_paths: Optional[dict[str, Any]]
+    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        """Normalize a token-endpoint payload via configured response paths.
+
+        Returns (normalized_payload, error). Defaults reproduce standard
+        OAuth exactly: token fields at the top level, failure = a non-empty
+        RFC 6749 top-level `error`. Nothing provider-specific lives in code —
+        Slack's `ok: false` / `authed_user.access_token` shape is purely
+        connector config (issue #109).
+        """
+        paths = response_paths or {}
+
+        # --- success / error detection ---
+        error_path = paths.get("error") or "error"
+        desc_path = paths.get("error_description") or "error_description"
+        success_flag = paths.get("success_flag")
+        failed = (
+            not self._dig(payload, success_flag)
+            if success_flag
+            # Standard shape: an error field present AND non-empty means failure,
+            # even on HTTP 200 (some providers do that too).
+            else bool(payload.get("error"))
+        )
+        if failed:
+            code = self._dig(payload, error_path)
+            desc = self._dig(payload, desc_path)
+            parts = [str(p) for p in (code, desc) if p]
+            return None, "; ".join(parts) or "provider reported failure"
+
+        # --- relocate token fields to their standard top-level names ---
+        if not any(paths.get(k) for _, k in self._TOKEN_PATH_FIELDS):
+            return payload, None
+        normalized = dict(payload)
+        for field, path_key in self._TOKEN_PATH_FIELDS:
+            configured = paths.get(path_key)
+            if configured:
+                value = self._dig(payload, configured)
+                if value is None:
+                    # Configured path is authoritative: a miss means absent,
+                    # not "fall back to wherever the top level points" (for
+                    # Slack that would silently store the BOT token as the
+                    # user token).
+                    normalized.pop(field, None)
+                else:
+                    normalized[field] = value
+        return normalized, None
+
     async def _post_token_request(
         self, token_url: str, data: dict[str, str], client_id: str,
         client_secret: str, client_auth_method: str,
+        response_paths: Optional[dict[str, Any]] = None,
     ) -> Optional[dict[str, Any]]:
-        """POST a token request (code exchange or refresh) and return the parsed JSON."""
+        """POST a token request (code exchange or refresh); return the parsed,
+        normalized JSON payload — token fields guaranteed at their standard
+        top-level names, provider errors already surfaced as failures."""
         headers = {"Accept": "application/json"}
         if client_auth_method == "basic":
             encoded = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
@@ -425,10 +499,21 @@ class ConnectorService:
             )
             return None
         try:
-            return resp.json()
+            payload = resp.json()
         except Exception:
             logger.error(f"OAuth token endpoint {token_url} returned a non-JSON body")
             return None
+
+        normalized, provider_error = self._apply_token_response_paths(
+            payload, response_paths
+        )
+        if provider_error is not None:
+            # e.g. Slack's HTTP 200 + {"ok": false, "error": "invalid_code"}
+            logger.error(
+                f"OAuth token endpoint {token_url} reported failure: {provider_error}"
+            )
+            return None
+        return normalized
 
     @staticmethod
     def _parse_expires_in(expires_in: Any) -> Optional[int]:
@@ -492,6 +577,7 @@ class ConnectorService:
             client_id,
             client_secret,
             auth_config.get("client_auth_method") or "body",
+            response_paths=auth_config.get("token_response_paths"),
         )
         if not payload or not payload.get("access_token"):
             return False
@@ -610,6 +696,9 @@ class ConnectorService:
                     client_id,
                     client_secret,
                     auth_config.get("client_auth_method") or "body",
+                    # Same paths as the code exchange — refresh responses are
+                    # just as nonstandard on these providers.
+                    response_paths=auth_config.get("token_response_paths"),
                 )
                 if not payload or not payload.get("access_token"):
                     logger.warning(f"OAuth refresh failed for connector {connector_id} user {user_id}")

@@ -45,6 +45,11 @@ class AzureOpenAIProvider(OpenAIProvider):
     unchanged from :class:`OpenAIProvider`.
     """
 
+    # Azure batch requires a dedicated Global-Batch deployment, which the
+    # provider config doesn't model yet — opt out of the inherited OpenAI
+    # batch methods so they aren't offered against a normal deployment.
+    supports_batch = False
+
     def __init__(
         self,
         api_key: Optional[str] = None,

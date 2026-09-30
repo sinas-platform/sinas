@@ -36,6 +36,22 @@ def _extract_key_value(
     return None
 
 
+
+def _dedup_ttl(dedup_config: dict) -> int:
+    """TTL from a stored dedup blob.
+
+    Accepts both key spellings: the REST schema stores `ttl_seconds` while the
+    config schema's model_dump() produced `ttlSeconds`, so rows written by
+    config apply carry the camelCase key. Reading both means existing rows keep
+    their configured TTL instead of silently falling back to the default.
+    """
+    for key in ("ttl_seconds", "ttlSeconds"):
+        value = dedup_config.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return 300
+
+
 async def check_and_mark(
     webhook_id: str,
     body: dict[str, Any],
@@ -49,7 +65,7 @@ async def check_and_mark(
         previous result if available (sync mode only).
     """
     key_expr = dedup_config.get("key", "")
-    ttl = dedup_config.get("ttl_seconds", 300)
+    ttl = _dedup_ttl(dedup_config)
 
     key_value = _extract_key_value(key_expr, body, headers)
     if not key_value:
@@ -80,7 +96,7 @@ async def store_result(
 ) -> None:
     """Cache the result of a sync webhook for dedup responses."""
     key_expr = dedup_config.get("key", "")
-    ttl = dedup_config.get("ttl_seconds", 300)
+    ttl = _dedup_ttl(dedup_config)
 
     key_value = _extract_key_value(key_expr, body, headers)
     if not key_value:

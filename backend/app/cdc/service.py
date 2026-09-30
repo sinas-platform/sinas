@@ -12,10 +12,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [cdc] %(levelname)s %(name)s: %(message)s",
-)
 logger = logging.getLogger(__name__)
 
 CDC_CHANNEL = "sinas:cdc:triggers"
@@ -264,17 +260,29 @@ class CDCManager:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             }
 
-                            # Enqueue function execution
+                            # Enqueue the target: function execution or pipeline fire.
+                            # Note: CDC advances its own bookmark at enqueue time
+                            # (below) regardless of downstream success; a pipeline's
+                            # own cursor (if any) is managed by the pipeline runner.
                             execution_id = str(uuid.uuid4())
-                            await queue_service.enqueue_function(
-                                function_namespace=trigger.function_namespace,
-                                function_name=trigger.function_name,
-                                input_data=payload,
-                                execution_id=execution_id,
-                                trigger_type="CDC",
-                                trigger_id=trigger_id,
-                                user_id=str(trigger.user_id),
-                            )
+                            if trigger.target_type == "pipeline":
+                                await queue_service.enqueue_pipeline_fire(
+                                    namespace=trigger.pipeline_namespace or "default",
+                                    name=trigger.pipeline_name,
+                                    run_input=payload,
+                                    trigger_type="CDC",
+                                    trigger_id=trigger_id,
+                                )
+                            else:
+                                await queue_service.enqueue_function(
+                                    function_namespace=trigger.function_namespace,
+                                    function_name=trigger.function_name,
+                                    input_data=payload,
+                                    execution_id=execution_id,
+                                    trigger_type="CDC",
+                                    trigger_id=trigger_id,
+                                    user_id=str(trigger.user_id),
+                                )
 
                             # Update bookmark and clear error
                             async with AsyncSessionLocal() as db:
@@ -363,8 +371,14 @@ async def _listen_for_trigger_changes(manager: CDCManager, stop_event: asyncio.E
         await pubsub.aclose()
 
 
-async def main() -> None:
-    from app.core.redis import close_redis, get_redis
+async def run(stop_event: asyncio.Event) -> None:
+    """CDC service body: startup, run until stop_event, graceful stop.
+
+    Factored out of main() so the all-in-one profile can run it as a task
+    inside the API process. Owns everything except signal handling and the
+    shared Redis client's lifecycle (the caller closes that).
+    """
+    from app.core.redis import get_redis
 
     # --- Redis ---
     redis = await get_redis()
@@ -373,18 +387,13 @@ async def main() -> None:
 
     # --- CDC Manager ---
     manager = CDCManager()
+    manager._stop_event = stop_event
     await manager.start()
 
     # --- Pub/sub listener for live trigger changes ---
-    stop_event = manager._stop_event
     listener_task = asyncio.create_task(_listen_for_trigger_changes(manager, stop_event))
 
-    print("🚀 CDC service running — press Ctrl+C or send SIGTERM to stop")
-
-    # Block until shutdown signal
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop_event.set)
+    print("🚀 CDC service running")
     await stop_event.wait()
 
     # --- Graceful shutdown ---
@@ -395,8 +404,26 @@ async def main() -> None:
     except asyncio.CancelledError:
         pass
     await manager.stop()
-    await close_redis()
     print("👋 CDC service stopped")
+
+
+async def main() -> None:
+    from app.core.redis import close_redis
+
+    # Standalone process only — embedded (all-in-one) mode inherits the API
+    # process's logging config instead of installing this one at import time.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [cdc] %(levelname)s %(name)s: %(message)s",
+    )
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop_event.set)
+    try:
+        await run(stop_event)
+    finally:
+        await close_redis()
 
 
 if __name__ == "__main__":

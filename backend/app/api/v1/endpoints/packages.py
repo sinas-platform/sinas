@@ -36,7 +36,12 @@ async def install_package(
 
     service = PackageService(db)
     try:
-        package, apply_result = await service.install(body.source, user_id, variables=body.variables)
+        package, apply_result = await service.install(
+            body.source,
+            user_id,
+            variables=body.variables,
+            allow_broad_role_permissions=body.allowBroadRolePermissions,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

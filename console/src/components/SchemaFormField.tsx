@@ -73,7 +73,7 @@ export function SchemaFormField({
               type="checkbox"
               checked={value === true}
               onChange={(e) => onChange(e.target.checked)}
-              className="rounded border-white/10 text-primary-600 focus:ring-primary-500"
+              className="rounded border-line text-primary-600 focus:ring-primary-500"
             />
             <span className="text-sm font-medium text-gray-300">
               {name} {required && <span className="text-red-500">*</span>}

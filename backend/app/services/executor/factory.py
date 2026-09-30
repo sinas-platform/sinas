@@ -52,8 +52,14 @@ def get_sandbox_executor() -> SandboxExecutor | None:
 
 
 @lru_cache(maxsize=1)
-def get_trusted_executor() -> TrustedExecutor:
-    """Return the configured trusted executor."""
+def get_trusted_executor() -> TrustedExecutor | None:
+    """Return the configured trusted executor, or None when disabled.
+
+    When `None` is returned, callers must reject `Function.shared_pool`
+    executions with a clear error — no silent fallback to the sandbox
+    (sandbox pods are network-isolated, so trusted functions would break
+    there in confusing ways rather than obviously).
+    """
     mode = settings.trusted_executor
 
     if mode == "docker_shared":
@@ -63,10 +69,18 @@ def get_trusted_executor() -> TrustedExecutor:
 
         return DockerSharedTrustedExecutor()
 
+    if mode == "k8s_shared":
+        from app.services.executor.k8s_shared_trusted import K8sSharedTrustedExecutor
+
+        return K8sSharedTrustedExecutor()
+
     if mode == "inprocess":
         from app.services.executor.inprocess_trusted import InProcessTrustedExecutor
 
         return InProcessTrustedExecutor()
+
+    if mode == "disabled":
+        return None
 
     raise ValueError(f"Unknown trusted_executor mode: {mode!r}")
 

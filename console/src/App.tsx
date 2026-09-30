@@ -42,6 +42,8 @@ import { QueryDetail } from './pages/QueryDetail';
 import { DatabaseTriggers } from './pages/DatabaseTriggers';
 import { Connectors } from './pages/Connectors';
 import { ConnectorEditor } from './pages/ConnectorEditor';
+import { Pipelines } from './pages/Pipelines';
+import { PipelineEditor } from './pages/PipelineEditor';
 import { Secrets } from './pages/Secrets';
 import { Stores } from './pages/Stores';
 
@@ -96,7 +98,7 @@ function App() {
       <ToastProvider>
         <APIErrorHandler>
           <AuthProvider>
-            <BrowserRouter>
+            <BrowserRouter basename="/ui">
           <Routes>
             <Route
               path="/login"
@@ -153,6 +155,8 @@ function App() {
               <Route path="config" element={<ConfigManager />} />
               <Route path="connectors" element={<Connectors />} />
               <Route path="connectors/:namespace/:name" element={<ConnectorEditor />} />
+              <Route path="pipelines" element={<Pipelines />} />
+              <Route path="pipelines/:namespace/:name" element={<PipelineEditor />} />
               <Route path="secrets" element={<Secrets />} />
               <Route path="stores" element={<Stores />} />
               <Route path="logs" element={<RequestLogs />} />

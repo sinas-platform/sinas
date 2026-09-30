@@ -1,9 +1,9 @@
 """Database trigger schemas for CDC."""
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 
 VALID_OPERATIONS = {"INSERT", "UPDATE"}
@@ -15,8 +15,11 @@ class DatabaseTriggerCreate(BaseModel):
     schema_name: str = Field(default="public", max_length=255)
     table_name: str = Field(..., min_length=1, max_length=255)
     operations: list[str] = Field(default=["INSERT", "UPDATE"])
+    target_type: Literal["function", "pipeline"] = "function"
     function_namespace: str = Field(default="default", min_length=1, max_length=255)
-    function_name: str = Field(..., min_length=1, max_length=255)
+    function_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    pipeline_namespace: str = Field(default="default", min_length=1, max_length=255)
+    pipeline_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     poll_column: str = Field(..., min_length=1, max_length=255)
     poll_interval_seconds: int = Field(default=10, ge=1, le=3600)
     batch_size: int = Field(default=100, ge=1, le=10000)
@@ -30,12 +33,25 @@ class DatabaseTriggerCreate(BaseModel):
             raise ValueError("At least one operation is required")
         return v
 
+    @model_validator(mode="after")
+    def validate_target(self):
+        if self.target_type == "function":
+            if not self.function_name:
+                raise ValueError("function_name is required for function-target triggers")
+        else:  # pipeline
+            if not self.pipeline_name:
+                raise ValueError("pipeline_name is required for pipeline-target triggers")
+        return self
+
 
 class DatabaseTriggerUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     operations: Optional[list[str]] = None
+    target_type: Optional[Literal["function", "pipeline"]] = None
     function_namespace: Optional[str] = Field(default=None, min_length=1, max_length=255)
     function_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    pipeline_namespace: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    pipeline_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     poll_column: Optional[str] = Field(default=None, min_length=1, max_length=255)
     poll_interval_seconds: Optional[int] = Field(default=None, ge=1, le=3600)
     batch_size: Optional[int] = Field(default=None, ge=1, le=10000)
@@ -59,8 +75,11 @@ class DatabaseTriggerResponse(BaseModel):
     schema_name: str
     table_name: str
     operations: list[str]
+    target_type: str
     function_namespace: str
-    function_name: str
+    function_name: Optional[str]
+    pipeline_namespace: Optional[str]
+    pipeline_name: Optional[str]
     poll_column: str
     poll_interval_seconds: int
     batch_size: int

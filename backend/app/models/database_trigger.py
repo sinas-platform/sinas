@@ -26,8 +26,15 @@ class DatabaseTrigger(Base):
     schema_name: Mapped[str] = mapped_column(String(255), nullable=False, default="public")
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
     operations: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    # Target: "function" (default) or "pipeline"
+    target_type: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="function", server_default="function"
+    )
     function_namespace: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    function_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    function_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Pipeline target fields (target_type == "pipeline")
+    pipeline_namespace: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    pipeline_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     poll_column: Mapped[str] = mapped_column(String(255), nullable=False)
     poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     batch_size: Mapped[int] = mapped_column(Integer, nullable=False, default=100)

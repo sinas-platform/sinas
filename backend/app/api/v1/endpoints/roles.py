@@ -26,10 +26,26 @@ router = APIRouter(prefix="/roles", tags=["roles"])
 @router.post("", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
 async def create_role(
     role_data: RoleCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_permission("sinas.roles.create:own")),
+    current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Create a new role. Requires admin permission."""
+    """Create a new role, optionally with its initial permission map in one call."""
+    user_id, permissions = current_user_data
+
+    if not check_permission(permissions, "sinas.roles.create:own"):
+        set_permission_used(request, "sinas.roles.create:own", has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to create roles")
+    set_permission_used(request, "sinas.roles.create:own")
+
+    # Inline permissions are the same operation as POST /{name}/permissions,
+    # so they require the same admin permission
+    if role_data.permissions and not check_permission(
+        permissions, "sinas.roles.manage_permissions:all"
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to manage role permissions"
+        )
 
     # Check if role name already exists
     result = await db.execute(select(Role).where(Role.name == role_data.name))
@@ -46,14 +62,20 @@ async def create_role(
     db.add(role)
     await db.flush()
 
-    # Add creator as first member
-    member = UserRole(
-        role_id=role.id,
-        user_id=uuid.UUID(user_id),
-        active=True,
-        added_by=uuid.UUID(user_id),
-    )
-    db.add(member)
+    for perm_key, perm_value in (role_data.permissions or {}).items():
+        db.add(
+            RolePermission(
+                role_id=role.id, permission_key=perm_key, permission_value=perm_value
+            )
+        )
+
+    # The creator is deliberately NOT added as a member. Creating a role
+    # defines a container of authority; it must not grant it (#167). Silent
+    # self-membership is a delayed-escalation path: an admin later attaches
+    # permissions to what looks like an unassigned role and the creator holds
+    # them from that moment, including through any API key they own, without
+    # anyone having decided to grant them. Config-applied roles already work
+    # this way, as do package-shipped roles ("define, never bind").
     await db.flush()
     await db.refresh(role)
 

@@ -1,3 +1,16 @@
+/**
+ * Per-agent provider behaviour overrides. Absent key = inherit the provider's
+ * setting. The backend validates keys and values (providers/factory.py
+ * AGENT_OVERRIDABLE); anything else is rejected.
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface ProviderOverrides {
+  prompt_caching?: boolean;
+  /** Anthropic `output_config.effort` — how much the model thinks and spends. */
+  effort?: EffortLevel;
+}
+
 // Authentication
 export interface User {
   id: string;
@@ -66,6 +79,11 @@ export interface AdminCreateResetLinkResponse {
 }
 
 // API Keys
+export interface APIKeyRoleRef {
+  id: string;
+  name: string;
+}
+
 export interface APIKey {
   id: string;
   user_id: string;
@@ -73,6 +91,7 @@ export interface APIKey {
   name: string;
   key_prefix: string;
   permissions: Record<string, boolean>;
+  roles?: APIKeyRoleRef[];
   is_active: boolean;
   last_used_at: string | null;
   expires_at: string | null;
@@ -82,6 +101,7 @@ export interface APIKey {
 export interface APIKeyCreate {
   name: string;
   permissions: Record<string, boolean>;
+  role_ids?: string[];
   expires_at?: string;
 }
 
@@ -235,6 +255,7 @@ export interface Agent {
   name: string;
   description: string | null;
   llm_provider_id: string | null;
+  provider_overrides?: ProviderOverrides | null;
   model: string | null;
   temperature: number;
   max_tokens: number | null;
@@ -253,6 +274,7 @@ export interface Agent {
   enabled_collections: EnabledCollectionConfig[];
   enabled_components: string[];
   enabled_connectors: EnabledConnectorConfig[];
+  enabled_pipelines: string[];
   hooks: AgentHooks | null;
   status_templates: Record<string, string>;
   icon: string | null;
@@ -271,6 +293,7 @@ export interface AgentCreate {
   name: string;
   description?: string;
   llm_provider_id?: string;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -287,6 +310,7 @@ export interface AgentCreate {
   enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: EnabledCollectionConfig[];
   enabled_connectors?: EnabledConnectorConfig[];
+  enabled_pipelines?: string[];
   hooks?: AgentHooks;
   icon?: string;
   is_default?: boolean;
@@ -300,6 +324,7 @@ export interface AgentUpdate {
   name?: string;
   description?: string;
   llm_provider_id?: string;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -317,6 +342,7 @@ export interface AgentUpdate {
   enabled_collections?: EnabledCollectionConfig[];
   enabled_components?: string[];
   enabled_connectors?: EnabledConnectorConfig[];
+  enabled_pipelines?: string[];
   hooks?: AgentHooks;
   status_templates?: Record<string, string>;
   icon?: string;
@@ -495,8 +521,15 @@ export interface EnabledConnectorConfig {
 export interface Webhook {
   id: string;
   path: string;
+  target_type: 'function' | 'agent' | 'pipeline';
   function_namespace: string;
-  function_name: string;
+  function_name: string | null;
+  agent_namespace: string | null;
+  agent_name: string | null;
+  pipeline_namespace?: string | null;
+  pipeline_name?: string | null;
+  message_template: string | null;
+  session_key_template: string | null;
   http_method: string;
   description: string | null;
   default_values: Record<string, any> | null;
@@ -510,8 +543,13 @@ export interface Webhook {
 
 export interface WebhookCreate {
   path: string;
+  target_type?: 'function' | 'agent' | 'pipeline';
   function_namespace?: string;
-  function_name: string;
+  function_name?: string;
+  agent_namespace?: string;
+  agent_name?: string;
+  message_template?: string;
+  session_key_template?: string;
   http_method?: string;
   description?: string;
   default_values?: Record<string, any>;
@@ -521,8 +559,13 @@ export interface WebhookCreate {
 }
 
 export interface WebhookUpdate {
+  target_type?: 'function' | 'agent' | 'pipeline';
   function_namespace?: string;
   function_name?: string;
+  agent_namespace?: string;
+  agent_name?: string;
+  message_template?: string;
+  session_key_template?: string;
   http_method?: string;
   description?: string;
   default_values?: Record<string, any>;
@@ -1158,8 +1201,11 @@ export interface DatabaseTrigger {
   schema_name: string;
   table_name: string;
   operations: string[];
+  target_type?: 'function' | 'pipeline';
   function_namespace: string;
   function_name: string;
+  pipeline_namespace?: string | null;
+  pipeline_name?: string | null;
   poll_column: string;
   poll_interval_seconds: number;
   batch_size: number;
@@ -1205,4 +1251,90 @@ export interface FileSearchResult {
   filename: string;
   version: number;
   matches: FileSearchMatch[];
+}
+
+// Pipelines
+export interface PipelineStep {
+  name: string;
+  type: 'connector' | 'function' | 'agent' | 'query' | 'load';
+  [key: string]: any; // per-type fields + `.$` mapping keys, edited as JSON
+}
+
+export interface Pipeline {
+  id: string;
+  user_id: string;
+  namespace: string;
+  name: string;
+  description?: string | null;
+  input_schema: Record<string, any>;
+  steps: PipelineStep[];
+  per_user?: { connector: string; disableAfterFailures?: number } | null;
+  as_tool: boolean;
+  tool_description?: string | null;
+  sync_timeout_seconds: number;
+  concurrency?: 'single' | 'parallel' | null;
+  disable_after_failures?: number | null;
+  output_mapping?: Record<string, any> | null;
+  cursor_value?: string | null;
+  error_message?: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at?: string | null;
+}
+
+export interface PipelineCreate {
+  namespace: string;
+  name: string;
+  description?: string | null;
+  input_schema?: Record<string, any> | null;
+  steps: PipelineStep[];
+  per_user?: { connector: string; disableAfterFailures?: number } | null;
+  as_tool?: boolean;
+  tool_description?: string | null;
+  sync_timeout_seconds?: number;
+  concurrency?: 'single' | 'parallel' | null;
+  disable_after_failures?: number | null;
+  output_mapping?: Record<string, any> | null;
+}
+
+export interface PipelineUpdate extends Partial<PipelineCreate> {
+  is_active?: boolean;
+}
+
+export interface PipelineRunStepSummary {
+  name: string;
+  type: string;
+  status: string;
+  startedAt?: string;
+  durationMs?: number;
+  executionId?: string;
+  chatId?: string;
+  error?: string;
+}
+
+export interface PipelineRun {
+  id: string;
+  run_id: string;
+  pipeline_id: string;
+  user_id: string;
+  trigger_type: string;
+  trigger_id?: string | null;
+  status: 'running' | 'succeeded' | 'failed' | 'timed_out' | string;
+  input?: Record<string, any> | null;
+  steps: PipelineRunStepSummary[];
+  error?: string | null;
+  cursor_before?: string | null;
+  cursor_after?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  duration_ms?: number | null;
+}
+
+export interface PipelineRunOutcome {
+  run_id: string;
+  status: string;
+  output?: any;
+  error?: string | null;
+  steps?: PipelineRunStepSummary[];
+  duration_ms?: number | null;
 }

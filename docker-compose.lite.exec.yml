@@ -1,0 +1,16 @@
+# Additive override for the lite profile: enables code execution by
+# mounting the host Docker socket and switching on the Docker executors
+# (ephemeral sandbox containers, shared trusted workers on demand).
+# The base lite file mounts no socket and disables execution, so the
+# privilege only exists when this file is explicitly included:
+#
+#   docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d
+
+services:
+  sinas:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      CODE_EXECUTION_ENABLED: ${CODE_EXECUTION_ENABLED:-true}
+      SANDBOX_EXECUTOR: ${SANDBOX_EXECUTOR:-docker_ephemeral}
+      TRUSTED_EXECUTOR: ${TRUSTED_EXECUTOR:-docker_shared}

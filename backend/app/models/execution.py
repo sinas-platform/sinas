@@ -17,6 +17,7 @@ class TriggerType(str, enum.Enum):
     API = "API"  # Triggered via runtime API
     CDC = "CDC"  # Triggered by CDC (Change Data Capture) polling
     HOOK = "HOOK"  # Triggered by message lifecycle hook
+    PIPELINE = "PIPELINE"  # Child execution of a pipeline run (trigger_id = run_id)
 
 
 class ExecutionStatus(str, enum.Enum):

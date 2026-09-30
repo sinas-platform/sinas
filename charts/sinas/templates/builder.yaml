@@ -1,3 +1,4 @@
+{{- if or (not (hasKey (.Values.builder | default dict) "enabled")) .Values.builder.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -18,9 +19,10 @@ spec:
         app.kubernetes.io/component: builder
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.builder) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: builder
-          image: {{ .Values.image.registry }}/builder:{{ .Values.image.tag }}
+          image: {{ .Values.image.registry }}/builder:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 3000
@@ -52,3 +54,4 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
+{{- end }}

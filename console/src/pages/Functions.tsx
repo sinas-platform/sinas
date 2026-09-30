@@ -4,9 +4,13 @@ import { Code, Plus, Trash2, Edit2, PackageOpen, ChevronDown, ChevronRight, Sear
 import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { SchemaFormField } from '../components/SchemaFormField';
+import { useAuth } from '../lib/auth-context';
 
 export function Functions() {
   const queryClient = useQueryClient();
+  const { instanceInfo } = useAuth();
+  // Absent flag (older backend) = enabled; only an explicit false greys out.
+  const codeExecutionEnabled = instanceInfo?.features?.code_execution !== false;
   const [showDependencyModal, setShowDependencyModal] = useState(false);
   const [dependencyName, setDependencyName] = useState('');
   const [dependencyVersion, setDependencyVersion] = useState('');
@@ -175,12 +179,24 @@ export function Functions() {
             <PackageOpen className="w-5 h-5 mr-2" />
             Dependencies
           </button>
-          <Link to="/functions/new/new" className="btn btn-primary flex items-center">
+          <Link
+            to="/functions/new/new"
+            className={`btn btn-primary flex items-center ${!codeExecutionEnabled ? 'opacity-40 pointer-events-none' : ''}`}
+            aria-disabled={!codeExecutionEnabled}
+          >
             <Plus className="w-5 h-5 mr-2" />
             New Function
           </Link>
         </div>
       </div>
+
+      {!codeExecutionEnabled && (
+        <div className="px-4 py-3 rounded-md bg-yellow-900/20 border border-yellow-800/30 text-sm text-yellow-400">
+          Code execution is disabled on this deployment
+          (<span className="font-mono">CODE_EXECUTION_ENABLED=false</span>).
+          Functions can be viewed but not created or executed.
+        </div>
+      )}
 
       {/* Search Bar */}
       {functions && functions.length > 0 && (
@@ -198,7 +214,7 @@ export function Functions() {
 
       {/* Dependencies Section */}
       {dependencies && dependencies.length > 0 && (
-        <div className="card bg-[#0d0d0d]">
+        <div className="card bg-surface-0">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-gray-300">Installed Dependencies ({dependencies.length})</h3>
             <button
@@ -211,7 +227,7 @@ export function Functions() {
           </div>
           <div className="flex flex-wrap gap-2">
             {dependencies.map((dep: any) => (
-              <div key={dep.id} className="flex items-center bg-[#161616] px-3 py-1 rounded border border-white/[0.06]">
+              <div key={dep.id} className="flex items-center bg-surface-1 px-3 py-1 rounded border border-line-soft">
                 <span className="text-sm font-mono">{dep.package_name}</span>
                 <span className="text-xs text-gray-500 ml-2">{dep.version}</span>
                 <button
@@ -303,16 +319,16 @@ export function Functions() {
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
                       onClick={() => handleExecute(func)}
-                      disabled={executeMutation.isPending}
-                      className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-400 bg-green-900/20 hover:bg-green-900/30 rounded-md transition-colors"
-                      title="Execute function"
+                      disabled={executeMutation.isPending || !codeExecutionEnabled}
+                      className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-400 bg-green-900/20 hover:bg-green-900/30 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={codeExecutionEnabled ? 'Execute function' : 'Code execution is disabled on this deployment (CODE_EXECUTION_ENABLED=false)'}
                     >
                       <Play className="w-4 h-4 mr-1.5" />
                       Run
                     </button>
                     <Link
                       to={`/functions/${func.namespace}/${func.name}`}
-                      className="p-2 text-gray-500 hover:text-primary-600 hover:bg-white/10 rounded-md transition-colors"
+                      className="p-2 text-gray-500 hover:text-primary-600 hover:bg-hover-strong rounded-md transition-colors"
                       title="Edit"
                     >
                       <Edit2 className="w-4 h-4" />
@@ -323,7 +339,7 @@ export function Functions() {
                           deleteMutation.mutate({ namespace: func.namespace, name: func.name });
                         }
                       }}
-                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-white/10 rounded-md transition-colors"
+                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-hover-strong rounded-md transition-colors"
                       disabled={deleteMutation.isPending}
                       title="Delete"
                     >
@@ -360,7 +376,7 @@ export function Functions() {
       {/* Execute Function Modal */}
       {showExecuteModal && executeFunc && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-xl font-semibold text-gray-100">Execute Function</h2>
@@ -472,7 +488,7 @@ export function Functions() {
       {/* Dependency Management Modal */}
       {showDependencyModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-2xl w-full p-6">
+          <div className="bg-surface-1 rounded-lg max-w-2xl w-full p-6">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Manage Dependencies</h2>
 
             <form onSubmit={handleInstallDependency} className="mb-6">
@@ -507,12 +523,12 @@ export function Functions() {
               </div>
             </form>
 
-            <div className="border-t border-white/[0.06] pt-4">
+            <div className="border-t border-line-soft pt-4">
               <h3 className="text-sm font-medium text-gray-300 mb-3">Installed Dependencies</h3>
               {dependencies && dependencies.length > 0 ? (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {dependencies.map((dep: any) => (
-                    <div key={dep.id} className="flex items-center justify-between p-2 bg-[#0d0d0d] rounded">
+                    <div key={dep.id} className="flex items-center justify-between p-2 bg-surface-0 rounded">
                       <div>
                         <span className="font-mono text-sm">{dep.package_name}</span>
                         {dep.version && <span className="text-xs text-gray-500 ml-2">=={dep.version}</span>}

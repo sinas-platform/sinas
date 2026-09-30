@@ -150,6 +150,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 101
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.clickhouse) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: clickhouse
           image: clickhouse/clickhouse-server:24-alpine

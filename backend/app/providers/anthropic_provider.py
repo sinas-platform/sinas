@@ -1,4 +1,6 @@
 """Anthropic LLM provider implementation."""
+import copy
+import json
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
@@ -7,8 +9,90 @@ from anthropic import AsyncAnthropic
 from .base import BaseLLMProvider
 
 
+class UnsupportedOutputSchema(ValueError):
+    """An agent output schema that Claude's native structured outputs can't
+    express. Raised before any request is sent, with the offending path."""
+
+
+_SUBSCHEMA_MAPS = ("properties", "$defs", "definitions")
+_SUBSCHEMA_LISTS = ("anyOf", "oneOf", "allOf", "prefixItems")
+_SUBSCHEMA_SINGLE = ("not", "if", "then", "else", "contains")
+
+
+def _is_object_schema(schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    if kind == "object" or (isinstance(kind, list) and "object" in kind):
+        return True
+    # Untyped schemas still describe objects when they carry object keywords;
+    # a bare `{"additionalProperties": {...}}` is a map and must be caught here,
+    # not sent to the API to 400 without a path.
+    return "type" not in schema and (
+        "properties" in schema or "additionalProperties" in schema
+    )
+
+
+def close_object_schemas(schema: Any, path: str = "$") -> Any:
+    """Return a copy of `schema` that native structured outputs will accept.
+
+    The one rule the API enforces on hand-written schemas: EVERY object,
+    nested ones included, must set `additionalProperties: false` (verified
+    live — a top-level-only fix still 400s on a nested object). `required`
+    is not needed, so optional fields stay optional and are left alone.
+
+    Unset -> filled in. An object that explicitly allows extra keys (`true`,
+    or a schema, i.e. a free-form map) can't be expressed at all, and forcing
+    `false` would silently turn the map into an always-empty object — that is
+    an error naming the path instead of a changed contract.
+
+    Always a deep copy: callers pass schemas that are still attached to the
+    agent's stored output_schema, and editing them in place would write
+    through to the ORM object.
+    """
+    if isinstance(schema, list):
+        return [close_object_schemas(item, f"{path}[{i}]") for i, item in enumerate(schema)]
+    if not isinstance(schema, dict):
+        return schema
+
+    out = {key: copy.deepcopy(value) for key, value in schema.items()}
+
+    if _is_object_schema(out):
+        extra = out.get("additionalProperties", None)
+        if extra is None:
+            out["additionalProperties"] = False
+        elif extra is not False:
+            raise UnsupportedOutputSchema(
+                f"Output schema object at {path} allows arbitrary extra keys "
+                f"(additionalProperties: {json.dumps(extra)}), which Claude's "
+                f"native structured outputs cannot express. Give it explicit "
+                f"properties, or model the map as an array of "
+                f"{{key, value}} objects."
+            )
+
+    for key in _SUBSCHEMA_MAPS:
+        if isinstance(out.get(key), dict):
+            out[key] = {
+                name: close_object_schemas(sub, f"{path}.{key}.{name}" if key != "properties" else f"{path}.{name}")
+                for name, sub in out[key].items()
+            }
+    for key in _SUBSCHEMA_LISTS:
+        if isinstance(out.get(key), list):
+            out[key] = [
+                close_object_schemas(sub, f"{path}.{key}[{i}]")
+                for i, sub in enumerate(out[key])
+            ]
+    for key in _SUBSCHEMA_SINGLE:
+        if isinstance(out.get(key), dict):
+            out[key] = close_object_schemas(out[key], f"{path}.{key}")
+    if isinstance(out.get("items"), (dict, list)):
+        out["items"] = close_object_schemas(out["items"], f"{path}[]")
+
+    return out
+
+
 class AnthropicProvider(BaseLLMProvider):
     """Anthropic (Claude) API provider."""
+
+    supports_batch = True
 
     def __init__(
         self,
@@ -19,6 +103,10 @@ class AnthropicProvider(BaseLLMProvider):
         super().__init__(api_key, base_url)
         self.client = AsyncAnthropic(api_key=api_key, base_url=base_url)
         self.enable_prompt_caching = enable_prompt_caching
+        # output_config.effort, set per agent through provider_overrides
+        # (see AGENT_OVERRIDABLE in factory.py). None sends nothing and the
+        # model runs at its own default effort.
+        self.effort: Optional[str] = None
 
     async def complete(
         self,
@@ -33,10 +121,13 @@ class AnthropicProvider(BaseLLMProvider):
         # Convert OpenAI-style messages to Anthropic format
         system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
+        # SDK >=1.0.0 removed the sampling knobs (temperature/top_p/top_k) from
+        # the Messages API entirely — passing them is a TypeError. The
+        # `temperature` argument is kept for provider-interface compatibility
+        # and deliberately ignored.
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,  # Anthropic requires max_tokens
         }
 
@@ -47,10 +138,38 @@ class AnthropicProvider(BaseLLMProvider):
             # Convert OpenAI tool format to Anthropic format
             params["tools"] = self._convert_tools_to_anthropic(tools)
 
+        # Structured outputs: native `output_config.format`, which guarantees
+        # the answer is a text block of JSON matching the schema. This
+        # replaced forced tool use (`tool_choice: {type: "tool"}`), which
+        # Claude Opus 5.5 / Sonnet 5.5 / Fable 5.1 reject with a 400; native
+        # structured outputs work on every current model (verified live
+        # across Haiku 4.5 through Opus 5.5). Only when the request carries
+        # no real tools — tool-using agents keep the prompt-based instruction.
+        response_format = kwargs.get("response_format")
+        if response_format and not tools and response_format.get("type") == "json_schema":
+            schema = (response_format.get("json_schema") or {}).get("schema")
+            if schema:
+                params.setdefault("output_config", {})["format"] = {
+                    "type": "json_schema",
+                    "schema": close_object_schemas(schema),
+                }
+
+        self._apply_output_config(params)
+
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
 
-        response = await self.client.messages.create(**params)
+        try:
+            response = await self.client.messages.create(**params)
+        except ValueError as e:
+            # The SDK refuses non-streaming requests whose ESTIMATED duration
+            # exceeds its limit (derived from max_tokens and model speed).
+            # Rather than encode any threshold ourselves, catch its guard and
+            # accumulate a stream into the identical Message object.
+            if "streaming" not in str(e).lower():
+                raise
+            async with self.client.messages.stream(**params) as s:
+                response = await s.get_final_message()
 
         # Extract content (Anthropic returns list of content blocks)
         content = ""
@@ -93,10 +212,11 @@ class AnthropicProvider(BaseLLMProvider):
         # Convert OpenAI-style messages to Anthropic format
         system_message, filtered_messages = self._convert_messages_to_anthropic(messages)
 
+        # temperature deliberately not passed — removed from the SDK >=1.0.0
+        # (see complete())
         params = {
             "model": model,
             "messages": filtered_messages,
-            "temperature": temperature if temperature is not None else 1.0,  # Anthropic requires valid number
             "max_tokens": max_tokens or 16384,
         }
 
@@ -105,6 +225,8 @@ class AnthropicProvider(BaseLLMProvider):
 
         if tools:
             params["tools"] = self._convert_tools_to_anthropic(tools)
+
+        self._apply_output_config(params)
 
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
@@ -209,6 +331,15 @@ class AnthropicProvider(BaseLLMProvider):
                     }
 
                 yield chunk_data
+
+    def _apply_output_config(self, params: dict[str, Any]) -> None:
+        """Merge this provider's output_config settings into a request.
+
+        Merged, not assigned: output_config also carries the structured-output
+        `format`, and one must never erase the other.
+        """
+        if self.effort:
+            params.setdefault("output_config", {})["effort"] = self.effort
 
     def _apply_cache_control(self, params: dict[str, Any]) -> None:
         """Mark prompt-cache breakpoints on the request (in place).
@@ -479,3 +610,73 @@ class AnthropicProvider(BaseLLMProvider):
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
         }
+
+    # ── Message Batches API ───────────────────────────────────────────────
+
+    def _build_batch_params(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Build per-request params for a batch item — same conversion and
+        cache-control path as complete()/stream(), minus tools (batch mode
+        is tool-less by contract)."""
+        system_message, filtered_messages = self._convert_messages_to_anthropic(
+            request["messages"]
+        )
+        # temperature deliberately not passed — removed from the SDK >=1.0.0
+        # (see complete()); batch items use the same params schema
+        params: dict[str, Any] = {
+            "model": request["model"],
+            "messages": filtered_messages,
+            "max_tokens": request.get("max_tokens") or 16384,
+        }
+        if system_message:
+            params["system"] = system_message
+        self._apply_output_config(params)
+        if self.enable_prompt_caching:
+            # Batch requests sharing an agent's system prompt can still land
+            # opportunistic cache hits — the discounts stack.
+            self._apply_cache_control(params)
+        return params
+
+    async def submit_batch(self, requests: list[dict[str, Any]]) -> str:
+        batch = await self.client.messages.batches.create(
+            requests=[
+                {"custom_id": req["custom_id"], "params": self._build_batch_params(req)}
+                for req in requests
+            ]
+        )
+        return batch.id
+
+    async def get_batch_status(self, provider_batch_id: str) -> dict[str, Any]:
+        batch = await self.client.messages.batches.retrieve(provider_batch_id)
+        return {
+            "status": batch.processing_status,
+            "ended": batch.processing_status == "ended",
+        }
+
+    async def fetch_batch_results(self, provider_batch_id: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        # SDK-normalized statuses: succeeded | errored | canceled | expired
+        status_map = {"canceled": "cancelled"}
+        async for entry in await self.client.messages.batches.results(provider_batch_id):
+            result_type = entry.result.type
+            item: dict[str, Any] = {
+                "custom_id": entry.custom_id,
+                "status": status_map.get(result_type, result_type),
+                "content": None,
+                "usage": None,
+                "error": None,
+            }
+            if result_type == "succeeded":
+                message = entry.result.message
+                item["content"] = "".join(
+                    block.text for block in message.content if block.type == "text"
+                )
+                item["usage"] = self.extract_usage(message)
+            elif result_type == "errored":
+                item["error"] = str(entry.result.error)
+            elif result_type == "expired":
+                item["error"] = "provider_batch_expired"
+            results.append(item)
+        return results
+
+    async def cancel_batch(self, provider_batch_id: str) -> None:
+        await self.client.messages.batches.cancel(provider_batch_id)

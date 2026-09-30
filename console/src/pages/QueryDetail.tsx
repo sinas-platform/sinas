@@ -131,7 +131,7 @@ export function QueryDetail() {
               {query.operation}
             </span>
             {!query.is_active && (
-              <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
+              <span className="px-2 py-0.5 bg-surface-2 text-gray-400 text-xs font-medium rounded">Inactive</span>
             )}
           </div>
         </div>
@@ -266,8 +266,8 @@ print(result)`,
             placeholder="SELECT * FROM table WHERE column = :param_name"
           />
           <p className="text-xs text-gray-500 mt-2">
-            Use <code className="bg-[#161616] px-1 rounded">:param_name</code> for input parameters.
-            Context vars <code className="bg-[#161616] px-1 rounded">:user_id</code> and <code className="bg-[#161616] px-1 rounded">:user_email</code> are auto-injected.
+            Use <code className="bg-surface-1 px-1 rounded">:param_name</code> for input parameters.
+            Context vars <code className="bg-surface-1 px-1 rounded">:user_id</code> and <code className="bg-surface-1 px-1 rounded">:user_email</code> are auto-injected.
           </p>
         </div>
 
@@ -384,7 +384,7 @@ print(result)`,
           )}
 
           {executeResult && (
-            <div className="bg-[#0d0d0d] border border-white/[0.06] rounded-lg p-4">
+            <div className="bg-surface-0 border border-line-soft rounded-lg p-4">
               <div className="flex items-center gap-4 mb-3 text-sm">
                 <span className={`font-medium ${executeResult.success ? 'text-green-400' : 'text-red-400'}`}>
                   {executeResult.success ? 'Success' : 'Failed'}
@@ -401,7 +401,7 @@ print(result)`,
                 <div className="overflow-x-auto">
                   <table className="min-w-full text-sm">
                     <thead>
-                      <tr className="border-b border-white/10">
+                      <tr className="border-b border-line">
                         {Object.keys(executeResult.data[0]).map((col) => (
                           <th key={col} className="px-3 py-2 text-left font-medium text-gray-300">
                             {col}
@@ -411,7 +411,7 @@ print(result)`,
                     </thead>
                     <tbody>
                       {executeResult.data.slice(0, 50).map((row, i) => (
-                        <tr key={i} className="border-b border-white/[0.06]">
+                        <tr key={i} className="border-b border-line-soft">
                           {Object.values(row).map((val, j) => (
                             <td key={j} className="px-3 py-2 text-gray-400 font-mono text-xs">
                               {val === null ? <span className="text-gray-500 italic">null</span> : String(val)}

@@ -17,8 +17,10 @@ function CreateTriggerModal({
   const [tableName, setTableName] = useState('');
   const [pollColumn, setPollColumn] = useState('');
   const [operations, setOperations] = useState<string[]>(['INSERT', 'UPDATE']);
+  const [targetType, setTargetType] = useState<'function' | 'pipeline'>('function');
   const [functionNamespace, setFunctionNamespace] = useState('default');
   const [functionName, setFunctionName] = useState('');
+  const [pipelineRef, setPipelineRef] = useState('');
   const [pollInterval, setPollInterval] = useState(10);
   const [batchSize, setBatchSize] = useState(100);
   const [error, setError] = useState('');
@@ -31,6 +33,11 @@ function CreateTriggerModal({
   const { data: functions } = useQuery({
     queryKey: ['functions'],
     queryFn: () => apiClient.listFunctions(),
+  });
+
+  const { data: pipelines } = useQuery({
+    queryKey: ['pipelines'],
+    queryFn: () => apiClient.listPipelines(),
   });
 
   const createMutation = useMutation({
@@ -47,6 +54,18 @@ function CreateTriggerModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    const target =
+      targetType === 'pipeline'
+        ? {
+            target_type: 'pipeline',
+            pipeline_namespace: pipelineRef.split('/')[0],
+            pipeline_name: pipelineRef.split('/').slice(1).join('/'),
+          }
+        : {
+            target_type: 'function',
+            function_namespace: functionNamespace,
+            function_name: functionName,
+          };
     createMutation.mutate({
       name,
       database_connection_id: connectionId,
@@ -54,8 +73,7 @@ function CreateTriggerModal({
       table_name: tableName,
       poll_column: pollColumn,
       operations,
-      function_namespace: functionNamespace,
-      function_name: functionName,
+      ...target,
       poll_interval_seconds: pollInterval,
       batch_size: batchSize,
     });
@@ -75,7 +93,7 @@ function CreateTriggerModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#161616] rounded-lg border border-white/[0.06] w-full max-w-lg max-h-[90vh] overflow-y-auto">
+      <div className="bg-surface-1 rounded-lg border border-line-soft w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="p-6">
           <h2 className="text-xl font-semibold text-gray-100 mb-4">New Database Trigger</h2>
 
@@ -169,6 +187,34 @@ function CreateTriggerModal({
               </div>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1">Target</label>
+              <div className="flex rounded-lg border border-line overflow-hidden w-fit">
+                {(['function', 'pipeline'] as const).map((t, i) => (
+                  <button key={t} type="button"
+                    onClick={() => setTargetType(t)}
+                    className={`px-4 py-1.5 text-sm font-medium ${i > 0 ? 'border-l border-line ' : ''}${
+                      targetType === t ? 'bg-blue-600 text-white' : 'bg-surface-1 text-gray-300 hover:bg-hover'}`}>
+                    {t === 'function' ? 'Function' : 'Pipeline'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {targetType === 'pipeline' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">Pipeline</label>
+                <select value={pipelineRef} onChange={(e) => setPipelineRef(e.target.value)} className="input w-full" required>
+                  <option value="">Select pipeline...</option>
+                  {(pipelines || []).map((pl: any) => (
+                    <option key={pl.id} value={`${pl.namespace}/${pl.name}`}>{pl.namespace}/{pl.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Changed rows arrive as the run input</p>
+              </div>
+            )}
+
+            {targetType === 'function' && (
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">Function Namespace</label>
@@ -200,6 +246,7 @@ function CreateTriggerModal({
                 </select>
               </div>
             </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -329,7 +376,7 @@ export function DatabaseTriggers() {
                             ? 'bg-red-900/30 text-red-300'
                             : trigger.is_active
                               ? 'bg-green-900/30 text-green-300'
-                              : 'bg-[#161616] text-gray-200'
+                              : 'bg-surface-1 text-gray-200'
                         }`}
                       >
                         {trigger.error_message ? 'Error' : trigger.is_active ? 'Active' : 'Inactive'}
@@ -354,9 +401,11 @@ export function DatabaseTriggers() {
                       </p>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      Function:{' '}
+                      {trigger.target_type === 'pipeline' ? 'Pipeline:' : 'Function:'}{' '}
                       <span className="font-mono">
-                        {trigger.function_namespace}/{trigger.function_name}
+                        {trigger.target_type === 'pipeline'
+                          ? `${trigger.pipeline_namespace}/${trigger.pipeline_name}`
+                          : `${trigger.function_namespace}/${trigger.function_name}`}
                       </span>
                     </p>
                     {trigger.last_poll_value && (

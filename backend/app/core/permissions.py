@@ -311,6 +311,10 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.connectors/*/*.read:own": True,
         "sinas.connectors/*/*.update:own": True,
         "sinas.connectors/*/*.delete:own": True,
+        # Pipelines (namespaced) — read + run for users; create/update stay
+        # admin-granted (conservative default, matching queries).
+        "sinas.pipelines/*/*.read:own": True,
+        "sinas.pipelines/*/*.run:own": True,
         # Secrets (non-namespaced)
         "sinas.secrets.create:own": True,
         "sinas.secrets.read:own": True,

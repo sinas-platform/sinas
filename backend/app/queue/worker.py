@@ -2,12 +2,16 @@
 import asyncio
 import json
 import logging
+import random
 import time
 import uuid
 from typing import Any
 
+from arq.worker import Retry
+
 from app.core.config import settings
 from app.core.redis import get_redis_settings
+from app.services.shared_admission import SharedPoolSaturated
 from app.services.queue_service import (
     DLQ_KEY,
     JOB_RESULT_PREFIX,
@@ -149,6 +153,74 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         logger.info(f"Function job {job_id} completed successfully")
         return result
 
+    except SharedPoolSaturated as e:
+        # Backpressure, not failure: the engine left the Execution row
+        # PENDING. Defer the job and let arq re-run it as slots free — the
+        # queue is the waiting room, so bulk ingest (thousands of uploads
+        # onto a small pool) drains over however long it takes. The
+        # time bound only exists so a permanently wedged pool eventually
+        # fails loudly; 0 = wait forever.
+        job_try = ctx.get("job_try", 1)
+        enqueued_at = base_fields.get("enqueued_at") or time.time()
+        base_fields["enqueued_at"] = enqueued_at  # start the clock if the status key expired
+        elapsed = time.time() - float(enqueued_at)
+        window = settings.queue_saturation_timeout_seconds
+        if window <= 0 or elapsed < window:
+            defer = min(2 ** job_try, 30) + random.uniform(0, 2)
+            await redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({
+                    **base_fields,
+                    "status": "queued",
+                    "detail": (
+                        f"shared pool saturated; waited {elapsed:.0f}s, "
+                        f"retrying in {defer:.0f}s"
+                    ),
+                }),
+                ex=JOB_TTL,
+            )
+            logger.info(
+                f"Function job {job_id} deferred {defer:.0f}s "
+                f"(pool saturated {elapsed:.0f}s, attempt {job_try})"
+            )
+            completed = True
+            raise Retry(defer=defer)
+
+        # Window exhausted — now it IS a failure. The engine skipped its
+        # failure bookkeeping for saturation, so do it here.
+        logger.error(
+            f"Function job {job_id} failed: pool saturated for {elapsed:.0f}s "
+            f"(window {window}s)"
+        )
+        from app.core.database import AsyncSessionLocal
+        from app.models.execution import Execution, ExecutionStatus
+        from sqlalchemy import select as _select
+        from datetime import datetime as _dt
+
+        async with AsyncSessionLocal() as _db:
+            row = (
+                await _db.execute(
+                    _select(Execution).where(Execution.execution_id == execution_id)
+                )
+            ).scalar_one_or_none()
+            if row and row.status == ExecutionStatus.PENDING:
+                row.status = ExecutionStatus.FAILED
+                row.error = str(e)
+                row.completed_at = _dt.utcnow()
+                await _db.commit()
+
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps({**base_fields, "status": "failed", "error": str(e)}),
+            ex=JOB_TTL,
+        )
+        await redis.publish(
+            f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+            json.dumps({"status": "failed", "error": str(e)}),
+        )
+        completed = True
+        raise
+
     except Exception as e:
         logger.error(f"Function job {job_id} failed: {e}")
 
@@ -229,7 +301,7 @@ async def function_worker_startup(ctx: dict) -> None:
     # Discover shared worker containers (created by scheduler).
     # Retry a few times — the scheduler may still be starting up.
     # Skipped for non-Docker executors (k8s / single-container).
-    if settings.trusted_executor == "docker_shared":
+    if settings.code_execution_enabled and settings.trusted_executor == "docker_shared":
         from app.services.shared_worker_manager import shared_worker_manager
 
         for attempt in range(10):
@@ -244,7 +316,7 @@ async def function_worker_startup(ctx: dict) -> None:
         print(f"✅ Discovered {len(shared_worker_manager.workers)} shared containers")
 
     # Discover existing sandbox containers (created by backend leader)
-    if settings.sandbox_executor == "docker_pool":
+    if settings.code_execution_enabled and settings.sandbox_executor == "docker_pool":
         from app.services.container_pool import container_pool
 
         await container_pool._discover_existing_containers()
@@ -286,7 +358,7 @@ async def agent_worker_startup(ctx: dict) -> None:
     from app.core.database import AsyncSessionLocal  # noqa: F401
 
     # Discover sandbox containers (needed for code execution tool)
-    if settings.sandbox_executor == "docker_pool":
+    if settings.code_execution_enabled and settings.sandbox_executor == "docker_pool":
         from app.services.container_pool import container_pool
 
         await container_pool._discover_existing_containers()
@@ -308,6 +380,77 @@ async def agent_worker_startup(ctx: dict) -> None:
     )
 
     logger.info(f"Agent worker started (id={worker_id})")
+
+
+async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
+    """Execute one pipeline run (one user scope) in the pipeline worker."""
+    from app.services import pipeline_runner
+
+    pipeline_id = kwargs["pipeline_id"]
+    user_id = kwargs["user_id"]
+
+    token = await pipeline_runner.mint_run_token(user_id)
+    if not token:
+        logger.error(f"Pipeline run job: user {user_id} not found, dropping run")
+        return {"status": "failed", "error": f"User {user_id} not found"}
+
+    return await pipeline_runner.run_pipeline(
+        pipeline_id,
+        kwargs.get("run_input"),
+        run_id=kwargs.get("run_id"),
+        trigger_type=kwargs.get("trigger_type", "API"),
+        trigger_id=kwargs.get("trigger_id"),
+        user_id=user_id,
+        user_token=token,
+        sync=False,
+    )
+
+
+async def execute_pipeline_fire_job(ctx: dict, **kwargs: Any) -> Any:
+    """Expand a trigger firing into per-scope run jobs (perUser fan-out)."""
+    from app.services import pipeline_runner
+
+    job_ids = await pipeline_runner.fire_pipeline(
+        kwargs["namespace"],
+        kwargs["name"],
+        kwargs.get("run_input"),
+        trigger_type=kwargs.get("trigger_type", "API"),
+        trigger_id=kwargs.get("trigger_id"),
+    )
+    return {"runs": len(job_ids), "job_ids": job_ids}
+
+
+async def pipeline_worker_startup(ctx: dict) -> None:
+    """arq startup hook for the pipeline worker.
+
+    Pipeline runs are await-heavy orchestration (they wait on child function/
+    agent executions and HTTP), so this worker runs many jobs concurrently and
+    needs no container discovery.
+    """
+    from redis.asyncio import Redis
+
+    from app.core.telemetry import init_telemetry
+    init_telemetry()
+
+    ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
+
+    # Eagerly import the runner so the first job doesn't pay import cost
+    from app.services import pipeline_runner  # noqa: F401
+
+    worker_id = str(uuid.uuid4())
+    ctx["worker_id"] = worker_id
+    heartbeat_data = {
+        "worker_id": worker_id,
+        "queue": "pipelines",
+        "max_jobs": settings.queue_pipeline_concurrency,
+        "started_at": time.time(),
+        "last_heartbeat": time.time(),
+    }
+    ctx["_heartbeat_task"] = asyncio.create_task(
+        _heartbeat_loop(ctx["redis"], worker_id, heartbeat_data)
+    )
+
+    logger.info(f"Pipeline worker started (id={worker_id})")
 
 
 async def shutdown(ctx: dict) -> None:
@@ -340,7 +483,17 @@ class WorkerSettings:
     queue_name = "sinas:queue:functions"
     max_jobs = settings.queue_function_concurrency
     job_timeout = settings.queue_default_timeout
-    max_tries = settings.queue_max_retries
+    # Must exceed the worst-case saturation attempt count (≈ window / 30s
+    # backoff cap) or arq's own cap kills a deferred job before our explicit
+    # exhausted-path bookkeeping runs. Plain exceptions are unaffected: arq
+    # only re-runs jobs that raise Retry. For window=0 (wait forever), give
+    # arq an effectively unlimited budget.
+    max_tries = max(
+        settings.queue_max_retries,
+        (settings.queue_saturation_timeout_seconds // 30 + 10)
+        if settings.queue_saturation_timeout_seconds > 0
+        else 1_000_000,
+    )
     retry_delay = settings.queue_retry_delay
 
 
@@ -367,6 +520,24 @@ class AgentWorkerSettings:
     max_jobs = settings.queue_agent_concurrency
     job_timeout = settings.agent_job_timeout  # Default timeout, can be overridden per-job
     max_tries = 1  # No retry for agent conversations (side effects)
+
+
+class PipelineWorkerSettings:
+    """arq worker settings for pipeline runs. Own queue + process so long
+    pipeline runs never starve function workers (and vice versa). High
+    concurrency: runs mostly await child executions and HTTP.
+
+        python -m arq app.queue.worker.PipelineWorkerSettings
+    """
+
+    functions = [execute_pipeline_run_job, execute_pipeline_fire_job]
+    on_startup = pipeline_worker_startup
+    on_shutdown = shutdown
+    redis_settings = get_redis_settings()
+    queue_name = "sinas:queue:pipelines"
+    max_jobs = settings.queue_pipeline_concurrency
+    job_timeout = settings.pipeline_job_timeout
+    max_tries = 1  # runs are re-fired by triggers; never auto-retried (side effects)
 
 
 class SubAgentWorkerSettings:

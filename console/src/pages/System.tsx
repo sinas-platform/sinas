@@ -34,7 +34,7 @@ function ResourceBar({ value, label, unit }: { value: number | null; label: stri
         <span className="text-sm text-gray-400">{label}</span>
         <span className={`text-sm font-semibold ${textColor}`}>{value}{unit}</span>
       </div>
-      <div className="h-2 bg-[#161616] rounded-full overflow-hidden">
+      <div className="h-2 bg-surface-1 rounded-full overflow-hidden">
         <div className={`h-full ${color} transition-all`} style={{ width: `${Math.min(value, 100)}%` }} />
       </div>
     </div>
@@ -180,10 +180,10 @@ export function System() {
     switch (status) {
       case 'running': return 'bg-blue-900/30 text-blue-300';
       case 'completed': return 'bg-green-900/30 text-green-300';
-      case 'queued': return 'bg-[#161616] text-gray-200';
+      case 'queued': return 'bg-surface-1 text-gray-200';
       case 'failed': return 'bg-red-900/30 text-red-300';
       case 'cancelled': return 'bg-yellow-900/30 text-yellow-300';
-      default: return 'bg-[#161616] text-gray-200';
+      default: return 'bg-surface-1 text-gray-200';
     }
   };
 
@@ -191,7 +191,7 @@ export function System() {
     switch (status) {
       case 'running': return 'bg-green-900/30 text-green-300';
       case 'missing': case 'exited': return 'bg-red-900/30 text-red-300';
-      default: return 'bg-[#161616] text-gray-200';
+      default: return 'bg-surface-1 text-gray-200';
     }
   };
 
@@ -404,7 +404,7 @@ export function System() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.06]">
+                <tr className="border-b border-line-soft">
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Service</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Status</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Health</th>
@@ -416,7 +416,7 @@ export function System() {
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
                 {services.map((svc: any) => (
-                  <tr key={svc.name} className="hover:bg-white/5">
+                  <tr key={svc.name} className="hover:bg-hover">
                     <td className="py-2 pr-4">
                       <div className="font-mono text-xs text-gray-300">{svc.name}</div>
                       {svc.service !== svc.name && (
@@ -516,7 +516,7 @@ export function System() {
             </div>
           </div>
 
-          <div className="mb-3 h-2 bg-[#161616] rounded-full overflow-hidden">
+          <div className="mb-3 h-2 bg-surface-1 rounded-full overflow-hidden">
             <div className="h-full flex">
               <div className="bg-blue-500 transition-all" style={{ width: `${poolBusyPct}%` }} />
               <div className="bg-green-400 transition-all" style={{ width: `${poolUtilPct - poolBusyPct}%` }} />
@@ -543,7 +543,7 @@ export function System() {
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/[0.06]">
+                  <tr className="border-b border-line-soft">
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[45%]">Container</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[15%]">Status</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[20%]">Executions</th>
@@ -552,7 +552,7 @@ export function System() {
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
                   {allSandboxContainers.map((c: any) => (
-                    <tr key={c.name} className="hover:bg-white/5">
+                    <tr key={c.name} className="hover:bg-hover">
                       <td className="py-2 pr-4 font-mono text-xs text-gray-300">{c.name}</td>
                       <td className="py-2 pr-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -579,7 +579,7 @@ export function System() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-100">Shared Containers</h2>
-              <p className="text-sm text-gray-400 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-[#161616] rounded text-xs">shared</code> execution mode functions</p>
+              <p className="text-sm text-gray-400 mt-1">Persistent containers for <code className="px-1 py-0.5 bg-surface-1 rounded text-xs">shared</code> execution mode functions</p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -624,7 +624,7 @@ export function System() {
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/[0.06]">
+                  <tr className="border-b border-line-soft">
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[45%]">Container</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[15%]">Status</th>
                     <th className="text-left py-2 pr-4 font-medium text-gray-500 w-[20%]">Executions</th>
@@ -633,7 +633,7 @@ export function System() {
                 </thead>
                 <tbody className="divide-y divide-white/[0.04]">
                   {sharedPoolContainers.map((w: any) => (
-                    <tr key={w.id} className="hover:bg-white/5">
+                    <tr key={w.id} className="hover:bg-hover">
                       <td className="py-2 pr-4 font-mono text-xs text-gray-300">{w.container_name}</td>
                       <td className="py-2 pr-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${getContainerStatusColor(w.status)}`}>
@@ -694,7 +694,7 @@ export function System() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.06]">
+                <tr className="border-b border-line-soft">
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Status</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Description</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Time</th>
@@ -708,7 +708,7 @@ export function System() {
                   return (
                   <Fragment key={job.job_id}>
                   <tr
-                    className="hover:bg-white/5 cursor-pointer"
+                    className="hover:bg-hover cursor-pointer"
                     onClick={() => setExpandedJob(isExpanded ? null : job.job_id)}
                     title="Click to view error & traceback"
                   >
@@ -794,7 +794,7 @@ export function System() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-white/[0.06]">
+                <tr className="border-b border-line-soft">
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Function</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Error</th>
                   <th className="text-left py-2 pr-4 font-medium text-gray-500">Attempts</th>
@@ -803,7 +803,7 @@ export function System() {
               </thead>
               <tbody className="divide-y divide-white/[0.04]">
                 {dlqEntries.map((entry: any, idx: number) => (
-                  <tr key={entry.job_id || idx} className="hover:bg-white/5">
+                  <tr key={entry.job_id || idx} className="hover:bg-hover">
                     <td className="py-2 pr-4 text-gray-300">{entry.function || '-'}</td>
                     <td className="py-2 pr-4 text-red-600 text-xs max-w-md truncate">
                       {entry.error || '-'}
@@ -851,7 +851,7 @@ function JobDetailRow({ jobId, colSpan }: { jobId: string; colSpan: number }) {
   });
 
   return (
-    <tr className="bg-[#0d0d0d]">
+    <tr className="bg-surface-0">
       <td colSpan={colSpan} className="px-4 py-3">
         {isLoading ? (
           <p className="text-xs text-gray-500">Loading execution details…</p>
@@ -872,7 +872,7 @@ function JobDetailRow({ jobId, colSpan }: { jobId: string; colSpan: number }) {
             {data?.traceback ? (
               <div>
                 <p className="text-gray-500 mb-1">Traceback</p>
-                <pre className="text-gray-300 font-mono whitespace-pre-wrap bg-[#161616] border border-white/[0.06] rounded p-2 max-h-96 overflow-auto">
+                <pre className="text-gray-300 font-mono whitespace-pre-wrap bg-surface-1 border border-line-soft rounded p-2 max-h-96 overflow-auto">
                   {data.traceback}
                 </pre>
               </div>

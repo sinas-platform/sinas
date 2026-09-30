@@ -1,7 +1,16 @@
 {{- if .Values.ingress.enabled }}
-## Path-based routing:
-##   Backend API paths → backend:8000
-##   Everything else   → console:80 (SPA)
+## Path-based routing, by namespace rather than allowlist:
+##   /ui  → console:80 (SPA, built with Vite base '/ui/')
+##   /    → console:80 (Exact: nginx 302s to /ui/, preserving the path)
+##   /    → backend:8000 (Prefix: every API route, current and future)
+##
+## The console living under /ui is what makes this possible: console page
+## paths and runtime API paths used to share the domain root, so the chart
+## kept a hand-maintained allowlist of backend prefixes. That list drifted
+## silently in both directions — /info went missing (breaking console login
+## on password-mode instances) while /states and /jobs outlived their
+## routes. With the app namespaced, new API routes work on day one and the
+## SPA owns exactly one prefix.
 ##
 ## Console uses window.location.hostname as the API base, so both services
 ## must share the same hostname.
@@ -31,8 +40,34 @@ spec:
     - host: {{ .Values.domain | quote }}
       http:
         paths:
-          {{- range list "/api" "/adapters" "/auth" "/files" "/stores" "/webhooks" "/agents" "/chats" "/functions" "/executions" "/manifests" "/components" "/queries" "/skills" "/collections" "/states" "/jobs" "/templates" "/health" "/docs" "/openapi.json" }}
-          - path: {{ . }}
+          {{- if .Values.allInOne }}
+          ## allInOne: the backend serves the console at /ui itself (and
+          ## 302s the bare domain to /ui/) — one rule covers everything.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          {{- else }}
+          - path: /ui
+            pathType: Prefix
+            backend:
+              service:
+                name: console
+                port:
+                  number: 80
+          ## Bare domain → console, which redirects to /ui/
+          - path: /
+            pathType: Exact
+            backend:
+              service:
+                name: console
+                port:
+                  number: 80
+          ## Everything else is the API
+          - path: /
             pathType: Prefix
             backend:
               service:
@@ -40,12 +75,4 @@ spec:
                 port:
                   number: 8000
           {{- end }}
-          ## Catch-all → console SPA
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: console
-                port:
-                  number: 80
 {{- end }}

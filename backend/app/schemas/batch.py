@@ -1,5 +1,5 @@
 """Batch submission/poll schemas."""
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,18 @@ class AgentBatchRequest(BaseModel):
     trigger_id_prefix: Optional[str] = None
     callback_url: Optional[str] = None
     batch_callback_url: Optional[str] = None
+    execution_mode: Literal["queue", "provider"] = Field(
+        default="queue",
+        description=(
+            "'queue' runs each invocation through the internal worker queue "
+            "(default). 'provider' submits the whole batch to the LLM "
+            "provider's batch API (~50% cost, up to 24h turnaround) — only "
+            "for agents without tools, on providers that support it. Note: "
+            "provider mode renders prompts from the agent config and "
+            "input_variables only; per-user context injection (custom "
+            "fields) does not apply."
+        ),
+    )
 
 
 class AgentBatchResponse(BaseModel):
@@ -41,6 +53,7 @@ class AgentBatchResponse(BaseModel):
     chat_ids: list[str]
     total: int
     status: str
+    execution_mode: str = "queue"
 
 
 # ── Polling ──
@@ -60,6 +73,7 @@ class BatchStatusResponse(BaseModel):
     started_at: Optional[str]
     finished_at: Optional[str]
     trigger_id_prefix: Optional[str]
+    execution_mode: str = "queue"
 
 
 class BatchExecutionItem(BaseModel):

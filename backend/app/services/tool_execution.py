@@ -171,21 +171,88 @@ def truncate_tool_result(result_content: str, max_size: int) -> str:
     return _clean_text_cut(result_content, max_size)
 
 
+def accumulate_tool_call_delta(tool_calls_list: list[dict[str, Any]], tc: dict[str, Any]) -> None:
+    """Merge one streamed tool-call delta into the per-step list, in place.
+
+    Deltas are keyed by `index` (OpenAI-style streaming); providers that omit
+    it are matched by id, else appended. The id is set ONCE per slot: only the
+    first delta of a call carries it, and a later delta must never replace it
+    (issue #195 — a provider-side fallback id on argument fragments used to
+    overwrite every call's real id with the same literal).
+    """
+    tc_index = tc.get("index")
+
+    if tc_index is None and tc.get("id"):
+        for idx, existing_tc in enumerate(tool_calls_list):
+            if existing_tc.get("id") == tc["id"]:
+                tc_index = idx
+                break
+        if tc_index is None:
+            tc_index = len(tool_calls_list)
+
+    if tc_index is None:
+        tc_index = 0
+
+    while len(tool_calls_list) <= tc_index:
+        tool_calls_list.append(
+            {
+                "id": None,
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
+        )
+
+    slot = tool_calls_list[tc_index]
+    if tc.get("id") and not slot.get("id"):
+        slot["id"] = tc["id"]
+    if tc.get("type"):
+        slot["type"] = tc["type"]
+    if tc.get("function", {}).get("name"):
+        slot["function"]["name"] = tc["function"]["name"]
+    if tc.get("function", {}).get("arguments"):
+        slot["function"]["arguments"] += tc["function"]["arguments"]
+    # Preserve any extra per-call fields (e.g. Gemini's thought_signature) —
+    # providers can require them round-tripped in the follow-up history.
+    for key, value in tc.items():
+        if key in ("id", "type", "function", "index") or value is None:
+            continue
+        slot[key] = value
+    for key, value in (tc.get("function") or {}).items():
+        if key in ("name", "arguments") or value is None:
+            continue
+        slot["function"][key] = value
+
+
 def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate tool calls and filter out corrupted ones.
 
-    Returns only valid tool calls.
+    Returns only valid tool calls. Ids are made present and unique within the
+    step: a call that streamed without one (some OpenAI-compatible gateways
+    never send ids) gets `call_<position>`, and a duplicate gets a positional
+    suffix. Every tool result is matched to its call by this id, so two calls
+    sharing one would make the second result unanswerable at the provider
+    (issue #195) and overwrite the first in the results cache.
     """
     if not tool_calls:
         return []
 
+    seen_ids: set[str] = set()
     valid_tool_calls = []
-    for tc in tool_calls:
+    for position, tc in enumerate(tool_calls):
         try:
-            # Check required fields
-            if not tc.get("id") or not tc.get("function", {}).get("name"):
-                print(f"\u26a0\ufe0f Skipping tool call without id or name: {tc}")
+            if not tc.get("function", {}).get("name"):
+                print(f"\u26a0\ufe0f Skipping tool call without name: {tc}")
                 continue
+            if not tc.get("id"):
+                tc["id"] = f"call_{position}"
+            if tc["id"] in seen_ids:
+                original = tc["id"]
+                renamed = f"{original}_{position}"
+                while renamed in seen_ids:  # the suffixed form can itself be taken
+                    renamed += "_"
+                print(f"\u26a0\ufe0f Duplicate tool call id {original!r} in one step; renamed to {renamed!r}")
+                tc["id"] = renamed
+            seen_ids.add(tc["id"])
 
             # Validate arguments is valid JSON
             args_str = tc.get("function", {}).get("arguments", "")
@@ -247,6 +314,8 @@ def tool_name_to_status_key(tool_name: str) -> str:
         return "skill:" + tool_name[len("get_skill_"):].replace("__", "/", 1)
     if tool_name.startswith("query_"):
         return "query:" + tool_name[len("query_"):].replace("__", "/", 1)
+    if tool_name.startswith("pipeline_"):
+        return "pipeline:" + tool_name[len("pipeline_"):].replace("__", "/", 1)
     if tool_name.startswith("search_collection_"):
         return "collection:" + tool_name[len("search_collection_"):].replace("__", "/", 1)
     if tool_name.startswith("get_file_"):
@@ -287,6 +356,9 @@ def build_tool_status(tool_name: str, arguments: dict, status_templates: dict[st
     if key.startswith("query:"):
         ref = key[6:]
         return f"Running query {ref.split('/')[-1].replace('_', ' ')}"
+    if key.startswith("pipeline:"):
+        ref = key[9:]
+        return f"Running pipeline {ref.split('/')[-1].replace('_', ' ')}"
     if key.startswith("collection:"):
         if tool_name.startswith("write_file_"):
             return "Writing file"
@@ -635,6 +707,13 @@ async def execute_single_tool(
                     tool_found_in_list = True
                     break
 
+            # Metering (§2a leaf-only rule): branches that recurse into a leaf
+            # chokepoint — code-exec, sub-agent, pipeline, query, function —
+            # are counted there; every other branch counts as one TOOL op
+            # after dispatch. This keeps "agent turn calling 3 functions" =
+            # 1 agent + 3 function, never double-counted.
+            counted_at_leaf = False
+
             # Built-in tools (no metadata needed)
             if tool_name in ("save_state", "retrieve_state", "update_state", "delete_state", "list_state_keys"):
                 result = await StateTools.execute_tool(
@@ -686,6 +765,7 @@ async def execute_single_tool(
                     resume_value=arguments["input"],
                 )
             elif tool_name == "execute_code":
+                counted_at_leaf = True  # metered in code_execution.execute()
                 start_time = time.time()
                 result = await execute_code(
                     code=arguments.get("code", ""),
@@ -758,6 +838,7 @@ async def execute_single_tool(
 
             # Metadata-driven tools — identity comes from _metadata, not tool name parsing
             elif tool_metadata.get("agent_id"):
+                counted_at_leaf = True  # sub-agent metered in message_service
                 result = await execute_agent_tool(
                     db=db,
                     chat=chat,
@@ -777,6 +858,29 @@ async def execute_single_tool(
                     metadata=tool_metadata,
                 )
                 logger.debug(f"Collection tool completed in {time.time() - start_time:.3f}s: {tool_name}")
+            elif tool_metadata.get("type") == "pipeline":
+                counted_at_leaf = True  # pipeline steps meter at their leaves
+                start_time = time.time()
+                from app.services.pipeline_tools import PipelineToolConverter
+
+                enabled_pipeline_list = []
+                if chat and chat.agent_id:
+                    result_agent = await db.execute(
+                        select(Agent).where(Agent.id == chat.agent_id)
+                    )
+                    chat_agent = result_agent.scalar_one_or_none()
+                    if chat_agent:
+                        enabled_pipeline_list = chat_agent.enabled_pipelines or []
+
+                result = await PipelineToolConverter().execute_pipeline_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    user_token=user_token,
+                    enabled_pipelines=enabled_pipeline_list,
+                )
+                logger.debug(f"Pipeline tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("type") == "connector":
                 start_time = time.time()
                 connector_tool_converter = ConnectorToolConverter()
@@ -806,6 +910,7 @@ async def execute_single_tool(
                     result = {"error": f"Skill not found for tool: {tool_name}"}
                 logger.debug(f"Skill retrieval completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_name.startswith("query_"):
+                counted_at_leaf = True  # metered in DatabasePoolManager.execute_query
                 start_time = time.time()
                 # Get enabled queries list from agent
                 enabled_query_list = []
@@ -836,6 +941,7 @@ async def execute_single_tool(
                 logger.debug(f"Query execution completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_found_in_list:
                 # Function tool — metadata has namespace/name
+                counted_at_leaf = True  # metered in execute_function
                 start_time = time.time()
                 enabled_function_list = []
                 if chat and chat.agent_id:
@@ -868,6 +974,12 @@ async def execute_single_tool(
                     "error": "Unauthorized tool call",
                     "message": f"Tool '{tool_name}' was not in the approved tools list for this agent.",
                 }
+                counted_at_leaf = True  # rejected — no work done, not billable
+
+            if not counted_at_leaf:
+                from app.services import metering
+
+                await metering.record(metering.OperationKind.TOOL)
 
             result_content = json.dumps(result) if not isinstance(result, str) else result
 

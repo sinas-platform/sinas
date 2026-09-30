@@ -2,25 +2,28 @@
 Package service for installing, uninstalling, and managing integration packages.
 """
 import logging
+import re
 from typing import Any, Optional
 
 import yaml
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.chat import Chat
 from app.models.connector import Connector
 from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
-from app.models.function import Function
+from app.models.function import Function, FunctionVersion
 from app.models.package import Package
 from app.models.query import Query
 from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
 from app.models.store import Store
 from app.models.template import Template
+from app.models.user import APIKeyRole, Role, RolePermission, UserRole
 from app.models.webhook import Webhook
 from app.schemas.config import ConfigApplyResponse, SinasConfig
 from app.services.config_apply import ConfigApplyService
@@ -45,11 +48,80 @@ from app.services.resource_serializers import (
 
 logger = logging.getLogger(__name__)
 
-# Resource types that packages cannot include (environment-specific)
-PACKAGE_SKIP_TYPES = {"roles", "users", "llmProviders", "databaseConnections"}
+# Resource types that packages cannot include (environment-specific).
+# Roles are deliberately NOT here: a package may DEFINE roles (its own
+# least-privilege permission surface) but never BIND them — assignment to
+# users stays an operator act, and emailDomain (auto-membership) is rejected.
+PACKAGE_SKIP_TYPES = {"users", "llmProviders", "databaseConnections"}
+
+# Permission keys shaped sinas.<resource>/<namespace>/... — anything else
+# (non-namespaced or non-sinas keys) counts as broad for package roles.
+NAMESPACED_PERM_RE = re.compile(r"^sinas\.[a-z_]+/(?P<ns>[^/]+)/")
 
 # Models that support managed_by
 MANAGED_MODELS = [Agent, Connector, Manifest, Component, Collection, DatabaseTrigger, Function, Query, ScheduledJob, Skill, Store, Template, Webhook]
+
+
+def _package_namespaces(config: SinasConfig) -> set[str]:
+    """Namespaces the package installs resources into."""
+    namespaces: set[str] = set()
+    for field in type(config.spec).model_fields:
+        value = getattr(config.spec, field, None)
+        if isinstance(value, list):
+            for item in value:
+                ns = getattr(item, "namespace", None)
+                if isinstance(ns, str) and ns:
+                    namespaces.add(ns)
+    return namespaces
+
+
+def package_role_violations(config: SinasConfig) -> tuple[list[str], list[str], list[str]]:
+    """
+    Governance checks for roles shipped by a package.
+
+    Returns (hard_errors, broad_permissions, advisories):
+    - hard_errors: things a package may never do — bind users (emailDomain is
+      auto-membership). Always rejected.
+    - broad_permissions: granted keys reaching outside the namespaces the
+      package itself installs into (non-namespaced keys, foreign or wildcard
+      namespaces). Rejected unless the operator explicitly consents.
+    - advisories: known potholes surfaced as warnings — e.g. agents .chat
+      without .read (the chats endpoint checks read on the agent BEFORE the
+      chat permission, so a chat-only role 403s on the very first call).
+    """
+    hard: list[str] = []
+    broad: list[str] = []
+    advisories: list[str] = []
+    roles = getattr(config.spec, "roles", None) or []
+    if not roles:
+        return hard, broad, advisories
+
+    namespaces = _package_namespaces(config)
+    for role in roles:
+        if role.emailDomain:
+            hard.append(
+                f"role '{role.name}' sets emailDomain — packages define roles, "
+                "never bind them to users"
+            )
+        granted = [p.key for p in role.permissions if p.value]
+        for key in granted:
+            m = NAMESPACED_PERM_RE.match(key)
+            if not m or m.group("ns") == "*" or m.group("ns") not in namespaces:
+                broad.append(f"role '{role.name}': {key}")
+
+        for key in granted:
+            m = re.match(r"^sinas\.agents/([^/]+)/.+\.chat:", key)
+            if m and not any(
+                g.startswith(f"sinas.agents/{m.group(1)}/") and ".read:" in g
+                for g in granted
+            ):
+                advisories.append(
+                    f"role '{role.name}' grants {key} without a matching "
+                    f"sinas.agents/{m.group(1)}/*.read permission — chatting with an "
+                    "agent also requires reading it, so this role will 403 on its "
+                    "first call"
+                )
+    return hard, broad, advisories
 
 
 def detach_if_package_managed(resource) -> bool:
@@ -78,6 +150,7 @@ class PackageService:
         yaml_content: str,
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
+        allow_broad_role_permissions: bool = False,
     ) -> tuple[Package, ConfigApplyResponse]:
         """
         Install a package from YAML content.
@@ -86,6 +159,8 @@ class PackageService:
             yaml_content: YAML string with kind: SinasPackage
             user_id: ID of the user installing the package
             variables: Install-time variable values (keyed by variable name)
+            allow_broad_role_permissions: accept package roles whose granted
+                permissions reach outside the package's own namespaces
 
         Returns:
             Tuple of (Package record, ConfigApplyResponse)
@@ -110,6 +185,16 @@ class PackageService:
         pkg_name = config.package.name
         managed_by = f"pkg:{pkg_name}"
 
+        hard, broad, role_advisories = package_role_violations(config)
+        if hard:
+            raise ValueError("Package roles rejected: " + "; ".join(hard))
+        if broad and not allow_broad_role_permissions:
+            raise ValueError(
+                "Package role permissions reach outside the package's own namespaces: "
+                + "; ".join(broad)
+                + ". Review them, then re-install with allowBroadRolePermissions=true to accept."
+            )
+
         # Check if already installed — upgrade in place if so
         existing_result = await self.db.execute(
             select(Package).where(Package.name == pkg_name)
@@ -133,6 +218,11 @@ class PackageService:
 
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
+        if broad:
+            result.warnings.append(
+                "Accepted broad role permissions (operator consent): " + "; ".join(broad)
+            )
+        result.warnings.extend(role_advisories)
 
         # Create or update package record
         if existing_package:
@@ -158,6 +248,10 @@ class PackageService:
 
         # Single commit for everything
         await self.db.commit()
+        # auto_commit=False means the apply service left its notifications
+        # queued for us; without this a package's schedules never reach the
+        # running scheduler and its CDC triggers aren't picked up until restart.
+        await apply_service.flush_notifications()
         await self.db.refresh(package)
 
         return package, result
@@ -180,7 +274,10 @@ class PackageService:
 
         # Substitute variables if provided
         if variables:
-            yaml_content, _ = await self._resolve_variables(yaml_content, variables, user_id)
+            # Preview is a dry run: validate + substitute, persist nothing.
+            yaml_content, _ = await self._resolve_variables(
+                yaml_content, variables, user_id, persist_secrets=False
+            )
 
         config, validation = await ConfigParser.parse_and_validate(yaml_content, db=self.db)
 
@@ -208,6 +305,17 @@ class PackageService:
 
         result = await apply_service.apply_config(config, dry_run=True)
         result.warnings.extend(validation.warnings)
+
+        hard, broad, role_advisories = package_role_violations(config)
+        for violation in hard:
+            result.errors.append(f"Package roles rejected: {violation}")
+        for perm in broad:
+            result.warnings.append(
+                "Broad role permission (install requires allowBroadRolePermissions=true): "
+                + perm
+            )
+        result.warnings.extend(role_advisories)
+
         return result, variable_declarations, requires_input
 
     async def uninstall(self, package_name: str) -> dict:
@@ -245,11 +353,38 @@ class PackageService:
             Webhook: "webhooks",
         }
 
+        # Children whose FK has no ON DELETE rule must be cleared first. The
+        # loop below issues Core bulk deletes, which bypass the ORM's
+        # delete-orphan cascades entirely, so a package whose functions had
+        # ever been versioned (or whose agents had ever been chatted with)
+        # failed the whole uninstall on a ForeignKeyViolationError (#63).
+        # Every other child of these tables already cascades at the DB level.
+        function_ids = select(Function.id).where(Function.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            delete(FunctionVersion).where(FunctionVersion.function_id.in_(function_ids))
+        )
+        # Chats outlive the package: a conversation is the user's, not the
+        # package's, so only the link to the vanishing agent is cleared.
+        agent_ids = select(Agent.id).where(Agent.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
+        )
+
         for model, type_name in model_names.items():
             stmt = delete(model).where(model.managed_by == managed_by)
             result = await self.db.execute(stmt)
             if result.rowcount > 0:
                 deleted_counts[type_name] = result.rowcount
+
+        # Package-managed roles: children first (their FKs have no ON DELETE),
+        # then the roles. User assignments vanish with the role — deliberate:
+        # an uninstalled package's authority should not linger anywhere.
+        role_ids = select(Role.id).where(Role.managed_by == managed_by).scalar_subquery()
+        for child in (RolePermission, UserRole, APIKeyRole):
+            await self.db.execute(delete(child).where(child.role_id.in_(role_ids)))
+        result = await self.db.execute(delete(Role).where(Role.managed_by == managed_by))
+        if result.rowcount > 0:
+            deleted_counts["roles"] = result.rowcount
 
         # Delete package record
         await self.db.delete(package)
@@ -484,8 +619,12 @@ class PackageService:
         yaml_content: str,
         provided: dict[str, Any],
         user_id: str,
+        persist_secrets: bool = True,
     ) -> tuple[str, dict[str, Any]]:
         """Validate and substitute install-time variables.
+
+        persist_secrets=False (preview) validates secret variables but writes
+        nothing — a dry run must never persist secrets.
 
         Returns (substituted_yaml, stored_values).
         stored_values is what gets persisted in Package.values
@@ -559,23 +698,31 @@ class PackageService:
                 value = str(value)
 
             elif var_type == "secret":
-                # Create/upsert the secret
-                from app.core.encryption import encryption_service
-                from app.models.secret import Secret
-                existing = await self.db.execute(
-                    select(Secret).where(Secret.name == name)
-                )
-                secret = existing.scalar_one_or_none()
-                if secret:
-                    secret.encrypted_value = encryption_service.encrypt(str(value))
-                else:
-                    secret = Secret(
-                        name=name,
-                        encrypted_value=encryption_service.encrypt(str(value)),
-                        description=decl.get("description"),
+                if persist_secrets:
+                    # Upsert the SHARED secret. Scoped to visibility="shared":
+                    # a name-only lookup could silently overwrite another
+                    # user's PRIVATE secret of the same name (same bug class
+                    # the config-apply secrets path fixed).
+                    from app.core.encryption import encryption_service
+                    from app.models.secret import Secret
+                    existing = await self.db.execute(
+                        select(Secret).where(
+                            Secret.name == name, Secret.visibility == "shared"
+                        )
                     )
-                    self.db.add(secret)
-                await self.db.flush()
+                    secret = existing.scalar_one_or_none()
+                    if secret:
+                        secret.encrypted_value = encryption_service.encrypt(str(value))
+                    else:
+                        secret = Secret(
+                            name=name,
+                            encrypted_value=encryption_service.encrypt(str(value)),
+                            description=decl.get("description"),
+                            user_id=user_id,
+                            visibility="shared",
+                        )
+                        self.db.add(secret)
+                    await self.db.flush()
                 # The substitution value is the secret reference syntax
                 resolved[name] = f"{{{{{name}}}}}"
                 stored_values[name] = "***"

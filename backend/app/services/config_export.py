@@ -85,6 +85,7 @@ class ConfigExportService:
         config_dict["spec"]["components"] = await self._export_components()
         config_dict["spec"]["manifests"] = await self._export_manifests()
         config_dict["spec"]["agents"] = await self._export_agents()
+        config_dict["spec"]["pipelines"] = await self._export_pipelines()
         config_dict["spec"]["webhooks"] = await self._export_webhooks()
         config_dict["spec"]["schedules"] = await self._export_schedules()
         config_dict["spec"]["databaseTriggers"] = await self._export_database_triggers()
@@ -242,6 +243,17 @@ class ConfigExportService:
             stmt = stmt.where(Connector.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_connector(c) for c in result.scalars().all()]
+
+    async def _export_pipelines(self) -> list[dict]:
+        """Export pipelines (cursor/failure state is runtime, not exported)."""
+        from app.models.pipeline import Pipeline
+        from app.services.resource_serializers import serialize_pipeline
+
+        stmt = select(Pipeline).where(Pipeline.is_active == True)
+        if self.managed_only:
+            stmt = stmt.where(Pipeline.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        return [serialize_pipeline(p) for p in result.scalars().all()]
 
     async def _export_functions(self) -> list[dict]:
         """Export functions"""

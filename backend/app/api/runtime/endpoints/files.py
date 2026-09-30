@@ -77,7 +77,7 @@ async def serve_file(
     The token contains the file_id, version, and expiry. No auth header needed.
     """
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired file token")
 
@@ -245,6 +245,11 @@ async def upload_file(
         set_permission_used(http_request, perm, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to upload files to this collection")
     set_permission_used(http_request, perm)
+
+    # Metering leaf: one op per authorized file upload
+    from app.services import metering
+
+    await metering.record(metering.OperationKind.UPLOAD)
 
     # Get or create collection
     coll = await Collection.get_by_name(db, namespace, collection)

@@ -388,6 +388,7 @@ async def submit_agent_batch(
             trigger_id_prefix=body.trigger_id_prefix,
             callback_url=callback_url,
             batch_callback_url=batch_callback_url,
+            execution_mode=body.execution_mode,
         )
     except batch_service.BatchError as e:
         raise HTTPException(status_code=400, detail=str(e))

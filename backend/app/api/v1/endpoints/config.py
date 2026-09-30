@@ -109,7 +109,9 @@ async def apply_config(
                 summary={},
                 changes=[],
                 errors=[f"{e.path}: {e.message}" for e in validation.errors],
-                warnings=[f"{w.path}: {w.message}" for w in validation.warnings],
+                # warnings are plain strings; formatting them as objects
+                # turned every warned-about invalid config into a 500.
+                warnings=list(validation.warnings),
             )
 
         # Apply configuration
@@ -117,7 +119,7 @@ async def apply_config(
         result = await apply_service.apply_config(config, dry_run=apply_request.dryRun)
 
         # Add validation warnings to result
-        result.warnings.extend([f"{w.path}: {w.message}" for w in validation.warnings])
+        result.warnings.extend(validation.warnings)
 
         return result
 

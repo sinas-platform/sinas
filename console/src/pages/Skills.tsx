@@ -143,7 +143,7 @@ export function Skills() {
                       {skill.namespace}/{skill.name}
                     </h3>
                     {!skill.is_active && (
-                      <span className="px-2 py-1 text-xs bg-[#1e1e1e] text-gray-400 rounded">
+                      <span className="px-2 py-1 text-xs bg-surface-2 text-gray-400 rounded">
                         Inactive
                       </span>
                     )}
@@ -193,7 +193,7 @@ export function Skills() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowCreateModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Create Skill</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -279,7 +279,7 @@ export function Skills() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowEditModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <h2 className="text-2xl font-bold mb-6">Edit Skill</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
@@ -362,7 +362,7 @@ export function Skills() {
         <>
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50" onClick={() => setShowViewModal(false)} />
           <div className="fixed inset-0 flex items-center justify-center z-50 p-4 pointer-events-none">
-            <div className="bg-[#161616] rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-surface-1 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 pointer-events-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold">
                   {selectedSkill.namespace}/{selectedSkill.name}
@@ -381,7 +381,7 @@ export function Skills() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Content</label>
-                  <pre className="bg-[#0d0d0d] p-4 rounded border border-white/[0.06] overflow-auto max-h-96 text-sm font-mono whitespace-pre-wrap">
+                  <pre className="bg-surface-0 p-4 rounded border border-line-soft overflow-auto max-h-96 text-sm font-mono whitespace-pre-wrap">
                     {selectedSkill.content}
                   </pre>
                 </div>

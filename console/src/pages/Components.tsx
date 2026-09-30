@@ -113,7 +113,7 @@ export function Components() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {components.map((comp) => (
-            <div key={comp.id} className="bg-[#111111] border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors">
+            <div key={comp.id} className="bg-surface-input border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors">
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
                   <Layers className="w-5 h-5 text-primary-400" />
@@ -186,7 +186,7 @@ export function Components() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#111111] border border-gray-800 rounded-lg w-full max-w-lg">
+          <div className="bg-surface-input border border-gray-800 rounded-lg w-full max-w-lg">
             <div className="p-6 border-b border-gray-800">
               <h2 className="text-lg font-semibold text-white">Create Component</h2>
             </div>
@@ -197,7 +197,7 @@ export function Components() {
                   <input
                     name="namespace"
                     defaultValue="default"
-                    className="w-full bg-[#0d0d0d] border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                    className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
                     pattern="^[a-zA-Z][a-zA-Z0-9_-]*$"
                   />
                 </div>
@@ -206,7 +206,7 @@ export function Components() {
                   <input
                     name="name"
                     required
-                    className="w-full bg-[#0d0d0d] border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                    className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
                     pattern="^[a-zA-Z][a-zA-Z0-9_-]*$"
                     placeholder="my-component"
                   />
@@ -216,7 +216,7 @@ export function Components() {
                 <label className="block text-sm text-gray-400 mb-1">Title</label>
                 <input
                   name="title"
-                  className="w-full bg-[#0d0d0d] border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
                   placeholder="My Component"
                 />
               </div>
@@ -224,7 +224,7 @@ export function Components() {
                 <label className="block text-sm text-gray-400 mb-1">Description</label>
                 <input
                   name="description"
-                  className="w-full bg-[#0d0d0d] border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
                   placeholder="What does this component do?"
                 />
               </div>
@@ -234,7 +234,7 @@ export function Components() {
                   name="source_code"
                   required
                   rows={8}
-                  className="w-full bg-[#0d0d0d] border border-gray-800 rounded px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-primary-600"
+                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-primary-600"
                   defaultValue={`import React from 'react';\n\nexport default function MyComponent() {\n  return (\n    <div style={{ padding: '1rem' }}>\n      <h1>Hello from SINAS!</h1>\n    </div>\n  );\n}`}
                 />
               </div>

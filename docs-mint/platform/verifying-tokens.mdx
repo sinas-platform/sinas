@@ -1,0 +1,140 @@
+---
+title: "Verifying Sinas Tokens"
+description: "Let your own services verify Sinas access tokens offline with standard JWT middleware"
+---
+
+When you build services next to Sinas — an internal API, a partner backend, a gateway — those services often receive Sinas access tokens and need to answer one question: *is this token valid, and who is it for?*
+
+By default Sinas signs access tokens with a symmetric secret (`HS256`), which only Sinas itself can verify. Switch to asymmetric signing and any standard JWT library can verify tokens offline — no shared secret, no per-request call back to Sinas:
+
+```bash
+JWT_ALGORITHM=RS256
+```
+
+That's the only required change. On first boot Sinas generates an RSA keypair and persists it (encrypted) in its database, so every backend, worker, and scheduler process signs with the same key. To bring your own key instead:
+
+```bash
+JWT_PRIVATE_KEY_FILE=/etc/sinas/jwt-private.pem   # path to a PKCS8 PEM
+# or inline:
+JWT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n..."
+```
+
+Generate one with `openssl genpkey -algorithm RSA -pkcs8 -out jwt-private.pem`.
+
+<Warning>
+Switching the algorithm invalidates in-flight access tokens. They live 15 minutes by default, and clients refresh automatically — logged-in users won't notice beyond one transparent refresh.
+</Warning>
+
+## What changes with RS256
+
+Access tokens gain the standard verification claims plus a key id header:
+
+| | HS256 (default) | RS256 |
+|---|---|---|
+| Signature | `SECRET_KEY` (symmetric) | RSA private key |
+| `iss` claim | — | `JWT_ISSUER` (defaults to your instance URL) |
+| `aud` claim | — | `JWT_AUDIENCE` (defaults to `sinas`) |
+| Public keys | not published | `GET /.well-known/jwks.json` |
+
+The JWKS endpoint is unauthenticated (public keys are public) and the `kid` in each token's header matches the published key, so libraries pick the right key automatically.
+
+## Verifying from your service
+
+Point your JWT middleware at the JWKS URL and check issuer + audience. No Sinas SDK needed.
+
+### FastAPI / Python
+
+```python
+import jwt  # PyJWT
+from jwt import PyJWKClient
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+SINAS_URL = "https://sinas.your-org.com"
+jwks_client = PyJWKClient(f"{SINAS_URL}/.well-known/jwks.json")
+
+app = FastAPI()
+bearer = HTTPBearer()
+
+def current_user(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
+    try:
+        key = jwks_client.get_signing_key_from_jwt(creds.credentials)
+        return jwt.decode(
+            creds.credentials,
+            key.key,
+            algorithms=["RS256"],
+            audience="sinas",
+            issuer=SINAS_URL,
+        )
+    except jwt.PyJWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+@app.get("/reports")
+def reports(user: dict = Depends(current_user)):
+    return {"for_user": user["sub"], "email": user["email"]}
+```
+
+### Express / Node
+
+```javascript
+import { createRemoteJWKSet, jwtVerify } from "jose";
+
+const SINAS_URL = "https://sinas.your-org.com";
+const jwks = createRemoteJWKSet(new URL(`${SINAS_URL}/.well-known/jwks.json`));
+
+async function requireUser(req, res, next) {
+  const token = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+  try {
+    const { payload } = await jwtVerify(token, jwks, {
+      issuer: SINAS_URL,
+      audience: "sinas",
+    });
+    req.user = payload; // { sub, email, iss, aud, exp, ... }
+    next();
+  } catch {
+    res.status(401).json({ error: "invalid token" });
+  }
+}
+
+app.get("/reports", requireUser, (req, res) => {
+  res.json({ forUser: req.user.sub, email: req.user.email });
+});
+```
+
+Both libraries cache the JWKS response, so verification is a local signature check on the hot path.
+
+## Getting user profile data
+
+The token proves identity; for profile data there's an OIDC-style userinfo endpoint (works under both algorithms):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://sinas.your-org.com/userinfo
+```
+
+```json
+{
+  "sub": "7c9e6679-7425-40de-963d-02d1102e0d13",
+  "email": "jane@acme.com",
+  "roles": ["Users"],
+  "department": "engineering",
+  "plan": "enterprise"
+}
+```
+
+`sub`, `email`, and `roles` are always present. Every entry in the user's [custom fields](/admin/users-roles) appears as a plain claim — set by admins or by your backend during [token exchange](/platform/authentication#token-exchange-bring-your-own-auth) — so downstream services can authorize on org-specific attributes without extra lookups. Custom fields can never shadow the standard claims.
+
+## Configuration reference
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `JWT_ALGORITHM` | `HS256` | `RS256` enables asymmetric signing + JWKS |
+| `JWT_ISSUER` | instance URL | `iss` claim on RS256 tokens |
+| `JWT_AUDIENCE` | `sinas` | `aud` claim on RS256 tokens |
+| `JWT_PRIVATE_KEY` | — | RS256 private key as PEM content |
+| `JWT_PRIVATE_KEY_FILE` | — | RS256 private key as a file path |
+
+Key resolution order: `JWT_PRIVATE_KEY` → `JWT_PRIVATE_KEY_FILE` → auto-generated and stored encrypted in the database.
+
+## What this is not
+
+Sinas is not a full OIDC identity provider — there is no `/authorize`, consent, or dynamic client registration. If your organization runs Keycloak, Authentik, or another IdP, keep it as the source of truth and use [token exchange](/platform/authentication#token-exchange-bring-your-own-auth) to bring those users into Sinas instead.

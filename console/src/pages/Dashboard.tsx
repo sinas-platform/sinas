@@ -139,7 +139,7 @@ export function Dashboard() {
           <div className="space-y-2">
             <Link
               to="/llm-providers"
-              className="flex items-center gap-3 p-2.5 bg-[#161616] rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
+              className="flex items-center gap-3 p-2.5 bg-surface-1 rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
             >
               {hasProviders ? (
                 <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
@@ -156,7 +156,7 @@ export function Dashboard() {
             </Link>
             <Link
               to="/agents"
-              className="flex items-center gap-3 p-2.5 bg-[#161616] rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
+              className="flex items-center gap-3 p-2.5 bg-surface-1 rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
             >
               {hasAgents ? (
                 <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
@@ -173,7 +173,7 @@ export function Dashboard() {
             </Link>
             <Link
               to="/agents"
-              className="flex items-center gap-3 p-2.5 bg-[#161616] rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
+              className="flex items-center gap-3 p-2.5 bg-surface-1 rounded-md border border-blue-100 hover:border-blue-300 transition-colors group"
             >
               {hasChats ? (
                 <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
@@ -231,8 +231,8 @@ export function Dashboard() {
                 <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <YAxis tick={{ fill: '#6b7280', fontSize: 12 }} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#161616', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', color: '#ededed' }}
-                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                  contentStyle={{ backgroundColor: 'var(--surface-1)', border: '1px solid var(--line-soft)', borderRadius: '6px', color: 'var(--content)' }}
+                  cursor={{ fill: 'var(--hover)' }}
                 />
                 <Bar dataKey="messages" fill="#3b82f6" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -290,10 +290,10 @@ export function Dashboard() {
                       index === 0
                         ? 'bg-yellow-900/30 text-yellow-400'
                         : index === 1
-                        ? 'bg-white/10 text-gray-300'
+                        ? 'bg-hover-strong text-gray-300'
                         : index === 2
                         ? 'bg-orange-900/30 text-orange-400'
-                        : 'bg-[#0d0d0d] text-gray-400'
+                        : 'bg-surface-0 text-gray-400'
                     }`}
                   >
                     {index + 1}

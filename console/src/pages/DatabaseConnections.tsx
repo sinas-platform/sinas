@@ -167,18 +167,18 @@ export function DatabaseConnections() {
       ) : connections && connections.length > 0 ? (
         <div className="grid gap-6">
           {connections.map((conn) => (
-            <div key={conn.id} className={`card ${!conn.is_active ? 'opacity-60 bg-[#0d0d0d]' : ''}`}>
+            <div key={conn.id} className={`card ${!conn.is_active ? 'opacity-60 bg-surface-0' : ''}`}>
               <div className="flex items-start justify-between">
                 <div className="flex items-center flex-1">
                   <Cable className={`w-8 h-8 mr-3 flex-shrink-0 ${conn.is_active ? 'text-primary-600' : 'text-gray-500'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-100">{conn.name}</h3>
-                      <span className="text-xs font-medium bg-[#161616] text-gray-300 px-2 py-0.5 rounded">{conn.connection_type}</span>
+                      <span className="text-xs font-medium bg-surface-1 text-gray-300 px-2 py-0.5 rounded">{conn.connection_type}</span>
                       {conn.is_active ? (
                         <span className="px-2 py-0.5 bg-green-900/30 text-green-300 text-xs font-medium rounded">Active</span>
                       ) : (
-                        <span className="px-2 py-0.5 bg-[#1e1e1e] text-gray-400 text-xs font-medium rounded">Inactive</span>
+                        <span className="px-2 py-0.5 bg-surface-2 text-gray-400 text-xs font-medium rounded">Inactive</span>
                       )}
                       {conn.read_only && (
                         <span className="px-2 py-0.5 bg-yellow-900/30 text-yellow-300 text-xs font-medium rounded flex items-center gap-1" title="Schema Browser is read-only. Query templates are unaffected.">
@@ -259,7 +259,7 @@ export function DatabaseConnections() {
       {/* Create Modal */}
       {showCreateModal && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Add Database Connection</h2>
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
@@ -379,7 +379,7 @@ export function DatabaseConnections() {
                     type="checkbox"
                     checked={createFormData.read_only || false}
                     onChange={(e) => setCreateFormData({ ...createFormData, read_only: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   Read-only (Schema Browser)
                 </label>
@@ -436,7 +436,7 @@ export function DatabaseConnections() {
       {/* Edit Modal */}
       {showEditModal && selectedConnection && (
         <div className="fixed inset-0 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#161616] rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-surface-1 rounded-lg max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-semibold text-gray-100 mb-4">Edit Database Connection</h2>
             <form onSubmit={handleEdit} className="space-y-4">
               <div>
@@ -550,7 +550,7 @@ export function DatabaseConnections() {
                   type="checkbox"
                   checked={editFormData.is_active ?? true}
                   onChange={(e) => setEditFormData({ ...editFormData, is_active: e.target.checked })}
-                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                 />
                 <label className="ml-2 block text-sm text-gray-300">Active</label>
               </div>
@@ -560,7 +560,7 @@ export function DatabaseConnections() {
                     type="checkbox"
                     checked={editFormData.read_only || false}
                     onChange={(e) => setEditFormData({ ...editFormData, read_only: e.target.checked })}
-                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-white/10 rounded"
+                    className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-line rounded"
                   />
                   Read-only (Schema Browser)
                 </label>

@@ -163,3 +163,24 @@ class UsageTrackingProvider(BaseLLMProvider):
 
     def extract_usage(self, response: Any) -> dict[str, int]:
         return self._inner.extract_usage(response)
+
+    # ── Batch API passthrough ─────────────────────────────────────────────
+    # Batch usage is recorded by the batch poller per result (with correct
+    # per-chat attribution), not here — a batch is N logical calls, so the
+    # single-call recording model doesn't apply.
+
+    @property
+    def supports_batch(self) -> bool:  # type: ignore[override]
+        return self._inner.supports_batch
+
+    async def submit_batch(self, requests: list[dict[str, Any]]) -> str:
+        return await self._inner.submit_batch(requests)
+
+    async def get_batch_status(self, provider_batch_id: str) -> dict[str, Any]:
+        return await self._inner.get_batch_status(provider_batch_id)
+
+    async def fetch_batch_results(self, provider_batch_id: str) -> list[dict[str, Any]]:
+        return await self._inner.fetch_batch_results(provider_batch_id)
+
+    async def cancel_batch(self, provider_batch_id: str) -> None:
+        await self._inner.cancel_batch(provider_batch_id)

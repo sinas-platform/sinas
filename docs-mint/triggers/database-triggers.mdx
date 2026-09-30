@@ -4,7 +4,7 @@ description: "Change data capture with polling"
 ---
 
 
-Database triggers watch external database tables for changes and automatically execute functions when new or updated rows are detected. This is poll-based Change Data Capture — no setup required on the source database.
+Database triggers watch external database tables for changes and automatically execute a function — or fire a pipeline — when new or updated rows are detected. This is poll-based Change Data Capture — no setup required on the source database.
 
 **How it works:**
 
@@ -23,7 +23,9 @@ Database triggers watch external database tables for changes and automatically e
 | `schema_name` | Database schema (default: `public`) |
 | `table_name` | Table to watch |
 | `operations` | `["INSERT"]`, `["UPDATE"]`, or both |
-| `function_namespace` / `function_name` | Function to execute when changes are detected |
+| `target_type` | `function` (default) or `pipeline` |
+| `function_namespace` / `function_name` | Function to execute (function targets) |
+| `pipeline_namespace` / `pipeline_name` | Pipeline to fire (pipeline targets) — the rows payload becomes the run input |
 | `poll_column` | Monotonically increasing column used as bookmark (e.g., `updated_at`, `id`) |
 | `poll_interval_seconds` | How often to poll (1–3600, default: `10`) |
 | `batch_size` | Max rows per poll (1–10000, default: `100`) |

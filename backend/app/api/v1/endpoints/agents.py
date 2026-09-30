@@ -75,6 +75,7 @@ async def create_agent(
         description=agent_data.description,
         llm_provider_id=agent_data.llm_provider_id,
         model=agent_data.model,
+        provider_overrides=agent_data.provider_overrides,
         temperature=agent_data.temperature or 0.7,
         max_tokens=agent_data.max_tokens,
         system_prompt=agent_data.system_prompt,
@@ -94,6 +95,7 @@ async def create_agent(
         enabled_collections=[c.model_dump() for c in agent_data.enabled_collections] if agent_data.enabled_collections else [],
         enabled_components=agent_data.enabled_components or [],
         enabled_connectors=agent_data.enabled_connectors or [],
+        enabled_pipelines=agent_data.enabled_pipelines or [],
         hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
         icon=agent_data.icon,
         is_active=True,
@@ -213,6 +215,10 @@ async def update_agent(
         agent.llm_provider_id = agent_data.llm_provider_id
     if agent_data.model is not None:
         agent.model = agent_data.model
+    if agent_data.provider_overrides is not None:
+        # {} clears all overrides (back to pure inherit); keys are whitelisted
+        # by the schema validator.
+        agent.provider_overrides = agent_data.provider_overrides or None
     if agent_data.temperature is not None:
         agent.temperature = agent_data.temperature
     if agent_data.max_tokens is not None:
@@ -247,6 +253,8 @@ async def update_agent(
         agent.enabled_components = agent_data.enabled_components
     if agent_data.enabled_connectors is not None:
         agent.enabled_connectors = agent_data.enabled_connectors
+    if agent_data.enabled_pipelines is not None:
+        agent.enabled_pipelines = agent_data.enabled_pipelines
     if agent_data.hooks is not None:
         agent.hooks = agent_data.hooks.model_dump(by_alias=True)
     if agent_data.icon is not None:

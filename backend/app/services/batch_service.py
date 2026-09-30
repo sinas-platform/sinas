@@ -46,6 +46,86 @@ def _trigger_id(prefix: Optional[str], index: int) -> str:
     return f"batch:{index}"
 
 
+def _provider_batch_blockers(agent: Any) -> list[str]:
+    """Agent capabilities incompatible with provider-native batch mode.
+
+    A provider batch is a single fire-and-forget LLM call per child — there
+    is no runtime to serve tool calls or lifecycle hooks. Preload-only
+    skills are fine (they only add system-prompt content).
+    """
+    blockers: list[str] = []
+    if agent.enabled_functions:
+        blockers.append("functions")
+    if agent.enabled_agents:
+        blockers.append("sub-agents")
+    if agent.enabled_queries:
+        blockers.append("queries")
+    if agent.enabled_stores:
+        blockers.append("stores")
+    if agent.enabled_collections:
+        blockers.append("collections")
+    if agent.enabled_components:
+        blockers.append("components")
+    if agent.enabled_connectors:
+        blockers.append("connectors")
+    if agent.enabled_pipelines:
+        # asTool pipelines are tools like any other (pipeline_<ns>__<name>).
+        # Omitting them here meant such an agent passed validation and was
+        # then submitted tool-less "by contract" — running the whole batch
+        # without its tools, silently, with no error.
+        blockers.append("pipelines")
+    if agent.system_tools:
+        blockers.append("system tools")
+    if agent.hooks and any(agent.hooks.get(k) for k in agent.hooks):
+        blockers.append("hooks")
+    for skill in agent.enabled_skills or []:
+        if isinstance(skill, str) or not skill.get("preload"):
+            blockers.append("non-preloaded skills")
+            break
+    return blockers
+
+
+async def _resolve_batch_provider(
+    db: AsyncSession, agent: Any
+) -> tuple[Any, Any, str]:
+    """Resolve (provider instance, LLMProvider row, model) for provider-mode
+    batches. Raises BatchError when unresolvable or unsupported."""
+    from app.models import LLMProvider
+    from app.providers import create_provider
+
+    if agent.llm_provider_id:
+        row = await db.execute(
+            select(LLMProvider).where(
+                LLMProvider.id == agent.llm_provider_id, LLMProvider.is_active == True
+            )
+        )
+    else:
+        row = await db.execute(
+            select(LLMProvider).where(
+                LLMProvider.is_default == True, LLMProvider.is_active == True
+            )
+        )
+    provider_row = row.scalar_one_or_none()
+    if not provider_row:
+        raise BatchError("No active LLM provider found for agent")
+
+    model = agent.model or provider_row.default_model
+    if not model:
+        raise BatchError(
+            f"Agent has no model and provider '{provider_row.name}' has no default_model"
+        )
+
+    provider = await create_provider(
+        provider_name=provider_row.name, db=db, overrides=agent.provider_overrides
+    )
+    if not provider.supports_batch:
+        raise BatchError(
+            f"Provider '{provider_row.name}' ({provider_row.provider_type}) does not "
+            f"support batch submission"
+        )
+    return provider, provider_row, model
+
+
 # ──────────────── Submission ────────────────
 
 
@@ -147,11 +227,15 @@ async def submit_agent_batch(
     trigger_id_prefix: Optional[str] = None,
     callback_url: Optional[str] = None,
     batch_callback_url: Optional[str] = None,
+    execution_mode: str = "queue",
 ) -> dict[str, Any]:
     """Create a batch of agent invocations. Each input becomes a fresh chat.
 
     Each `inputs[i]` shape: `{"input_variables": {...}, "message": "..."}`.
     Missing fields default to empty / required keys raise BatchError.
+
+    execution_mode="provider" submits the whole batch to the LLM provider's
+    batch API (tool-less agents only); a scheduler job polls it to completion.
     """
     if not inputs:
         raise BatchError("inputs must be a non-empty list")
@@ -167,6 +251,19 @@ async def submit_agent_batch(
     for i, item in enumerate(inputs):
         if not isinstance(item, dict) or "message" not in item:
             raise BatchError(f"inputs[{i}] must have a 'message' field")
+
+    provider = provider_row = batch_model = None
+    if execution_mode == "provider":
+        blockers = _provider_batch_blockers(agent)
+        if blockers:
+            raise BatchError(
+                f"Agent '{namespace}/{name}' cannot run in provider batch mode — "
+                f"it uses: {', '.join(blockers)}. Provider batches support only "
+                f"tool-less agents (preload-only skills are allowed)."
+            )
+        provider, provider_row, batch_model = await _resolve_batch_provider(db, agent)
+    elif execution_mode != "queue":
+        raise BatchError(f"Unknown execution_mode: {execution_mode!r}")
 
     from app.services.message_service import render_template
     from app.utils.schema import validate_with_coercion
@@ -186,12 +283,15 @@ async def submit_agent_batch(
         batch_callback_url=batch_callback_url,
         started_at=now,
         created_at=now,
+        execution_mode=execution_mode,
+        llm_provider_id=provider_row.id if provider_row else None,
     )
     db.add(batch)
     await db.flush()
 
     execution_ids: list[str] = []
     chat_ids: list[str] = []
+    provider_children: list[tuple[Chat, dict[str, Any]]] = []
 
     for i, item in enumerate(inputs):
         input_variables = item.get("input_variables") or {}
@@ -228,6 +328,13 @@ async def submit_agent_batch(
                         pass
                 db.add(Message(chat_id=chat.id, role=msg_data["role"], content=content))
 
+        # Provider mode: persist the user message now (the queue worker does
+        # this in queue mode) so history building and the final transcript
+        # include it.
+        if execution_mode == "provider":
+            db.add(Message(chat_id=chat.id, role="user", content=message_content))
+            provider_children.append((chat, input_variables))
+
         execution_id = str(uuid_lib.uuid4())
         execution_ids.append(execution_id)
 
@@ -247,20 +354,75 @@ async def submit_agent_batch(
         )
         db.add(execution)
 
-    await db.commit()
+    if execution_mode == "provider":
+        # Build each child's request through the same pipeline as live chats
+        # (system prompt rendering, preloaded skills, output-schema
+        # instruction), then submit the whole batch to the provider. Rows are
+        # only flushed so a submission failure rolls everything back.
+        from app.services.conversation_history import build_conversation_history
+        from app.services.skill_tools import SkillToolConverter
 
-    # Enqueue agent message jobs.
-    for execution_id, chat_id, item in zip(execution_ids, chat_ids, inputs):
-        await queue_service.enqueue_agent_message(
-            chat_id=chat_id,
-            user_id=user_id,
-            user_token=user_token,
-            content=item["message"],
-            channel_id=f"batch:{batch.id}:{execution_id}",
-            agent=f"{namespace}/{name}",
-            trigger_type=TriggerType.AGENT.value,
-            execution_id=execution_id,
+        await db.flush()
+        skill_converter = SkillToolConverter()
+
+        requests = []
+        for execution_id, (chat, input_variables) in zip(execution_ids, provider_children):
+            messages = await build_conversation_history(
+                db=db,
+                chat=chat,
+                skill_converter=skill_converter,
+                inject_context=False,
+                user_id=user_id,
+                template_variables=input_variables or None,
+                provider_type=provider_row.provider_type,
+            )
+            requests.append({
+                "custom_id": execution_id,
+                "messages": messages,
+                "model": batch_model,
+                "temperature": agent.temperature,
+                "max_tokens": agent.max_tokens,
+            })
+
+        try:
+            provider_batch_id = await provider.submit_batch(requests)
+        except BatchError:
+            raise
+        except Exception as e:
+            await db.rollback()
+            raise BatchError(f"Provider batch submission failed: {e}")
+
+        batch.provider_batch_id = provider_batch_id
+        batch.status = BatchStatus.RUNNING
+        await db.commit()
+
+        # Metering: queue-mode children are counted at the agent leaf in
+        # message_service when each turn runs; provider-mode children never
+        # pass through it, so count the whole batch at submission — this is
+        # the moment the work is irrevocably bought from the provider.
+        from app.services import metering
+
+        await metering.record(metering.OperationKind.AGENT, n=len(requests))
+
+        logger.info(
+            "Submitted provider batch %s (%d requests) as %s via %s",
+            batch.id, len(requests), provider_batch_id, provider_row.name,
         )
+    else:
+        await db.commit()
+
+        # Enqueue agent message jobs.
+        for execution_id, chat_id, item in zip(execution_ids, chat_ids, inputs):
+            await queue_service.enqueue_agent_message(
+                chat_id=chat_id,
+                user_id=user_id,
+                user_token=user_token,
+                content=item["message"],
+                channel_id=f"batch:{batch.id}:{execution_id}",
+                agent=f"{namespace}/{name}",
+                trigger_type=TriggerType.AGENT.value,
+                execution_id=execution_id,
+            )
 
     return {
         "batch_id": str(batch.id),
@@ -268,6 +430,7 @@ async def submit_agent_batch(
         "chat_ids": chat_ids,
         "total": batch.total,
         "status": batch.status.value.lower(),
+        "execution_mode": execution_mode,
     }
 
 
@@ -305,6 +468,7 @@ async def get_batch_status(
         "started_at": batch.started_at.isoformat() if batch.started_at else None,
         "finished_at": batch.finished_at.isoformat() if batch.finished_at else None,
         "trigger_id_prefix": batch.trigger_id_prefix,
+        "execution_mode": batch.execution_mode,
     }
 
 
@@ -374,6 +538,28 @@ async def cancel_batch(
             "status": batch.status.value.lower(),
             "cancelled_children": 0,
         }
+
+    # Provider-mode: best-effort cancel at the provider first. Children are
+    # PENDING (there are no queue jobs), so the generic cancellation below
+    # marks them all CANCELLED; any results the provider still returns are
+    # ignored by the poller's already-terminal check.
+    if batch.execution_mode == "provider" and batch.provider_batch_id:
+        try:
+            from app.models import LLMProvider
+            from app.providers import create_provider
+
+            row = await db.execute(
+                select(LLMProvider).where(LLMProvider.id == batch.llm_provider_id)
+            )
+            provider_row = row.scalar_one_or_none()
+            if provider_row:
+                provider = await create_provider(provider_name=provider_row.name, db=db)
+                await provider.cancel_batch(batch.provider_batch_id)
+        except Exception as e:
+            logger.warning(
+                "Provider-side cancel failed for batch %s (%s): %s",
+                batch.id, batch.provider_batch_id, e,
+            )
 
     # Cancel queued / pending children. Running ones must complete naturally
     # (arq doesn't support clean preemption from outside the worker).

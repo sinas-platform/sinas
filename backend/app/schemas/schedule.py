@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, validator
 
 class ScheduledJobCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    schedule_type: Literal["function", "agent"] = "function"
+    schedule_type: Literal["function", "agent", "pipeline"] = "function"
     target_namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"
     )
@@ -36,7 +36,7 @@ class ScheduledJobCreate(BaseModel):
 
 class ScheduledJobUpdate(BaseModel):
     name: Optional[str] = None
-    schedule_type: Optional[Literal["function", "agent"]] = None
+    schedule_type: Optional[Literal["function", "agent", "pipeline"]] = None
     target_namespace: Optional[str] = None
     target_name: Optional[str] = None
     description: Optional[str] = None
