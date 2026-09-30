@@ -68,7 +68,7 @@ class FunctionVersion(Base):
 
     id: Mapped[uuid_pk]
     function_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("functions.id"), nullable=False, index=True
+        ForeignKey("functions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     code: Mapped[str] = mapped_column(Text, nullable=False)
