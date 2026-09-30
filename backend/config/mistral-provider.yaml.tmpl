@@ -1,0 +1,13 @@
+apiVersion: sinas.co/v1
+kind: SinasConfig
+metadata:
+  name: mistral-provider
+  description: Mistral AI LLM provider, injected by deploy.sh from MISTRAL_API_KEY
+
+spec:
+  llmProviders:
+    - name: Mistral
+      type: mistral
+      apiKey: __MISTRAL_API_KEY__
+      defaultModel: mistral-large-latest
+      isDefault: true

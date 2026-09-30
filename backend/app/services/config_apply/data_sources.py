@@ -84,7 +84,7 @@ async def apply_llm_providers(
                         )
                     existing.is_default = provider_config.isDefault
                     if provider_config.apiKey:
-                        existing.api_key = EncryptionService.encrypt(provider_config.apiKey)
+                        existing.api_key = EncryptionService().encrypt(provider_config.apiKey)
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -95,7 +95,7 @@ async def apply_llm_providers(
                 if not dry_run:
                     encrypted_key = None
                     if provider_config.apiKey:
-                        encrypted_key = EncryptionService.encrypt(provider_config.apiKey)
+                        encrypted_key = EncryptionService().encrypt(provider_config.apiKey)
 
                     if provider_config.isDefault:
                         await db.execute(
@@ -193,7 +193,7 @@ async def apply_database_connections(
                     existing.ssl_mode = conn_config.sslMode
                     existing.config = conn_config.config
                     if conn_config.password:
-                        existing.password = EncryptionService.encrypt(conn_config.password)
+                        existing.password = EncryptionService().encrypt(conn_config.password)
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -204,7 +204,7 @@ async def apply_database_connections(
                 if not dry_run:
                     encrypted_password = None
                     if conn_config.password:
-                        encrypted_password = EncryptionService.encrypt(
+                        encrypted_password = EncryptionService().encrypt(
                             conn_config.password
                         )
 

@@ -222,3 +222,6 @@ console/node_modules/
 console/dist/
 console/.env.local
 console/.env.*.local
+
+# Backend (backend/)
+backend/config/*.yaml
