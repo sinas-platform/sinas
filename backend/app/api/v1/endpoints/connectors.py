@@ -66,12 +66,20 @@ def _spec(data: dict) -> ConnectorSpec:
 
 async def _locked(ctx: ApplyContext, authorized: Connector) -> Connector:
     """The row the permission check authorized, locked until commit (the
-    permission lookup doesn't lock). Re-read by id, never by name: a
-    connector deleted and recreated under that name meanwhile is another
-    resource, which this caller may not be allowed to touch."""
+    permission lookup doesn't lock).
+
+    Re-read by id, never by name: one deleted and recreated under that name
+    meanwhile is another resource. And still under the name and owner the
+    check authorized: permissions are scoped by namespace/name and owner, so
+    a row renamed or handed over meanwhile may be outside them."""
+    namespace, name, owner = authorized.namespace, authorized.name, authorized.user_id
     connector = await _applier.find_by_id(ctx, authorized.id)
     if connector is None:  # deleted between the permission check and now
         raise HTTPException(status_code=404, detail="Connector not found")
+    if (connector.namespace, connector.name, connector.user_id) != (namespace, name, owner):
+        raise HTTPException(
+            status_code=409, detail="Connector changed while this request ran; try again"
+        )
     return connector
 
 
