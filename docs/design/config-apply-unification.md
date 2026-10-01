@@ -370,10 +370,26 @@ instance's configuration, including edits made in the UI.
 - **Ordering:** a global monotonically increasing id, so the log is totally
   ordered without per-key revision counters that concurrent writers could race.
 - **Read API:** `GET /config/history` (filter by kind, key or resource id; keyset
-  pagination) and `GET /config/history/{id}`, behind `sinas.config.read:all`.
+  pagination; field values and specs opt-in via `include_details`) and
+  `GET /config/history/{id}`, behind `sinas.config.read:all`.
+- **Restore:** `POST /config/history/{id}/restore` (`sinas.config.apply:all`)
+  brings a resource back to a revision's state through its normal applier. A
+  deleted resource is recreated under its original id and original owner
+  (revisions record `owner_user_id`); an existing one is reverted, renames
+  included. The restore is itself a revision (`restored_from_id`).
 
-Not yet: restore-a-revision, a console history view, and the git mirror. Each
-builds on this log without changing it.
+Not yet: a console history view and the git mirror. Each builds on this log
+without changing it.
+
+### 4.8 All-or-nothing applies
+
+Added 2026-10-01. A config apply or package install with **any** failing
+resource now changes nothing (resolving the "Transactionality" row of §2.2):
+`success=False`, every error listed, queued effects discarded, and the
+transaction rolled back by whoever owns it. A dry run reaches the same verdict.
+Deletion remains out of the declarative channel (§4.5); with restore available,
+pruning on *package upgrade* (removing what a new version no longer ships,
+scoped to that package) becomes safe to add, and is the natural next step.
 
 ## 5. Migration sequencing
 
