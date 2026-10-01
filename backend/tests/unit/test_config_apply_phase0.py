@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.encryption import encryption_service
 from app.models.secret import Secret
 from app.services.config_parser import ConfigValidation
+from app.services.resources import SchedulerJobChanged
 
 
 # --------------------------------------------------------------------------
@@ -126,6 +127,9 @@ class TestSecretsApplierScoping:
 # --------------------------------------------------------------------------
 
 class TestApplyNotifications:
+    # Scheduler events now go through the shared SideEffectBus
+    # (app.services.resources); CDC and compiles still use the service's own
+    # queues until those kinds migrate.
     async def test_flush_publishes_queued_events(self, db: AsyncSession, monkeypatch):
         """Config-applied schedules never reached the running scheduler, and the
         CDC reload was skipped entirely for callers using auto_commit=False."""
@@ -143,7 +147,7 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", fake_get_redis)
 
         svc = ConfigApplyService(db, "test-config", owner_user_id=None, auto_commit=False)
-        svc._pending_scheduler.append(("create", "job-1"))
+        svc.effects.add(SchedulerJobChanged("add", "job-1"))
         svc._pending_cdc_reload = True
 
         await svc.flush_notifications()
@@ -167,7 +171,7 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", fake_get_redis)
 
         svc = ConfigApplyService(db, "c", owner_user_id=None, auto_commit=False)
-        svc._pending_scheduler.append(("create", "j"))
+        svc.effects.add(SchedulerJobChanged("add", "j"))
         await svc.flush_notifications()
         # assert the first flush really published — otherwise a missed
         # monkeypatch would make the idempotency check below vacuously true

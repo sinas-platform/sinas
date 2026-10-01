@@ -207,28 +207,53 @@ async def committed_service_key():
 
 
 class _StampWriteCounter:
-    """Counts the statements that actually reach the database."""
+    """Counts stamp UPDATEs two ways.
+
+    `api_keys` / `users`: statements *issued*. `rows_api_keys` / `rows_users`:
+    rows those statements actually *wrote*. They differ under a cold herd:
+    every session can legitimately issue the conditional UPDATE before the
+    first commit lands, but only one of them matches a row — the rest
+    re-evaluate the WHERE after the winner commits and write nothing. The fix's
+    guarantee is about rows written; counting statements made the stale-burst
+    assertion depend on scheduling, and it flaked.
+    """
 
     def __init__(self):
         self.api_keys = 0
         self.users = 0
+        self.rows_api_keys = 0
+        self.rows_users = 0
 
     def __enter__(self):
         from app.core.database import async_engine
 
         self._engine = async_engine.sync_engine
-        event.listen(self._engine, "before_cursor_execute", self._on)
+        event.listen(self._engine, "before_cursor_execute", self._issued)
+        event.listen(self._engine, "after_cursor_execute", self._written)
         return self
 
     def __exit__(self, *exc):
-        event.remove(self._engine, "before_cursor_execute", self._on)
+        event.remove(self._engine, "before_cursor_execute", self._issued)
+        event.remove(self._engine, "after_cursor_execute", self._written)
 
-    def _on(self, conn, cursor, statement, params, context, executemany):
+    @staticmethod
+    def _table(statement):
         normalised = " ".join(statement.split()).lower()
         if normalised.startswith("update api_keys"):
-            self.api_keys += 1
-        elif normalised.startswith("update users"):
-            self.users += 1
+            return "api_keys"
+        if normalised.startswith("update users"):
+            return "users"
+        return None
+
+    def _issued(self, conn, cursor, statement, params, context, executemany):
+        table = self._table(statement)
+        if table:
+            setattr(self, table, getattr(self, table) + 1)
+
+    def _written(self, conn, cursor, statement, params, context, executemany):
+        table = self._table(statement)
+        if table and (cursor.rowcount or 0) > 0:
+            setattr(self, f"rows_{table}", getattr(self, f"rows_{table}") + cursor.rowcount)
 
 
 class TestConcurrentRequests:
@@ -263,7 +288,7 @@ class TestConcurrentRequests:
         assert writes.api_keys == 0
         assert writes.users == 0
 
-    async def test_a_burst_on_a_stale_row_collapses_to_few_writes(
+    async def test_a_burst_on_a_stale_row_writes_each_row_exactly_once(
         self, committed_service_key
     ):
         """The herd at window expiry. A caller that blocks on the row
@@ -286,10 +311,14 @@ class TestConcurrentRequests:
         with _StampWriteCounter() as writes:
             await self._burst(plain, self.CONCURRENCY)
 
-        assert writes.api_keys < self.CONCURRENCY, (
-            "every concurrent request wrote — the staleness gate is not holding"
+        # Exactly one write per row, however the burst is scheduled: a blocked
+        # caller re-evaluates the WHERE after the winner commits, finds the
+        # stamp fresh and matches nothing. (How many *issue* the statement
+        # varies run to run — up to all of them — and isn't the guarantee.)
+        assert writes.rows_api_keys == 1, (
+            f"{writes.rows_api_keys} concurrent requests wrote the key's stamp"
         )
-        assert writes.users < self.CONCURRENCY
+        assert writes.rows_users == 1
 
         # And the row did get refreshed exactly once, to one value
         async with AsyncSessionLocal() as s:

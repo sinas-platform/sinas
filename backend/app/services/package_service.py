@@ -209,12 +209,20 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=False)
 
         if not result.success:
-            raise ValueError(f"Package apply failed: {'; '.join(result.errors)}")
+            # All or nothing: nothing from this package is committed. The
+            # caller's transaction rolls back (the API returns 400; the agent
+            # tool's session closes without committing).
+            raise ValueError(
+                f"Package not installed: {len(result.errors)} resource(s) failed, so "
+                f"nothing was applied. {'; '.join(result.errors)}"
+            )
 
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
@@ -301,6 +309,8 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=True)
@@ -318,7 +328,7 @@ class PackageService:
 
         return result, variable_declarations, requires_input
 
-    async def uninstall(self, package_name: str) -> dict:
+    async def uninstall(self, package_name: str, actor_user_id: Optional[str] = None) -> dict:
         """
         Uninstall a package: delete all resources with matching managed_by and the package record.
 
@@ -346,7 +356,6 @@ class PackageService:
             DatabaseTrigger: "databaseTriggers",
             Function: "functions",
             Query: "queries",
-            ScheduledJob: "schedules",
             Skill: "skills",
             Store: "stores",
             Template: "templates",
@@ -370,6 +379,31 @@ class PackageService:
             update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
         )
 
+        # Schedules go through their applier rather than a bulk delete: each
+        # deletion is recorded in the change history, and the running
+        # scheduler is told to drop the job. A bulk delete did neither, so the
+        # scheduler kept firing jobs whose rows were already gone.
+        from app.services.resources import ApplyContext
+        from app.services.resources.schedules import ScheduleApplier
+
+        schedule_ctx = ApplyContext(
+            db=self.db,
+            origin="package",
+            actor_user_id=actor_user_id,
+            managed_by=managed_by,
+            config_name=package_name,
+        )
+        schedule_applier = ScheduleApplier()
+        managed_schedules = (
+            await self.db.execute(
+                select(ScheduledJob).where(ScheduledJob.managed_by == managed_by)
+            )
+        ).scalars().all()
+        for schedule in managed_schedules:
+            await schedule_applier.delete(schedule, schedule_ctx)
+        if managed_schedules:
+            deleted_counts["schedules"] = len(managed_schedules)
+
         for model, type_name in model_names.items():
             stmt = delete(model).where(model.managed_by == managed_by)
             result = await self.db.execute(stmt)
@@ -389,6 +423,7 @@ class PackageService:
         # Delete package record
         await self.db.delete(package)
         await self.db.commit()
+        await schedule_ctx.effects.flush()
 
         return deleted_counts
 

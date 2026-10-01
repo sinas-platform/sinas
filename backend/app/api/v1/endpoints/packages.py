@@ -167,7 +167,7 @@ async def uninstall_package(
 
     service = PackageService(db)
     try:
-        deleted_counts = await service.uninstall(name)
+        deleted_counts = await service.uninstall(name, actor_user_id=str(user_id))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
