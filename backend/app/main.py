@@ -16,6 +16,7 @@ from app.core.database import AsyncSessionLocal, get_db
 from app.core.templates import initialize_default_templates
 from app.core.config import settings
 from app.middleware.request_logger import RequestLoggerMiddleware
+from app.middleware.trace_context import TraceContextMiddleware
 from app.services.clickhouse_logger import clickhouse_logger
 from app.services.openapi_generator import generate_runtime_openapi
 
@@ -147,6 +148,9 @@ app.add_middleware(
 
 # Add request logging middleware
 app.add_middleware(RequestLoggerMiddleware)
+# Outside the request logger and CORS, and on the root app so every mounted
+# sub-app serves the request inside the trace context the caller sent.
+app.add_middleware(TraceContextMiddleware)
 
 
 @app.middleware("http")

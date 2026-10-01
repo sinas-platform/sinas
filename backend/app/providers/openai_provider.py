@@ -50,6 +50,10 @@ class OpenAIProvider(BaseLLMProvider):
         # Add any additional kwargs
         params.update(kwargs)
 
+        headers = self._context_headers()
+        if headers:
+            params["extra_headers"] = {**params.get("extra_headers", {}), **headers}
+
         return params
 
     async def complete(
