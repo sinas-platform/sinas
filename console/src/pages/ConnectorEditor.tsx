@@ -47,6 +47,11 @@ function pruneAuthForSave(auth: any): Record<string, any> {
     if (auth.client_auth_method) out.client_auth_method = auth.client_auth_method;
     if (auth.token_params && Object.keys(auth.token_params).length) out.token_params = auth.token_params;
     if (type === 'oauth2_authorization_code' && auth.authorize_url) out.authorize_url = auth.authorize_url;
+    // Not editable here, but set by config for providers with nonstandard
+    // token responses (e.g. Slack): saving must not drop it.
+    if (auth.token_response_paths && Object.values(auth.token_response_paths).some(Boolean)) {
+      out.token_response_paths = auth.token_response_paths;
+    }
     return out;
   }
   return out;

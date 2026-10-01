@@ -18,6 +18,7 @@ async def record_revision(
     action: str,
     spec: dict[str, Any] | None,
     changes: dict[str, Any] | None,
+    secrets: dict[str, Any] | None = None,
 ) -> ConfigRevision:
     """Append one revision, in the caller's transaction.
 
@@ -40,6 +41,36 @@ async def record_revision(
         config_name=ctx.config_name,
         owner_user_id=uuid.UUID(str(owner)) if owner else None,
         restored_from_id=ctx.restored_from_id,
+        secret_state=_encrypt(secrets) if secrets else None,
     )
     ctx.db.add(revision)
     return revision
+
+
+def _encrypt(secrets: dict[str, Any]) -> str:
+    import json
+
+    from app.core.encryption import encryption_service
+
+    return encryption_service.encrypt(json.dumps(secrets, sort_keys=True))
+
+
+def decrypt_secret_state(secret_state: str | None) -> dict[str, Any]:
+    import json
+
+    from app.core.encryption import encryption_service
+
+    return json.loads(encryption_service.decrypt(secret_state)) if secret_state else {}
+
+
+def redact(value: str) -> str:
+    """A stand-in for a secret value in history: stable for equal values (so
+    a changed value still shows as a change) but keyed, so a short secret
+    can't be recovered by hashing guesses."""
+    import hashlib
+    import hmac
+
+    from app.core.config import settings
+
+    digest = hmac.new(settings.secret_key.encode(), value.encode(), hashlib.sha256).hexdigest()
+    return f"<redacted:{digest[:16]}>"

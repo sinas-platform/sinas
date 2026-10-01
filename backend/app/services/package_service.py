@@ -349,7 +349,6 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
-            Connector: "connectors",
             Manifest: "manifests",
             Component: "components",
             Collection: "collections",
