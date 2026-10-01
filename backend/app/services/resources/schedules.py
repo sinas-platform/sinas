@@ -44,8 +44,15 @@ class ScheduleApplier(ResourceApplier[ScheduleSpec]):
     async def find(self, ctx: ApplyContext, key: str) -> ScheduledJob | None:
         # Schedule names are globally unique (the column is UNIQUE), so the
         # lookup is global too; who may touch a row is the API layer's call.
+        # Locked until commit, like every row an applier may write: two
+        # concurrent applies must not both diff against the same old state.
         return (
-            await ctx.db.execute(select(ScheduledJob).where(ScheduledJob.name == key))
+            await ctx.db.execute(
+                select(ScheduledJob)
+                .where(ScheduledJob.name == key)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
         ).scalar_one_or_none()
 
     def spec_from_row(self, row: ScheduledJob) -> ScheduleSpec:

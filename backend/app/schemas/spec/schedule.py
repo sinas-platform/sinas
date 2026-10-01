@@ -8,7 +8,12 @@ from app.schemas.spec.base import SpecModel
 
 ScheduleType = Literal["function", "agent", "pipeline"]
 
-NAMESPACE_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+# The union of what a schedule's targets allow: function namespaces use
+# [a-zA-Z0-9_], agent and pipeline namespaces also allow "-". Narrower than
+# this and a schedule on a legitimately named agent ("customer-support/triage")
+# can't be expressed — which, with all-or-nothing applies, fails the whole
+# config (and a startup auto-apply, the boot).
+NAMESPACE_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_-]*$"
 
 # Config YAML references the target with one field per schedule type, holding
 # "namespace/name". The REST API splits it into target_namespace/target_name.
@@ -49,6 +54,11 @@ class ScheduleSpec(SpecModel):
         defaults to "default"). Existing YAML keeps parsing unchanged."""
         if not isinstance(data, dict):
             return data
+        # The config path used to store scheduleType unvalidated, so existing
+        # YAML may say "Agent" or "Function". Accept any case; store lowercase.
+        for type_key in ("scheduleType", "schedule_type"):
+            if isinstance(data.get(type_key), str):
+                data = {**data, type_key: data[type_key].lower()}
         refs = {key: data[key] for key in _REF_KEYS if data.get(key)}
         if not refs:
             return {key: value for key, value in data.items() if key not in _REF_KEYS}
@@ -79,10 +89,20 @@ class ScheduleSpec(SpecModel):
             raise ValueError("Invalid cron expression")
         return value
 
-    @model_validator(mode="after")
-    def _agent_schedules_need_content(self) -> "ScheduleSpec":
+    def whole_spec_problems(self) -> list[str]:
+        """Rules that span fields. Kept callable on its own: pydantic skips
+        after-validators once any field has failed, so a partial update over
+        a row that already holds an invalid field has to run these itself."""
+        problems = []
         if self.schedule_type == "agent" and not self.content:
-            raise ValueError("content is required for agent schedules")
+            problems.append("content is required for agent schedules")
+        return problems
+
+    @model_validator(mode="after")
+    def _whole_spec(self) -> "ScheduleSpec":
+        problems = self.whole_spec_problems()
+        if problems:
+            raise ValueError(problems[0])
         return self
 
     @property
@@ -93,10 +113,15 @@ class ScheduleSpec(SpecModel):
         """Config YAML form — the shape `resource_serializers.serialize_schedule`
         always exported, now including `description` (which config apply used
         to accept and then silently drop)."""
+        # Rows predating validation may hold a miscased or unknown type. Export
+        # must not crash on one: normalise the case, and for a type that is
+        # still unknown leave the reference out, as the old serializer did.
+        schedule_type = (self.schedule_type or "").lower()
+        ref_field = _CONFIG_REF_FIELD.get(schedule_type)
         out = {
             "name": self.name,
-            "scheduleType": self.schedule_type,
-            _CONFIG_REF_FIELD[self.schedule_type]: self.target,
+            "scheduleType": schedule_type if ref_field else self.schedule_type,
+            **({ref_field: self.target} if ref_field else {}),
             "description": self.description,
             "content": self.content,
             "cronExpression": self.cron_expression,

@@ -59,17 +59,22 @@ def _patched_spec(schedule: ScheduledJob, patch: dict) -> ScheduleSpec:
     pausable, renameable or re-described — otherwise the only way to stop a
     broken schedule would be to delete it.
 
-    - An error on a field the PATCH didn't send is stored data, not the
-      PATCH's doing: tolerated.
-    - A whole-spec error is tolerated unless the PATCH touched a field that
+    A field counts as touched only if the PATCH changes its value: the console
+    sends the whole form, so a stored invalid cron comes back unchanged.
+
+    - An error on a field the PATCH didn't change is stored data: tolerated.
+    - A whole-spec error is tolerated unless the PATCH changed a field that
       rule reads (ScheduleSpec.WHOLE_SPEC_FIELDS).
 
     Stored errors can't simply be diffed against merged ones: pydantic skips
     whole-spec validation when a field fails, so a second stored problem stays
     hidden until the first is fixed — and fixing the first would then be blamed
-    for the second.
+    for the second. That is also why the whole-spec rules are re-run
+    explicitly below when a field they read changed.
     """
-    merged = {**_applier.spec_from_row(schedule).model_dump(), **patch}
+    stored = _applier.spec_from_row(schedule).model_dump()
+    changed = {key for key, value in patch.items() if stored.get(key) != value}
+    merged = {**stored, **patch}
     try:
         return ScheduleSpec.model_validate(merged)
     except ValidationError as error:
@@ -78,16 +83,37 @@ def _patched_spec(schedule: ScheduledJob, patch: dict) -> ScheduleSpec:
     def introduced(err: dict) -> bool:
         if err["loc"]:
             field = _FIELD_BY_ALIAS.get(str(err["loc"][0]), str(err["loc"][0]))
-            return field in patch
-        return bool(ScheduleSpec.WHOLE_SPEC_FIELDS & patch.keys())
+            return field in changed
+        return bool(ScheduleSpec.WHOLE_SPEC_FIELDS & changed)
 
-    blocking = [e for e in errors if introduced(e)]
+    blocking = [
+        {"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]}
+        for e in errors
+        if introduced(e)
+    ]
+    spec = ScheduleSpec.model_construct(**merged)
+    if not blocking and ScheduleSpec.WHOLE_SPEC_FIELDS & changed:
+        blocking = [
+            {"loc": [], "msg": problem, "type": "value_error"}
+            for problem in spec.whole_spec_problems()
+        ]
     if blocking:
-        raise HTTPException(
-            status_code=422,
-            detail=[{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in blocking],
+        raise HTTPException(status_code=422, detail=blocking)
+    return spec
+
+
+async def _locked(db: AsyncSession, name: str, user_id) -> ScheduledJob | None:
+    """The row an edit is about to change, locked until commit, so two
+    concurrent edits can't both read the old state and record overlapping
+    history."""
+    return (
+        await db.execute(
+            select(ScheduledJob)
+            .where(ScheduledJob.name == name, ScheduledJob.user_id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
-    return ScheduleSpec.model_construct(**merged)
+    ).scalar_one_or_none()
 
 
 async def _commit_and_notify(db: AsyncSession, ctx: ApplyContext) -> None:
@@ -192,7 +218,7 @@ async def update_schedule(
     """Update a scheduled job."""
     user_id, permissions = current_user_data
 
-    schedule = await ScheduledJob.get_by_name(db, name, user_id)
+    schedule = await _locked(db, name, user_id)
 
     if not schedule:
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")
@@ -233,7 +259,7 @@ async def delete_schedule(
     """Delete a scheduled job."""
     user_id, permissions = current_user_data
 
-    schedule = await ScheduledJob.get_by_name(db, name, user_id)
+    schedule = await _locked(db, name, user_id)
 
     if not schedule:
         raise HTTPException(status_code=404, detail=f"Schedule '{name}' not found")

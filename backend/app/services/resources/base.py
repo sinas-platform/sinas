@@ -153,15 +153,21 @@ OwnershipDecision = Literal["write", "write_detach", "skip"]
 def ownership_decision(row_managed_by: Optional[str], ctx: ApplyContext) -> OwnershipDecision:
     """The managed_by state machine (design §4.4), one place for every kind.
 
-    | row managed_by | API write       | config / package apply              |
-    |----------------|-----------------|-------------------------------------|
-    | NULL (manual)  | write           | adopt + stamp                       |
-    | same manager   | write + detach  | write, re-stamp                     |
-    | other manager  | write + detach  | warn + skip                         |
+    | row managed_by | API write       | config apply     | package install  |
+    |----------------|-----------------|------------------|------------------|
+    | NULL (manual)  | write           | adopt + stamp    | warn + skip      |
+    | same manager   | write + detach  | write, re-stamp  | write, re-stamp  |
+    | other manager  | write + detach  | warn + skip      | warn + skip      |
+
+    A package never adopts a manual row: once adopted, uninstalling the
+    package (or an upgrade that drops it) would delete something an operator
+    made by hand. Config apply is the operator's own declaration, so it may.
     """
     if ctx.origin == "api":
         return "write_detach" if row_managed_by else "write"
-    if row_managed_by is None or row_managed_by == ctx.managed_by:
+    if row_managed_by is None:
+        return "skip" if ctx.origin == "package" else "write"
+    if row_managed_by == ctx.managed_by:
         return "write"
     return "skip"
 
@@ -204,7 +210,9 @@ class ResourceApplier(Generic[TSpec]):
         raise NotImplementedError
 
     async def find_by_id(self, ctx: ApplyContext, resource_id: Any) -> Any:
-        return await ctx.db.get(self.model, resource_id)
+        return await ctx.db.get(
+            self.model, resource_id, with_for_update=True, populate_existing=True
+        )
 
     def spec_from_row(self, row: Any) -> TSpec:
         raise NotImplementedError
@@ -282,10 +290,16 @@ class ResourceApplier(Generic[TSpec]):
         # ---- update ----------------------------------------------------------
         decision = ownership_decision(row.managed_by, ctx)
         if decision == "skip":
-            warning = (
-                f"{self.label} '{new_key}' exists but is managed by "
-                f"'{row.managed_by}'. Skipping."
-            )
+            if row.managed_by is None:
+                warning = (
+                    f"{self.label} '{new_key}' exists and was created or edited by "
+                    f"hand; '{ctx.managed_by}' leaves it as is."
+                )
+            else:
+                warning = (
+                    f"{self.label} '{new_key}' exists but is managed by "
+                    f"'{row.managed_by}'. Skipping."
+                )
             return ApplyResult("skipped", obj=row, warning=warning)
 
         changes = diff_specs(self.history_spec(self.spec_from_row(row)), new_canonical)

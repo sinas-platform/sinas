@@ -994,3 +994,139 @@ class TestPackageUpgrade:
         _, result = await _apply(db, admin_user)  # same config, now without it
         assert result.summary.deleted == {}
         assert await _row(db, name) is not None
+
+
+# ------------------------------------------- second review round (#206)
+
+
+class TestConfigShapesAcceptedBefore:
+    """All-or-nothing makes one refused entry fail a whole config (and a
+    startup auto-apply, the boot), so the spec must not refuse YAML the old
+    config path accepted and ran."""
+
+    async def test_an_agent_in_a_hyphenated_namespace(self, db: AsyncSession, admin_user):
+        row = Agent(
+            user_id=admin_user.id, namespace=f"customer-support-{_uid()}", name="triage",
+            system_prompt="Triage.",
+        )
+        db.add(row)
+        await db.flush()
+        name = f"cfg-{_uid()}"
+        _, result = await _apply(db, admin_user, {
+            "name": name, "scheduleType": "agent", "agentName": f"{row.namespace}/triage",
+            "content": "Go", "cronExpression": "0 3 * * *",
+        })
+        assert result.success, result.errors
+        assert (await _row(db, name)).target_namespace == row.namespace
+
+    async def test_a_miscased_schedule_type_is_stored_lowercase(self, db: AsyncSession, admin_user, fn):
+        name = f"cfg-{_uid()}"
+        _, result = await _apply(db, admin_user, _yaml_schedule(name, fn, scheduleType="Function"))
+        assert result.success, result.errors
+        assert (await _row(db, name)).schedule_type == "function"
+
+    async def test_export_survives_legacy_schedule_types(self, db: AsyncSession, admin_user, fn, agent):
+        odd = await _legacy_row(db, admin_user, fn, schedule_type="Weird")
+        cased = await _legacy_row(
+            db, admin_user, fn, schedule_type="Agent",
+            target_namespace=agent.namespace, target_name=agent.name, content="Go",
+        )
+        exported = {s["name"]: s for s in await ConfigExportService(db)._export_schedules()}
+        assert exported[odd.name]["scheduleType"] == "Weird"
+        assert not {"functionName", "agentName", "pipelineName"} & exported[odd.name].keys()
+        assert exported[cased.name]["scheduleType"] == "agent"
+        assert exported[cased.name]["agentName"] == f"{agent.namespace}/{agent.name}"
+
+
+class TestPatchTouchesOnlyWhatItChanges:
+    async def test_a_full_form_resending_a_stored_invalid_cron_is_accepted(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        """The console sends the whole form: an unchanged legacy cron must not
+        block pausing the schedule."""
+        row = await _legacy_row(db, admin_user, fn)
+        response = await client.patch(
+            f"/api/v1/schedules/{row.name}",
+            json={**_rest_schedule(row.name, fn), "cron_expression": "not a cron", "is_active": False},
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 200, response.text
+        await db.refresh(row)
+        assert row.is_active is False
+
+    async def test_a_stored_field_error_does_not_hide_a_new_whole_spec_error(
+        self, client, db: AsyncSession, admin_user, fn, agent, published
+    ):
+        """With the stored cron failing, pydantic never runs the whole-spec
+        rule, so switching to an agent without content slipped through."""
+        row = await _legacy_row(db, admin_user, fn)
+        response = await client.patch(
+            f"/api/v1/schedules/{row.name}",
+            json={"schedule_type": "agent", "target_namespace": agent.namespace, "target_name": agent.name},
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 422
+        assert "content is required" in response.text
+        await db.refresh(row)
+        assert row.schedule_type == "function"
+
+
+class TestPackagesDoNotAdopt:
+    async def test_a_package_leaves_a_manual_schedule_alone(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        """Adopting it would let an uninstall or upgrade delete something an
+        operator made by hand."""
+        from app.services.package_service import PackageService
+
+        pkg, ns, name = f"pkg-{_uid()}", f"ns{_uid()}", f"shared-{_uid()}"
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=auth_headers(admin_user))
+        service = PackageService(db)
+
+        _, result = await service.install(_package_yaml(pkg, "1.0.0", ns, [name]), str(admin_user.id))
+        assert any("by hand" in w for w in result.warnings)
+        row = await _row(db, name)
+        assert (row.managed_by, row.target_namespace) == (None, fn.namespace)
+
+        await service.install(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
+        assert await _row(db, name) is not None
+        await service.uninstall(pkg, actor_user_id=str(admin_user.id))
+        assert await _row(db, name) is not None
+
+
+class TestRoundTwoFixes:
+    async def test_a_restore_falls_back_to_the_restorer_when_the_owner_is_gone(
+        self, client, db: AsyncSession, admin_user, test_user, fn, published
+    ):
+        name = f"cfg-{_uid()}"
+        await _apply(db, test_user, _yaml_schedule(name, fn))
+        from app.services.resources import ApplyContext
+        from app.services.resources.schedules import ScheduleApplier
+
+        await ScheduleApplier().delete(
+            await _row(db, name), ApplyContext(db=db, origin="api", actor_user_id=str(admin_user.id))
+        )
+        [deleted] = [r for r in await _revisions(db, resource_key=name) if r.action == "delete"]
+        test_user.is_active = False
+        await db.flush()
+
+        response = await client.post(
+            f"/api/v1/config/history/{deleted.id}/restore", headers=auth_headers(admin_user)
+        )
+        assert response.status_code == 200, response.text
+        assert (await _row(db, name)).user_id == admin_user.id
+
+    async def test_an_agent_tool_uninstall_records_who_did_it(
+        self, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+        from app.services.package_tools import _uninstall
+
+        pkg, ns, sched = f"pkg-{_uid()}", f"ns{_uid()}", f"s-{_uid()}"
+        await PackageService(db).install(_package_yaml(pkg, "1.0.0", ns, [sched]), str(admin_user.id))
+
+        await _uninstall(
+            db, {"package_name": pkg}, admin_user.id, {"sinas.packages.uninstall:all": True}
+        )
+        [deleted] = [r for r in await _revisions(db, resource_key=sched) if r.action == "delete"]
+        assert deleted.actor_user_id == admin_user.id

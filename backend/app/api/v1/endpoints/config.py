@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -288,7 +289,18 @@ async def restore_config_revision(
             detail=f"The state in revision {revision_id} is not valid today: {e.errors(include_url=False)[0]['msg']}",
         )
 
-    owner = str(revision.owner_user_id or user_id)
+    # The original owner, if they can still own things; otherwise whoever
+    # restores it (a schedule owned by a deactivated user would never run as
+    # anyone sensible).
+    owner = str(user_id)
+    if revision.owner_user_id is not None:
+        from app.models.user import User
+
+        owner_active = (
+            await db.execute(select(User.is_active).where(User.id == revision.owner_user_id))
+        ).scalar_one_or_none()
+        if owner_active:
+            owner = str(revision.owner_user_id)
     ctx = ApplyContext(
         db=db,
         origin="api",
@@ -312,6 +324,14 @@ async def restore_config_revision(
             result = await applier.apply(spec, ctx, existing=current)
     except ApplierError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    except IntegrityError:
+        # Something else took the resource's place meanwhile (a concurrent
+        # restore of the same revision, or a new row under its unique name).
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Revision {revision_id} could not be restored: it conflicts with the current state",
+        )
 
     await db.commit()
     await ctx.effects.flush()
