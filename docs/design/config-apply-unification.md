@@ -475,7 +475,7 @@ invalidation effect).
   store and config didn't).
 - **History never shows secret values.** Header values, `auth.token_params`
   values and URL credentials (userinfo and query of `base_url`, the token
-  URL and operation paths) are redacted with a
+  and authorize URLs and operation paths) are redacted with a
   keyed HMAC — stable, so a changed value still shows as a change, but not
   reversible by hashing guesses. The real values are kept encrypted in
   `config_revisions.secret_state` and used only by restore, so a deleted

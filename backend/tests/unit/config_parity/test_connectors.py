@@ -123,6 +123,7 @@ class TestConnectorSpec:
         {"auth": {"type": "oauth2_client_credentials", "clientId": "c"}},  # no token URL
         {"retry": {"maxAttempts": 0}},  # every call failed with a TypeError
         {"timeoutSeconds": 0},  # every call timed out
+        {"namespace": "team/api"},  # no "ns/name" reference could reach it
         {"operations": [{"name": "o", "method": "GET", "path": "/", "requestBodyMapping": "body"}]},
     ])
     def test_config_now_refuses_what_never_worked(self, bad):
@@ -217,12 +218,16 @@ class TestHistoryKeepsSecretsOut:
         keys ride in token URLs and operation paths too (?code=...)."""
         name, headers = f"api-{_uid()}", auth_headers(admin_user)
         body = _rest_connector(name, base_url="https://ghp_TOKEN1@api.example.com/v1")
-        body["auth"]["token_url"] = "https://auth.example.com/token?code=TOKEN2"
+        body["auth"] = {
+            "type": "oauth2_authorization_code", "client_id": "sinas", "secret": "CRM_SECRET",
+            "token_url": "https://auth.example.com/token?code=TOKEN2",
+            "authorize_url": "https://TOKEN4@auth.example.com/authorize",
+        }
         body["operations"][0]["path"] = "/contacts?code=TOKEN3"
         await client.post("/api/v1/connectors", json=body, headers=headers)
         [created] = await _revisions(db, name)
         shown = json.dumps(created.spec)
-        assert not any(token in shown for token in ("TOKEN1", "TOKEN2", "TOKEN3")), shown
+        assert not any(f"TOKEN{i}" in shown for i in range(1, 5)), shown
 
         await client.delete(f"/api/v1/connectors/crm/{name}", headers=headers)
         [deleted] = [r for r in await _revisions(db, name) if r.action == "delete"]
@@ -231,6 +236,7 @@ class TestHistoryKeepsSecretsOut:
         row = await _row(db, name)
         assert row.base_url == "https://ghp_TOKEN1@api.example.com/v1"
         assert row.auth["token_url"].endswith("?code=TOKEN2")
+        assert row.auth["authorize_url"] == "https://TOKEN4@auth.example.com/authorize"
         assert row.operations[0]["path"] == "/contacts?code=TOKEN3"
 
     async def test_a_restore_refuses_when_secrets_cannot_be_decrypted(

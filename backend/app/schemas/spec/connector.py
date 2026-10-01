@@ -91,7 +91,9 @@ class ConnectorRetrySpec(SpecModel):
 class ConnectorSpec(SpecModel):
     WHOLE_SPEC_FIELDS: ClassVar[frozenset[str]] = frozenset({"auth"})
 
-    namespace: str = Field(default="default", min_length=1, max_length=100)
+    # No "/": every reference ("ns/name" in agents, pipelines, the resource
+    # key) splits on the first one, so such a namespace was never reachable.
+    namespace: str = Field(default="default", min_length=1, max_length=100, pattern=r"^[^/]+$")
     name: str = Field(min_length=1, max_length=100)
     description: Optional[str] = None
     base_url: str = Field(min_length=1)
