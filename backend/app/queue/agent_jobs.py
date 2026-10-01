@@ -99,7 +99,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     from app.services.message_service import MessageService
     from app.services.stream_relay import stream_relay
 
-    from app.core.telemetry import extract_trace_context, get_tracer
+    from app.core.telemetry import attached, extract_trace_context, get_tracer
 
     job_id = kwargs["job_id"]
     chat_id = kwargs["chat_id"]
@@ -173,7 +173,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
 
     completed = False
     span_ctx = {"context": parent_ctx} if parent_ctx else {}
-    with tracer.start_as_current_span(
+    with attached(parent_ctx), tracer.start_as_current_span(
         "agent.job",
         **span_ctx,
         attributes={
