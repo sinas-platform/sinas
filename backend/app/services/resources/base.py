@@ -99,6 +99,10 @@ class ApplyContext:
     # A dry run creates nothing, so a reference to something the same config
     # is about to create can only be satisfied from here.
     pending_references: dict[str, set[str]] = field(default_factory=dict)
+    # Restores: bring a deleted resource back under its original id (so its
+    # history stays one timeline), and mark the revision as a restore.
+    restore_resource_id: Optional[Any] = None
+    restored_from_id: Optional[int] = None
     _actor_email: Optional[str] = field(default=None, repr=False)
 
     async def actor_email(self) -> Optional[str]:
@@ -119,6 +123,7 @@ class ApplyResult:
     obj: Any = None
     changes: dict[str, Any] = field(default_factory=dict)
     warning: Optional[str] = None
+    revision: Any = None  # the ConfigRevision recorded, if any
 
 
 # --------------------------------------------------------------- errors
@@ -191,6 +196,9 @@ class ResourceApplier(Generic[TSpec]):
     async def find(self, ctx: ApplyContext, key: str) -> Any:
         raise NotImplementedError
 
+    async def find_by_id(self, ctx: ApplyContext, resource_id: Any) -> Any:
+        return await ctx.db.get(self.model, resource_id)
+
     def spec_from_row(self, row: Any) -> TSpec:
         raise NotImplementedError
 
@@ -253,14 +261,16 @@ class ResourceApplier(Generic[TSpec]):
             if ctx.dry_run:
                 return ApplyResult("create", changes=changes)
             row = self.new_row(spec, ctx)
+            if ctx.restore_resource_id is not None:
+                row.id = ctx.restore_resource_id
             self.write_fields(row, spec)
             self._stamp(row, spec, ctx)
             ctx.db.add(row)
             await ctx.db.flush()  # assigns the id effects and history refer to
-            await record_revision(ctx, self, row, "create", new_canonical, changes)
+            revision = await record_revision(ctx, self, row, "create", new_canonical, changes)
             for effect in self.effects("create", row):
                 ctx.effects.add(effect)
-            return ApplyResult("create", obj=row, changes=changes)
+            return ApplyResult("create", obj=row, changes=changes, revision=revision)
 
         # ---- update ----------------------------------------------------------
         decision = ownership_decision(row.managed_by, ctx)
@@ -299,10 +309,10 @@ class ResourceApplier(Generic[TSpec]):
             self._stamp(row, spec, ctx)
         await ctx.db.flush()
 
-        await record_revision(ctx, self, row, "update", new_canonical, changes)
+        revision = await record_revision(ctx, self, row, "update", new_canonical, changes)
         for effect in self.effects("update", row):
             ctx.effects.add(effect)
-        return ApplyResult("update", obj=row, changes=changes)
+        return ApplyResult("update", obj=row, changes=changes, revision=revision)
 
     async def delete(self, row: Any, ctx: ApplyContext) -> None:
         """Delete a resource. History keeps its last state, so it can be

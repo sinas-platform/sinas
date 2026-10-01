@@ -380,15 +380,18 @@ class TestValidationParity:
         assert any("Function 'nowhere/ghost' not found" in e for e in result.errors)
         assert await _row(db, name) is None
 
-    async def test_one_bad_schedule_does_not_sink_the_others(self, db: AsyncSession, admin_user, fn):
+    async def test_one_bad_schedule_fails_the_whole_apply(self, db: AsyncSession, admin_user, fn):
+        """All or nothing: the error is reported for the bad one, and the
+        apply as a whole fails rather than committing the rest."""
         bad, good = f"cfg-{_uid()}", f"cfg-{_uid()}"
-        _, result = await _apply(
+        svc, result = await _apply(
             db, admin_user,
             {"name": bad, "functionName": "nowhere/ghost", "cronExpression": "0 * * * *"},
             _yaml_schedule(good, fn),
         )
-        assert len(result.errors) == 1
-        assert await _row(db, good) is not None
+        assert result.success is False
+        assert len(result.errors) == 1 and bad in result.errors[0]
+        assert svc.effects.pending == []  # nothing will be announced
 
     async def test_api_patch_to_a_missing_pipeline_is_refused(self, client, admin_user, fn, published):
         """The update path used to check functions and agents, never pipelines."""
@@ -660,3 +663,210 @@ spec:
         [deleted] = [r for r in await _revisions(db, resource_key=sched) if r.action == "delete"]
         assert (deleted.origin, deleted.actor_user_id) == ("package", admin_user.id)
         assert ("sinas:scheduler:jobs", {"action": "remove", "job_id": job_id}) in published
+
+
+# --------------------------------------------------------- all or nothing
+
+
+class TestAllOrNothing:
+    async def test_config_apply_with_an_error_rolls_back_instead_of_committing(
+        self, db: AsyncSession, admin_user, fn, monkeypatch
+    ):
+        calls: list[str] = []
+
+        async def fake_commit():
+            calls.append("commit")
+
+        async def fake_rollback():
+            calls.append("rollback")
+
+        svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id))  # auto_commit
+        monkeypatch.setattr(svc.db, "commit", fake_commit)
+        monkeypatch.setattr(svc.db, "rollback", fake_rollback)
+        result = await svc.apply_config(_config(
+            _yaml_schedule(f"cfg-{_uid()}", fn),
+            _yaml_schedule(f"cfg-{_uid()}", fn, cronExpression="whenever"),
+        ))
+        assert result.success is False
+        assert calls == ["rollback"]
+
+    async def test_a_dry_run_gives_the_verdict_the_apply_would(self, db: AsyncSession, admin_user, fn):
+        _, preview = await _apply(
+            db, admin_user, _yaml_schedule(f"cfg-{_uid()}", fn, cronExpression="whenever"),
+            dry_run=True,
+        )
+        assert preview.success is False
+
+
+@pytest_asyncio.fixture
+async def committed_owner():
+    """A user that really exists, for tests that need independent sessions to
+    see real commits (the rolled-back `db` fixture is invisible to them)."""
+    from sqlalchemy import delete
+
+    from app.core.database import AsyncSessionLocal, async_engine
+    from app.models.user import User
+
+    async with AsyncSessionLocal() as setup:
+        user = User(email=f"owner-{_uid()}@example.com")
+        setup.add(user)
+        await setup.commit()
+        user_id = user.id
+    try:
+        yield user_id
+    finally:
+        async with AsyncSessionLocal() as cleanup:
+            await cleanup.execute(delete(User).where(User.id == user_id))
+            await cleanup.commit()
+        await async_engine.dispose()
+
+
+class TestPackageInstallIsAtomic:
+    async def test_a_package_with_one_bad_resource_installs_nothing(self, committed_owner):
+        """The function is fine and the schedule's cron is not. Before, the
+        function was committed and the package reported installed."""
+        from app.core.database import AsyncSessionLocal
+        from app.models.package import Package
+        from app.services.package_service import PackageService
+
+        pkg, ns = f"pkg-{_uid()}", f"ns{_uid()}"
+        yaml = f"""
+apiVersion: sinas.co/v1
+kind: SinasPackage
+metadata:
+  name: {pkg}
+package:
+  name: {pkg}
+  version: "1.0.0"
+spec:
+  functions:
+    - namespace: {ns}
+      name: job
+      code: |
+        def handler(input, context):
+            return {{}}
+  schedules:
+    - name: {pkg}-sched
+      functionName: {ns}/job
+      cronExpression: "whenever"
+"""
+        async with AsyncSessionLocal() as session:
+            with pytest.raises(ValueError, match="nothing was applied"):
+                await PackageService(session).install(yaml, str(committed_owner))
+            await session.rollback()  # what the request / tool session does
+
+        async with AsyncSessionLocal() as check:
+            assert (await check.execute(select(Package).where(Package.name == pkg))).first() is None
+            assert (await check.execute(select(Function).where(Function.namespace == ns))).first() is None
+
+
+# ------------------------------------------------------------------ restore
+
+
+class TestRestore:
+    async def test_a_deleted_schedule_comes_back_whole(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        name, headers = f"api-{_uid()}", auth_headers(admin_user)
+        created = (await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)).json()
+        await client.delete(f"/api/v1/schedules/{name}", headers=headers)
+        [deleted] = [r for r in await _revisions(db, resource_key=name) if r.action == "delete"]
+        published.clear()
+
+        response = await client.post(f"/api/v1/config/history/{deleted.id}/restore", headers=headers)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["action"] == "create"
+        # Same identity, so its history is one timeline, not two
+        assert body["resource_id"] == created["id"]
+        assert body["revision"]["restored_from_id"] == deleted.id
+        row = await _row(db, name)
+        assert {f: getattr(row, f) for f in FIELDS} == {
+            f: deleted.spec[f] for f in FIELDS
+        }
+        assert ("sinas:scheduler:jobs", {"action": "add", "job_id": created["id"]}) in published
+        actions = [r.action for r in await _revisions(db, resource_id=uuid.UUID(created["id"]))]
+        assert actions == ["create", "delete", "create"]
+
+    async def test_restoring_an_older_revision_reverts_the_resource(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        name, headers = f"api-{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)
+        await client.patch(f"/api/v1/schedules/{name}", json={"cron_expression": "0 9 * * *", "description": "edited"}, headers=headers)
+        [original] = [r for r in await _revisions(db, resource_key=name) if r.action == "create"]
+
+        response = await client.post(f"/api/v1/config/history/{original.id}/restore", headers=headers)
+
+        assert response.json()["action"] == "update"
+        row = await _row(db, name)
+        await db.refresh(row)
+        assert (row.cron_expression, row.description) == ("0 3 * * *", "Nightly run")
+
+    async def test_a_restore_also_undoes_a_rename(self, client, db: AsyncSession, admin_user, fn, published):
+        old, new, headers = f"api-{_uid()}", f"api-{_uid()}", auth_headers(admin_user)
+        created = (await client.post("/api/v1/schedules", json=_rest_schedule(old, fn), headers=headers)).json()
+        await client.patch(f"/api/v1/schedules/{old}", json={"name": new}, headers=headers)
+        [original] = [r for r in await _revisions(db, resource_id=uuid.UUID(created["id"])) if r.action == "create"]
+
+        await client.post(f"/api/v1/config/history/{original.id}/restore", headers=headers)
+        assert await _row(db, old) is not None and await _row(db, new) is None
+
+    async def test_restoring_the_current_state_changes_nothing(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        name, headers = f"api-{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)
+        [current] = await _revisions(db, resource_key=name)
+        response = await client.post(f"/api/v1/config/history/{current.id}/restore", headers=headers)
+        assert response.json()["action"] == "unchanged"
+        assert response.json()["revision"] is None
+        assert len(await _revisions(db, resource_key=name)) == 1
+
+    async def test_a_restore_gives_the_resource_back_to_its_owner(
+        self, client, db: AsyncSession, admin_user, test_user, fn, published
+    ):
+        """An admin restoring someone's schedule must not become its owner —
+        the owner could otherwise no longer see it."""
+        name = f"cfg-{_uid()}"
+        await _apply(db, test_user, _yaml_schedule(name, fn))  # owned by test_user
+        row = await _row(db, name)
+        from app.services.resources import ApplyContext
+        from app.services.resources.schedules import ScheduleApplier
+
+        await ScheduleApplier().delete(
+            row, ApplyContext(db=db, origin="api", actor_user_id=str(admin_user.id))
+        )
+        [deleted] = [r for r in await _revisions(db, resource_key=name) if r.action == "delete"]
+        assert deleted.owner_user_id == test_user.id
+
+        response = await client.post(
+            f"/api/v1/config/history/{deleted.id}/restore", headers=auth_headers(admin_user)
+        )
+        assert response.status_code == 200, response.text
+        assert (await _row(db, name)).user_id == test_user.id
+
+    async def test_restoring_onto_a_name_now_taken_is_refused(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        name, headers = f"api-{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)
+        await client.delete(f"/api/v1/schedules/{name}", headers=headers)
+        [deleted] = [r for r in await _revisions(db, resource_key=name) if r.action == "delete"]
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)
+
+        response = await client.post(f"/api/v1/config/history/{deleted.id}/restore", headers=headers)
+        assert response.status_code == 400
+        assert "already exists" in response.json()["detail"]
+
+    async def test_restore_needs_apply_permission_and_a_real_revision(
+        self, client, db: AsyncSession, admin_user, test_user, fn, published
+    ):
+        name = f"api-{_uid()}"
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=auth_headers(admin_user))
+        [rev] = await _revisions(db, resource_key=name)
+        denied = await client.post(f"/api/v1/config/history/{rev.id}/restore", headers=auth_headers(test_user))
+        assert denied.status_code == 403
+        missing = await client.post("/api/v1/config/history/999999999/restore", headers=auth_headers(admin_user))
+        assert missing.status_code == 404

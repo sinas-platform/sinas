@@ -20,6 +20,8 @@ class ConfigRevisionResponse(BaseModel):
     actor_email: Optional[str]
     managed_by: Optional[str]
     config_name: Optional[str]
+    owner_user_id: Optional[uuid.UUID] = None
+    restored_from_id: Optional[int] = None
     # Names of the fields this change touched — always present, always small.
     changed_fields: list[str] = []
     # The field-level values (`{field: {from, to}}`) and the full spec after
@@ -38,3 +40,15 @@ class ConfigRevisionResponse(BaseModel):
             response.changes = None
             response.spec = None
         return response
+
+
+class ConfigRestoreResponse(BaseModel):
+    """What a restore did. `action` is "create" (a deleted resource is back),
+    "update" (reverted to the recorded state) or "unchanged" (it already was)."""
+
+    action: str
+    resource_kind: str
+    resource_key: str
+    resource_id: Optional[uuid.UUID]
+    # The revision the restore itself recorded; None when nothing changed.
+    revision: Optional[ConfigRevisionResponse] = None

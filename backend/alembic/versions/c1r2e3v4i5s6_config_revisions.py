@@ -27,6 +27,8 @@ def upgrade() -> None:
         sa.Column("origin", sa.String(length=16), nullable=False),
         sa.Column("actor_user_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("actor_email", sa.String(length=255), nullable=True),
+        sa.Column("owner_user_id", postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("restored_from_id", sa.BigInteger(), nullable=True),
         sa.Column("managed_by", sa.Text(), nullable=True),
         sa.Column("config_name", sa.Text(), nullable=True),
         sa.Column(

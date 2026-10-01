@@ -21,7 +21,7 @@ from app.schemas.config import (
     ValidationError as SchemaValidationError,
 )
 from app.models.config_revision import ConfigRevision
-from app.schemas.config_history import ConfigRevisionResponse
+from app.schemas.config_history import ConfigRestoreResponse, ConfigRevisionResponse
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
@@ -236,3 +236,95 @@ async def get_config_revision(
     if revision is None:
         raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
     return ConfigRevisionResponse.from_revision(revision, details=True)
+
+
+@router.post("/history/{revision_id}/restore", response_model=ConfigRestoreResponse)
+async def restore_config_revision(
+    request: Request,
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Bring a resource back to the state a revision recorded.
+
+    - A deleted resource is recreated — under its original id, so its history
+      stays one timeline, and owned by its original owner.
+    - An existing resource is reverted to that state (a rename is undone too).
+    - Already in that state: nothing happens.
+
+    The restore is itself recorded as a revision (`restored_from_id`), so it
+    can be undone the same way. It goes through the resource's normal write
+    path: the same validation, reference checks and side effects as any edit.
+    """
+    from pydantic import ValidationError
+
+    from app.services.resources import ApplierError, ApplyContext
+    from app.services.resources.registry import applier_for
+
+    user_id, permissions = current_user_data
+    perm = "sinas.config.apply:all"
+    if not check_permission(permissions, perm):
+        set_permission_used(request, perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to restore config")
+    set_permission_used(request, perm, has_perm=True)
+
+    revision = await db.get(ConfigRevision, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
+    applier = applier_for(revision.resource_kind)
+    if applier is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resources of kind '{revision.resource_kind}' cannot be restored yet",
+        )
+    if not revision.spec:
+        raise HTTPException(status_code=400, detail=f"Revision {revision_id} holds no state")
+
+    try:
+        spec = applier.spec_model.model_validate(revision.spec)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The state in revision {revision_id} is not valid today: {e.errors(include_url=False)[0]['msg']}",
+        )
+
+    owner = str(revision.owner_user_id or user_id)
+    ctx = ApplyContext(
+        db=db,
+        origin="api",
+        actor_user_id=str(user_id),
+        owner_user_id=owner,
+        # Restore is an admin config operation, like config apply: references
+        # must exist, but needn't belong to anyone in particular. (Scoping them
+        # to the owner would refuse to restore a config-created schedule whose
+        # target someone else owns.)
+        reference_scope_user_id=None,
+        restored_from_id=revision.id,
+    )
+    current = (
+        await applier.find_by_id(ctx, revision.resource_id) if revision.resource_id else None
+    )
+    try:
+        if current is None:
+            ctx.restore_resource_id = revision.resource_id
+            result = await applier.apply(spec, ctx, must_create=True)
+        else:
+            result = await applier.apply(spec, ctx, existing=current)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+
+    await db.commit()
+    await ctx.effects.flush()
+    if result.revision is not None:
+        await db.refresh(result.revision)  # created_at is a database default
+    return ConfigRestoreResponse(
+        action=result.action,
+        resource_kind=revision.resource_kind,
+        resource_key=applier.key_of(spec),
+        resource_id=getattr(result.obj, "id", None),
+        revision=(
+            ConfigRevisionResponse.from_revision(result.revision, details=True)
+            if result.revision is not None
+            else None
+        ),
+    )

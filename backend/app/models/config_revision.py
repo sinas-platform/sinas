@@ -38,6 +38,11 @@ class ConfigRevision(Base):
     origin: Mapped[str] = mapped_column(String(16), nullable=False)  # api|config|package|startup
     actor_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(GUID())
     actor_email: Mapped[Optional[str]] = mapped_column(String(255))
+    # The resource's owner at the time — so a restore can give it back to them
+    # rather than to whoever happens to restore it.
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(GUID())
+    # Set when this change was a restore of an earlier revision.
+    restored_from_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     managed_by: Mapped[Optional[str]] = mapped_column(Text)
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[created_at]

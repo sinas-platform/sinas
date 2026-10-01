@@ -25,6 +25,7 @@ async def record_revision(
     revision, and a committed change must always have one.
     """
     actor = ctx.actor_user_id
+    owner = getattr(row, "user_id", None)
     revision = ConfigRevision(
         resource_kind=applier.kind,
         resource_key=applier.key_of_row(row),
@@ -37,6 +38,8 @@ async def record_revision(
         actor_email=await ctx.actor_email(),
         managed_by=ctx.managed_by,
         config_name=ctx.config_name,
+        owner_user_id=uuid.UUID(str(owner)) if owner else None,
+        restored_from_id=ctx.restored_from_id,
     )
     ctx.db.add(revision)
     return revision
