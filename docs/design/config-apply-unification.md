@@ -285,9 +285,16 @@ Make the implicit rules explicit and uniform:
 
 | Row state | API write (`origin="api"`) | Config apply | Package apply |
 |---|---|---|---|
-| `managed_by=NULL` (manual) | write | **adopt + stamp** `managed_by` (today: adopts silently without stamping) | adopt + stamp `pkg:` |
+| `managed_by=NULL` (manual) | write | **adopt + stamp** `managed_by` (today: adopts silently without stamping) | **warn + skip** (never adopt; see below) |
 | `managed_by="config"` | write + **detach** (today: only `pkg:` detaches) | write, re-stamp | conflict → warn + skip |
 | `managed_by="pkg:x"` | write + detach (as today) | conflict → warn + skip | write if same pkg, else warn + skip |
+
+Packages never adopt a manual row (decided 2026-10-01, PR #206 review):
+once adopted, uninstalling the package — or an upgrade that no longer ships
+it (§4.8) — would delete something an operator made by hand. Config apply is
+the operator's own declaration, so it still adopts. A restore is a manual
+write too: the restored resource is unmanaged, or a package upgrade would
+prune it straight away again.
 
 Changes vs today: (a) detach-on-manual-edit applies to *all* managed resources
 — including secrets, llmProviders, databaseConnections, roles, users, which
