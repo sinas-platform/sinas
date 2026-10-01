@@ -286,7 +286,7 @@ class ConfigExportService:
 
     async def _export_collections(self) -> list[dict]:
         """Export collections"""
-        stmt = select(Collection)
+        stmt = select(Collection).where(Collection.kind == "collection")
         if self.managed_only:
             stmt = stmt.where(Collection.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

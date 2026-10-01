@@ -672,6 +672,7 @@ async def apply_collections(
             stmt = select(Collection).where(
                 Collection.namespace == coll_config.namespace,
                 Collection.name == coll_config.name,
+                Collection.kind == "collection",
             )
             result = await db.execute(stmt)
             existing = result.scalar_one_or_none()

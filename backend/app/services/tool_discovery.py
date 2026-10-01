@@ -336,7 +336,17 @@ async def get_available_tools(
     # Not advertised when disabled: offering a tool the platform will refuse
     # wastes context and invites retry loops when the model keeps trying it.
     if has_system_tool(system_tools, "codeExecution") and settings.code_execution_enabled:
-        tools.append(await get_code_exec_tool_definition(db))
+        code_exec_tool = await get_code_exec_tool_definition(db)
+        if has_system_tool(system_tools, "workbench"):
+            code_exec_tool["function"]["description"] += (
+                " The workbench files of this chat are materialized into the "
+                "working directory, and files you create or modify there are "
+                "persisted back to the workbench after the run. Large files "
+                "appear as lazy stubs whose content loads automatically on "
+                "open(); call workbench_fetch(path) first when passing a lazy "
+                "file to native code that bypasses Python's open()."
+            )
+        tools.append(code_exec_tool)
     if has_system_tool(system_tools, "packageManagement"):
         from app.services.package_tools import get_package_tool_definitions
         tools.extend(get_package_tool_definitions())
@@ -346,6 +356,9 @@ async def get_available_tools(
     if has_system_tool(system_tools, "databaseIntrospection"):
         from app.services.db_introspection_tools import get_db_introspection_tool_definitions
         tools.extend(get_db_introspection_tool_definitions())
+    if has_system_tool(system_tools, "workbench"):
+        from app.services.workbench import get_workbench_tool_definitions
+        tools.extend(get_workbench_tool_definitions())
 
     # Check for paused executions belonging to this chat
     result = await db.execute(

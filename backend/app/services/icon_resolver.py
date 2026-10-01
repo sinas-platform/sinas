@@ -46,6 +46,7 @@ async def resolve_icon_url(icon: Optional[str], db: AsyncSession) -> Optional[st
             select(Collection.is_public).where(
                 Collection.namespace == namespace,
                 Collection.name == collection,
+                Collection.kind == "collection",
             )
         )
         row = result.first()
@@ -66,6 +67,7 @@ async def resolve_icon_url(icon: Optional[str], db: AsyncSession) -> Optional[st
                 select(Collection.id).where(
                     Collection.namespace == namespace,
                     Collection.name == collection,
+                    Collection.kind == "collection",
                 )
             )
             coll_row = coll_result.first()

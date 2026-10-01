@@ -30,6 +30,12 @@ class PooledContainer:
     container_id: str
     executions: int = 0
     created_at: float = field(default_factory=time.time)
+    # Workbench sync bookkeeping: the chat this container last served (for
+    # acquire affinity) and the content hashes of workbench blobs already
+    # shipped into its /tmp/wb_cache (for delta copy-in). Both are best-effort
+    # hints — a wiped container degrades to lazy fetch, never to wrong data.
+    last_chat_id: Optional[str] = None
+    known_hashes: set = field(default_factory=set)
 
 
 class ContainerPool:
@@ -265,12 +271,17 @@ class ContainerPool:
     # Acquire / Release
     # ------------------------------------------------------------------
 
-    async def acquire(self, timeout: Optional[int] = None) -> PooledContainer:
+    async def acquire(
+        self, timeout: Optional[int] = None, chat_id: Optional[str] = None
+    ) -> PooledContainer:
         """
         Acquire an idle container from the pool.
 
         Waits up to `timeout` seconds if none available. Signals
-        replenishment when the pool is low.
+        replenishment when the pool is low. When `chat_id` is given, an idle
+        container that last served the same chat is preferred — its
+        workbench blob cache is warm, so the delta copy-in ships nothing
+        the container has already seen.
         """
         if timeout is None:
             timeout = settings.sandbox_acquire_timeout
@@ -294,6 +305,16 @@ class ContainerPool:
                         f"No sandbox container available within {timeout}s "
                         f"(idle=0, in_use={len(self.in_use)})"
                     )
+
+            # Affinity: move the container that last served this chat to the
+            # front, so the pop below prefers it (falling through to the
+            # normal order if it turns out dead).
+            if chat_id:
+                for candidate in self.idle:
+                    if candidate.last_chat_id == chat_id:
+                        self.idle.remove(candidate)
+                        self.idle.appendleft(candidate)
+                        break
 
             # Pop idle containers, skipping any that no longer exist in Docker
             pc = None
@@ -329,6 +350,8 @@ class ContainerPool:
                 else:
                     raise TimeoutError("No sandbox container available after replenish")
 
+            if chat_id:
+                pc.last_chat_id = chat_id
             self.in_use[pc.name] = pc
 
             # Trigger replenish if idle is getting low
@@ -367,7 +390,13 @@ class ContainerPool:
                     )
                     await asyncio.to_thread(
                         container.exec_run,
-                        cmd=["sh", "-c", "rm -f /tmp/exec_request.json /tmp/exec_result.json /tmp/exec_trigger"],
+                        # Remove per-execution IPC files (legacy unsuffixed and
+                        # eid-suffixed, plus workbench fetch channel files) but
+                        # keep /tmp/wb_cache — the blob cache is the point of
+                        # reusing the container.
+                        cmd=["sh", "-c",
+                             "rm -f /tmp/exec_request*.json /tmp/exec_result*.json "
+                             "/tmp/exec_trigger* /tmp/wb_fetch_req_*.json /tmp/wb_fetch_resp_*.json"],
                     )
                 except Exception as e:
                     logger.warning(f"Failed to clean IPC files in {name}: {e}")

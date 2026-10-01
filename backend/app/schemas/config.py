@@ -224,7 +224,8 @@ class AgentConfig(BaseModel):
         description=(
             "Opt-in Sinas platform tools. Simple string or {name, ...config}. "
             "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
-            "'databaseIntrospection' (requires connections list)."
+            "'databaseIntrospection' (requires connections list), 'workbench' "
+            "(per-chat persistent working tree)."
         ),
     )
 

@@ -27,6 +27,7 @@ agents:
 | `configIntrospection` | string | Read-only inspection of the current Sinas configuration: list resource types, browse resources by name/description, read full resource detail |
 | `packageManagement` | string | Validate, preview, install, and uninstall Sinas packages. Install and uninstall require user approval. |
 | `databaseIntrospection` | object | Read-only schema inspection of database connections. Requires `connections` list specifying which connections the agent can access. |
+| `workbench` | string | A per-chat persistent working tree. Adds `workbench_list/read/write/edit/delete` file tools, `workbench_checkout` (copy collection files in, single or bulk) and `workbench_promote` (publish back to a collection, updating a checked-out source with conflict detection). Every workbench file is private to the chat's user. Combined with `codeExecution`, workbench files are materialized into the sandbox working directory and files the code creates or modifies persist back to the workbench after the run. |
 
 **Config introspection tools:**
 

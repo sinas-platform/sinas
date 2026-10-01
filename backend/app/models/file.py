@@ -27,6 +27,13 @@ class Collection(Base, PermissionMixin):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
+    # Discriminator: "collection" (user-facing, permission-governed) or
+    # "workbench" (a chat's working tree — reachable only via its chat,
+    # never through the collections API or collection permission grants).
+    kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="collection", server_default="collection", index=True
+    )
+
     # Metadata schema for files in this collection (JSON Schema format)
     metadata_schema: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
@@ -61,8 +68,14 @@ class Collection(Base, PermissionMixin):
 
     @classmethod
     async def get_by_name(cls, db: AsyncSession, namespace: str, name: str) -> Optional["Collection"]:
-        """Get collection by namespace and name."""
-        result = await db.execute(select(cls).where(cls.namespace == namespace, cls.name == name))
+        """Get a user-facing collection by namespace and name.
+
+        Workbench rows (kind='workbench') are never resolvable by name — they
+        are reached exclusively through their chat.
+        """
+        result = await db.execute(
+            select(cls).where(cls.namespace == namespace, cls.name == name, cls.kind == "collection")
+        )
         return result.scalar_one_or_none()
 
 
