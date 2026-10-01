@@ -346,8 +346,10 @@ class ConfigExportService:
         return [serialize_store(s) for s in result.scalars().all()]
 
     async def _export_webhooks(self) -> list[dict]:
-        """Export webhooks"""
-        stmt = select(Webhook).where(Webhook.is_active == True)
+        """Export webhooks — disabled ones too, with isActive: false, as for
+        schedules: leaving them out dropped them from any instance restored
+        from the export."""
+        stmt = select(Webhook).order_by(Webhook.path)
         if self.managed_only:
             stmt = stmt.where(Webhook.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -374,24 +376,16 @@ class ConfigExportService:
         return [serialize_schedule(s) for s in result.scalars().all()]
 
     async def _export_database_triggers(self) -> list[dict]:
-        """Export database triggers"""
-        stmt = select(DatabaseTrigger).where(DatabaseTrigger.is_active == True)
+        """Export database triggers, paused ones included (see webhooks)."""
+        stmt = (
+            select(DatabaseTrigger, DatabaseConnection.name)
+            .outerjoin(
+                DatabaseConnection,
+                DatabaseConnection.id == DatabaseTrigger.database_connection_id,
+            )
+            .order_by(DatabaseTrigger.name)
+        )
         if self.managed_only:
             stmt = stmt.where(DatabaseTrigger.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        triggers = result.scalars().all()
-
-        exported = []
-        for trigger in triggers:
-            conn_name = None
-            if trigger.database_connection_id:
-                conn_result = await self.db.execute(
-                    select(DatabaseConnection).where(
-                        DatabaseConnection.id == trigger.database_connection_id
-                    )
-                )
-                conn = conn_result.scalar_one_or_none()
-                if conn:
-                    conn_name = conn.name
-            exported.append(serialize_database_trigger(trigger, conn_name))
-        return exported
+        return [serialize_database_trigger(trigger, name) for trigger, name in result.all()]

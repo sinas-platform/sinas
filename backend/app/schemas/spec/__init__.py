@@ -7,6 +7,10 @@ either form. See docs/design/config-apply-unification.md §4.1.
 """
 
 from app.schemas.spec.base import SpecModel
+from app.schemas.spec.database_trigger import DatabaseTriggerSpec
 from app.schemas.spec.schedule import ScheduleSpec
+from app.schemas.spec.webhook import WebhookDedupSpec, WebhookSpec
 
-__all__ = ["SpecModel", "ScheduleSpec"]
+__all__ = [
+    "SpecModel", "DatabaseTriggerSpec", "ScheduleSpec", "WebhookDedupSpec", "WebhookSpec",
+]

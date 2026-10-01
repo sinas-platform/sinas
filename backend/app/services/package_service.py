@@ -353,13 +353,11 @@ class PackageService:
             Manifest: "manifests",
             Component: "components",
             Collection: "collections",
-            DatabaseTrigger: "databaseTriggers",
             Function: "functions",
             Query: "queries",
             Skill: "skills",
             Store: "stores",
             Template: "templates",
-            Webhook: "webhooks",
         }
 
         # Children whose FK has no ON DELETE rule must be cleared first. The
@@ -379,30 +377,30 @@ class PackageService:
             update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
         )
 
-        # Schedules go through their applier rather than a bulk delete: each
-        # deletion is recorded in the change history, and the running
-        # scheduler is told to drop the job. A bulk delete did neither, so the
-        # scheduler kept firing jobs whose rows were already gone.
+        # Kinds with an applier go through it rather than a bulk delete: each
+        # deletion is recorded in the change history (so it can be restored),
+        # and running workers are told — a bulk delete left the scheduler
+        # firing jobs, and CDC polling tables, for rows already gone.
         from app.services.resources import ApplyContext
-        from app.services.resources.schedules import ScheduleApplier
+        from app.services.resources.registry import all_appliers
 
-        schedule_ctx = ApplyContext(
+        applier_ctx = ApplyContext(
             db=self.db,
             origin="package",
             actor_user_id=actor_user_id,
             managed_by=managed_by,
             config_name=package_name,
         )
-        schedule_applier = ScheduleApplier()
-        managed_schedules = (
-            await self.db.execute(
-                select(ScheduledJob).where(ScheduledJob.managed_by == managed_by)
-            )
-        ).scalars().all()
-        for schedule in managed_schedules:
-            await schedule_applier.delete(schedule, schedule_ctx)
-        if managed_schedules:
-            deleted_counts["schedules"] = len(managed_schedules)
+        for applier in all_appliers():
+            rows = (
+                await self.db.execute(
+                    select(applier.model).where(applier.model.managed_by == managed_by)
+                )
+            ).scalars().all()
+            for row in rows:
+                await applier.delete(row, applier_ctx)
+            if rows:
+                deleted_counts[applier.kind] = len(rows)
 
         for model, type_name in model_names.items():
             stmt = delete(model).where(model.managed_by == managed_by)
@@ -423,7 +421,7 @@ class PackageService:
         # Delete package record
         await self.db.delete(package)
         await self.db.commit()
-        await schedule_ctx.effects.flush()
+        await applier_ctx.effects.flush()
 
         return deleted_counts
 

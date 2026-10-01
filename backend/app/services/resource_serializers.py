@@ -132,29 +132,10 @@ def serialize_template(template) -> dict:
 
 
 def serialize_webhook(webhook) -> dict:
-    target_type = getattr(webhook, "target_type", "function") or "function"
-    return _remove_none_values({
-        "path": webhook.path,
-        # Omitted for function targets so legacy exports stay unchanged
-        "targetType": target_type if target_type != "function" else None,
-        "functionName": f"{webhook.function_namespace}/{webhook.function_name}"
-        if target_type == "function"
-        else None,
-        "agentName": f"{webhook.agent_namespace}/{webhook.agent_name}"
-        if target_type == "agent"
-        else None,
-        "pipelineName": f"{webhook.pipeline_namespace or 'default'}/{webhook.pipeline_name}"
-        if target_type == "pipeline"
-        else None,
-        "messageTemplate": webhook.message_template if target_type == "agent" else None,
-        "sessionKeyTemplate": webhook.session_key_template if target_type == "agent" else None,
-        "httpMethod": webhook.http_method,
-        "requiresAuth": webhook.requires_auth,
-        "description": webhook.description,
-        "defaultValues": webhook.default_values or None,
-        "responseMode": getattr(webhook, "response_mode", None),
-        "dedup": _serialize_dedup(getattr(webhook, "dedup", None)),
-    })
+    """Config form of a webhook — delegated to its spec."""
+    from app.services.resources.webhooks import WebhookApplier
+
+    return WebhookApplier().spec_from_row(webhook).to_config()
 
 
 def _serialize_dedup(dedup: Optional[dict]) -> Optional[dict]:
@@ -283,24 +264,10 @@ def serialize_query(query, connection_name: Optional[str] = None) -> dict:
 
 
 def serialize_database_trigger(trigger, connection_name: Optional[str] = None) -> dict:
-    return _remove_none_values({
-        "name": trigger.name,
-        "connectionName": connection_name,
-        "schemaName": trigger.schema_name,
-        "tableName": trigger.table_name,
-        "operations": trigger.operations,
-        "targetType": trigger.target_type if trigger.target_type != "function" else None,
-        "functionName": f"{trigger.function_namespace}/{trigger.function_name}"
-        if trigger.function_name
-        else None,
-        "pipelineName": f"{trigger.pipeline_namespace or 'default'}/{trigger.pipeline_name}"
-        if trigger.pipeline_name
-        else None,
-        "pollColumn": trigger.poll_column,
-        "pollIntervalSeconds": trigger.poll_interval_seconds,
-        "batchSize": trigger.batch_size,
-        "isActive": trigger.is_active,
-    })
+    """Config form of a database trigger — delegated to its spec."""
+    from app.services.resources.database_triggers import DatabaseTriggerApplier
+
+    return DatabaseTriggerApplier().spec_from_row(trigger, connection_name).to_config()
 
 
 def serialize_pipeline(pipeline) -> dict:
