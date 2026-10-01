@@ -237,8 +237,8 @@ class ConfigExportService:
         return exported
 
     async def _export_connectors(self) -> list[dict]:
-        """Export connectors."""
-        stmt = select(Connector).where(Connector.is_active == True)
+        """Export connectors, disabled ones included (as isActive: false)."""
+        stmt = select(Connector).order_by(Connector.namespace, Connector.name)
         if self.managed_only:
             stmt = stmt.where(Connector.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

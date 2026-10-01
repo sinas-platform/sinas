@@ -283,9 +283,19 @@ class ResourceApplier(Generic[TSpec]):
         return []
 
     def history_spec(self, spec: TSpec) -> dict[str, Any]:
-        """What change history stores. Kinds with secret fields MUST override
-        this to store references, never values."""
+        """What change history shows (and diffs). Kinds with secret-bearing
+        fields MUST override this to redact them (history.redact) and return
+        the real values from `secret_values`."""
         return spec.canonical()
+
+    def secret_values(self, spec: TSpec) -> dict[str, Any]:
+        """The values `history_spec` redacts, keyed as `with_secrets` expects.
+        Stored encrypted beside the revision, for restores only."""
+        return {}
+
+    def with_secrets(self, state: dict[str, Any], secrets: dict[str, Any]) -> dict[str, Any]:
+        """A recorded (redacted) state with its secret values put back."""
+        return state
 
     # ---- shared semantics --------------------------------------------------
 
@@ -341,7 +351,9 @@ class ResourceApplier(Generic[TSpec]):
             self._stamp(row, spec, ctx)
             ctx.db.add(row)
             await ctx.db.flush()  # assigns the id effects and history refer to
-            revision = await record_revision(ctx, self, row, "create", new_canonical, changes)
+            revision = await record_revision(
+                ctx, self, row, "create", new_canonical, changes, self.secret_values(spec)
+            )
             for effect in self.effects("create", row):
                 ctx.effects.add(effect)
             return ApplyResult("create", obj=row, changes=changes, revision=revision)
@@ -394,7 +406,9 @@ class ResourceApplier(Generic[TSpec]):
             self._stamp(row, spec, ctx)
         await ctx.db.flush()
 
-        revision = await record_revision(ctx, self, row, "update", new_canonical, changes)
+        revision = await record_revision(
+            ctx, self, row, "update", new_canonical, changes, self.secret_values(spec)
+        )
         for effect in self.effects("update", row):
             ctx.effects.add(effect)
         return ApplyResult("update", obj=row, changes=changes, revision=revision)
@@ -406,9 +420,12 @@ class ResourceApplier(Generic[TSpec]):
 
         if ctx.dry_run:
             return
-        last = self.history_spec(await self.current_spec(ctx, row))
+        current = await self.current_spec(ctx, row)
+        last = self.history_spec(current)
         effects = self.effects("delete", row)
-        await record_revision(ctx, self, row, "delete", last, diff_specs(last, None))
+        await record_revision(
+            ctx, self, row, "delete", last, diff_specs(last, None), self.secret_values(current)
+        )
         await ctx.db.delete(row)
         await ctx.db.flush()
         for effect in effects:

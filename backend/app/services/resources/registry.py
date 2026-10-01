@@ -7,11 +7,12 @@ from app.services.resources.base import ResourceApplier
 
 def _applier_classes() -> list[type[ResourceApplier]]:
     """Every migrated kind, in config dependency order."""
+    from app.services.resources.connectors import ConnectorApplier
     from app.services.resources.database_triggers import DatabaseTriggerApplier
     from app.services.resources.schedules import ScheduleApplier
     from app.services.resources.webhooks import WebhookApplier
 
-    return [WebhookApplier, ScheduleApplier, DatabaseTriggerApplier]
+    return [ConnectorApplier, WebhookApplier, ScheduleApplier, DatabaseTriggerApplier]
 
 
 def applier_for(kind: str) -> Optional[ResourceApplier]:

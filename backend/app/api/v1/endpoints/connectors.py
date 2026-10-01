@@ -1,5 +1,12 @@
-"""Connectors API endpoints."""
+"""Connectors API endpoints.
+
+Writes go through ConnectorApplier — the same path config apply and package
+install use — so validation, ownership and change history are identical on
+every channel. OAuth sign-in and test calls are runtime operations and stay
+here.
+"""
 import ipaddress
+import json
 from urllib.parse import urlparse
 
 import httpx
@@ -32,9 +39,56 @@ from app.schemas.connector import (
 )
 from app.services.connector_openapi import extract_auth, extract_operations, parse_openapi_spec
 from app.services.connector_service import ConnectorAuthError, connector_service
-from app.services.package_service import detach_if_package_managed
+from app.schemas.spec.connector import ConnectorSpec
+from app.services.resources import ApplierError, ApplyContext
+from app.services.resources.connectors import ConnectorApplier
+from app.services.resources.patch import PatchRejected, patched_spec
 
 router = APIRouter(prefix="/connectors", tags=["connectors"])
+
+_applier = ConnectorApplier()
+
+
+def _context(db: AsyncSession, user_id) -> ApplyContext:
+    return ApplyContext(
+        db=db, origin="api", actor_user_id=str(user_id), owner_user_id=str(user_id)
+    )
+
+
+def _spec(data: dict) -> ConnectorSpec:
+    from pydantic import ValidationError
+
+    try:
+        return ConnectorSpec.model_validate(data)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
+
+
+async def _locked(ctx: ApplyContext, namespace: str, name: str) -> Connector:
+    """The row an edit is about to change, locked until commit (the
+    permission lookup doesn't lock)."""
+    connector = await _applier.find(ctx, f"{namespace}/{name}")
+    if connector is None:  # deleted between the permission check and now
+        raise HTTPException(status_code=404, detail="Connector not found")
+    return connector
+
+
+async def _write(ctx: ApplyContext, spec: ConnectorSpec, **kwargs):
+    from sqlalchemy.exc import IntegrityError
+
+    try:
+        return await _applier.apply(spec, ctx, **kwargs)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except IntegrityError:
+        # Lost a race to a concurrent create or rename of the same name (the
+        # applier's check can't lock a row that doesn't exist yet).
+        raise HTTPException(status_code=400, detail=f"Connector '{spec.key}' already exists")
+
+
+async def _commit(db: AsyncSession, ctx: ApplyContext) -> None:
+    await db.commit()
+    await ctx.effects.flush()
 
 
 @router.post("/parse-openapi", response_model=OpenAPIImportResponse)
@@ -131,31 +185,13 @@ async def create_connector(
         raise HTTPException(status_code=403, detail="Not authorized to create connectors")
     set_permission_used(request, permission)
 
-    # Check uniqueness
-    result = await db.execute(
-        select(Connector).where(
-            and_(Connector.namespace == data.namespace, Connector.name == data.name)
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Connector '{data.namespace}/{data.name}' already exists")
-
-    connector = Connector(
-        user_id=user_id,
-        namespace=data.namespace,
-        name=data.name,
-        description=data.description,
-        base_url=data.base_url,
-        auth=data.auth.model_dump(),
-        headers=data.headers,
-        retry=data.retry.model_dump(),
-        timeout_seconds=data.timeout_seconds,
-        operations=[op.model_dump() for op in data.operations],
-    )
-    db.add(connector)
-    await db.flush()
-    await db.refresh(connector)
-    return ConnectorResponse.model_validate(connector)
+    ctx = _context(db, user_id)
+    # A clash is a 400 "Connector 'ns/name' already exists", as before — now
+    # also when two creates race (see _write).
+    result = await _write(ctx, _spec(data.model_dump()), must_create=True)
+    await _commit(db, ctx)
+    await db.refresh(result.obj)
+    return ConnectorResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[ConnectorResponse])
@@ -211,30 +247,18 @@ async def update_connector(
     )
     set_permission_used(request, f"sinas.connectors/{namespace}/{name}.update")
 
-    detach_if_package_managed(connector)
-
-    if data.namespace is not None:
-        connector.namespace = data.namespace
-    if data.name is not None:
-        connector.name = data.name
-    if data.description is not None:
-        connector.description = data.description
-    if data.base_url is not None:
-        connector.base_url = data.base_url
-    if data.auth is not None:
-        connector.auth = data.auth.model_dump()
-    if data.headers is not None:
-        connector.headers = data.headers
-    if data.retry is not None:
-        connector.retry = data.retry.model_dump()
-    if data.timeout_seconds is not None:
-        connector.timeout_seconds = data.timeout_seconds
-    if data.operations is not None:
-        connector.operations = [op.model_dump() for op in data.operations]
-    if data.is_active is not None:
-        connector.is_active = data.is_active
-
-    await db.flush()
+    ctx = _context(db, user_id)
+    connector = await _locked(ctx, namespace, name)
+    # As before: fields left out (or sent as null) are unchanged; auth,
+    # headers and operations are replaced whole. A rename onto an existing
+    # connector is now a 400 rather than a 500.
+    patch = {key: value for key, value in data.model_dump().items() if value is not None}
+    try:
+        spec = patched_spec(_applier.spec_from_row(connector), patch)
+    except PatchRejected as e:
+        raise HTTPException(status_code=422, detail=e.detail)
+    await _write(ctx, spec, existing=connector)
+    await _commit(db, ctx)
     await db.refresh(connector)
     return ConnectorResponse.model_validate(connector)
 
@@ -256,8 +280,9 @@ async def delete_connector(
     )
     set_permission_used(request, f"sinas.connectors/{namespace}/{name}.delete")
 
-    await db.delete(connector)
-    await db.flush()
+    ctx = _context(db, user_id)
+    await _applier.delete(await _locked(ctx, namespace, name), ctx)
+    await _commit(db, ctx)
     return None
 
 
@@ -323,26 +348,31 @@ async def import_openapi(
             warnings.append(f"Skipped operation '{op.get('name', '?')}': {e}")
 
     applied = 0
-    if import_data.apply:
-        # Merge into connector: add new, update existing by name, keep manually-added
-        existing_names = {op.get("name") for op in connector.operations}
-        new_ops = list(connector.operations)  # Copy existing
-
+    if import_data.apply and parsed_ops:
+        # Merge into the connector's operations (replace by name, append the
+        # rest, keep manually added ones) — as a normal edit: validated,
+        # recorded in history, and detaching a managed connector.
+        ctx = _context(db, user_id)
+        connector = await _locked(ctx, namespace, name)
+        stored = _applier.spec_from_row(connector)
+        operations = [op.model_dump() for op in stored.operations]
         for op in parsed_ops:
             op_dict = op.model_dump()
-            # Find existing operation with same name
-            found = False
-            for i, existing_op in enumerate(new_ops):
-                if existing_op.get("name") == op.name:
-                    new_ops[i] = op_dict
-                    found = True
-                    break
-            if not found:
-                new_ops.append(op_dict)
+            index = next(
+                (i for i, existing in enumerate(operations) if existing.get("name") == op.name),
+                None,
+            )
+            if index is None:
+                operations.append(op_dict)
+            else:
+                operations[index] = op_dict
             applied += 1
-
-        connector.operations = new_ops
-        await db.flush()
+        try:
+            spec = patched_spec(stored, {"operations": operations})
+        except PatchRejected as e:
+            raise HTTPException(status_code=422, detail=e.detail)
+        await _write(ctx, spec, existing=connector)
+        await _commit(db, ctx)
 
     return OpenAPIImportResponse(
         operations=parsed_ops,

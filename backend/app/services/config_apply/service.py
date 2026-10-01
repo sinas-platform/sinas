@@ -24,7 +24,6 @@ from app.services.config_apply.data_sources import (
 from app.services.config_apply.resources import (
     apply_collections,
     apply_components,
-    apply_connectors,
     apply_dependencies,
     apply_functions,
     apply_manifests,
@@ -244,12 +243,6 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            if "connectors" not in self.skip_resource_types:
-                await apply_connectors(
-                    **common_with_owner,
-                    connectors=config.spec.connectors,
-                )
-
             if "functions" not in self.skip_resource_types:
                 await apply_functions(
                     **common_with_owner,
@@ -309,8 +302,10 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            # Kinds with a per-resource applier: webhooks, schedules,
-            # databaseTriggers — after everything they can point at.
+            # Kinds with a per-resource applier: connectors, webhooks,
+            # schedules, databaseTriggers — after everything they can point
+            # at. (Nothing checks a reference to a connector yet; when agents
+            # and pipelines migrate, connectors move ahead of them.)
             from app.services.resources.registry import all_appliers
 
             for applier in all_appliers():
