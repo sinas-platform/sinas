@@ -1,38 +1,68 @@
-"""Database Triggers API endpoints for CDC."""
+"""Database Triggers API endpoints for CDC.
+
+Writes go through DatabaseTriggerApplier — the same path config apply and
+package install use — so validation, ownership, CDC notifications and change
+history are identical on every channel.
+"""
 
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import and_, select
+from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
-from app.core.redis import get_redis
 from app.models.database_connection import DatabaseConnection
 from app.models.database_trigger import DatabaseTrigger
-from app.models.function import Function
 from app.schemas.database_trigger import (
     DatabaseTriggerCreate,
     DatabaseTriggerResponse,
     DatabaseTriggerUpdate,
 )
-from app.services.package_service import detach_if_package_managed
+from app.schemas.spec.database_trigger import DatabaseTriggerSpec
+from app.services.resources import ApplierError, ApplyContext
+from app.services.resources.database_triggers import DatabaseTriggerApplier
+from app.services.resources.patch import PatchRejected, patched_spec
 
 router = APIRouter(prefix="/database-triggers", tags=["database-triggers"])
 
-CDC_CHANNEL = "sinas:cdc:triggers"
+_applier = DatabaseTriggerApplier()
 
 
-async def _notify_cdc(action: str, trigger_id: str) -> None:
-    """Publish a trigger change event to the CDC service via Redis pub/sub."""
-    redis = await get_redis()
-    await redis.publish(CDC_CHANNEL, json.dumps({"action": action, "trigger_id": trigger_id}))
+def _context(db: AsyncSession, user_id, owner_id) -> ApplyContext:
+    return ApplyContext(
+        db=db,
+        origin="api",
+        actor_user_id=str(user_id),
+        # Names are unique per owner, so an edit is checked against the
+        # trigger owner's other triggers, and its function must be theirs:
+        # the trigger runs as its owner.
+        owner_user_id=str(owner_id),
+        reference_scope_user_id=str(owner_id),
+    )
 
 
+def _spec(data: dict) -> DatabaseTriggerSpec:
+    try:
+        return DatabaseTriggerSpec.model_validate(data)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
 
-async def _resolve_trigger(db: AsyncSession, name: str, user_id, has_all: bool):
+
+async def _commit_and_notify(db: AsyncSession, ctx: ApplyContext) -> None:
+    """The CDC worker hears about a change only once it is durable. Deletes
+    used to be announced before they were even flushed, so a failed commit
+    stopped a trigger that still existed."""
+    await db.commit()
+    await ctx.effects.flush()
+
+
+async def _resolve_trigger(
+    db: AsyncSession, name: str, user_id, has_all: bool, lock: bool = False
+):
     """Resolve a trigger by name for this caller.
 
     Trigger names are unique per (user_id, name), NOT globally — so selecting on
@@ -45,6 +75,8 @@ async def _resolve_trigger(db: AsyncSession, name: str, user_id, has_all: bool):
     query = select(DatabaseTrigger).where(DatabaseTrigger.name == name)
     if not has_all:
         query = query.where(DatabaseTrigger.user_id == user_id)
+    if lock:
+        query = query.with_for_update().execution_options(populate_existing=True)
     rows = (await db.execute(query)).scalars().all()
     if not rows:
         return None
@@ -58,7 +90,7 @@ async def create_database_trigger(
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Create a new database trigger for CDC polling."""
+    """Create a new database trigger."""
     user_id, permissions = current_user_data
 
     create_perm = "sinas.database_triggers.create:own"
@@ -67,75 +99,37 @@ async def create_database_trigger(
         raise HTTPException(status_code=403, detail="Not authorized to create database triggers")
     set_permission_used(request, create_perm)
 
-    # Check unique name per user
-    result = await db.execute(
-        select(DatabaseTrigger).where(
-            and_(DatabaseTrigger.user_id == user_id, DatabaseTrigger.name == trigger_data.name)
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400, detail=f"Database trigger '{trigger_data.name}' already exists"
-        )
-
-    # Validate database connection exists and is active
-    result = await db.execute(
-        select(DatabaseConnection).where(
-            and_(
+    # The API names the connection by id, and only an active one will do;
+    # the spec (shared with config) names it.
+    connection_name = (
+        await db.execute(
+            select(DatabaseConnection.name).where(
                 DatabaseConnection.id == trigger_data.database_connection_id,
-                DatabaseConnection.is_active == True,
+                DatabaseConnection.is_active == True,  # noqa: E712
             )
         )
-    )
-    if not result.scalar_one_or_none():
+    ).scalar_one_or_none()
+    if connection_name is None:
         raise HTTPException(status_code=404, detail="Database connection not found or inactive")
 
-    # Validate the target exists
-    if trigger_data.target_type == "pipeline":
-        from app.models.pipeline import Pipeline
+    data = trigger_data.model_dump()
+    target_type = data["target_type"]
+    spec = _spec({
+        **{key: value for key, value in data.items() if key in DatabaseTriggerSpec.model_fields},
+        "connection_name": connection_name,
+        "target_namespace": data[f"{target_type}_namespace"],
+        "target_name": data[f"{target_type}_name"],
+    })
 
-        target_pipeline = await Pipeline.get_by_name(
-            db, trigger_data.pipeline_namespace, trigger_data.pipeline_name
-        )
-        if not target_pipeline:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Pipeline '{trigger_data.pipeline_namespace}/{trigger_data.pipeline_name}' not found",
-            )
-    else:
-        target_func = await Function.get_by_name(
-            db, trigger_data.function_namespace, trigger_data.function_name, user_id
-        )
-        if not target_func:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Function '{trigger_data.function_namespace}/{trigger_data.function_name}' not found",
-            )
+    ctx = _context(db, user_id, user_id)
+    try:
+        result = await _applier.apply(spec, ctx, must_create=True)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
-    trigger = DatabaseTrigger(
-        user_id=user_id,
-        name=trigger_data.name,
-        database_connection_id=trigger_data.database_connection_id,
-        schema_name=trigger_data.schema_name,
-        table_name=trigger_data.table_name,
-        operations=trigger_data.operations,
-        target_type=trigger_data.target_type,
-        function_namespace=trigger_data.function_namespace,
-        function_name=trigger_data.function_name,
-        pipeline_namespace=trigger_data.pipeline_namespace if trigger_data.target_type == "pipeline" else None,
-        pipeline_name=trigger_data.pipeline_name,
-        poll_column=trigger_data.poll_column,
-        poll_interval_seconds=trigger_data.poll_interval_seconds,
-        batch_size=trigger_data.batch_size,
-    )
-
-    db.add(trigger)
-    await db.commit()
-    await db.refresh(trigger)
-
-    await _notify_cdc("add", str(trigger.id))
-
-    return DatabaseTriggerResponse.model_validate(trigger)
+    await _commit_and_notify(db, ctx)
+    await db.refresh(result.obj)
+    return DatabaseTriggerResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[DatabaseTriggerResponse])
@@ -202,53 +196,46 @@ async def update_database_trigger(
     user_id, permissions = current_user_data
 
     has_all = check_permission(permissions, "sinas.database_triggers.update:all")
-    trigger = await _resolve_trigger(db, name, user_id, has_all)
-
+    trigger = await _resolve_trigger(db, name, user_id, has_all, lock=True)
     if not trigger:
         raise HTTPException(status_code=404, detail=f"Database trigger '{name}' not found")
+    set_permission_used(
+        request,
+        "sinas.database_triggers.update:all" if has_all else "sinas.database_triggers.update:own",
+    )
 
-    if check_permission(permissions, "sinas.database_triggers.update:all"):
-        set_permission_used(request, "sinas.database_triggers.update:all")
+    ctx = _context(db, user_id, trigger.user_id)
+    stored = await _applier.current_spec(ctx, trigger)
+    # The API never let a PATCH move a trigger to another connection, schema
+    # or table (DatabaseTriggerUpdate has no such fields); that stays so.
+    patch = {
+        field: value
+        for field, value in trigger_data.model_dump(exclude_unset=True).items()
+        if value is not None and field in DatabaseTriggerSpec.model_fields
+    }
+    target_type = trigger_data.target_type or stored.target_type
+    namespace = getattr(trigger_data, f"{target_type}_namespace")
+    target_name = getattr(trigger_data, f"{target_type}_name")
+    if target_type != stored.target_type:
+        # A type switch needs the new type's name: a reference stored for
+        # another type used to be picked up silently, unchecked.
+        patch.update(target_namespace=namespace or "default", target_name=target_name)
     else:
-        if trigger.user_id != user_id:
-            set_permission_used(request, "sinas.database_triggers.update:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to update this trigger")
-        set_permission_used(request, "sinas.database_triggers.update:own")
+        if namespace is not None:
+            patch["target_namespace"] = namespace
+        if target_name is not None:
+            patch["target_name"] = target_name
 
-    detach_if_package_managed(trigger)
+    try:
+        spec = patched_spec(stored, patch)
+        await _applier.apply(spec, ctx, existing=trigger)
+    except PatchRejected as e:
+        raise HTTPException(status_code=422, detail=e.detail)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
-    if trigger_data.name is not None:
-        trigger.name = trigger_data.name
-    if trigger_data.operations is not None:
-        trigger.operations = trigger_data.operations
-    if trigger_data.target_type is not None:
-        trigger.target_type = trigger_data.target_type
-    if trigger_data.function_namespace is not None:
-        trigger.function_namespace = trigger_data.function_namespace
-    if trigger_data.function_name is not None:
-        trigger.function_name = trigger_data.function_name
-    if trigger_data.pipeline_namespace is not None:
-        trigger.pipeline_namespace = trigger_data.pipeline_namespace
-    if trigger_data.pipeline_name is not None:
-        trigger.pipeline_name = trigger_data.pipeline_name
-    if trigger.target_type == "pipeline" and not trigger.pipeline_name:
-        raise HTTPException(status_code=400, detail="pipeline_name is required for pipeline-target triggers")
-    if trigger.target_type == "function" and not trigger.function_name:
-        raise HTTPException(status_code=400, detail="function_name is required for function-target triggers")
-    if trigger_data.poll_column is not None:
-        trigger.poll_column = trigger_data.poll_column
-    if trigger_data.poll_interval_seconds is not None:
-        trigger.poll_interval_seconds = trigger_data.poll_interval_seconds
-    if trigger_data.batch_size is not None:
-        trigger.batch_size = trigger_data.batch_size
-    if trigger_data.is_active is not None:
-        trigger.is_active = trigger_data.is_active
-
-    await db.commit()
+    await _commit_and_notify(db, ctx)
     await db.refresh(trigger)
-
-    await _notify_cdc("update", str(trigger.id))
-
     return DatabaseTriggerResponse.model_validate(trigger)
 
 
@@ -263,22 +250,15 @@ async def delete_database_trigger(
     user_id, permissions = current_user_data
 
     has_all = check_permission(permissions, "sinas.database_triggers.delete:all")
-    trigger = await _resolve_trigger(db, name, user_id, has_all)
-
+    trigger = await _resolve_trigger(db, name, user_id, has_all, lock=True)
     if not trigger:
         raise HTTPException(status_code=404, detail=f"Database trigger '{name}' not found")
+    set_permission_used(
+        request,
+        "sinas.database_triggers.delete:all" if has_all else "sinas.database_triggers.delete:own",
+    )
 
-    if check_permission(permissions, "sinas.database_triggers.delete:all"):
-        set_permission_used(request, "sinas.database_triggers.delete:all")
-    else:
-        if trigger.user_id != user_id:
-            set_permission_used(request, "sinas.database_triggers.delete:own", has_perm=False)
-            raise HTTPException(status_code=403, detail="Not authorized to delete this trigger")
-        set_permission_used(request, "sinas.database_triggers.delete:own")
-
-    await _notify_cdc("remove", str(trigger.id))
-
-    await db.delete(trigger)
-    await db.flush()
-
+    ctx = _context(db, user_id, trigger.user_id)
+    await _applier.delete(trigger, ctx)
+    await _commit_and_notify(db, ctx)
     return None

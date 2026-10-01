@@ -6,7 +6,6 @@ validation, same scheduler notifications, same ownership rules — and that ever
 change through either is recorded in the change history.
 """
 
-import json
 import uuid
 
 import pytest
@@ -34,59 +33,6 @@ FIELDS = (
 
 def _uid() -> str:
     return uuid.uuid4().hex[:8]
-
-
-# ------------------------------------------------------------------- fixtures
-
-
-@pytest.fixture
-def published(monkeypatch):
-    """Capture what reaches Redis; everything else is a harmless no-op."""
-    sent: list[tuple[str, dict]] = []
-
-    class _Redis:
-        async def publish(self, channel, payload):
-            sent.append((channel, json.loads(payload)))
-
-        def __getattr__(self, _name):
-            async def _noop(*args, **kwargs):
-                return None
-
-            return _noop
-
-    async def fake_get_redis():
-        return _Redis()
-
-    monkeypatch.setattr("app.core.redis.get_redis", fake_get_redis)
-    return sent
-
-
-@pytest_asyncio.fixture
-async def fn(db: AsyncSession, admin_user) -> Function:
-    function = Function(
-        user_id=admin_user.id,
-        namespace=f"ns{_uid()}",
-        name="nightly",
-        code="def handler(input, context):\n    return {}",
-        input_schema={},
-        output_schema={},
-    )
-    db.add(function)
-    await db.flush()
-    return function
-
-
-@pytest_asyncio.fixture
-async def agent(db: AsyncSession, admin_user) -> Agent:
-    row = Agent(
-        user_id=admin_user.id,
-        namespace=f"ns{_uid()}",
-        name="digest",
-        system_prompt="Summarise.",
-    )
-    db.add(row)
-    await db.flush()
-    return row
 
 
 def _yaml_schedule(name: str, fn: Function, **extra) -> dict:
@@ -260,13 +206,15 @@ class TestSchedulerNotifications:
     ):
         svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id), auto_commit=False)
 
-        async def explode(*args, **kwargs):
-            raise RuntimeError("database fell over")
+        original = ConfigApplyService._apply_kind
+
+        async def explode_after_schedules(self, applier, items, dry_run):
+            await original(self, applier, items, dry_run)
+            if applier.kind == "schedules":
+                raise RuntimeError("database fell over")
 
         # A fatal error after the schedule was applied rolls the whole thing back
-        monkeypatch.setattr(
-            "app.services.config_apply.service.apply_database_triggers", explode
-        )
+        monkeypatch.setattr(ConfigApplyService, "_apply_kind", explode_after_schedules)
         result = await svc.apply_config(_config(_yaml_schedule(f"cfg-{_uid()}", fn)))
         assert result.success is False
         assert svc.effects.pending == []
