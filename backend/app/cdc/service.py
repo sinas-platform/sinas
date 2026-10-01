@@ -118,8 +118,13 @@ class CDCManager:
         re-query, so reload only needs to handle add/remove.
 
         Used to pick up triggers created via config apply / Package install,
-        which don't emit a per-trigger notification.
+        which don't emit a per-trigger notification. (They do now; reload is
+        kept for manual use. Its imports were missing, so a reload used to
+        raise and take the pub/sub listener down with it.)
         """
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
         from app.models.database_trigger import DatabaseTrigger
 
         async with AsyncSessionLocal() as db:
@@ -284,11 +289,23 @@ class CDCManager:
                                     user_id=str(trigger.user_id),
                                 )
 
-                            # Update bookmark and clear error
+                            # Update bookmark and clear error — only if the
+                            # trigger still reads the source this poll read. An
+                            # edit that moved it (another column, table or
+                            # connection) resets the bookmark; writing this one
+                            # over that reset would compare the new column
+                            # against the old column's value.
                             async with AsyncSessionLocal() as db:
                                 await db.execute(
                                     update(DatabaseTrigger)
-                                    .where(DatabaseTrigger.id == uuid.UUID(trigger_id))
+                                    .where(
+                                        DatabaseTrigger.id == uuid.UUID(trigger_id),
+                                        DatabaseTrigger.database_connection_id
+                                        == trigger.database_connection_id,
+                                        DatabaseTrigger.schema_name == trigger.schema_name,
+                                        DatabaseTrigger.table_name == trigger.table_name,
+                                        DatabaseTrigger.poll_column == trigger.poll_column,
+                                    )
                                     .values(
                                         last_poll_value=new_bookmark,
                                         error_message=None,

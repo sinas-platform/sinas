@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.encryption import encryption_service
 from app.models.secret import Secret
 from app.services.config_parser import ConfigValidation
-from app.services.resources import SchedulerJobChanged
+from app.services.resources import CdcTriggerChanged, SchedulerJobChanged
 
 
 # --------------------------------------------------------------------------
@@ -148,7 +148,7 @@ class TestApplyNotifications:
 
         svc = ConfigApplyService(db, "test-config", owner_user_id=None, auto_commit=False)
         svc.effects.add(SchedulerJobChanged("add", "job-1"))
-        svc._pending_cdc_reload = True
+        svc.effects.add(CdcTriggerChanged("add", "trigger-1"))
 
         await svc.flush_notifications()
 
@@ -191,7 +191,7 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", boom)
 
         svc = ConfigApplyService(db, "c", owner_user_id=None, auto_commit=False)
-        svc._pending_cdc_reload = True
+        svc.effects.add(CdcTriggerChanged("add", "trigger-1"))
         await svc.flush_notifications()  # must not raise
 
 

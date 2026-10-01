@@ -426,6 +426,46 @@ and finally identity/data-sources (roles/users/llmProviders/
 databaseConnections — admin-only endpoints, UUID-ref translation, pool
 invalidation effect).
 
+### Slice 2: webhooks + databaseTriggers (decisions)
+
+- **Trigger names are unique per owner.** A REST write addresses the
+  owner's own trigger, and checks renames and function references against
+  the owner (it runs as them). A config or package apply declares *the*
+  trigger by that name: the one that source already manages, else the
+  applying user's, else the oldest other one (ownership rules then adopt or
+  skip). Scoping it to the applying user alone would create a second trigger
+  on the same table whenever another admin applied the same config.
+- **Connections are referenced by name in the spec** (as config always did);
+  REST still takes `database_connection_id` and translates. Async
+  `current_spec` / `write_row` hooks on the applier resolve name ↔ id.
+- **CDC gets per-trigger `add`/`update`/`remove`** after commit, from every
+  channel. Config apply's blanket `reload` is gone: it never restarted a
+  running poll loop, so changed settings waited a full interval.
+- **The poll bookmark resets** when connection, schema, table or poll column
+  changes (it pointed at other data; with a type change, every poll failed).
+  `last_poll_value` / `error_message` are runtime state, not spec.
+- **Only the target type's own reference is stored**, for webhooks and
+  triggers alike. A PATCH that switches type must name the new target: a
+  stale reference stored for another type used to be picked up silently, with
+  no existence or permission check.
+- **A webhook's `is_active` is operator state unless declared.** Config may
+  now declare `isActive` (and export keeps disabled webhooks, with
+  `isActive: false`); left out, a new webhook is active and an existing one
+  keeps its state, so a re-apply never re-arms a webhook someone disabled.
+  Generic mechanism: `ResourceApplier.keep_unless_declared`. REST lookups no longer filter on `is_active` — a disabled
+  webhook used to be a 404 for GET, PATCH and DELETE, so it could never be
+  enabled again.
+- **Strictness follows what worked.** Since applies are all-or-nothing (and
+  run at boot), the specs refuse only YAML that never worked at runtime:
+  poll interval or batch size below 1, dedup TTL below 1, unknown HTTP
+  methods, quotes in SQL identifiers, whitespace in webhook paths, and
+  targets that don't exist. Things that ran keep working: empty `operations`
+  (the poller ignores them), intervals and TTLs above the API's caps,
+  lowercase `httpMethod`, any other path characters, any target namespace.
+- Webhook permission checks (`chat:all` on an agent target, `run:own` on a
+  pipeline) stay at the REST boundary: they are about the caller, not the
+  resource.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

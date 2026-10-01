@@ -252,6 +252,9 @@ class WebhookConfig(BaseModel):
     defaultValues: dict[str, Any] = Field(default_factory=dict)
     responseMode: str = "sync"  # "sync", "async", or "raw" (raw: function targets only)
     dedup: Optional[WebhookDedupConfig] = None
+    # Unset: a new webhook is active, an existing one keeps its state — an
+    # operator who disabled one must not see a re-apply silently re-arm it.
+    isActive: Optional[bool] = None
 
     @validator("dedup", always=True)
     def validate_target(cls, v, values):

@@ -36,10 +36,10 @@ from app.services.config_apply.resources import (
 )
 from app.services.config_apply.agents import apply_agents
 from app.services.config_apply.integrations import (
-    apply_database_triggers,
     apply_templates,
-    apply_webhooks,
 )
+from pydantic.alias_generators import to_camel
+
 from app.services.resources import ApplyContext, SideEffectBus
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,6 @@ class ConfigApplyService:
         # move over.
         self.effects = SideEffectBus()
         self._pending_references: dict[str, dict[str, bool]] = {}
-        self._pending_cdc_reload = False
         self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
         self.warnings: list[str] = []
@@ -144,26 +143,11 @@ class ConfigApplyService:
         triggers are not picked up until a restart. Best-effort throughout: a
         notification failure must not fail an apply that already committed.
         """
-        import json
-
-        from app.core.redis import get_redis
-
         await self.effects.flush()
 
-        cdc_reload, self._pending_cdc_reload = self._pending_cdc_reload, False
         pending_compiles, self._pending_component_compiles = (
             self._pending_component_compiles, []
         )
-        if not cdc_reload and not pending_compiles:
-            return
-        try:
-            if cdc_reload:
-                redis = await get_redis()
-                await redis.publish(
-                    "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
-                )
-        except Exception as e:
-            logger.warning(f"Failed to publish config-apply notifications: {e}")
 
         # Compile config-applied components in the background — the same
         # builder path the REST endpoint uses. Without this, components from
@@ -202,6 +186,11 @@ class ConfigApplyService:
             }
             for kind in ("functions", "agents", "pipelines")
         }
+        # Packages skip connections: one declared there is never created.
+        if "databaseConnections" not in self.skip_resource_types:
+            self._pending_references["databaseConnections"] = {
+                item.name: True for item in config.spec.databaseConnections
+            }
         try:
             # Common kwargs shared by all appliers
             common = dict(
@@ -320,18 +309,15 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            if "webhooks" not in self.skip_resource_types:
-                await apply_webhooks(
-                    **common_with_owner,
-                    webhooks=config.spec.webhooks,
-                )
-            if "schedules" not in self.skip_resource_types:
-                await self._apply_schedules(config.spec.schedules, dry_run)
-            if "databaseTriggers" not in self.skip_resource_types:
-                await apply_database_triggers(
-                    **common_with_owner,
-                    triggers=config.spec.databaseTriggers,
-                )
+            # Kinds with a per-resource applier: webhooks, schedules,
+            # databaseTriggers — after everything they can point at.
+            from app.services.resources.registry import all_appliers
+
+            for applier in all_appliers():
+                if applier.kind not in self.skip_resource_types:
+                    await self._apply_kind(
+                        applier, getattr(config.spec, applier.config_section), dry_run
+                    )
 
             if self.prune_missing:
                 await self._prune_missing(config, dry_run)
@@ -355,11 +341,9 @@ class ConfigApplyService:
                     warnings=self.warnings,
                 )
 
-            if not dry_run:
-                self._pending_cdc_reload = True
-                if self.auto_commit:
-                    await self.db.commit()
-                    await self.flush_notifications()
+            if not dry_run and self.auto_commit:
+                await self.db.commit()
+                await self.flush_notifications()
 
             return ConfigApplyResponse(
                 success=True,
@@ -429,7 +413,6 @@ class ConfigApplyService:
     def _discard_pending(self) -> None:
         """Forget every queued notification: the transaction won't commit."""
         self.effects.discard()
-        self._pending_cdc_reload = False
         self._pending_component_compiles = []
 
     def _resource_context(self, dry_run: bool) -> ApplyContext:
@@ -445,31 +428,31 @@ class ConfigApplyService:
             pending_references=self._pending_references,
         )
 
-    async def _apply_schedules(self, schedules: list, dry_run: bool) -> None:
-        from app.schemas.spec.schedule import ScheduleSpec
-        from app.services.resources.schedules import ScheduleApplier
-
-        applier = ScheduleApplier()
+    async def _apply_kind(self, applier, items: list, dry_run: bool) -> None:
         ctx = self._resource_context(dry_run)
-        for schedule_config in schedules:
+        for item in items:
+            key = applier.config_key(item)
             try:
-                spec = ScheduleSpec.model_validate(schedule_config.model_dump(exclude_none=True))
-                # One savepoint per resource: a failing schedule is reported
-                # and rolled back on its own instead of poisoning the session
-                # for every resource after it.
+                declared = item.model_dump(exclude_none=True)
+                spec = applier.spec_model.model_validate(declared)
+                keep = {
+                    field for field in applier.keep_unless_declared
+                    if to_camel(field) not in declared
+                }
+                # One savepoint per resource: a failing one is reported and
+                # rolled back on its own instead of poisoning the session for
+                # every resource after it.
                 async with self.db.begin_nested():
-                    result = await applier.apply(spec, ctx)
+                    result = await applier.apply(spec, ctx, keep=keep)
             except Exception as e:
-                self.errors.append(
-                    f"Error applying schedule '{schedule_config.name}': {_describe_error(e)}"
-                )
+                self.errors.append(f"Error applying {applier.noun} '{key}': {_describe_error(e)}")
                 continue
             if result.warning:
                 self.warnings.append(result.warning)
             self._track_change(
                 "unchanged" if result.action == "skipped" else result.action,
-                "schedules",
-                schedule_config.name,
+                applier.kind,
+                key,
                 changes=result.changes or None,
             )
 

@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -22,6 +22,18 @@ class SpecModel(BaseModel):
         populate_by_name=True,
         extra="forbid",
     )
+
+    # Fields read by rules that span several fields (whole_spec_problems). A
+    # partial update that changes none of them cannot have caused such an error.
+    WHOLE_SPEC_FIELDS: ClassVar[frozenset[str]] = frozenset()
+
+    def whole_spec_problems(self) -> list[str]:
+        """Rules that span fields. Kept callable on its own: pydantic skips
+        after-validators once any field has failed, so a partial update over
+        a row that already holds an invalid field has to run these itself.
+        Subclasses with such rules override this and raise the first problem
+        from an after-validator."""
+        return []
 
     def canonical(self) -> dict[str, Any]:
         """Stable snake_case form: what the checksum and change history use."""
