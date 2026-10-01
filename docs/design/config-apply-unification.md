@@ -466,6 +466,38 @@ invalidation effect).
   pipeline) stay at the REST boundary: they are about the caller, not the
   resource.
 
+### Slice 3: connectors (decisions)
+
+- **One nested spec replaces the field maps.** `CONNECTOR_AUTH_FIELD_MAP`,
+  `TOKEN_RESPONSE_PATH_FIELD_MAP` and the hand-written operation/retry
+  mappings are gone: the spec's camelCase aliases translate YAML, and
+  storage is the spec's snake_case dump (without nulls, which REST used to
+  store and config didn't).
+- **History never shows secret values.** Header values, `auth.token_params`
+  values and URL credentials (userinfo and query of `base_url`, the token
+  and authorize URLs and operation paths) are redacted with a
+  keyed HMAC — stable, so a changed value still shows as a change, but not
+  reversible by hashing guesses. The real values are kept encrypted in
+  `config_revisions.secret_state` and used only by restore, so a deleted
+  connector still comes back exactly. `auth.secret` is a Secret's *name* and
+  stays readable. Generic hooks: `history_spec` / `secret_values` /
+  `with_secrets`; any later kind with secret-bearing fields uses them.
+- **Repointing OAuth drops stored user tokens.** When auth type, token URL,
+  client id or authorize URL changes, users' `ConnectorOAuthToken` rows for
+  that connector are deleted and they sign in again: otherwise a refresh
+  posts the old refresh token, with the client secret, to the new token URL.
+- **`is_active` is operator state unless declared** (as for webhooks).
+- **Package upgrades now remove connectors** a new version no longer ships,
+  like every applier kind; their users' OAuth tokens go with them (a restore
+  brings the connector back, users reconnect).
+- `import-openapi` is an ordinary edit now: validated, recorded, detaching.
+- Strictness follows what worked: refused are unknown auth types (requests
+  went out unauthenticated), OAuth grants missing their URLs/client id,
+  zero retries or timeout, unknown request-body mappings (parameters were
+  dropped). Lowercase methods, HEAD/OPTIONS, unknown backoff/position/client-auth values
+  (they always fell back to a default) and duplicate operation names keep
+  working.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

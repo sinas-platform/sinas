@@ -5,22 +5,6 @@ Used by both config_export.py (full config export) and package_service.py
 """
 from typing import Any, Optional
 
-from app.schemas.config import (
-    CONNECTOR_AUTH_FIELD_MAP,
-    TOKEN_RESPONSE_PATH_FIELD_MAP,
-)
-
-
-def _camelize_token_response_paths(paths: Any) -> Optional[dict]:
-    """snake_case stored token-response paths → camelCase config keys."""
-    if not isinstance(paths, dict):
-        return None
-    return {
-        camel: paths.get(snake)
-        for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
-        if paths.get(snake) is not None
-    } or None
-
 
 def _remove_none_values(d: dict) -> dict:
     """Remove None values from dictionary recursively."""
@@ -167,43 +151,11 @@ def serialize_schedule(schedule) -> dict:
 
 
 def serialize_connector(conn) -> dict:
-    auth = conn.auth or {}
-    retry = conn.retry or {}
-    operations = []
-    for op in (conn.operations or []):
-        op_dict = {
-            "name": op.get("name"),
-            "method": op.get("method"),
-            "path": op.get("path"),
-            "description": op.get("description"),
-            "parameters": op.get("parameters"),
-            "requestBodyMapping": op.get("request_body_mapping", "json"),
-            "responseMapping": op.get("response_mapping", "json"),
-        }
-        operations.append(_remove_none_values(op_dict))
+    """Config form of a connector — delegated to its spec, whose aliases
+    replace the field maps every auth field had to be added to by hand."""
+    from app.services.resources.connectors import ConnectorApplier
 
-    return _remove_none_values({
-        "namespace": conn.namespace,
-        "name": conn.name,
-        "description": conn.description,
-        "baseUrl": conn.base_url,
-        # Map snake_case stored keys → camelCase config keys via the single field map.
-        "auth": _remove_none_values({
-            **{camel: auth.get(snake) for camel, snake in CONNECTOR_AUTH_FIELD_MAP},
-            "type": auth.get("type", "none"),  # type always present in export
-            # Nested object: its inner keys need their own camelization.
-            "tokenResponsePaths": _camelize_token_response_paths(
-                auth.get("token_response_paths")
-            ),
-        }),
-        "headers": conn.headers if conn.headers else None,
-        "retry": _remove_none_values({
-            "maxAttempts": retry.get("max_attempts", 1),
-            "backoff": retry.get("backoff", "none"),
-        }),
-        "timeoutSeconds": conn.timeout_seconds,
-        "operations": operations,
-    })
+    return ConnectorApplier().spec_from_row(conn).to_config()
 
 
 # ─────────────────────────────────────────────────────────────
