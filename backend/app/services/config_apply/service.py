@@ -325,6 +325,25 @@ class ConfigApplyService:
                     triggers=config.spec.databaseTriggers,
                 )
 
+            if self.errors:
+                # All or nothing. A config or package with any resource that
+                # fails changes nothing at all: it used to report success and
+                # commit everything else, leaving a package "installed" without
+                # the parts that failed. Callers that own the transaction
+                # (auto_commit=False: package install) get success=False and
+                # roll back themselves; a dry run reports the same verdict the
+                # real apply would reach.
+                self._discard_pending()
+                if not dry_run and self.auto_commit:
+                    await self.db.rollback()
+                return ConfigApplyResponse(
+                    success=False,
+                    summary=self.summary,
+                    changes=self.changes,
+                    errors=self.errors,
+                    warnings=self.warnings,
+                )
+
             if not dry_run:
                 self._pending_cdc_reload = True
                 if self.auto_commit:
@@ -342,7 +361,7 @@ class ConfigApplyService:
         except Exception as e:
             logger.error(f"Error applying config: {str(e)}", exc_info=True)
             await self.db.rollback()
-            self.effects.discard()  # nothing committed, so nothing to announce
+            self._discard_pending()  # nothing committed, so nothing to announce
             return ConfigApplyResponse(
                 success=False,
                 summary=self.summary,
@@ -354,6 +373,12 @@ class ConfigApplyService:
     # ------------------------------------------------------------------
     # Kinds migrated to per-resource appliers
     # ------------------------------------------------------------------
+
+    def _discard_pending(self) -> None:
+        """Forget every queued notification: the transaction won't commit."""
+        self.effects.discard()
+        self._pending_cdc_reload = False
+        self._pending_component_compiles = []
 
     def _resource_context(self, dry_run: bool) -> ApplyContext:
         return ApplyContext(

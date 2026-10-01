@@ -214,7 +214,13 @@ class PackageService:
         result = await apply_service.apply_config(config, dry_run=False)
 
         if not result.success:
-            raise ValueError(f"Package apply failed: {'; '.join(result.errors)}")
+            # All or nothing: nothing from this package is committed. The
+            # caller's transaction rolls back (the API returns 400; the agent
+            # tool's session closes without committing).
+            raise ValueError(
+                f"Package not installed: {len(result.errors)} resource(s) failed, so "
+                f"nothing was applied. {'; '.join(result.errors)}"
+            )
 
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
