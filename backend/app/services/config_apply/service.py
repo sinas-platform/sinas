@@ -37,10 +37,10 @@ from app.services.config_apply.resources import (
 from app.services.config_apply.agents import apply_agents
 from app.services.config_apply.integrations import (
     apply_database_triggers,
-    apply_schedules,
     apply_templates,
     apply_webhooks,
 )
+from app.services.resources import ApplyContext, SideEffectBus
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,11 @@ class ConfigApplyService:
         # after the transaction commits, so a worker can never observe an event
         # for a row it cannot read yet. When auto_commit is False the caller
         # owns the commit and must call flush_notifications() itself.
-        self._pending_scheduler: list[tuple[str, str]] = []
+        # Effects from resources already migrated to the per-resource
+        # appliers (docs/design/config-apply-unification.md); the two lists
+        # below are the not-yet-migrated kinds and fold into this bus as they
+        # move over.
+        self.effects = SideEffectBus()
         self._pending_cdc_reload = False
         self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
@@ -138,24 +142,20 @@ class ConfigApplyService:
 
         from app.core.redis import get_redis
 
-        pending_jobs, self._pending_scheduler = self._pending_scheduler, []
+        await self.effects.flush()
+
         cdc_reload, self._pending_cdc_reload = self._pending_cdc_reload, False
         pending_compiles, self._pending_component_compiles = (
             self._pending_component_compiles, []
         )
-        if not pending_jobs and not cdc_reload and not pending_compiles:
+        if not cdc_reload and not pending_compiles:
             return
         try:
-            if pending_jobs or cdc_reload:
+            if cdc_reload:
                 redis = await get_redis()
-                for action, job_id in pending_jobs:
-                    await redis.publish(
-                        "sinas:scheduler:jobs", json.dumps({"action": action, "job_id": job_id})
-                    )
-                if cdc_reload:
-                    await redis.publish(
-                        "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
-                    )
+                await redis.publish(
+                    "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
+                )
         except Exception as e:
             logger.warning(f"Failed to publish config-apply notifications: {e}")
 
@@ -313,13 +313,7 @@ class ConfigApplyService:
                     webhooks=config.spec.webhooks,
                 )
             if "schedules" not in self.skip_resource_types:
-                await apply_schedules(
-                    **common_with_owner,
-                    schedules=config.spec.schedules,
-                    notify_scheduler=lambda action, job_id: self._pending_scheduler.append(
-                        (action, job_id)
-                    ),
-                )
+                await self._apply_schedules(config.spec.schedules, dry_run)
             if "databaseTriggers" not in self.skip_resource_types:
                 await apply_database_triggers(
                     **common_with_owner,
@@ -343,6 +337,7 @@ class ConfigApplyService:
         except Exception as e:
             logger.error(f"Error applying config: {str(e)}", exc_info=True)
             await self.db.rollback()
+            self.effects.discard()  # nothing committed, so nothing to announce
             return ConfigApplyResponse(
                 success=False,
                 summary=self.summary,
@@ -350,3 +345,59 @@ class ConfigApplyService:
                 errors=[f"Fatal error: {str(e)}"],
                 warnings=self.warnings,
             )
+
+    # ------------------------------------------------------------------
+    # Kinds migrated to per-resource appliers
+    # ------------------------------------------------------------------
+
+    def _resource_context(self, dry_run: bool) -> ApplyContext:
+        return ApplyContext(
+            db=self.db,
+            origin="package" if self.managed_by.startswith("pkg:") else "config",
+            actor_user_id=self.owner_user_id,
+            owner_user_id=self.owner_user_id,
+            managed_by=self.managed_by,
+            config_name=self.config_name,
+            dry_run=dry_run,
+            effects=self.effects,
+        )
+
+    async def _apply_schedules(self, schedules: list, dry_run: bool) -> None:
+        from app.schemas.spec.schedule import ScheduleSpec
+        from app.services.resources.schedules import ScheduleApplier
+
+        applier = ScheduleApplier()
+        ctx = self._resource_context(dry_run)
+        for schedule_config in schedules:
+            try:
+                spec = ScheduleSpec.model_validate(schedule_config.model_dump(exclude_none=True))
+                # One savepoint per resource: a failing schedule is reported
+                # and rolled back on its own instead of poisoning the session
+                # for every resource after it.
+                async with self.db.begin_nested():
+                    result = await applier.apply(spec, ctx)
+            except Exception as e:
+                self.errors.append(
+                    f"Error applying schedule '{schedule_config.name}': {_describe_error(e)}"
+                )
+                continue
+            if result.warning:
+                self.warnings.append(result.warning)
+            self._track_change(
+                "unchanged" if result.action == "skipped" else result.action,
+                "schedules",
+                schedule_config.name,
+                changes=result.changes or None,
+            )
+
+
+def _describe_error(error: Exception) -> str:
+    """One line per problem, rather than pydantic's multi-line dump."""
+    from pydantic import ValidationError
+
+    if isinstance(error, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in err['loc']) or 'spec'}: {err['msg']}"
+            for err in error.errors(include_url=False)
+        )
+    return str(error)

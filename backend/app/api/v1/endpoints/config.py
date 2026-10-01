@@ -3,8 +3,11 @@ Declarative configuration endpoints
 Handles applying, validating, and exporting SINAS configuration
 """
 import logging
+import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -17,6 +20,8 @@ from app.schemas.config import (
     ConfigValidateResponse,
     ValidationError as SchemaValidationError,
 )
+from app.models.config_revision import ConfigRevision
+from app.schemas.config_history import ConfigRevisionResponse
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
@@ -166,3 +171,70 @@ async def export_config(
     except Exception as e:
         logger.error(f"Error exporting config: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error exporting config: {str(e)}")
+
+
+def _require_config_read(request: Request, permissions: dict) -> None:
+    perm = "sinas.config.read:all"
+    if not check_permission(permissions, perm):
+        set_permission_used(request, perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to read config history")
+    set_permission_used(request, perm, has_perm=True)
+
+
+@router.get("/history", response_model=list[ConfigRevisionResponse])
+async def list_config_history(
+    request: Request,
+    kind: Optional[str] = Query(None, description="Resource kind, e.g. 'schedules'"),
+    key: Optional[str] = Query(None, description="Resource key, e.g. a schedule name"),
+    resource_id: Optional[uuid.UUID] = Query(
+        None, description="Follow one resource across renames"
+    ),
+    before: Optional[int] = Query(
+        None, description="Only revisions older than this id (keyset pagination)"
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    include_spec: bool = Query(False, description="Include each revision's full spec"),
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Change history of configurable resources, newest first.
+
+    Every change made through any channel — console, API, config apply,
+    package install — is recorded, in the same transaction as the change.
+    """
+    _, permissions = current_user_data
+    _require_config_read(request, permissions)
+
+    stmt = select(ConfigRevision).order_by(ConfigRevision.id.desc()).limit(limit)
+    if kind:
+        stmt = stmt.where(ConfigRevision.resource_kind == kind)
+    if key:
+        stmt = stmt.where(ConfigRevision.resource_key == key)
+    if resource_id:
+        stmt = stmt.where(ConfigRevision.resource_id == resource_id)
+    if before is not None:
+        stmt = stmt.where(ConfigRevision.id < before)
+
+    revisions = (await db.execute(stmt)).scalars().all()
+    responses = [ConfigRevisionResponse.model_validate(r) for r in revisions]
+    if not include_spec:
+        for response in responses:
+            response.spec = None
+    return responses
+
+
+@router.get("/history/{revision_id}", response_model=ConfigRevisionResponse)
+async def get_config_revision(
+    request: Request,
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """One revision, including the full spec it recorded."""
+    _, permissions = current_user_data
+    _require_config_read(request, permissions)
+
+    revision = await db.get(ConfigRevision, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
+    return ConfigRevisionResponse.model_validate(revision)

@@ -1,30 +1,54 @@
-"""Schedules API endpoints."""
+"""Schedules API endpoints.
+
+Writes go through ScheduleApplier — the same path config apply and package
+install use — so validation, ownership, scheduler notifications and change
+history are identical on every channel. Permission checks and lookups stay
+here, at the API boundary.
+"""
 
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import and_, select
+from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
-from app.core.redis import get_redis
-from app.models.agent import Agent
-from app.models.function import Function
 from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
-from app.services.package_service import detach_if_package_managed
+from app.schemas.spec.schedule import ScheduleSpec
+from app.services.resources import ApplierError, ApplyContext
+from app.services.resources.schedules import ScheduleApplier
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
 
-SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
+_applier = ScheduleApplier()
 
 
-async def _notify_scheduler(action: str, job_id: str) -> None:
-    """Publish a job change event to the scheduler service via Redis pub/sub."""
-    redis = await get_redis()
-    await redis.publish(SCHEDULER_CHANNEL, json.dumps({"action": action, "job_id": job_id}))
+def _context(db: AsyncSession, user_id) -> ApplyContext:
+    return ApplyContext(
+        db=db,
+        origin="api",
+        actor_user_id=str(user_id),
+        owner_user_id=str(user_id),
+        # The REST API has only ever let you schedule your own functions.
+        reference_scope_user_id=str(user_id),
+    )
+
+
+def _spec(data: dict) -> ScheduleSpec:
+    try:
+        return ScheduleSpec.model_validate(data)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
+
+
+async def _commit_and_notify(db: AsyncSession, ctx: ApplyContext) -> None:
+    """Effects fire only after the write is durable."""
+    await db.commit()
+    await ctx.effects.flush()
 
 
 @router.post("", response_model=ScheduledJobResponse, status_code=status.HTTP_201_CREATED)
@@ -44,82 +68,17 @@ async def create_schedule(
         raise HTTPException(status_code=403, detail="Not authorized to create schedules")
     set_permission_used(request, create_perm)
 
-    # Check if schedule name already exists for this user
-    result = await db.execute(
-        select(ScheduledJob).where(
-            and_(ScheduledJob.user_id == user_id, ScheduledJob.name == schedule_data.name)
+    ctx = _context(db, user_id)
+    try:
+        result = await _applier.apply(
+            _spec(schedule_data.model_dump()), ctx, must_create=True
         )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400, detail=f"Schedule '{schedule_data.name}' already exists"
-        )
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
-    # Verify target exists based on schedule_type
-    if schedule_data.schedule_type == "function":
-        target = await Function.get_by_name(
-            db, schedule_data.target_namespace, schedule_data.target_name, user_id
-        )
-        if not target:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Function '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
-            )
-    elif schedule_data.schedule_type == "pipeline":
-        from app.models import Pipeline
-
-        result = await db.execute(
-            select(Pipeline).where(
-                and_(
-                    Pipeline.namespace == schedule_data.target_namespace,
-                    Pipeline.name == schedule_data.target_name,
-                    Pipeline.is_active == True,
-                )
-            )
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Pipeline '{schedule_data.target_namespace}/{schedule_data.target_name}' not found or inactive",
-            )
-    else:
-        result = await db.execute(
-            select(Agent).where(
-                and_(
-                    Agent.namespace == schedule_data.target_namespace,
-                    Agent.name == schedule_data.target_name,
-                )
-            )
-        )
-        if not result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Agent '{schedule_data.target_namespace}/{schedule_data.target_name}' not found",
-            )
-
-    # Create schedule
-    schedule = ScheduledJob(
-        user_id=user_id,
-        name=schedule_data.name,
-        schedule_type=schedule_data.schedule_type,
-        target_namespace=schedule_data.target_namespace,
-        target_name=schedule_data.target_name,
-        description=schedule_data.description,
-        cron_expression=schedule_data.cron_expression,
-        timezone=schedule_data.timezone,
-        input_data=schedule_data.input_data,
-        content=schedule_data.content,
-    )
-
-    db.add(schedule)
-    await db.commit()
-    await db.refresh(schedule)
-
-    await _notify_scheduler("add", str(schedule.id))
-
-    response = ScheduledJobResponse.model_validate(schedule)
-
-    return response
+    await _commit_and_notify(db, ctx)
+    await db.refresh(result.obj)
+    return ScheduledJobResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[ScheduledJobResponse])
@@ -202,66 +161,22 @@ async def update_schedule(
             raise HTTPException(status_code=403, detail="Not authorized to update this schedule")
         set_permission_used(request, "sinas.schedules.update:own")
 
-    detach_if_package_managed(schedule)
+    # PATCH edits the resource's spec: merge the set fields over its current
+    # state and apply the whole thing, so the result is validated as one spec
+    # (a type change is checked against its new target, an agent schedule
+    # still needs content). As before, fields sent as null are ignored.
+    patch = {k: v for k, v in schedule_data.model_dump(exclude_unset=True).items() if v is not None}
+    merged = {**_applier.spec_from_row(schedule).model_dump(), **patch}
 
-    # Update fields
-    if schedule_data.name is not None:
-        schedule.name = schedule_data.name
-    if schedule_data.schedule_type is not None:
-        schedule.schedule_type = schedule_data.schedule_type
-    if schedule_data.target_namespace is not None:
-        schedule.target_namespace = schedule_data.target_namespace
+    ctx = _context(db, user_id)
+    try:
+        await _applier.apply(_spec(merged), ctx, existing=schedule)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
 
-    if schedule_data.target_name is not None:
-        # Verify new target exists
-        effective_type = schedule_data.schedule_type or schedule.schedule_type
-        effective_ns = schedule_data.target_namespace or schedule.target_namespace
-
-        if effective_type == "function":
-            target = await Function.get_by_name(
-                db, effective_ns, schedule_data.target_name, user_id
-            )
-            if not target:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Function '{effective_ns}/{schedule_data.target_name}' not found",
-                )
-        else:
-            result = await db.execute(
-                select(Agent).where(
-                    and_(
-                        Agent.namespace == effective_ns,
-                        Agent.name == schedule_data.target_name,
-                    )
-                )
-            )
-            if not result.scalar_one_or_none():
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Agent '{effective_ns}/{schedule_data.target_name}' not found",
-                )
-        schedule.target_name = schedule_data.target_name
-
-    if schedule_data.description is not None:
-        schedule.description = schedule_data.description
-    if schedule_data.cron_expression is not None:
-        schedule.cron_expression = schedule_data.cron_expression
-    if schedule_data.timezone is not None:
-        schedule.timezone = schedule_data.timezone
-    if schedule_data.input_data is not None:
-        schedule.input_data = schedule_data.input_data
-    if schedule_data.content is not None:
-        schedule.content = schedule_data.content
-    if schedule_data.is_active is not None:
-        schedule.is_active = schedule_data.is_active
-    await db.commit()
+    await _commit_and_notify(db, ctx)
     await db.refresh(schedule)
-
-    await _notify_scheduler("update", str(schedule.id))
-
-    response = ScheduledJobResponse.model_validate(schedule)
-
-    return response
+    return ScheduledJobResponse.model_validate(schedule)
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
@@ -288,9 +203,9 @@ async def delete_schedule(
             raise HTTPException(status_code=403, detail="Not authorized to delete this schedule")
         set_permission_used(request, "sinas.schedules.delete:own")
 
-    await _notify_scheduler("remove", str(schedule.id))
-
-    await db.delete(schedule)
-    await db.flush()
-
+    ctx = _context(db, user_id)
+    await _applier.delete(schedule, ctx)
+    # The scheduler used to be told before the delete was even flushed, so a
+    # failed commit left it running a job that still existed.
+    await _commit_and_notify(db, ctx)
     return None
