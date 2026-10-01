@@ -64,10 +64,12 @@ def _spec(data: dict) -> ConnectorSpec:
         raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
 
 
-async def _locked(ctx: ApplyContext, namespace: str, name: str) -> Connector:
-    """The row an edit is about to change, locked until commit (the
-    permission lookup doesn't lock)."""
-    connector = await _applier.find(ctx, f"{namespace}/{name}")
+async def _locked(ctx: ApplyContext, authorized: Connector) -> Connector:
+    """The row the permission check authorized, locked until commit (the
+    permission lookup doesn't lock). Re-read by id, never by name: a
+    connector deleted and recreated under that name meanwhile is another
+    resource, which this caller may not be allowed to touch."""
+    connector = await _applier.find_by_id(ctx, authorized.id)
     if connector is None:  # deleted between the permission check and now
         raise HTTPException(status_code=404, detail="Connector not found")
     return connector
@@ -248,7 +250,7 @@ async def update_connector(
     set_permission_used(request, f"sinas.connectors/{namespace}/{name}.update")
 
     ctx = _context(db, user_id)
-    connector = await _locked(ctx, namespace, name)
+    connector = await _locked(ctx, connector)
     # As before: fields left out (or sent as null) are unchanged; auth,
     # headers and operations are replaced whole. A rename onto an existing
     # connector is now a 400 rather than a 500.
@@ -281,7 +283,7 @@ async def delete_connector(
     set_permission_used(request, f"sinas.connectors/{namespace}/{name}.delete")
 
     ctx = _context(db, user_id)
-    await _applier.delete(await _locked(ctx, namespace, name), ctx)
+    await _applier.delete(await _locked(ctx, connector), ctx)
     await _commit(db, ctx)
     return None
 
@@ -353,7 +355,7 @@ async def import_openapi(
         # rest, keep manually added ones) — as a normal edit: validated,
         # recorded in history, and detaching a managed connector.
         ctx = _context(db, user_id)
-        connector = await _locked(ctx, namespace, name)
+        connector = await _locked(ctx, connector)
         stored = _applier.spec_from_row(connector)
         operations = [op.model_dump() for op in stored.operations]
         for op in parsed_ops:

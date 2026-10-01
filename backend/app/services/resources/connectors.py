@@ -18,6 +18,8 @@ from app.services.resources.history import redact
 # stored tokens belong to another identity provider (or app): a refresh would
 # post the old refresh token, with the client secret, to the new token URL.
 _TOKEN_IDENTITY = ("type", "token_url", "client_id", "authorize_url")
+# Auth URLs that can carry credentials (userinfo, query) — redacted in history.
+_AUTH_URLS = ("token_url", "authorize_url")
 
 
 def _without_none(value: Any) -> Any:
@@ -130,8 +132,9 @@ class ConnectorApplier(ResourceApplier[ConnectorSpec]):
         if token_params:
             state["auth"]["token_params"] = {k: redact(v) for k, v in token_params.items()}
         state["base_url"] = _redacted_url(spec.base_url)
-        if spec.auth and spec.auth.token_url:
-            state["auth"]["token_url"] = _redacted_url(spec.auth.token_url)
+        for field in _AUTH_URLS:
+            if spec.auth and getattr(spec.auth, field):
+                state["auth"][field] = _redacted_url(getattr(spec.auth, field))
         for op_state, op in zip(state.get("operations") or [], spec.operations or []):
             op_state["path"] = _redacted_url(op.path)
         return state
@@ -144,9 +147,10 @@ class ConnectorApplier(ResourceApplier[ConnectorSpec]):
             secrets["token_params"] = dict(spec.auth.token_params)
         if _redacted_url(spec.base_url) != spec.base_url:
             secrets["base_url"] = spec.base_url
-        token_url = spec.auth.token_url if spec.auth else None
-        if _redacted_url(token_url) != token_url:
-            secrets["token_url"] = token_url
+        for field in _AUTH_URLS:
+            url = getattr(spec.auth, field) if spec.auth else None
+            if _redacted_url(url) != url:
+                secrets[field] = url
         paths = {
             str(index): op.path
             for index, op in enumerate(spec.operations or [])
@@ -164,8 +168,9 @@ class ConnectorApplier(ResourceApplier[ConnectorSpec]):
             state["auth"]["token_params"] = secrets["token_params"]
         if "base_url" in secrets:
             state["base_url"] = secrets["base_url"]
-        if "token_url" in secrets:
-            state["auth"]["token_url"] = secrets["token_url"]
+        for field in _AUTH_URLS:
+            if field in secrets:
+                state["auth"][field] = secrets[field]
         if "operation_paths" in secrets:
             operations = [dict(op) for op in state.get("operations") or []]
             for index, path in secrets["operation_paths"].items():
