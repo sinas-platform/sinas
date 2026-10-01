@@ -116,6 +116,7 @@ def serialize_manifest(manifest) -> dict:
         "optionalPermissions": manifest.optional_permissions or None,
         "exposedNamespaces": manifest.exposed_namespaces or None,
         "storeDependencies": getattr(manifest, "store_dependencies", None) or None,
+        "publicInfo": getattr(manifest, "public_info", None) or None,
     })
 
 
