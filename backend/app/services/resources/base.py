@@ -178,6 +178,7 @@ class ResourceApplier(Generic[TSpec]):
 
     kind: ClassVar[str]
     label: ClassVar[str]  # "Schedule" — used in error messages
+    config_section: ClassVar[str]  # attribute of ConfigSpec holding this kind
     spec_model: ClassVar[type[SpecModel]]
     model: ClassVar[type]
     # Canonical fields that point at other resources. References are verified
@@ -191,6 +192,12 @@ class ResourceApplier(Generic[TSpec]):
         raise NotImplementedError
 
     def key_of_row(self, row: Any) -> str:
+        raise NotImplementedError
+
+    def config_key(self, item: Any) -> str:
+        """The key a config entry declares, read without validating it, so
+        deciding what a package still ships never depends on whether each
+        entry happens to parse."""
         raise NotImplementedError
 
     async def find(self, ctx: ApplyContext, key: str) -> Any:

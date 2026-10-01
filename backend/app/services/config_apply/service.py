@@ -56,6 +56,7 @@ class ConfigApplyService:
         managed_by: str = "config",
         auto_commit: bool = True,
         skip_resource_types: Optional[set[str]] = None,
+        prune_missing: bool = False,
     ):
         self.db = db
         self.config_name = config_name
@@ -63,6 +64,10 @@ class ConfigApplyService:
         self.managed_by = managed_by
         self.auto_commit = auto_commit
         self.skip_resource_types = skip_resource_types or set()
+        # Remove resources this source manages but no longer declares (package
+        # upgrades). Only for kinds with an applier: their removals are
+        # recorded in the change history, so they can be restored.
+        self.prune_missing = prune_missing
         self.summary = ConfigApplySummary()
         self.changes: list[ResourceChange] = []
         # Post-commit notifications. Collected during apply and published only
@@ -325,6 +330,9 @@ class ConfigApplyService:
                     triggers=config.spec.databaseTriggers,
                 )
 
+            if self.prune_missing:
+                await self._prune_missing(config, dry_run)
+
             if self.errors:
                 # All or nothing. A config or package with any resource that
                 # fails changes nothing at all: it used to report success and
@@ -373,6 +381,47 @@ class ConfigApplyService:
     # ------------------------------------------------------------------
     # Kinds migrated to per-resource appliers
     # ------------------------------------------------------------------
+
+    async def _prune_missing(self, config: SinasConfig, dry_run: bool) -> None:
+        """Delete what this source manages but no longer declares.
+
+        Scoped to resources stamped with this source's managed_by — and, for a
+        plain config (where every file shares managed_by="config"), to its
+        config_name too, or applying one file would delete another's
+        resources. A resource someone edited by hand was detached from the
+        package at that edit, so an upgrade never removes it. Part of the same
+        all-or-nothing transaction, reported in summary.deleted, and a dry run
+        lists what would go without removing anything.
+        """
+        from sqlalchemy import select
+
+        from app.services.resources.registry import all_appliers
+
+        ctx = self._resource_context(dry_run)
+        for applier in all_appliers():
+            if applier.kind in self.skip_resource_types:
+                continue
+            declared = {
+                applier.config_key(item)
+                for item in getattr(config.spec, applier.config_section, None) or []
+            }
+            model = applier.model
+            stmt = select(model).where(model.managed_by == self.managed_by)
+            if not self.managed_by.startswith("pkg:"):
+                stmt = stmt.where(model.config_name == self.config_name)
+            for row in (await self.db.execute(stmt)).scalars().all():
+                key = applier.key_of_row(row)
+                if key in declared:
+                    continue
+                try:
+                    async with self.db.begin_nested():
+                        await applier.delete(row, ctx)
+                except Exception as e:
+                    self.errors.append(
+                        f"Error removing {applier.label.lower()} '{key}': {_describe_error(e)}"
+                    )
+                    continue
+                self._track_change("delete", applier.kind, key)
 
     def _discard_pending(self) -> None:
         """Forget every queued notification: the transaction won't commit."""

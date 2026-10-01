@@ -209,6 +209,8 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=False)
@@ -307,6 +309,8 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=True)

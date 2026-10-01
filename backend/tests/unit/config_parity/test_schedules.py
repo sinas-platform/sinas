@@ -870,3 +870,127 @@ class TestRestore:
         assert denied.status_code == 403
         missing = await client.post("/api/v1/config/history/999999999/restore", headers=auth_headers(admin_user))
         assert missing.status_code == 404
+
+
+# ------------------------------------------------------ package upgrades
+
+
+def _package_yaml(pkg: str, version: str, ns: str, schedules: list[str]) -> str:
+    lines = [
+        "apiVersion: sinas.co/v1",
+        "kind: SinasPackage",
+        "metadata:",
+        f"  name: {pkg}",
+        "package:",
+        f"  name: {pkg}",
+        f'  version: "{version}"',
+        "spec:",
+        "  functions:",
+        f"    - namespace: {ns}",
+        "      name: job",
+        "      code: |",
+        "        def handler(input, context):",
+        "            return {}",
+        "  schedules:" + ("" if schedules else " []"),
+    ]
+    for name in schedules:
+        lines += [
+            f"    - name: {name}",
+            f"      functionName: {ns}/job",
+            '      cronExpression: "0 3 * * *"',
+        ]
+    return "\n".join(lines) + "\n"
+
+
+class TestPackageUpgrade:
+    async def test_an_upgrade_removes_what_the_new_version_dropped(
+        self, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+
+        pkg, ns, keep, drop = f"pkg-{_uid()}", f"ns{_uid()}", f"keep-{_uid()}", f"drop-{_uid()}"
+        service = PackageService(db)
+        await service.install(_package_yaml(pkg, "1.0.0", ns, [keep, drop]), str(admin_user.id))
+        dropped_id = str((await _row(db, drop)).id)
+        published.clear()
+
+        _, result = await service.install(_package_yaml(pkg, "2.0.0", ns, [keep]), str(admin_user.id))
+
+        assert result.summary.deleted == {"schedules": 1}
+        assert await _row(db, keep) is not None
+        assert await _row(db, drop) is None
+        [removal] = [r for r in await _revisions(db, resource_key=drop) if r.action == "delete"]
+        assert (removal.origin, removal.managed_by) == ("package", f"pkg:{pkg}")
+        assert ("sinas:scheduler:jobs", {"action": "remove", "job_id": dropped_id}) in published
+
+    async def test_a_hand_edited_schedule_survives_an_upgrade(
+        self, client, db: AsyncSession, admin_user, published
+    ):
+        """Editing a package schedule by hand detaches it from the package, so
+        an upgrade that no longer ships it leaves the edited copy alone."""
+        from app.services.package_service import PackageService
+
+        pkg, ns, edited = f"pkg-{_uid()}", f"ns{_uid()}", f"edited-{_uid()}"
+        service = PackageService(db)
+        await service.install(_package_yaml(pkg, "1.0.0", ns, [edited]), str(admin_user.id))
+        await client.patch(
+            f"/api/v1/schedules/{edited}", json={"cron_expression": "0 7 * * *"},
+            headers=auth_headers(admin_user),
+        )
+
+        await service.install(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
+        row = await _row(db, edited)
+        assert row is not None and row.managed_by is None
+
+    async def test_an_upgrade_never_touches_another_packages_schedules(
+        self, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+
+        mine, theirs = f"pkg-{_uid()}", f"pkg-{_uid()}"
+        ns_mine, ns_theirs = f"ns{_uid()}", f"ns{_uid()}"
+        other = f"other-{_uid()}"
+        service = PackageService(db)
+        await service.install(_package_yaml(theirs, "1.0.0", ns_theirs, [other]), str(admin_user.id))
+        await service.install(_package_yaml(mine, "1.0.0", ns_mine, [f"m-{_uid()}"]), str(admin_user.id))
+        await service.install(_package_yaml(mine, "2.0.0", ns_mine, []), str(admin_user.id))
+        assert await _row(db, other) is not None
+
+    async def test_an_upgrade_preview_lists_removals_without_removing(
+        self, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+
+        pkg, ns, drop = f"pkg-{_uid()}", f"ns{_uid()}", f"drop-{_uid()}"
+        service = PackageService(db)
+        await service.install(_package_yaml(pkg, "1.0.0", ns, [drop]), str(admin_user.id))
+
+        preview, _, _ = await service.preview(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
+
+        assert preview.summary.deleted == {"schedules": 1}
+        assert await _row(db, drop) is not None
+
+    async def test_a_removed_schedule_can_be_restored(
+        self, client, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+
+        pkg, ns, drop = f"pkg-{_uid()}", f"ns{_uid()}", f"drop-{_uid()}"
+        service = PackageService(db)
+        await service.install(_package_yaml(pkg, "1.0.0", ns, [drop]), str(admin_user.id))
+        await service.install(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
+        [removal] = [r for r in await _revisions(db, resource_key=drop) if r.action == "delete"]
+
+        response = await client.post(
+            f"/api/v1/config/history/{removal.id}/restore", headers=auth_headers(admin_user)
+        )
+        assert response.status_code == 200, response.text
+        assert await _row(db, drop) is not None
+
+    async def test_plain_config_apply_never_deletes(self, db: AsyncSession, admin_user, fn):
+        """A config file may legitimately be partial; removal stays opt-in."""
+        name = f"cfg-{_uid()}"
+        await _apply(db, admin_user, _yaml_schedule(name, fn))
+        _, result = await _apply(db, admin_user)  # same config, now without it
+        assert result.summary.deleted == {}
+        assert await _row(db, name) is not None

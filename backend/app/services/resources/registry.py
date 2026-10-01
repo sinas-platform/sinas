@@ -12,3 +12,10 @@ def applier_for(kind: str) -> Optional[ResourceApplier]:
     appliers = {ScheduleApplier.kind: ScheduleApplier}
     applier_class = appliers.get(kind)
     return applier_class() if applier_class else None
+
+
+def all_appliers() -> list[ResourceApplier]:
+    """Every migrated kind, in config dependency order."""
+    from app.services.resources.schedules import ScheduleApplier
+
+    return [ScheduleApplier()]

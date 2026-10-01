@@ -22,6 +22,7 @@ from app.services.resources.base import (
 class ScheduleApplier(ResourceApplier[ScheduleSpec]):
     kind = "schedules"
     label = "Schedule"
+    config_section = "schedules"
     spec_model = ScheduleSpec
     model = ScheduledJob
     reference_fields = ("schedule_type", "target_namespace", "target_name")
@@ -36,6 +37,9 @@ class ScheduleApplier(ResourceApplier[ScheduleSpec]):
 
     def key_of_row(self, row: ScheduledJob) -> str:
         return row.name
+
+    def config_key(self, item: Any) -> str:
+        return item.name
 
     async def find(self, ctx: ApplyContext, key: str) -> ScheduledJob | None:
         # Schedule names are globally unique (the column is UNIQUE), so the
