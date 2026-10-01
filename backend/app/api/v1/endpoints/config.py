@@ -253,6 +253,12 @@ async def restore_config_revision(
     - An existing resource is reverted to that state (a rename is undone too).
     - Already in that state: nothing happens.
 
+    A restore is a manual write: the restored resource is unmanaged, whoever
+    managed it before. Deliberately — a schedule a package upgrade removed,
+    restored under that package, would be removed again by the next upgrade,
+    and an uninstalled package isn't there to manage it at all. Same rule as
+    any manual edit of a managed resource.
+
     The restore is itself recorded as a revision (`restored_from_id`), so it
     can be undone the same way. It goes through the resource's normal write
     path: the same validation, reference checks and side effects as any edit.

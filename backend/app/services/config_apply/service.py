@@ -79,7 +79,7 @@ class ConfigApplyService:
         # below are the not-yet-migrated kinds and fold into this bus as they
         # move over.
         self.effects = SideEffectBus()
-        self._pending_references: dict[str, set[str]] = {}
+        self._pending_references: dict[str, dict[str, bool]] = {}
         self._pending_cdc_reload = False
         self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
@@ -196,7 +196,10 @@ class ConfigApplyService:
             ConfigApplyResponse with results
         """
         self._pending_references = {
-            kind: {f"{item.namespace}/{item.name}" for item in getattr(config.spec, kind)}
+            kind: {
+                f"{item.namespace}/{item.name}": getattr(item, "isActive", True) is not False
+                for item in getattr(config.spec, kind)
+            }
             for kind in ("functions", "agents", "pipelines")
         }
         try:

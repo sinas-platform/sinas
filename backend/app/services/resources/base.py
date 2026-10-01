@@ -95,15 +95,25 @@ class ApplyContext:
     # Reference checks are scoped to this user where the channel requires it
     # (the REST API only lets you target your own functions). None = any owner.
     reference_scope_user_id: Optional[str] = None
-    # Keys defined earlier in the same apply, by kind ("functions": {"ns/x"}).
+    # What the same apply declares, by kind: {"pipelines": {"ns/x": is_active}}.
     # A dry run creates nothing, so a reference to something the same config
-    # is about to create can only be satisfied from here.
-    pending_references: dict[str, set[str]] = field(default_factory=dict)
+    # is about to create can only be satisfied from here (see `declared`).
+    pending_references: dict[str, dict[str, bool]] = field(default_factory=dict)
     # Restores: bring a deleted resource back under its original id (so its
     # history stays one timeline), and mark the revision as a restore.
     restore_resource_id: Optional[Any] = None
     restored_from_id: Optional[int] = None
     _actor_email: Optional[str] = field(default=None, repr=False)
+
+    def declared(self, kind: str, key: str, *, active: bool = False) -> bool:
+        """In a dry run: does this apply declare `key` — and, with `active`,
+        declare it active? A preview must accept exactly what the real apply
+        will find once the declared resources exist, no more: a pipeline
+        declared with isActive: false fails the real apply's active check."""
+        if not self.dry_run:
+            return False
+        declared = self.pending_references.get(kind, {})
+        return key in declared and (declared[key] or not active)
 
     async def actor_email(self) -> Optional[str]:
         if self._actor_email is None and self.actor_user_id:

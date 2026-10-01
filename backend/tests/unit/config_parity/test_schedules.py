@@ -621,6 +621,30 @@ class TestPreviewMatchesApply:
         assert preview.errors == []
         assert preview.summary.created.get("schedules") == 1
 
+    async def test_a_preview_refuses_a_same_config_target_declared_inactive(
+        self, db: AsyncSession, admin_user
+    ):
+        """The real apply requires an active pipeline; a preview that took
+        the declaration alone approved installs that then failed."""
+        ns = f"ns{_uid()}"
+        svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id), auto_commit=False)
+        config = SinasConfig.model_validate({
+            "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
+            "spec": {
+                "functions": [{"namespace": ns, "name": "job", "code": "def handler(input, context):\n    return {}"}],
+                "pipelines": [{
+                    "namespace": ns, "name": "off", "isActive": False,
+                    "steps": [{"name": "s", "type": "function", "function": f"{ns}/job"}],
+                }],
+                "schedules": [{
+                    "name": f"cfg-{_uid()}", "scheduleType": "pipeline",
+                    "pipelineName": f"{ns}/off", "cronExpression": "0 * * * *",
+                }],
+            },
+        })
+        preview = await svc.apply_config(config, dry_run=True)
+        assert any("not found or inactive" in e for e in preview.errors), preview.errors
+
 
 class TestPackageUninstall:
     async def test_uninstall_records_deletions_and_tells_the_scheduler(

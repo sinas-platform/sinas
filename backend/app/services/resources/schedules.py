@@ -76,14 +76,16 @@ class ScheduleApplier(ResourceApplier[ScheduleSpec]):
         parser pre-pass that `force=true` skips), and a REST PATCH that changed
         the target to a pipeline never checked the pipeline at all."""
         ns, name, db = spec.target_namespace, spec.target_name, ctx.db
-        if ctx.dry_run:
-            # In a preview the same config may be about to create the target.
-            # Only in a preview: in a real apply it has been created by now,
-            # and the database (not the config) is the truth — if creating it
-            # failed, this schedule must fail too.
-            kind = {"function": "functions", "agent": "agents", "pipeline": "pipelines"}
-            if spec.target in ctx.pending_references.get(kind[spec.schedule_type], set()):
-                return
+        # In a preview the same config may be about to create the target.
+        # Only in a preview: in a real apply it has been created by now, and
+        # the database (not the config) is the truth — if creating it failed,
+        # this schedule must fail too. Functions and pipelines must be active,
+        # as below; agents need only exist.
+        kind = {"function": "functions", "agent": "agents", "pipeline": "pipelines"}
+        if ctx.declared(
+            kind[spec.schedule_type], spec.target, active=spec.schedule_type != "agent"
+        ):
+            return
         if spec.schedule_type == "function":
             scope = ctx.reference_scope_user_id
             target = await Function.get_by_name(
