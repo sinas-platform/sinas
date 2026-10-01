@@ -47,6 +47,22 @@ def _serialize_row(row) -> dict[str, Any]:
     return {key: _serialize_value(row[key]) for key in row.keys()}
 
 
+
+def _same_source(trigger, trigger_id: str) -> tuple:
+    """WHERE clause for a bookmark write: the trigger, but only while it still
+    reads the source this poll read. An edit that moved it (another column,
+    table or connection) resets the bookmark; writing this poll's value over
+    that reset would compare the new column against the old one's value."""
+    from app.models.database_trigger import DatabaseTrigger
+
+    return (
+        DatabaseTrigger.id == uuid.UUID(trigger_id),
+        DatabaseTrigger.database_connection_id == trigger.database_connection_id,
+        DatabaseTrigger.schema_name == trigger.schema_name,
+        DatabaseTrigger.table_name == trigger.table_name,
+        DatabaseTrigger.poll_column == trigger.poll_column,
+    )
+
 class CDCManager:
     """Manages poll loops for all active CDC triggers."""
 
@@ -222,7 +238,7 @@ class CDCManager:
                         async with AsyncSessionLocal() as db:
                             await db.execute(
                                 update(DatabaseTrigger)
-                                .where(DatabaseTrigger.id == uuid.UUID(trigger_id))
+                                .where(*_same_source(trigger, trigger_id))
                                 .values(
                                     last_poll_value=new_bookmark,
                                     error_message=None,
@@ -289,23 +305,11 @@ class CDCManager:
                                     user_id=str(trigger.user_id),
                                 )
 
-                            # Update bookmark and clear error — only if the
-                            # trigger still reads the source this poll read. An
-                            # edit that moved it (another column, table or
-                            # connection) resets the bookmark; writing this one
-                            # over that reset would compare the new column
-                            # against the old column's value.
+                            # Update bookmark and clear error
                             async with AsyncSessionLocal() as db:
                                 await db.execute(
                                     update(DatabaseTrigger)
-                                    .where(
-                                        DatabaseTrigger.id == uuid.UUID(trigger_id),
-                                        DatabaseTrigger.database_connection_id
-                                        == trigger.database_connection_id,
-                                        DatabaseTrigger.schema_name == trigger.schema_name,
-                                        DatabaseTrigger.table_name == trigger.table_name,
-                                        DatabaseTrigger.poll_column == trigger.poll_column,
-                                    )
+                                    .where(*_same_source(trigger, trigger_id))
                                     .values(
                                         last_poll_value=new_bookmark,
                                         error_message=None,
