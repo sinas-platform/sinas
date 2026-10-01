@@ -189,6 +189,29 @@ class TestOneWritePath:
         assert row.managed_by is None
 
 
+class TestEditsStayAuthorized:
+    async def test_a_row_renamed_since_the_permission_check_is_not_written(
+        self, client, db: AsyncSession, admin_user
+    ):
+        """Permissions are scoped by namespace/name: a connector renamed
+        elsewhere after the check may now be outside the caller's scope."""
+        from fastapi import HTTPException
+        from sqlalchemy import update
+
+        from app.api.v1.endpoints.connectors import _context, _locked
+
+        name = f"api-{_uid()}"
+        await client.post("/api/v1/connectors", json=_rest_connector(name), headers=auth_headers(admin_user))
+        authorized = await _row(db, name)
+        await db.execute(  # a concurrent rename, behind the session's back
+            update(Connector).where(Connector.id == authorized.id).values(name=f"moved-{_uid()}")
+            .execution_options(synchronize_session=False)
+        )
+        with pytest.raises(HTTPException) as raised:
+            await _locked(_context(db, admin_user.id), authorized)
+        assert raised.value.status_code == 409
+
+
 # ------------------------------------------------------------ history
 
 
