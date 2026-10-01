@@ -174,7 +174,23 @@ class ReferenceNotFound(ApplierError):
 OwnershipDecision = Literal["write", "write_detach", "skip"]
 
 
-def ownership_decision(row_managed_by: Optional[str], ctx: ApplyContext) -> OwnershipDecision:
+def _same_source(row_managed_by: str, row_config_name: Optional[str], ctx: ApplyContext) -> bool:
+    """Every plain config file is managed_by="config"; its config_name tells
+    them apart (a package's managed_by alone identifies it). Without this,
+    applying one config file rewrote what another one declares. A row with no
+    config_name predates the stamp and belongs to whichever config claims it."""
+    if row_managed_by != ctx.managed_by:
+        return False
+    return (
+        row_managed_by.startswith("pkg:")
+        or row_config_name is None
+        or row_config_name == ctx.config_name
+    )
+
+
+def ownership_decision(
+    row_managed_by: Optional[str], ctx: ApplyContext, row_config_name: Optional[str] = None
+) -> OwnershipDecision:
     """The managed_by state machine (design §4.4), one place for every kind.
 
     | row managed_by | API write       | config apply     | package install  |
@@ -191,7 +207,7 @@ def ownership_decision(row_managed_by: Optional[str], ctx: ApplyContext) -> Owne
         return "write_detach" if row_managed_by else "write"
     if row_managed_by is None:
         return "skip" if ctx.origin == "package" else "write"
-    if row_managed_by == ctx.managed_by:
+    if _same_source(row_managed_by, row_config_name, ctx):
         return "write"
     return "skip"
 
@@ -331,7 +347,7 @@ class ResourceApplier(Generic[TSpec]):
             return ApplyResult("create", obj=row, changes=changes, revision=revision)
 
         # ---- update ----------------------------------------------------------
-        decision = ownership_decision(row.managed_by, ctx)
+        decision = ownership_decision(row.managed_by, ctx, getattr(row, "config_name", None))
         if decision == "skip":
             if row.managed_by is None:
                 warning = (
@@ -339,9 +355,14 @@ class ResourceApplier(Generic[TSpec]):
                     f"hand; '{ctx.managed_by}' leaves it as is."
                 )
             else:
+                manager = row.managed_by
+                if manager == "config" and getattr(row, "config_name", None):
+                    manager = f"config '{row.config_name}'"
+                else:
+                    manager = f"'{manager}'"
                 warning = (
                     f"{self.label} '{new_key}' exists but is managed by "
-                    f"'{row.managed_by}'. Skipping."
+                    f"{manager}. Skipping."
                 )
             return ApplyResult("skipped", obj=row, warning=warning)
 

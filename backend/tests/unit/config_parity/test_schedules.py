@@ -427,6 +427,18 @@ class TestOwnership:
         row = await _row(db, name)
         assert (row.managed_by, row.cron_expression, row.is_active) == ("pkg:demo", "0 3 * * *", False)
 
+    async def test_one_config_file_does_not_rewrite_anothers(self, db: AsyncSession, admin_user, fn):
+        """Every plain config is managed_by="config"; config_name tells them
+        apart. Applying file B used to rewrite what file A declares."""
+        name = f"cfg-{_uid()}"
+        await _apply(db, admin_user, _yaml_schedule(name, fn), config_name="a")
+        _, result = await _apply(
+            db, admin_user, _yaml_schedule(name, fn, cronExpression="0 9 * * *"), config_name="b"
+        )
+        assert any("managed by config 'a'" in w for w in result.warnings), result.warnings
+        row = await _row(db, name)
+        assert (row.config_name, row.cron_expression) == ("a", "0 3 * * *")
+
     async def test_config_adopts_and_stamps_a_manual_schedule(
         self, client, db: AsyncSession, admin_user, fn, published
     ):

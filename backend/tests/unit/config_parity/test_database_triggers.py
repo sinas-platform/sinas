@@ -84,8 +84,8 @@ def _config(*triggers: dict, connections: list | None = None) -> SinasConfig:
     )
 
 
-async def _apply(db, owner, *triggers, dry_run=False, connections=None):
-    svc = ConfigApplyService(db, "cfg", owner_user_id=str(owner.id), auto_commit=False)
+async def _apply(db, owner, *triggers, dry_run=False, connections=None, config_name="cfg"):
+    svc = ConfigApplyService(db, config_name, owner_user_id=str(owner.id), auto_commit=False)
     result = await svc.apply_config(_config(*triggers, connections=connections), dry_run=dry_run)
     return svc, result
 
@@ -187,6 +187,18 @@ class TestOneWritePath:
         assert result.success, result.errors
         [row] = await _rows(db, name)
         assert (row.user_id, row.batch_size) == (test_user.id, 7)
+
+    async def test_another_config_files_trigger_is_left_alone(
+        self, db: AsyncSession, admin_user, test_user, conn, fn
+    ):
+        name = f"sync-{_uid()}"
+        await _apply(db, test_user, _yaml_trigger(name, conn, fn), config_name="a")
+        _, result = await _apply(
+            db, admin_user, _yaml_trigger(name, conn, fn, batchSize=7), config_name="b"
+        )
+        assert any("managed by config 'a'" in w for w in result.warnings), result.warnings
+        [row] = await _rows(db, name)
+        assert (row.config_name, row.batch_size) == ("a", 100)
 
     async def test_a_preview_does_not_count_on_connections_a_package_skips(
         self, db: AsyncSession, admin_user, conn, fn
