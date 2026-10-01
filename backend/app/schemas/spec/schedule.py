@@ -1,6 +1,6 @@
 """Schedule spec."""
 
-from typing import Any, Literal, Optional
+from typing import Any, ClassVar, Literal, Optional
 
 from pydantic import Field, field_validator, model_validator
 
@@ -24,6 +24,10 @@ _REF_KEYS = (
 
 
 class ScheduleSpec(SpecModel):
+    # Fields read by the whole-spec validator below. A partial update that
+    # touches none of them cannot have caused a whole-spec error.
+    WHOLE_SPEC_FIELDS: ClassVar[frozenset[str]] = frozenset({"schedule_type", "content"})
+
     name: str = Field(min_length=1, max_length=255)
     schedule_type: ScheduleType = "function"
     target_namespace: str = Field(

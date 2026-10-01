@@ -20,7 +20,21 @@ class ConfigRevisionResponse(BaseModel):
     actor_email: Optional[str]
     managed_by: Optional[str]
     config_name: Optional[str]
-    changes: Optional[dict[str, Any]]
-    # Full spec after the change. Omitted from list responses unless asked for.
+    # Names of the fields this change touched — always present, always small.
+    changed_fields: list[str] = []
+    # The field-level values (`{field: {from, to}}`) and the full spec after
+    # the change. Field values can be large (agent prompts, input data), so the
+    # list endpoint leaves both out unless include_details=true; the detail
+    # endpoint always includes them.
+    changes: Optional[dict[str, Any]] = None
     spec: Optional[dict[str, Any]] = None
     created_at: datetime
+
+    @classmethod
+    def from_revision(cls, revision: Any, *, details: bool) -> "ConfigRevisionResponse":
+        response = cls.model_validate(revision)
+        response.changed_fields = sorted((revision.changes or {}).keys())
+        if not details:
+            response.changes = None
+            response.spec = None
+        return response

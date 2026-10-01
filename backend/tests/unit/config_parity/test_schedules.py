@@ -341,7 +341,14 @@ class TestChangeHistory:
         assert listed.status_code == 200, listed.text
         body = listed.json()
         assert [r["action"] for r in body] == ["update", "create"]  # newest first
-        assert all(r["spec"] is None for r in body)  # opt-in
+        # Field names always; values and spec only on request (they can be large)
+        assert body[0]["changed_fields"] == ["timezone"]
+        assert all(r["changes"] is None and r["spec"] is None for r in body)
+
+        detailed = await client.get(
+            f"/api/v1/config/history?key={name}&include_details=true", headers=headers
+        )
+        assert detailed.json()[0]["changes"] == {"timezone": {"from": "UTC", "to": "Europe/Amsterdam"}}
 
         detail = await client.get(f"/api/v1/config/history/{body[0]['id']}", headers=headers)
         assert detail.json()["spec"]["timezone"] == "Europe/Amsterdam"
@@ -501,3 +508,155 @@ class TestExport:
         svc, result = await _apply(db, admin_user, mine)
         assert result.summary.unchanged.get("schedules") == 1
         assert len(await _revisions(db, resource_key=name)) == 1
+
+
+# ------------------------------------------------- review follow-ups (#206)
+
+
+async def _legacy_row(db: AsyncSession, owner, fn, **overrides) -> ScheduledJob:
+    """A row as the config path used to write it, before it validated."""
+    fields = {
+        "user_id": owner.id,
+        "name": f"legacy-{_uid()}",
+        "schedule_type": "function",
+        "target_namespace": fn.namespace,
+        "target_name": fn.name,
+        "cron_expression": "not a cron",
+        "timezone": "UTC",
+        "input_data": {},
+        "is_active": True,
+    }
+    row = ScheduledJob(**{**fields, **overrides})
+    db.add(row)
+    await db.flush()
+    return row
+
+
+class TestLegacyRows:
+    async def test_a_legacy_invalid_schedule_can_still_be_paused(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        row = await _legacy_row(db, admin_user, fn)
+        response = await client.patch(
+            f"/api/v1/schedules/{row.name}", json={"is_active": False},
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 200, response.text
+        await db.refresh(row)
+        assert row.is_active is False
+        assert row.cron_expression == "not a cron"  # untouched, not "repaired"
+
+    async def test_a_patch_still_cannot_introduce_a_bad_value(
+        self, client, db: AsyncSession, admin_user, fn, published
+    ):
+        row = await _legacy_row(db, admin_user, fn)
+        response = await client.patch(
+            f"/api/v1/schedules/{row.name}", json={"cron_expression": "also not a cron"},
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 422
+
+    async def test_fixing_one_problem_is_not_blocked_by_a_hidden_second_one(
+        self, client, db: AsyncSession, admin_user, fn, agent, published
+    ):
+        """pydantic skips whole-spec checks while a field fails, so a stored
+        agent schedule with a bad cron AND no content only reports the cron.
+        Fixing the cron must not be blamed for the content."""
+        row = await _legacy_row(
+            db, admin_user, fn,
+            schedule_type="agent", target_namespace=agent.namespace, target_name=agent.name,
+        )
+        response = await client.patch(
+            f"/api/v1/schedules/{row.name}", json={"cron_expression": "0 6 * * *"},
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 200, response.text
+
+    async def test_making_a_valid_schedule_an_agent_without_content_is_refused(
+        self, client, admin_user, fn, agent, published
+    ):
+        name, headers = f"api-{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/schedules", json=_rest_schedule(name, fn), headers=headers)
+        response = await client.patch(
+            f"/api/v1/schedules/{name}",
+            json={"schedule_type": "agent", "target_namespace": agent.namespace, "target_name": agent.name},
+            headers=headers,
+        )
+        assert response.status_code == 422
+
+
+class TestPreviewMatchesApply:
+    async def test_a_preview_refuses_what_the_apply_would(self, db: AsyncSession, admin_user):
+        from app.models import Pipeline
+
+        pipeline = Pipeline(
+            user_id=admin_user.id, namespace="default", name=f"off-{_uid()}",
+            steps=[{"name": "s", "type": "function", "function": "default/f"}], is_active=False,
+        )
+        db.add(pipeline)
+        await db.flush()
+
+        spec = {"name": f"cfg-{_uid()}", "scheduleType": "pipeline",
+                "pipelineName": f"default/{pipeline.name}", "cronExpression": "0 * * * *"}
+        _, preview = await _apply(db, admin_user, spec, dry_run=True)
+        assert any("not found or inactive" in e for e in preview.errors)
+        assert preview.summary.created.get("schedules") is None
+
+    async def test_a_preview_accepts_a_target_the_same_config_creates(
+        self, db: AsyncSession, admin_user
+    ):
+        ns = f"ns{_uid()}"
+        svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id), auto_commit=False)
+        config = SinasConfig.model_validate({
+            "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
+            "spec": {
+                "functions": [{"namespace": ns, "name": "job", "code": "def handler(input, context):\n    return {}"}],
+                "schedules": [{"name": f"cfg-{_uid()}", "functionName": f"{ns}/job", "cronExpression": "0 * * * *"}],
+            },
+        })
+        preview = await svc.apply_config(config, dry_run=True)
+        assert preview.errors == []
+        assert preview.summary.created.get("schedules") == 1
+
+
+class TestPackageUninstall:
+    async def test_uninstall_records_deletions_and_tells_the_scheduler(
+        self, db: AsyncSession, admin_user, published
+    ):
+        from app.services.package_service import PackageService
+
+        pkg, ns, sched = f"pkg-{_uid()}", f"ns{_uid()}", f"pkg-sched-{_uid()}"
+        yaml = f"""
+apiVersion: sinas.co/v1
+kind: SinasPackage
+metadata:
+  name: {pkg}
+package:
+  name: {pkg}
+  version: "1.0.0"
+spec:
+  functions:
+    - namespace: {ns}
+      name: job
+      code: |
+        def handler(input, context):
+            return {{}}
+  schedules:
+    - name: {sched}
+      functionName: {ns}/job
+      cronExpression: "0 3 * * *"
+"""
+        service = PackageService(db)
+        await service.install(yaml, str(admin_user.id))
+        row = await _row(db, sched)
+        assert row is not None and row.managed_by == f"pkg:{pkg}"
+        job_id = str(row.id)
+        published.clear()
+
+        counts = await service.uninstall(pkg, actor_user_id=str(admin_user.id))
+
+        assert counts.get("schedules") == 1
+        assert await _row(db, sched) is None
+        [deleted] = [r for r in await _revisions(db, resource_key=sched) if r.action == "delete"]
+        assert (deleted.origin, deleted.actor_user_id) == ("package", admin_user.id)
+        assert ("sinas:scheduler:jobs", {"action": "remove", "job_id": job_id}) in published

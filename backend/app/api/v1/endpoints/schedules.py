@@ -45,6 +45,51 @@ def _spec(data: dict) -> ScheduleSpec:
         raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
 
 
+_FIELD_BY_ALIAS = {
+    (info.alias or name): name for name, info in ScheduleSpec.model_fields.items()
+}
+
+
+def _patched_spec(schedule: ScheduledJob, patch: dict) -> ScheduleSpec:
+    """The spec a PATCH produces: the patch merged over the stored state.
+
+    A PATCH may not introduce invalidity, but it is not blocked by invalidity
+    it doesn't touch. Rows written before the config path validated (an
+    unparseable cron, an agent schedule with no content) must still be
+    pausable, renameable or re-described — otherwise the only way to stop a
+    broken schedule would be to delete it.
+
+    - An error on a field the PATCH didn't send is stored data, not the
+      PATCH's doing: tolerated.
+    - A whole-spec error is tolerated unless the PATCH touched a field that
+      rule reads (ScheduleSpec.WHOLE_SPEC_FIELDS).
+
+    Stored errors can't simply be diffed against merged ones: pydantic skips
+    whole-spec validation when a field fails, so a second stored problem stays
+    hidden until the first is fixed — and fixing the first would then be blamed
+    for the second.
+    """
+    merged = {**_applier.spec_from_row(schedule).model_dump(), **patch}
+    try:
+        return ScheduleSpec.model_validate(merged)
+    except ValidationError as error:
+        errors = error.errors(include_url=False)
+
+    def introduced(err: dict) -> bool:
+        if err["loc"]:
+            field = _FIELD_BY_ALIAS.get(str(err["loc"][0]), str(err["loc"][0]))
+            return field in patch
+        return bool(ScheduleSpec.WHOLE_SPEC_FIELDS & patch.keys())
+
+    blocking = [e for e in errors if introduced(e)]
+    if blocking:
+        raise HTTPException(
+            status_code=422,
+            detail=[{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in blocking],
+        )
+    return ScheduleSpec.model_construct(**merged)
+
+
 async def _commit_and_notify(db: AsyncSession, ctx: ApplyContext) -> None:
     """Effects fire only after the write is durable."""
     await db.commit()
@@ -166,11 +211,10 @@ async def update_schedule(
     # (a type change is checked against its new target, an agent schedule
     # still needs content). As before, fields sent as null are ignored.
     patch = {k: v for k, v in schedule_data.model_dump(exclude_unset=True).items() if v is not None}
-    merged = {**_applier.spec_from_row(schedule).model_dump(), **patch}
 
     ctx = _context(db, user_id)
     try:
-        await _applier.apply(_spec(merged), ctx, existing=schedule)
+        await _applier.apply(_patched_spec(schedule, patch), ctx, existing=schedule)
     except ApplierError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 

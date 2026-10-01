@@ -95,6 +95,10 @@ class ApplyContext:
     # Reference checks are scoped to this user where the channel requires it
     # (the REST API only lets you target your own functions). None = any owner.
     reference_scope_user_id: Optional[str] = None
+    # Keys defined earlier in the same apply, by kind ("functions": {"ns/x"}).
+    # A dry run creates nothing, so a reference to something the same config
+    # is about to create can only be satisfied from here.
+    pending_references: dict[str, set[str]] = field(default_factory=dict)
     _actor_email: Optional[str] = field(default=None, repr=False)
 
     async def actor_email(self) -> Optional[str]:
@@ -242,9 +246,12 @@ class ResourceApplier(Generic[TSpec]):
         # ---- create ----------------------------------------------------------
         if row is None:
             changes = diff_specs(None, new_canonical)
+            # Checked in dry runs too: a preview must refuse what the real
+            # apply would refuse (e.g. an inactive target), or a package
+            # preview says "fine" for an install that then fails.
+            await self.check_references(spec, ctx)
             if ctx.dry_run:
                 return ApplyResult("create", changes=changes)
-            await self.check_references(spec, ctx)
             row = self.new_row(spec, ctx)
             self.write_fields(row, spec)
             self._stamp(row, spec, ctx)
@@ -277,11 +284,11 @@ class ResourceApplier(Generic[TSpec]):
                 await ctx.db.flush()
             return ApplyResult("unchanged", obj=row)
 
-        if ctx.dry_run:
-            return ApplyResult("update", obj=row, changes=changes)
-
         if any(field in changes for field in self.reference_fields):
             await self.check_references(spec, ctx)
+
+        if ctx.dry_run:
+            return ApplyResult("update", obj=row, changes=changes)
 
         self.write_fields(row, spec)
         if decision == "write_detach":

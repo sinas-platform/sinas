@@ -193,7 +193,9 @@ async def list_config_history(
         None, description="Only revisions older than this id (keyset pagination)"
     ),
     limit: int = Query(50, ge=1, le=500),
-    include_spec: bool = Query(False, description="Include each revision's full spec"),
+    include_details: bool = Query(
+        False, description="Include each revision's field-level values and full spec"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
@@ -216,11 +218,7 @@ async def list_config_history(
         stmt = stmt.where(ConfigRevision.id < before)
 
     revisions = (await db.execute(stmt)).scalars().all()
-    responses = [ConfigRevisionResponse.model_validate(r) for r in revisions]
-    if not include_spec:
-        for response in responses:
-            response.spec = None
-    return responses
+    return [ConfigRevisionResponse.from_revision(r, details=include_details) for r in revisions]
 
 
 @router.get("/history/{revision_id}", response_model=ConfigRevisionResponse)
@@ -230,11 +228,11 @@ async def get_config_revision(
     db: AsyncSession = Depends(get_db),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
-    """One revision, including the full spec it recorded."""
+    """One revision, with its field-level values and the full spec it recorded."""
     _, permissions = current_user_data
     _require_config_read(request, permissions)
 
     revision = await db.get(ConfigRevision, revision_id)
     if revision is None:
         raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
-    return ConfigRevisionResponse.model_validate(revision)
+    return ConfigRevisionResponse.from_revision(revision, details=True)

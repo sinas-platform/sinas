@@ -74,6 +74,7 @@ class ConfigApplyService:
         # below are the not-yet-migrated kinds and fold into this bus as they
         # move over.
         self.effects = SideEffectBus()
+        self._pending_references: dict[str, set[str]] = {}
         self._pending_cdc_reload = False
         self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
@@ -189,6 +190,10 @@ class ConfigApplyService:
         Returns:
             ConfigApplyResponse with results
         """
+        self._pending_references = {
+            kind: {f"{item.namespace}/{item.name}" for item in getattr(config.spec, kind)}
+            for kind in ("functions", "agents", "pipelines")
+        }
         try:
             # Common kwargs shared by all appliers
             common = dict(
@@ -360,6 +365,7 @@ class ConfigApplyService:
             config_name=self.config_name,
             dry_run=dry_run,
             effects=self.effects,
+            pending_references=self._pending_references,
         )
 
     async def _apply_schedules(self, schedules: list, dry_run: bool) -> None:
