@@ -12,12 +12,13 @@ from app.models.connector import Connector
 from app.models.connector_oauth_token import ConnectorOAuthToken
 from app.schemas.spec.connector import ConnectorSpec
 from app.services.resources.base import ApplyContext, ResourceApplier
+from app.services.connector_service import oauth_identity
 from app.services.resources.history import redact
 
-# Where a user's OAuth tokens are sent or were issued. When one changes, the
-# stored tokens belong to another identity provider (or app): a refresh would
-# post the old refresh token, with the client secret, to the new token URL.
-_TOKEN_IDENTITY = ("type", "token_url", "client_id", "authorize_url")
+# Where a user's OAuth tokens are sent or were issued (connector_service). When
+# one changes, the stored tokens belong to another identity provider (or app):
+# a refresh would post the old refresh token, with the client secret, to the
+# new token URL.
 # Auth URLs that can carry credentials (userinfo, query) — redacted in history.
 _AUTH_URLS = ("token_url", "authorize_url")
 
@@ -111,9 +112,7 @@ class ConnectorApplier(ResourceApplier[ConnectorSpec]):
         row.timeout_seconds = spec.timeout_seconds
         row.operations = [op.model_dump(mode="json") for op in spec.operations]
         row.is_active = spec.is_active
-        if before is not None and any(
-            before.get(field) != row.auth.get(field) for field in _TOKEN_IDENTITY
-        ):
+        if before is not None and oauth_identity(before) != oauth_identity(row.auth):
             # Users sign in again, against the new provider or app.
             await ctx.db.execute(
                 delete(ConnectorOAuthToken).where(ConnectorOAuthToken.connector_id == row.id)

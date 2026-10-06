@@ -143,9 +143,13 @@ class TestConnectorSpec:
             **_yaml_connector("x"),
             "retry": {"maxAttempts": 25, "backoff": "exponental"},  # unknown backoff: none
             "auth": {"type": "api_key", "secret": "K", "position": "Query"},
-            "operations": [{"name": "ping", "method": "head", "path": "/"}],
+            "operations": [
+                {"name": "ping", "method": "head", "path": "/"},
+                {"name": "dav", "method": "propfind", "path": "/files"},  # custom methods passed through
+            ],
         })
         assert (spec.retry.max_attempts, spec.operations[0].method) == (25, "HEAD")
+        assert spec.operations[1].method == "PROPFIND"
 
 
 # ------------------------------------------------------------ one write path
@@ -325,6 +329,46 @@ class TestStoredTokens:
         name, row = await self._with_token(client, db, admin_user)
         auth = {**_rest_connector(name)["auth"], "token_url": "https://elsewhere.example.com/token"}
         await client.put(f"/api/v1/connectors/crm/{name}", json={"auth": auth}, headers=auth_headers(admin_user))
+        assert await self._tokens(db, row) == 0
+
+    async def test_an_exchange_racing_a_repoint_stores_nothing(
+        self, client, db: AsyncSession, admin_user, monkeypatch
+    ):
+        """A sign-in already exchanging its code when the token URL changes
+        must not put the old provider's tokens back after the purge."""
+        from sqlalchemy import update
+
+        from app.services.connector_service import connector_service
+
+        name = f"api-{_uid()}"
+        body = _rest_connector(name)
+        body["auth"] = {
+            "type": "oauth2_authorization_code", "client_id": "sinas", "secret": "CRM_SECRET",
+            "token_url": "https://auth.example.com/token",
+            "authorize_url": "https://auth.example.com/authorize",
+        }
+        await client.post("/api/v1/connectors", json=body, headers=auth_headers(admin_user))
+        row = await _row(db, name)
+
+        async def secret(*args, **kwargs):
+            return "client-secret"
+
+        async def exchange_while_repointed(*args, **kwargs):
+            # The edit lands while the token request is in flight.
+            await db.execute(
+                update(Connector).where(Connector.id == row.id).values(
+                    auth={**row.auth, "token_url": "https://elsewhere.example.com/token"}
+                ).execution_options(synchronize_session=False)
+            )
+            return {"access_token": "old-provider-token"}
+
+        monkeypatch.setattr(connector_service, "_resolve_secret_value", secret)
+        monkeypatch.setattr(connector_service, "_post_token_request", exchange_while_repointed)
+
+        stored = await connector_service.exchange_authorization_code(
+            db, row, str(admin_user.id), "code", "verifier"
+        )
+        assert stored is False
         assert await self._tokens(db, row) == 0
 
     async def test_other_edits_keep_them(self, client, db: AsyncSession, admin_user):

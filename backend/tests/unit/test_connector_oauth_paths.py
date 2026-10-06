@@ -210,6 +210,15 @@ class TestExchangePassesPaths:
             async def flush(self):
                 pass
 
+            async def execute(self, _statement):
+                # The post-exchange identity check re-reads the connector's
+                # auth under a lock; unchanged here.
+                class _Result:
+                    def scalar_one_or_none(self_inner):
+                        return connector.auth
+
+                return _Result()
+
         ok = await connector_service.exchange_authorization_code(
             _Db(), connector, "u1", "code", "verifier"
         )

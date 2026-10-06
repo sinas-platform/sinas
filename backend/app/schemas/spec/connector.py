@@ -21,10 +21,10 @@ REQUEST_BODY_MAPPINGS = Literal["json", "query", "path_and_json", "path_and_quer
 
 class ConnectorOperationSpec(SpecModel):
     name: str = Field(min_length=1)
-    # Any case: the HTTP client upper-cases it, so "get" in YAML always worked.
-    # HEAD and OPTIONS were never offered by the API, but config stored them
-    # and the client sends them fine.
-    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    # Any HTTP method token, any case: config passed the string straight to
+    # the HTTP client, so HEAD, TRACE or a custom method (PROPFIND, ...) worked.
+    # Normalised to upper case, as the client sends it.
+    method: str = Field(pattern=r"^[A-Z][A-Z0-9_-]*$", max_length=32)
     path: str = Field(min_length=1)
     description: Optional[str] = None
     parameters: dict[str, Any] = Field(
