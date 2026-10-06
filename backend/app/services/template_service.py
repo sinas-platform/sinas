@@ -3,7 +3,8 @@ import logging
 from typing import Any, Optional
 
 import jsonschema
-from jinja2 import BaseLoader, Environment, StrictUndefined, TemplateError
+from jinja2 import BaseLoader, StrictUndefined, TemplateError
+from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,10 +17,13 @@ class TemplateService:
     """Service for rendering templates with Jinja2 and schema validation."""
 
     def __init__(self):
-        # Jinja2 environment with autoescape for variable protection
-        # Admin-created template HTML is trusted (not sanitized)
-        # Variables are auto-escaped to prevent injection via user input
-        self.jinja_env = Environment(
+        # Sandboxed, like template_renderer.py: templates are rendered
+        # in-process in the API worker (which holds SECRET_KEY, ENCRYPTION_KEY
+        # and database credentials), and a plain Environment lets a template
+        # author traverse attributes (__class__/__globals__) to execute code.
+        # Autoescape protects variables ({{user_email}}) from injection; it
+        # does not prevent that.
+        self.jinja_env = SandboxedEnvironment(
             loader=BaseLoader(),
             autoescape=True,  # Protects variables: {{user_email}} is escaped
             undefined=StrictUndefined,  # Raise errors on undefined variables
