@@ -108,9 +108,12 @@ class DatabaseTriggerApplier(ResourceApplier[DatabaseTriggerSpec]):
         return DatabaseTrigger(user_id=uuid.UUID(str(ctx.owner_user_id)))
 
     async def _connection_id(self, ctx: ApplyContext, name: str) -> uuid.UUID:
+        # FOR SHARE: not renamed (and the name reused) before this commits.
         connection_id = (
             await ctx.db.execute(
-                select(DatabaseConnection.id).where(DatabaseConnection.name == name)
+                select(DatabaseConnection.id)
+                .where(DatabaseConnection.name == name)
+                .with_for_update(read=True)
             )
         ).scalar_one_or_none()
         if connection_id is None:
@@ -120,7 +123,15 @@ class DatabaseTriggerApplier(ResourceApplier[DatabaseTriggerSpec]):
     async def write_row(
         self, row: DatabaseTrigger, spec: DatabaseTriggerSpec, ctx: ApplyContext
     ) -> None:
-        connection_id = await self._connection_id(ctx, spec.connection_name)
+        # Held by id; resolve the name only when the spec names another
+        # connection, or an edit could follow a reused name to another database.
+        from app.services.resources.queries import connection_name
+
+        current = await connection_name(ctx.db, row.database_connection_id, lock=True)
+        if current is not None and current == spec.connection_name:
+            connection_id = row.database_connection_id
+        else:
+            connection_id = await self._connection_id(ctx, spec.connection_name)
         before = {field: getattr(row, field, None) for field in _BOOKMARK_FIELDS}
         row.name = spec.name
         row.database_connection_id = connection_id
