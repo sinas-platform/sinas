@@ -308,6 +308,13 @@ async def execute(
     pc = await container_pool.acquire(chat_id=chat_id)
     logger.info(f"Acquired sandbox container {pc.name} for code execution (chat={chat_id})")
 
+    # The wrapper purges every other chat's blob cache before user code runs,
+    # so the backend's view of "blobs this container holds" is per chat too:
+    # keep only this chat's set, forget the rest.
+    chat_key = chat_id or ""
+    known_for_chat = pc.known_hashes.get(chat_key, set())
+    pc.known_hashes = {chat_key: known_for_chat}
+
     # Delta copy-in: blobs this container has already seen ride as cached
     # references instead of bytes (a wiped cache degrades to lazy fetch in
     # the wrapper, so this is purely an optimization).
@@ -319,7 +326,7 @@ async def execute(
             sha = entry.get("sha256")
             if sha:
                 shipped_hashes.add(sha)
-            if sha and sha in pc.known_hashes:
+            if sha and sha in known_for_chat:
                 delta_files.append({"path": entry["path"], "sha256": sha, "cached": True})
             else:
                 delta_files.append(entry)
@@ -333,7 +340,7 @@ async def execute(
             # The wrapper caches fetched blobs too — remember them so the
             # next execution on this container ships a reference.
             if resp.get("sha256"):
-                pc.known_hashes.add(resp["sha256"])
+                known_for_chat.add(resp["sha256"])
             return resp
 
     tainted = False
@@ -344,7 +351,7 @@ async def execute(
             fetch_handler=pool_fetch_handler,
         )
         if result.get("error") is None:
-            pc.known_hashes.update(shipped_hashes)
+            known_for_chat.update(shipped_hashes)
         # Discard the container if the run errored (avoid handing leaked state on).
         if result.get("error") is not None:
             tainted = True
@@ -513,7 +520,20 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
     _wb_lazy_unfetched = set()
     _wb_root = _tempfile.mkdtemp(prefix="workbench_")
     _wb_old_cwd = _os.getcwd()
-    _wb_cache_dir = "/tmp/wb_cache"
+    # Blob cache is namespaced per chat, and every OTHER chat's cache is
+    # purged here — before any user code runs — so a pooled container that
+    # served chat A can never expose A's files to chat B's untrusted code.
+    _wb_chat = "".join(
+        _c for _c in str((context or {}).get("chat_id") or "") if _c.isalnum() or _c in "-_"
+    ) or "_none"
+    _wb_cache_root = "/tmp/wb_cache"
+    _wb_cache_dir = _os.path.join(_wb_cache_root, _wb_chat)
+    try:
+        for _other in _os.listdir(_wb_cache_root):
+            if _other != _wb_chat:
+                _shutil.rmtree(_os.path.join(_wb_cache_root, _other), ignore_errors=True)
+    except OSError:
+        pass
 
     def _wb_cache_put(sha, data):
         try:
