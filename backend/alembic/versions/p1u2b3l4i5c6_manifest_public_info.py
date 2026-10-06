@@ -1,7 +1,7 @@
 """manifests.public_info — values a manifest publishes on the unauthenticated /info
 
 Revision ID: p1u2b3l4i5c6
-Revises: m1e2t3v4p5d6
+Revises: c2s3e4c5r6t7
 Create Date: 2026-09-07
 """
 
@@ -11,7 +11,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "p1u2b3l4i5c6"
-down_revision = "m1e2t3v4p5d6"
+down_revision = "c2s3e4c5r6t7"
 branch_labels = None
 depends_on = None
 
