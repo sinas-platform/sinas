@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.encryption import EncryptionService
+from app.core.encryption import encryption_service
 from app.models.agent import Agent
 from app.models.component import Component
 from app.models.connector import Connector
@@ -195,7 +195,7 @@ class ConfigExportService:
                 provider_dict["endpoint"] = provider.api_endpoint
 
             if self.include_secrets and provider.api_key:
-                provider_dict["apiKey"] = EncryptionService.decrypt(provider.api_key)
+                provider_dict["apiKey"] = encryption_service.decrypt(provider.api_key)
 
             exported.append(provider_dict)
 
