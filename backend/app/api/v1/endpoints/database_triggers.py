@@ -126,6 +126,13 @@ async def create_database_trigger(
         result = await _applier.apply(spec, ctx, must_create=True)
     except ApplierError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    if result.obj.database_connection_id != trigger_data.database_connection_id:
+        # The applier resolves the connection by name: renamed and its name
+        # reused since the check above, it would poll another database.
+        raise HTTPException(
+            status_code=409,
+            detail="Database connection changed while this request ran; try again",
+        )
 
     await _commit_and_notify(db, ctx)
     await db.refresh(result.obj)

@@ -118,14 +118,16 @@ class DatabaseTriggerApplier(ResourceApplier[DatabaseTriggerSpec]):
         return connection_id
 
     async def write_row(
-        self, row: DatabaseTrigger, spec: DatabaseTriggerSpec, ctx: ApplyContext
+        self,
+        row: DatabaseTrigger,
+        spec: DatabaseTriggerSpec,
+        ctx: ApplyContext,
+        current: Optional[DatabaseTriggerSpec] = None,
     ) -> None:
         # Held by id; resolve the name only when the spec names another
-        # connection, or an edit could follow a reused name to another database.
-        from app.services.resources.queries import connection_name
-
-        current = await connection_name(ctx.db, row.database_connection_id)
-        if current is not None and current == spec.connection_name:
+        # connection than the change was computed against, or an edit could
+        # follow a renamed-and-reused name to another database.
+        if current is not None and current.connection_name == spec.connection_name:
             connection_id = row.database_connection_id
         else:
             connection_id = await self._connection_id(ctx, spec.connection_name)

@@ -74,12 +74,14 @@ class QueryApplier(ResourceApplier[QuerySpec]):
             raise ReferenceNotFound(f"Database connection '{name}' not found")
         return connection_id
 
-    async def write_row(self, row: Query, spec: QuerySpec, ctx: ApplyContext) -> None:
-        # The connection is held by id; re-resolve the name only when the spec
-        # names another connection. Re-resolving on every edit could follow
-        # the name to a different database after a rename.
-        current = await connection_name(ctx.db, row.database_connection_id)
-        if current is None or current != spec.connection_name:
+    async def write_row(
+        self, row: Query, spec: QuerySpec, ctx: ApplyContext, current: Optional[QuerySpec] = None
+    ) -> None:
+        # The connection is held by id. Resolve the name only when the spec
+        # names another connection than the one the change was computed
+        # against: re-resolving now could follow a renamed-and-reused name
+        # to a different database.
+        if current is None or current.connection_name != spec.connection_name:
             row.database_connection_id = await self._connection_id(ctx, spec.connection_name)
         row.namespace = spec.namespace
         row.name = spec.name

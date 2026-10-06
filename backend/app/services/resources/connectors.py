@@ -99,7 +99,9 @@ class ConnectorApplier(ResourceApplier[ConnectorSpec]):
     def new_row(self, spec: ConnectorSpec, ctx: ApplyContext) -> Connector:
         return Connector(user_id=uuid.UUID(str(ctx.owner_user_id)))
 
-    async def write_row(self, row: Connector, spec: ConnectorSpec, ctx: ApplyContext) -> None:
+    async def write_row(
+        self, row: Connector, spec: ConnectorSpec, ctx: ApplyContext, current=None
+    ) -> None:
         before = _without_none(row.auth or {}) if row.id is not None else None
         row.namespace = spec.namespace
         row.name = spec.name

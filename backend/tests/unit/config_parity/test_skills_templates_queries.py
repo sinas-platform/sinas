@@ -242,6 +242,42 @@ class TestOneWritePath:
         assert resolved == []
         assert (await _row(db, Query, name)).database_connection_id == connection.id
 
+    async def test_an_edit_racing_a_rename_and_reuse_keeps_its_database(
+        self, db: AsyncSession, admin_user, connection
+    ):
+        """The edit read connection A as "x"; before it writes, A is renamed
+        and a new connection B takes "x". The query must stay on A."""
+        from app.services.resources import ApplyContext
+        from app.services.resources.queries import QueryApplier
+
+        name = f"q-{_uid()}"
+        await _apply(db, admin_user, queries=[_yaml_query(name, connection.name)])
+        row = await _row(db, Query, name)
+        applier = QueryApplier()
+        ctx = ApplyContext(db=db, origin="api", actor_user_id=str(admin_user.id),
+                           owner_user_id=str(admin_user.id))
+        read = await applier.current_spec(ctx, row)  # names A by its name then
+
+        old_name = connection.name
+        connection.name = f"renamed-{_uid()}"
+        await db.flush()
+        db.add(DatabaseConnection(
+            name=old_name, connection_type="postgresql", host="h", port=5432,
+            database="other", username="u",
+        ))
+        await db.flush()
+
+        async def stale(self, ctx, row):
+            return read
+
+        edited = read.model_copy(update={"description": "Edited"})
+        QueryApplier.current_spec, original = stale, QueryApplier.current_spec
+        try:
+            await applier.apply(edited, ctx, existing=row)
+        finally:
+            QueryApplier.current_spec = original
+        assert (await _row(db, Query, name)).database_connection_id == connection.id
+
     async def test_a_name_reused_mid_request_is_refused_not_followed(
         self, client, db: AsyncSession, admin_user, connection, monkeypatch
     ):

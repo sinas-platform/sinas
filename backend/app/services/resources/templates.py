@@ -57,7 +57,9 @@ class TemplateApplier(ResourceApplier[TemplateSpec]):
         owner = uuid.UUID(str(ctx.owner_user_id))
         return Template(user_id=owner, created_by=owner)
 
-    async def write_row(self, row: Template, spec: TemplateSpec, ctx: ApplyContext) -> None:
+    async def write_row(
+        self, row: Template, spec: TemplateSpec, ctx: ApplyContext, current=None
+    ) -> None:
         row.namespace = spec.namespace
         row.name = spec.name
         row.description = spec.description
