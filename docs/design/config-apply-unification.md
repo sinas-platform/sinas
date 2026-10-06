@@ -498,6 +498,30 @@ invalidation effect).
   (they always fell back to a default) and duplicate operation names keep
   working.
 
+### Slice 4: skills, templates, queries (decisions)
+
+- **Shared REST plumbing.** `services/resources/rest.py` holds what every
+  endpoint does around an applier (parse, lock the authorized row, write,
+  commit, publish). These three kinds use it; earlier kinds keep their own
+  copies until they are touched again.
+- **`is_active` is operator state unless declared**, for all three. Exports
+  now include disabled ones (templates used to be left out) with
+  `isActive: false`.
+- **Queries hold the connection by name** in the spec (config's form); REST
+  still sends an id, which the endpoint authorizes (permission + active)
+  and turns into the name. The applier checks that the connection exists,
+  accepting one the same config declares in a preview.
+- **A template PATCH keeps null-clears-the-field** for optional fields;
+  nulling `html_content` is a 422 instead of a 500 at flush.
+- Strictness follows what worked: refused are a query operation other than
+  read/write (it ran through the write path, so a SELECT returned only a
+  count and got no LIMIT), a zero timeout or max-rows, and a namespace with
+  "/". Operation case is forgiven. Empty skill text stays accepted from
+  config (REST still requires it).
+- The default-template seed looked `otp_email` up by name alone: a template
+  of that name in any other namespace crashed startup. It is scoped to
+  `default` now.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**
