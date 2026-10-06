@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Generic, Literal, Optional, TypeVar
+from typing import Any, ClassVar, Generic, Iterable, Literal, Optional, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,20 @@ class SchedulerJobChanged:
 
     def message(self) -> str:
         return json.dumps({"action": self.action, "job_id": self.job_id})
+
+
+@dataclass(frozen=True)
+class CdcTriggerChanged:
+    """Tell the CDC worker a trigger changed. add/update (re)start its poll
+    loop at once, remove stops it (cdc/service.py handle_trigger_change)."""
+
+    action: Literal["add", "update", "remove"]
+    trigger_id: str
+
+    channel: ClassVar[str] = "sinas:cdc:triggers"
+
+    def message(self) -> str:
+        return json.dumps({"action": self.action, "trigger_id": self.trigger_id})
 
 
 class SideEffectBus:
@@ -160,7 +174,23 @@ class ReferenceNotFound(ApplierError):
 OwnershipDecision = Literal["write", "write_detach", "skip"]
 
 
-def ownership_decision(row_managed_by: Optional[str], ctx: ApplyContext) -> OwnershipDecision:
+def _same_source(row_managed_by: str, row_config_name: Optional[str], ctx: ApplyContext) -> bool:
+    """Every plain config file is managed_by="config"; its config_name tells
+    them apart (a package's managed_by alone identifies it). Without this,
+    applying one config file rewrote what another one declares. A row with no
+    config_name predates the stamp and belongs to whichever config claims it."""
+    if row_managed_by != ctx.managed_by:
+        return False
+    return (
+        row_managed_by.startswith("pkg:")
+        or row_config_name is None
+        or row_config_name == ctx.config_name
+    )
+
+
+def ownership_decision(
+    row_managed_by: Optional[str], ctx: ApplyContext, row_config_name: Optional[str] = None
+) -> OwnershipDecision:
     """The managed_by state machine (design §4.4), one place for every kind.
 
     | row managed_by | API write       | config apply     | package install  |
@@ -177,7 +207,7 @@ def ownership_decision(row_managed_by: Optional[str], ctx: ApplyContext) -> Owne
         return "write_detach" if row_managed_by else "write"
     if row_managed_by is None:
         return "skip" if ctx.origin == "package" else "write"
-    if row_managed_by == ctx.managed_by:
+    if _same_source(row_managed_by, row_config_name, ctx):
         return "write"
     return "skip"
 
@@ -194,6 +224,7 @@ class ResourceApplier(Generic[TSpec]):
 
     kind: ClassVar[str]
     label: ClassVar[str]  # "Schedule" — used in error messages
+    noun: ClassVar[str]  # "schedule" — in config apply's per-resource errors
     config_section: ClassVar[str]  # attribute of ConfigSpec holding this kind
     spec_model: ClassVar[type[SpecModel]]
     model: ClassVar[type]
@@ -201,6 +232,9 @@ class ResourceApplier(Generic[TSpec]):
     # on create and when one of these changes — not on every update, or a
     # resource whose target was deleted could no longer even be paused.
     reference_fields: ClassVar[tuple[str, ...]] = ()
+    # Operator state a config sets only when it says so: left out of the
+    # YAML, an existing resource keeps its value (see apply's `keep`).
+    keep_unless_declared: ClassVar[tuple[str, ...]] = ()
 
     # ---- hooks -------------------------------------------------------------
 
@@ -227,11 +261,20 @@ class ResourceApplier(Generic[TSpec]):
     def spec_from_row(self, row: Any) -> TSpec:
         raise NotImplementedError
 
+    async def current_spec(self, ctx: ApplyContext, row: Any) -> TSpec:
+        """The row's state as a spec. Override where that needs a lookup
+        (a reference stored by id but declared by name)."""
+        return self.spec_from_row(row)
+
     def new_row(self, spec: TSpec, ctx: ApplyContext) -> Any:
         raise NotImplementedError
 
     def write_fields(self, row: Any, spec: TSpec) -> None:
         raise NotImplementedError
+
+    async def write_row(self, row: Any, spec: TSpec, ctx: ApplyContext) -> None:
+        """Write the spec onto the row. Override where that needs a lookup."""
+        self.write_fields(row, spec)
 
     async def check_references(self, spec: TSpec, ctx: ApplyContext) -> None:
         """Raise ReferenceNotFound if the spec points at something missing."""
@@ -253,12 +296,14 @@ class ResourceApplier(Generic[TSpec]):
         *,
         existing: Any = None,
         must_create: bool = False,
+        keep: Iterable[str] = (),
     ) -> ApplyResult:
         """Create or update the resource described by `spec`.
 
         `existing`: the row being edited, when the caller already resolved it
         (a REST PATCH may rename, so the new key alone wouldn't find it).
         `must_create`: refuse to update an existing row (REST POST contract).
+        `keep`: fields the caller didn't set; an existing row keeps its value.
         """
         from app.services.resources.history import record_revision
 
@@ -274,6 +319,10 @@ class ResourceApplier(Generic[TSpec]):
             if clash is not None and clash is not row:
                 raise ResourceConflict(f"{self.label} '{new_key}' already exists")
 
+        current = await self.current_spec(ctx, row) if row is not None else None
+        keep = set(keep)
+        if current is not None and keep:
+            spec = spec.model_copy(update={field: getattr(current, field) for field in keep})
         new_canonical = self.history_spec(spec)
 
         # ---- create ----------------------------------------------------------
@@ -288,7 +337,7 @@ class ResourceApplier(Generic[TSpec]):
             row = self.new_row(spec, ctx)
             if ctx.restore_resource_id is not None:
                 row.id = ctx.restore_resource_id
-            self.write_fields(row, spec)
+            await self.write_row(row, spec, ctx)
             self._stamp(row, spec, ctx)
             ctx.db.add(row)
             await ctx.db.flush()  # assigns the id effects and history refer to
@@ -298,7 +347,7 @@ class ResourceApplier(Generic[TSpec]):
             return ApplyResult("create", obj=row, changes=changes, revision=revision)
 
         # ---- update ----------------------------------------------------------
-        decision = ownership_decision(row.managed_by, ctx)
+        decision = ownership_decision(row.managed_by, ctx, getattr(row, "config_name", None))
         if decision == "skip":
             if row.managed_by is None:
                 warning = (
@@ -306,13 +355,18 @@ class ResourceApplier(Generic[TSpec]):
                     f"hand; '{ctx.managed_by}' leaves it as is."
                 )
             else:
+                manager = row.managed_by
+                if manager == "config" and getattr(row, "config_name", None):
+                    manager = f"config '{row.config_name}'"
+                else:
+                    manager = f"'{manager}'"
                 warning = (
                     f"{self.label} '{new_key}' exists but is managed by "
-                    f"'{row.managed_by}'. Skipping."
+                    f"{manager}. Skipping."
                 )
             return ApplyResult("skipped", obj=row, warning=warning)
 
-        changes = diff_specs(self.history_spec(self.spec_from_row(row)), new_canonical)
+        changes = diff_specs(self.history_spec(current), new_canonical)
 
         if not changes:
             # Nothing about the resource changes. A config/package apply may
@@ -331,7 +385,7 @@ class ResourceApplier(Generic[TSpec]):
         if ctx.dry_run:
             return ApplyResult("update", obj=row, changes=changes)
 
-        self.write_fields(row, spec)
+        await self.write_row(row, spec, ctx)
         if decision == "write_detach":
             row.managed_by = None
             row.config_name = None
@@ -352,7 +406,7 @@ class ResourceApplier(Generic[TSpec]):
 
         if ctx.dry_run:
             return
-        last = self.history_spec(self.spec_from_row(row))
+        last = self.history_spec(await self.current_spec(ctx, row))
         effects = self.effects("delete", row)
         await record_revision(ctx, self, row, "delete", last, diff_specs(last, None))
         await ctx.db.delete(row)

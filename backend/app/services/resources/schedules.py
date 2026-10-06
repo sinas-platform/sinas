@@ -22,6 +22,7 @@ from app.services.resources.base import (
 class ScheduleApplier(ResourceApplier[ScheduleSpec]):
     kind = "schedules"
     label = "Schedule"
+    noun = "schedule"
     config_section = "schedules"
     spec_model = ScheduleSpec
     model = ScheduledJob

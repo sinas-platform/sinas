@@ -20,6 +20,7 @@ from app.models.schedule import ScheduledJob
 from app.schemas import ScheduledJobCreate, ScheduledJobResponse, ScheduledJobUpdate
 from app.schemas.spec.schedule import ScheduleSpec
 from app.services.resources import ApplierError, ApplyContext
+from app.services.resources.patch import PatchRejected, patched_spec
 from app.services.resources.schedules import ScheduleApplier
 
 router = APIRouter(prefix="/schedules", tags=["schedules"])
@@ -43,63 +44,6 @@ def _spec(data: dict) -> ScheduleSpec:
         return ScheduleSpec.model_validate(data)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
-
-
-_FIELD_BY_ALIAS = {
-    (info.alias or name): name for name, info in ScheduleSpec.model_fields.items()
-}
-
-
-def _patched_spec(schedule: ScheduledJob, patch: dict) -> ScheduleSpec:
-    """The spec a PATCH produces: the patch merged over the stored state.
-
-    A PATCH may not introduce invalidity, but it is not blocked by invalidity
-    it doesn't touch. Rows written before the config path validated (an
-    unparseable cron, an agent schedule with no content) must still be
-    pausable, renameable or re-described — otherwise the only way to stop a
-    broken schedule would be to delete it.
-
-    A field counts as touched only if the PATCH changes its value: the console
-    sends the whole form, so a stored invalid cron comes back unchanged.
-
-    - An error on a field the PATCH didn't change is stored data: tolerated.
-    - A whole-spec error is tolerated unless the PATCH changed a field that
-      rule reads (ScheduleSpec.WHOLE_SPEC_FIELDS).
-
-    Stored errors can't simply be diffed against merged ones: pydantic skips
-    whole-spec validation when a field fails, so a second stored problem stays
-    hidden until the first is fixed — and fixing the first would then be blamed
-    for the second. That is also why the whole-spec rules are re-run
-    explicitly below when a field they read changed.
-    """
-    stored = _applier.spec_from_row(schedule).model_dump()
-    changed = {key for key, value in patch.items() if stored.get(key) != value}
-    merged = {**stored, **patch}
-    try:
-        return ScheduleSpec.model_validate(merged)
-    except ValidationError as error:
-        errors = error.errors(include_url=False)
-
-    def introduced(err: dict) -> bool:
-        if err["loc"]:
-            field = _FIELD_BY_ALIAS.get(str(err["loc"][0]), str(err["loc"][0]))
-            return field in changed
-        return bool(ScheduleSpec.WHOLE_SPEC_FIELDS & changed)
-
-    blocking = [
-        {"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]}
-        for e in errors
-        if introduced(e)
-    ]
-    spec = ScheduleSpec.model_construct(**merged)
-    if not blocking and ScheduleSpec.WHOLE_SPEC_FIELDS & changed:
-        blocking = [
-            {"loc": [], "msg": problem, "type": "value_error"}
-            for problem in spec.whole_spec_problems()
-        ]
-    if blocking:
-        raise HTTPException(status_code=422, detail=blocking)
-    return spec
 
 
 async def _locked(db: AsyncSession, name: str, user_id) -> ScheduledJob | None:
@@ -240,7 +184,10 @@ async def update_schedule(
 
     ctx = _context(db, user_id)
     try:
-        await _applier.apply(_patched_spec(schedule, patch), ctx, existing=schedule)
+        spec = patched_spec(_applier.spec_from_row(schedule), patch)
+        await _applier.apply(spec, ctx, existing=schedule)
+    except PatchRejected as e:
+        raise HTTPException(status_code=422, detail=e.detail)
     except ApplierError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
 
