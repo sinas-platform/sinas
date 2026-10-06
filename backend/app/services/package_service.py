@@ -488,9 +488,15 @@ class PackageService:
             config_name=package_name,
         )
         for applier in all_appliers():
+            # Locked, and the ownership filter re-checked on the locked row: a
+            # concurrent manual edit detaches a row (managed_by = NULL), and
+            # must not be deleted after its save succeeded.
             rows = (
                 await self.db.execute(
-                    select(applier.model).where(applier.model.managed_by == managed_by)
+                    select(applier.model)
+                    .where(applier.model.managed_by == managed_by)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalars().all()
             for row in rows:

@@ -217,6 +217,31 @@ class TestOneWritePath:
         row = await _row(db, Query, name)
         assert (row.max_rows, row.managed_by) == (10, None)
 
+    async def test_an_edit_keeps_the_connection_it_has(
+        self, client, db: AsyncSession, admin_user, connection, monkeypatch
+    ):
+        """Re-resolving the name on every edit could follow it to another
+        database, should the connection be renamed and the name reused
+        meanwhile. Only a change of connection resolves a name."""
+        from app.services.resources.queries import QueryApplier
+
+        name, headers = f"q-{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/queries", json=_rest_query(name, connection.id), headers=headers)
+        resolved: list[str] = []
+        original = QueryApplier._connection_id
+
+        async def spy(self, ctx, conn_name):
+            resolved.append(conn_name)
+            return await original(self, ctx, conn_name)
+
+        monkeypatch.setattr(QueryApplier, "_connection_id", spy)
+        response = await client.put(
+            f"/api/v1/queries/{NS}/{name}", json={"description": "Renamed"}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+        assert resolved == []
+        assert (await _row(db, Query, name)).database_connection_id == connection.id
+
     async def test_config_reports_a_missing_connection(self, db: AsyncSession, admin_user):
         name = f"q-{_uid()}"
         result = await _apply(db, admin_user, queries=[_yaml_query(name, "nope")])

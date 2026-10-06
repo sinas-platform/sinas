@@ -65,9 +65,13 @@ class QueryApplier(ResourceApplier[QuerySpec]):
         return Query(user_id=uuid.UUID(str(ctx.owner_user_id)))
 
     async def _connection_id(self, ctx: ApplyContext, name: str) -> uuid.UUID:
+        # FOR SHARE: the connection can't be renamed (and the name reused)
+        # between resolving it and committing the query that points at it.
         connection_id = (
             await ctx.db.execute(
-                select(DatabaseConnection.id).where(DatabaseConnection.name == name)
+                select(DatabaseConnection.id)
+                .where(DatabaseConnection.name == name)
+                .with_for_update(read=True)
             )
         ).scalar_one_or_none()
         if connection_id is None:
@@ -75,7 +79,12 @@ class QueryApplier(ResourceApplier[QuerySpec]):
         return connection_id
 
     async def write_row(self, row: Query, spec: QuerySpec, ctx: ApplyContext) -> None:
-        row.database_connection_id = await self._connection_id(ctx, spec.connection_name)
+        # The connection is held by id; re-resolve the name only when the spec
+        # names another connection. Re-resolving on every edit could follow
+        # the name to a different database after a rename.
+        current = await connection_name(ctx.db, row.database_connection_id, lock=True)
+        if current is None or current != spec.connection_name:
+            row.database_connection_id = await self._connection_id(ctx, spec.connection_name)
         row.namespace = spec.namespace
         row.name = spec.name
         row.description = spec.description
@@ -93,11 +102,10 @@ class QueryApplier(ResourceApplier[QuerySpec]):
             await self._connection_id(ctx, spec.connection_name)
 
 
-async def connection_name(db, connection_id) -> Optional[str]:
+async def connection_name(db, connection_id, lock: bool = False) -> Optional[str]:
     if connection_id is None:
         return None
-    return (
-        await db.execute(
-            select(DatabaseConnection.name).where(DatabaseConnection.id == connection_id)
-        )
-    ).scalar_one_or_none()
+    stmt = select(DatabaseConnection.name).where(DatabaseConnection.id == connection_id)
+    if lock:
+        stmt = stmt.with_for_update(read=True)
+    return (await db.execute(stmt)).scalar_one_or_none()

@@ -371,6 +371,10 @@ class ConfigApplyService:
             stmt = select(model).where(model.managed_by == self.managed_by)
             if not self.managed_by.startswith("pkg:"):
                 stmt = stmt.where(model.config_name == self.config_name)
+            if not dry_run:
+                # As for uninstall: a row detached by a concurrent manual edit
+                # drops out of the filter once locked, and is kept.
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
             for row in (await self.db.execute(stmt)).scalars().all():
                 key = applier.key_of_row(row)
                 if key in declared:

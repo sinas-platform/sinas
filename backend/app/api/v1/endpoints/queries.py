@@ -46,10 +46,14 @@ async def _authorize_connection(
     # On success the request log keeps the query permission the endpoint set.
     found = (
         await db.execute(
-            select(DatabaseConnection.name).where(
+            select(DatabaseConnection.name)
+            .where(
                 DatabaseConnection.id == connection_id,
                 DatabaseConnection.is_active == True,  # noqa: E712
             )
+            # Held until commit: the applier resolves this name back to the
+            # id, so it must not move to another connection meanwhile.
+            .with_for_update(read=True)
         )
     ).scalar_one_or_none()
     if found is None:
