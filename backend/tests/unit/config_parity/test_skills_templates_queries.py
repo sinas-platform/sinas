@@ -242,6 +242,30 @@ class TestOneWritePath:
         assert resolved == []
         assert (await _row(db, Query, name)).database_connection_id == connection.id
 
+    async def test_a_name_reused_mid_request_is_refused_not_followed(
+        self, client, db: AsyncSession, admin_user, connection, monkeypatch
+    ):
+        """The applier resolves a connection by name; if the authorized one
+        was renamed and its name reused meanwhile, the save is refused."""
+        from app.services.resources.queries import QueryApplier
+
+        other = DatabaseConnection(
+            name=f"other-{_uid()}", connection_type="postgresql",
+            host="localhost", port=5432, database="test", username="test",
+        )
+        db.add(other)
+        await db.flush()
+
+        async def reused(self, ctx, conn_name):
+            return other.id
+
+        monkeypatch.setattr(QueryApplier, "_connection_id", reused)
+        response = await client.post(
+            "/api/v1/queries", json=_rest_query(f"q-{_uid()}", connection.id),
+            headers=auth_headers(admin_user),
+        )
+        assert response.status_code == 409
+
     async def test_config_reports_a_missing_connection(self, db: AsyncSession, admin_user):
         name = f"q-{_uid()}"
         result = await _apply(db, admin_user, queries=[_yaml_query(name, "nope")])

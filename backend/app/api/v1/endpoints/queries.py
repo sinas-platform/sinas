@@ -46,20 +46,27 @@ async def _authorize_connection(
     # On success the request log keeps the query permission the endpoint set.
     found = (
         await db.execute(
-            select(DatabaseConnection.name)
-            .where(
+            select(DatabaseConnection.name).where(
                 DatabaseConnection.id == connection_id,
                 DatabaseConnection.is_active == True,  # noqa: E712
             )
-            # Held until commit: the applier resolves this name back to the
-            # id, so it must not move to another connection meanwhile.
-            .with_for_update(read=True)
         )
     ).scalar_one_or_none()
     if found is None:
         # Previously an unknown id failed the foreign key at flush: a 500.
         raise HTTPException(status_code=404, detail="Database connection not found or inactive")
     return found
+
+
+def _same_connection(query: Query, requested) -> None:
+    """The applier resolves the connection by name. Should the authorized
+    connection have been renamed and its name reused meanwhile, the query
+    would point at another database: refuse (rolled back) instead."""
+    if query.database_connection_id != requested:
+        raise HTTPException(
+            status_code=409,
+            detail="Database connection changed while this request ran; try again",
+        )
 
 
 @router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
@@ -89,6 +96,7 @@ async def create_query(
         _applier, ctx, rest.parse_spec(_applier, {**data, "connection_name": connection}),
         must_create=True,
     )
+    _same_connection(result.obj, query_data.database_connection_id)
     await rest.commit(db, ctx)
     await db.refresh(result.obj)
     return QueryResponse.model_validate(result.obj)
@@ -169,27 +177,23 @@ async def update_query(
 
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.update")
 
+    ctx = rest.api_context(db, user_id)
+    query = await rest.locked(_applier, ctx, query)
+
     # As before: fields left out (or null) are unchanged.
     patch = {
         key: value
         for key, value in query_data.model_dump(exclude={"database_connection_id"}).items()
         if value is not None
     }
-    if (
-        query_data.database_connection_id is not None
-        and query_data.database_connection_id != query.database_connection_id
-    ):
-        # Before the query's lock: config apply locks a connection, then the
-        # queries on it. The same order here can't deadlock with it.
-        patch["connection_name"] = await _authorize_connection(
-            request, db, permissions, query_data.database_connection_id
-        )
-
-    ctx = rest.api_context(db, user_id)
-    query = await rest.locked(_applier, ctx, query)
+    requested = query_data.database_connection_id
+    if requested is not None and requested != query.database_connection_id:
+        patch["connection_name"] = await _authorize_connection(request, db, permissions, requested)
     current = _applier.spec_from_row(query, await connection_name(db, query.database_connection_id))
     spec = rest.patch_spec(_applier, query, patch, current=current)
     await rest.write(_applier, ctx, spec, existing=query)
+    if requested is not None:
+        _same_connection(query, requested)
     await rest.commit(db, ctx)
     await db.refresh(query)
     return QueryResponse.model_validate(query)

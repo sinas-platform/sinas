@@ -108,12 +108,9 @@ class DatabaseTriggerApplier(ResourceApplier[DatabaseTriggerSpec]):
         return DatabaseTrigger(user_id=uuid.UUID(str(ctx.owner_user_id)))
 
     async def _connection_id(self, ctx: ApplyContext, name: str) -> uuid.UUID:
-        # FOR SHARE: not renamed (and the name reused) before this commits.
         connection_id = (
             await ctx.db.execute(
-                select(DatabaseConnection.id)
-                .where(DatabaseConnection.name == name)
-                .with_for_update(read=True)
+                select(DatabaseConnection.id).where(DatabaseConnection.name == name)
             )
         ).scalar_one_or_none()
         if connection_id is None:
