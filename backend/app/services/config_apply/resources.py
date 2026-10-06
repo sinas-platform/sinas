@@ -24,6 +24,7 @@ from app.models.skill import Skill
 from app.models.store import Store
 
 from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
+from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ async def apply_secrets(
             if existing:
                 if existing.managed_by and existing.managed_by != managed_by:
                     warnings.append(
-                        f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
+                        OwnershipSkip(f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "secrets", resource_name)
                     continue

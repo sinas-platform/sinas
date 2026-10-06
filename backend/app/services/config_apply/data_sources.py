@@ -13,6 +13,7 @@ from app.core.encryption import encryption_service
 from app.models.database_connection import DatabaseConnection
 from app.models.llm_provider import LLMProvider
 from app.models.table_annotation import TableAnnotation
+from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def apply_llm_providers(
             if existing:
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"LLM provider '{provider_config.name}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"LLM provider '{provider_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "llmProviders", provider_config.name)
                     llm_provider_ids[provider_config.name] = str(existing.id)
@@ -187,7 +188,7 @@ async def apply_database_connections(
             if existing:
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"Database connection '{conn_config.name}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"Database connection '{conn_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change(
                         "unchanged", "databaseConnections", conn_config.name

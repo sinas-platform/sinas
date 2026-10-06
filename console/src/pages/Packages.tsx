@@ -100,7 +100,14 @@ export function Packages() {
     }
   };
 
+  // The preview (and its warnings) is for one install name; after editing the
+  // name it no longer describes what Confirm would install.
+  const previewStale =
+    !!previewResult?.multi_instance &&
+    (instanceName.trim() || previewResult.package_name) !== previewResult.instance;
+
   const handleInstall = () => {
+    if (previewStale) return;
     setInstallStep('installing');
     const vars = Object.keys(variableValues).length > 0 ? variableValues : undefined;
     installMutation.mutate({ source: yamlInput, variables: vars, instance: instanceName.trim() || undefined });
@@ -377,6 +384,11 @@ export function Packages() {
                         Re-preview
                       </button>
                     </div>
+                    {previewStale && (
+                      <p className="text-xs text-amber-400 mt-2">
+                        The name changed since this preview. Re-preview before installing.
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -442,7 +454,12 @@ export function Packages() {
                   <button onClick={() => setInstallStep('input')} className="btn btn-secondary">
                     Back
                   </button>
-                  <button onClick={handleInstall} className="btn btn-primary flex items-center">
+                  <button
+                    onClick={handleInstall}
+                    className="btn btn-primary flex items-center"
+                    disabled={previewStale}
+                    title={previewStale ? 'Re-preview with the new install name first' : undefined}
+                  >
                     <Check className="w-4 h-4 mr-2" />
                     Confirm Install
                   </button>

@@ -635,6 +635,13 @@ class SinasConfig(BaseModel):
         return v
 
 
+class OwnershipSkip(str):
+    """A warning that a declared resource was left alone because someone else
+    (another config, another package, a hand edit) owns it. Still a plain
+    string in the response; the type lets callers that can't accept such a
+    skip (a multi-instance package install) find them."""
+
+
 # Response schemas
 class ResourceChange(BaseModel):
     """A single resource change"""

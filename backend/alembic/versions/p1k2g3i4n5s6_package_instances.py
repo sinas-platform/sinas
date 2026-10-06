@@ -1,7 +1,7 @@
 """packages: declared package name next to the install name (multi-instance installs)
 
 Revision ID: p1k2g3i4n5s6
-Revises: m1e2t3v4p5d6
+Revises: p1u2b3l4i5c6
 Create Date: 2026-09-07
 """
 
@@ -10,7 +10,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "p1k2g3i4n5s6"
-down_revision = "m1e2t3v4p5d6"
+down_revision = "p1u2b3l4i5c6"
 branch_labels = None
 depends_on = None
 

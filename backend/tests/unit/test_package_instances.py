@@ -208,3 +208,54 @@ class TestPackageInstances:
             .all()
         )
         assert {p.permission_key for p in rows} == {f"{pkg}-work.*.read:all"}
+
+
+# One resource the author forgot to scope by install name: every instance
+# declares the same connector (resource applier) and agent (legacy path).
+LEAKY_YAML = MULTI_YAML.replace(
+    "  agents:\n",
+    "    - namespace: {pkg}-shared\n      name: api\n      baseUrl: https://example.com\n"
+    "  agents:\n"
+    "    - namespace: {pkg}-shared\n      name: helper\n      description: shared\n"
+    "      systemPrompt: shared helper\n",
+)
+
+
+class TestInstanceCollisions:
+    async def test_a_second_instance_sharing_a_resource_is_refused(self, db, admin_user):
+        pkg = _pkg()
+        svc = PackageService(db)
+        yaml = LEAKY_YAML.format(pkg=pkg)
+        _, first = await svc.install(yaml, str(admin_user.id), instance=f"{pkg}-work")
+        assert first.success, first.errors
+        with pytest.raises(ValueError, match="would share resources") as err:
+            await svc.install(yaml, str(admin_user.id), instance=f"{pkg}-personal")
+        assert f"{pkg}-shared/api" in str(err.value)
+        assert f"{pkg}-shared/helper" in str(err.value)
+
+    async def test_preview_reports_the_collision_as_an_error(self, db, admin_user):
+        pkg = _pkg()
+        svc = PackageService(db)
+        yaml = LEAKY_YAML.format(pkg=pkg)
+        await svc.install(yaml, str(admin_user.id), instance=f"{pkg}-work")
+        result, _, _, _ = await svc.preview(yaml, str(admin_user.id), instance=f"{pkg}-personal")
+        assert not result.success
+        assert any(f"{pkg}-shared/api" in e for e in result.errors)
+        assert not any(f"{pkg}-shared/api" in w for w in result.warnings)
+
+    async def test_the_default_instance_is_checked_too(self, db, admin_user):
+        pkg = _pkg()
+        svc = PackageService(db)
+        yaml = LEAKY_YAML.format(pkg=pkg)
+        await svc.install(yaml, str(admin_user.id), instance=f"{pkg}-work")
+        with pytest.raises(ValueError, match="would share resources"):
+            await svc.install(yaml, str(admin_user.id))
+
+    async def test_a_hand_made_resource_in_the_way_is_refused(self, db, admin_user):
+        pkg = _pkg()
+        db.add(Connector(user_id=admin_user.id, namespace=f"{pkg}-work", name="api", base_url="https://manual"))
+        await db.flush()
+        with pytest.raises(ValueError, match="would share resources"):
+            await PackageService(db).install(
+                MULTI_YAML.format(pkg=pkg), str(admin_user.id), instance=f"{pkg}-work"
+            )

@@ -25,7 +25,7 @@ from app.models.store import Store
 from app.models.template import Template
 from app.models.user import APIKeyRole, Role, RolePermission, UserRole
 from app.models.webhook import Webhook
-from app.schemas.config import ConfigApplyResponse, SinasConfig
+from app.schemas.config import ConfigApplyResponse, OwnershipSkip, SinasConfig
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
@@ -193,6 +193,12 @@ def resolve_install_name(yaml_content: str, instance: Optional[str]) -> tuple[st
     return install_name, substituted, declared, multi
 
 
+def _instance_conflicts(warnings: list[str]) -> list[str]:
+    """Resources a multi-instance install left alone because another owner
+    has them. Each instance must own everything it declares."""
+    return [str(w) for w in warnings if isinstance(w, OwnershipSkip)]
+
+
 class PackageService:
     """Service for managing installable integration packages."""
 
@@ -223,7 +229,7 @@ class PackageService:
             Tuple of (Package record, ConfigApplyResponse)
         """
         # The install name first: it may appear inside variable defaults too.
-        install_name, yaml_content, declared_name, _ = resolve_install_name(yaml_content, instance)
+        install_name, yaml_content, declared_name, multi = resolve_install_name(yaml_content, instance)
 
         # Substitute variables before parsing if provided
         yaml_content, resolved_values = await self._resolve_variables(
@@ -281,6 +287,15 @@ class PackageService:
         )
 
         result = await apply_service.apply_config(config, dry_run=False)
+
+        conflicts = _instance_conflicts(apply_service.warnings) if multi else []
+        if conflicts:
+            # A skipped resource would leave this instance pointing at another
+            # owner's copy, so instances share it after all. Refuse instead.
+            raise ValueError(
+                f"Package not installed as '{pkg_name}': it would share resources "
+                f"owned by someone else. {'; '.join(conflicts)}"
+            )
 
         if not result.success:
             # All or nothing: nothing from this package is committed. The
@@ -388,6 +403,12 @@ class PackageService:
         )
 
         result = await apply_service.apply_config(config, dry_run=True)
+        if multi:
+            conflicts = _instance_conflicts(apply_service.warnings)
+            if conflicts:
+                result.errors.extend(conflicts)
+                result.warnings = [w for w in result.warnings if w not in conflicts]
+                result.success = False
         result.warnings.extend(validation.warnings)
         if multi and install_name == config.package.name:
             result.warnings.append(
