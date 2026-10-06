@@ -60,6 +60,32 @@ class TestChatLock:
         await chat_steering.release_chat_lock(chat_id, token2)
 
 
+class TestLockHeartbeat:
+    @pytest.mark.asyncio
+    async def test_refresh_extends_ttl_only_for_holder(self, monkeypatch):
+        """A loop that outlives the base TTL keeps its lock as long as it
+        heartbeats at round boundaries; a stale holder cannot refresh."""
+        from app.core.redis import get_redis
+
+        monkeypatch.setattr(chat_steering, "_lock_ttl", lambda: 2)
+        chat_id = f"lock-hb-{uuid.uuid4().hex}"
+        token = await chat_steering.acquire_chat_lock(chat_id)
+        assert token
+        redis = await get_redis()
+        key = f"chat:loop-lock:{chat_id}"
+        assert await redis.ttl(key) <= 2
+
+        monkeypatch.setattr(chat_steering, "_lock_ttl", lambda: 600)
+        # Token comes from the contextvar set by acquire — no plumbing needed.
+        assert await chat_steering.refresh_chat_lock(chat_id) is True
+        assert await redis.ttl(key) > 100
+
+        # Someone else's token must not extend our lock.
+        assert await chat_steering.refresh_chat_lock(chat_id, token="not-ours") is False
+        await chat_steering.release_chat_lock(chat_id, token)
+        assert await chat_steering.refresh_chat_lock(chat_id, token=token) is False
+
+
 class TestInterruptFlag:
     @pytest.mark.asyncio
     async def test_request_consume_clear(self):

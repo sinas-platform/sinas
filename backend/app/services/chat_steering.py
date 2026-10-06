@@ -24,6 +24,7 @@ Mechanics:
 """
 import logging
 import uuid
+from contextvars import ContextVar
 from typing import Optional
 
 from app.core.config import settings
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 
 _LOCK_PREFIX = "chat:loop-lock:"
 _INTERRUPT_PREFIX = "chat:interrupt:"
+
+# The token of the lock the current task holds, so the loop can heartbeat
+# it at round boundaries without threading the token through every call.
+current_lock_token: ContextVar[Optional[str]] = ContextVar("current_lock_token", default=None)
 
 # How long an interrupt request stays armed. Long enough to catch queued
 # continuation jobs that haven't started yet, short enough that a forgotten
@@ -51,7 +56,33 @@ async def acquire_chat_lock(chat_id: str) -> Optional[str]:
     redis = await get_redis()
     token = uuid.uuid4().hex
     ok = await redis.set(f"{_LOCK_PREFIX}{chat_id}", token, nx=True, ex=_lock_ttl())
-    return token if ok else None
+    if ok:
+        current_lock_token.set(token)
+        return token
+    return None
+
+
+async def refresh_chat_lock(chat_id: str, token: Optional[str] = None) -> bool:
+    """Heartbeat: extend the lock's TTL if we still hold it (token-checked,
+    atomic). Called at every tool-round boundary, so a loop that outlives
+    the base TTL — many rounds, or a chat with a long job_timeout — keeps
+    its exclusivity for as long as it is actually making progress. Returns
+    False when the lock is no longer ours (expired and taken over)."""
+    from app.core.redis import get_redis
+
+    token = token or current_lock_token.get()
+    if not token:
+        return False
+    redis = await get_redis()
+    script = (
+        "if redis.call('get', KEYS[1]) == ARGV[1] then "
+        "return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+    )
+    try:
+        return bool(await redis.eval(script, 1, f"{_LOCK_PREFIX}{chat_id}", token, _lock_ttl()))
+    except Exception as e:
+        logger.warning(f"Failed to refresh chat lock for {chat_id}: {e}")
+        return False
 
 
 async def release_chat_lock(chat_id: str, token: str) -> None:
@@ -69,6 +100,8 @@ async def release_chat_lock(chat_id: str, token: str) -> None:
         await redis.eval(script, 1, f"{_LOCK_PREFIX}{chat_id}", token)
     except Exception as e:
         logger.warning(f"Failed to release chat lock for {chat_id}: {e}")
+    if current_lock_token.get() == token:
+        current_lock_token.set(None)
 
 
 async def is_chat_locked(chat_id: str) -> bool:

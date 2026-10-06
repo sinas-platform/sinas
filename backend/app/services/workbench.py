@@ -756,6 +756,9 @@ async def _write_bytes(
     file_hash = storage.calculate_hash(content)
 
     if existing is None:
+        # Row lock: two overlapping writes to the same file (agent tool +
+        # console upload, say) must serialize the version bump, or both read
+        # N and collide on the (file_id, version) uniqueness constraint.
         existing = (
             await db.execute(
                 select(File)
@@ -763,8 +766,14 @@ async def _write_bytes(
                 .where(or_(File.user_id == uuid_lib.UUID(user_id), File.visibility == "shared"))
                 .order_by((File.user_id == uuid_lib.UUID(user_id)).desc())
                 .limit(1)
+                .with_for_update()
             )
         ).scalar_one_or_none()
+    else:
+        # Caller-supplied row (promote's source update): lock it too.
+        existing = (
+            await db.execute(select(File).where(File.id == existing.id).with_for_update())
+        ).scalar_one()
 
     if existing:
         existing.current_version += 1

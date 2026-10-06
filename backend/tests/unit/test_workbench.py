@@ -702,7 +702,7 @@ class TestDeltaAndAffinity:
             {"execution_id": _uuid.uuid4().hex},
         )
         assert out["status"] == "completed", out
-        assert _os.path.exists(f"/tmp/wb_cache/{sha}")
+        assert _os.path.exists(f"/tmp/wb_cache/_none/{sha}")  # no chat_id in context → "_none" namespace
 
         # Second execution: cached reference only, no bytes.
         wrapper2 = _build_wrapper(

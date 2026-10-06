@@ -90,9 +90,17 @@ async def resolve_references(db, chat, user_id: str, arguments: Any) -> Any:
 
     workbench = await get_or_create_workbench(db, chat)
     storage = get_storage()
+    # Aggregate budget across ALL references in one call (the per-file cap
+    # alone lets a compact argument expand to many times its size), plus a
+    # per-call cache so the same file referenced twice is read once.
+    budget = {"remaining": settings.workbench_ref_max_bytes}
+    resolved_cache: dict[tuple[str, str], str] = {}
 
     async def _resolve_one(ref: dict[str, Any]) -> str:
         path = ref[SENTINEL_KEY]
+        cache_key = (path, ref.get("encoding") or "")
+        if cache_key in resolved_cache:
+            return resolved_cache[cache_key]
         err = _validate_path(path)
         if err:
             raise ReferenceError_(f"Invalid workbench reference {path!r}: {err}")
@@ -120,6 +128,12 @@ async def resolve_references(db, chat, user_id: str, arguments: Any) -> Any:
                 f"Workbench reference {path!r} is {version.size_bytes} bytes, above the "
                 f"{settings.workbench_ref_max_bytes}-byte reference limit"
             )
+        if version.size_bytes > budget["remaining"]:
+            raise ReferenceError_(
+                f"Workbench references in this call exceed the combined "
+                f"{settings.workbench_ref_max_bytes}-byte limit at {path!r}"
+            )
+        budget["remaining"] -= version.size_bytes
         try:
             content = await storage.read(version.storage_path)
         except Exception as e:
@@ -129,10 +143,12 @@ async def resolve_references(db, chat, user_id: str, arguments: Any) -> Any:
         if encoding == "base64":
             import base64
 
-            return base64.b64encode(content).decode()
+            resolved_cache[cache_key] = base64.b64encode(content).decode()
+            return resolved_cache[cache_key]
         if encoding == "text":
             try:
-                return content.decode("utf-8")
+                resolved_cache[cache_key] = content.decode("utf-8")
+                return resolved_cache[cache_key]
             except UnicodeDecodeError:
                 raise ReferenceError_(
                     f"Workbench reference {path!r} is not valid UTF-8 text — "
@@ -156,8 +172,17 @@ async def resolve_references(db, chat, user_id: str, arguments: Any) -> Any:
 
 
 def _spill_filename(tool_name: str, tool_call_id: str, content: str) -> str:
+    """One file per tool call. The call id is kept in full (sanitized) and,
+    when it is long enough that a prefix would be ambiguous, suffixed with a
+    hash of the whole id — two calls must never share a spill path, or the
+    earlier pointer would silently serve the later call's result."""
+    import hashlib
+
     safe_tool = re.sub(r"[^A-Za-z0-9_-]", "_", tool_name)[:60]
-    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", tool_call_id)[:16]
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", tool_call_id)
+    if len(safe_id) > 48 or safe_id != tool_call_id:
+        digest = hashlib.sha256(tool_call_id.encode()).hexdigest()[:12]
+        safe_id = f"{safe_id[:48]}_{digest}"
     try:
         json.loads(content)
         ext = "json"

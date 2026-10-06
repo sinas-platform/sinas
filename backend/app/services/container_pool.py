@@ -31,11 +31,13 @@ class PooledContainer:
     executions: int = 0
     created_at: float = field(default_factory=time.time)
     # Workbench sync bookkeeping: the chat this container last served (for
-    # acquire affinity) and the content hashes of workbench blobs already
-    # shipped into its /tmp/wb_cache (for delta copy-in). Both are best-effort
-    # hints — a wiped container degrades to lazy fetch, never to wrong data.
+    # acquire affinity) and, per chat, the content hashes of workbench blobs
+    # already shipped into its /tmp/wb_cache/<chat> (for delta copy-in). Both
+    # are best-effort hints — a wiped container degrades to lazy fetch, never
+    # to wrong data — and the wrapper purges other chats' caches before user
+    # code runs, so a container never exposes one chat's blobs to another.
     last_chat_id: Optional[str] = None
-    known_hashes: set = field(default_factory=set)
+    known_hashes: dict = field(default_factory=dict)  # chat_id -> set of sha256
 
 
 class ContainerPool:

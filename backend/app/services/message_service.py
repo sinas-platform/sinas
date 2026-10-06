@@ -967,6 +967,7 @@ class MessageService:
         # left without matching tool results.
         from app.services import chat_steering
 
+        await chat_steering.refresh_chat_lock(chat_id)  # heartbeat at the round boundary
         if await chat_steering.consume_interrupt(chat_id):
             interrupted_result = json.dumps({"error": "Interrupted by operator before execution"})
             for tc in valid_tool_calls:
@@ -1338,6 +1339,7 @@ class MessageService:
         """
         from app.services import chat_steering
 
+        await chat_steering.refresh_chat_lock(chat_id)  # heartbeat at the round boundary
         if await chat_steering.consume_interrupt(chat_id):
             self.db.add(
                 Message(chat_id=chat_id, role="system", content=chat_steering.INTERRUPT_MARKER)
