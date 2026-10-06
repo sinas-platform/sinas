@@ -127,7 +127,7 @@ class DatabaseTriggerApplier(ResourceApplier[DatabaseTriggerSpec]):
         # connection, or an edit could follow a reused name to another database.
         from app.services.resources.queries import connection_name
 
-        current = await connection_name(ctx.db, row.database_connection_id, lock=True)
+        current = await connection_name(ctx.db, row.database_connection_id)
         if current is not None and current == spec.connection_name:
             connection_id = row.database_connection_id
         else:

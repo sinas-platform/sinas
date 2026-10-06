@@ -169,9 +169,6 @@ async def update_query(
 
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.update")
 
-    ctx = rest.api_context(db, user_id)
-    query = await rest.locked(_applier, ctx, query)
-
     # As before: fields left out (or null) are unchanged.
     patch = {
         key: value
@@ -182,9 +179,14 @@ async def update_query(
         query_data.database_connection_id is not None
         and query_data.database_connection_id != query.database_connection_id
     ):
+        # Before the query's lock: config apply locks a connection, then the
+        # queries on it. The same order here can't deadlock with it.
         patch["connection_name"] = await _authorize_connection(
             request, db, permissions, query_data.database_connection_id
         )
+
+    ctx = rest.api_context(db, user_id)
+    query = await rest.locked(_applier, ctx, query)
     current = _applier.spec_from_row(query, await connection_name(db, query.database_connection_id))
     spec = rest.patch_spec(_applier, query, patch, current=current)
     await rest.write(_applier, ctx, spec, existing=query)

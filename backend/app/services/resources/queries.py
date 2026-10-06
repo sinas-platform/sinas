@@ -81,8 +81,10 @@ class QueryApplier(ResourceApplier[QuerySpec]):
     async def write_row(self, row: Query, spec: QuerySpec, ctx: ApplyContext) -> None:
         # The connection is held by id; re-resolve the name only when the spec
         # names another connection. Re-resolving on every edit could follow
-        # the name to a different database after a rename.
-        current = await connection_name(ctx.db, row.database_connection_id, lock=True)
+        # the name to a different database after a rename. (No lock here:
+        # keeping the id needs none, and locking the connection after the
+        # query would invert config apply's order — connection, then query.)
+        current = await connection_name(ctx.db, row.database_connection_id)
         if current is None or current != spec.connection_name:
             row.database_connection_id = await self._connection_id(ctx, spec.connection_name)
         row.namespace = spec.namespace
@@ -102,10 +104,11 @@ class QueryApplier(ResourceApplier[QuerySpec]):
             await self._connection_id(ctx, spec.connection_name)
 
 
-async def connection_name(db, connection_id, lock: bool = False) -> Optional[str]:
+async def connection_name(db, connection_id) -> Optional[str]:
     if connection_id is None:
         return None
-    stmt = select(DatabaseConnection.name).where(DatabaseConnection.id == connection_id)
-    if lock:
-        stmt = stmt.with_for_update(read=True)
-    return (await db.execute(stmt)).scalar_one_or_none()
+    return (
+        await db.execute(
+            select(DatabaseConnection.name).where(DatabaseConnection.id == connection_id)
+        )
+    ).scalar_one_or_none()
