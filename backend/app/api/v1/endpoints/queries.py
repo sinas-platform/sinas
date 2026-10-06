@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
+from app.models.database_connection import DatabaseConnection
 from app.models.query import Query
 from app.models.user import User
 from app.schemas.query import (
@@ -22,6 +23,31 @@ from app.services.database_pool import DatabasePoolManager
 from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/queries", tags=["queries"])
+
+
+async def _authorize_connection(
+    request: Request, db: AsyncSession, permissions: dict, connection_id
+) -> None:
+    """A query runs its SQL with the connection's credentials, so binding one
+    takes the same right as seeing connections (admin-granted by default) —
+    the console's editor can only list them with it. Holding queries.create
+    alone used to let anyone bind any connection by its UUID."""
+    permission = "sinas.database_connections.read:all"
+    if not check_permission(permissions, permission):
+        set_permission_used(request, permission, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to use database connections")
+    # On success the request log keeps the query permission the endpoint set.
+    found = (
+        await db.execute(
+            select(DatabaseConnection.id).where(
+                DatabaseConnection.id == connection_id,
+                DatabaseConnection.is_active == True,  # noqa: E712
+            )
+        )
+    ).scalar_one_or_none()
+    if found is None:
+        # Previously an unknown id failed the foreign key at flush: a 500.
+        raise HTTPException(status_code=404, detail="Database connection not found or inactive")
 
 
 @router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
@@ -39,6 +65,8 @@ async def create_query(
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to create queries")
     set_permission_used(request, permission)
+
+    await _authorize_connection(request, db, permissions, query_data.database_connection_id)
 
     # Check uniqueness
     result = await db.execute(
@@ -149,6 +177,12 @@ async def update_query(
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.update")
 
     detach_if_package_managed(query)
+
+    if (
+        query_data.database_connection_id is not None
+        and query_data.database_connection_id != query.database_connection_id
+    ):
+        await _authorize_connection(request, db, permissions, query_data.database_connection_id)
 
     # Check for namespace/name conflicts
     new_namespace = query_data.namespace or query.namespace
