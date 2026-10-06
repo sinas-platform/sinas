@@ -2,6 +2,7 @@
 Declarative configuration endpoints
 Handles applying, validating, and exporting SINAS configuration
 """
+import json
 import logging
 import uuid
 from typing import Optional
@@ -287,8 +288,28 @@ async def restore_config_revision(
     if not revision.spec:
         raise HTTPException(status_code=400, detail=f"Revision {revision_id} holds no state")
 
+    from app.services.resources.history import decrypt_secret_state
+
+    from cryptography.fernet import InvalidToken
+
     try:
-        spec = applier.spec_model.model_validate(revision.spec)
+        secrets = decrypt_secret_state(revision.secret_state)
+    except (InvalidToken, ValueError):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Revision {revision_id} can't be restored: its secret values can no "
+            "longer be decrypted (was the encryption key changed?)",
+        )
+    state = applier.with_secrets(revision.spec, secrets)
+    if "<redacted:" in json.dumps(state):
+        # Never write a placeholder where a secret was.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Revision {revision_id} can't be restored: it holds redacted values "
+            "whose originals were not kept",
+        )
+    try:
+        spec = applier.spec_model.model_validate(state)
     except ValidationError as e:
         raise HTTPException(
             status_code=422,

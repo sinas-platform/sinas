@@ -43,6 +43,9 @@ class ConfigRevision(Base):
     owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(GUID())
     # Set when this change was a restore of an earlier revision.
     restored_from_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    # Values `spec` shows redacted (ResourceApplier.secret_values), encrypted,
+    # for restores only. Never returned by the history API.
+    secret_state: Mapped[Optional[str]] = mapped_column(Text)
     managed_by: Mapped[Optional[str]] = mapped_column(Text)
     config_name: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[created_at]
