@@ -363,7 +363,11 @@ class ConfigExportService:
 
     async def _export_schedules(self) -> list[dict]:
         """Export scheduled jobs"""
-        stmt = select(ScheduledJob).where(ScheduledJob.is_active == True)
+        # Every schedule, paused ones included: is_active means "paused" for a
+        # schedule, not "deleted", and a paused schedule left out of an export
+        # vanished from any instance restored from it. Ordered, so the same
+        # state always exports the same document.
+        stmt = select(ScheduledJob).order_by(ScheduledJob.name)
         if self.managed_only:
             stmt = stmt.where(ScheduledJob.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

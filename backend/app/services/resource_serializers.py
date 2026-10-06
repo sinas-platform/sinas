@@ -178,24 +178,11 @@ def _serialize_dedup(dedup: Optional[dict]) -> Optional[dict]:
 
 
 def serialize_schedule(schedule) -> dict:
-    return _remove_none_values({
-        "name": schedule.name,
-        "scheduleType": schedule.schedule_type,
-        "functionName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "function"
-        else None,
-        "agentName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "agent"
-        else None,
-        "pipelineName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "pipeline"
-        else None,
-        "content": schedule.content,
-        "cronExpression": schedule.cron_expression,
-        "isActive": schedule.is_active,
-        "timezone": schedule.timezone,
-        "inputData": schedule.input_data or None,
-    })
+    """Config form of a schedule — delegated to its spec, the one definition
+    shared by the REST API, config apply, export and change history."""
+    from app.services.resources.schedules import ScheduleApplier
+
+    return ScheduleApplier().spec_from_row(schedule).to_config()
 
 
 def serialize_connector(conn) -> dict:

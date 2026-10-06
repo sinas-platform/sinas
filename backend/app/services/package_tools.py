@@ -231,7 +231,7 @@ async def execute_package_tool(
         if tool_name == "sinas_package_install":
             return await _install(db, arguments, user_id, permissions)
         if tool_name == "sinas_package_uninstall":
-            return await _uninstall(db, arguments, permissions)
+            return await _uninstall(db, arguments, user_id, permissions)
         if tool_name == "sinas_package_list":
             return await _list(db, permissions)
         if tool_name == "sinas_package_export":
@@ -370,7 +370,7 @@ async def _install(db, arguments, user_id, permissions):
     }
 
 
-async def _uninstall(db, arguments, permissions):
+async def _uninstall(db, arguments, user_id, permissions):
     if not check_permission(permissions, "sinas.packages.uninstall:all"):
         raise PermissionError("sinas.packages.uninstall:all required")
 
@@ -379,7 +379,7 @@ async def _uninstall(db, arguments, permissions):
         return {"error": "missing_package_name", "detail": "'package_name' argument is required"}
 
     service = PackageService(db)
-    deleted = await service.uninstall(package_name)
+    deleted = await service.uninstall(package_name, actor_user_id=str(user_id) if user_id else None)
     return {"package_name": package_name, "deleted": deleted}
 
 

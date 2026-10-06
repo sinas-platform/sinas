@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database_connection import DatabaseConnection
 from app.models.database_trigger import DatabaseTrigger
-from app.models.schedule import ScheduledJob
 from app.models.template import Template
 from app.models.webhook import Webhook
 
@@ -236,113 +235,6 @@ async def apply_templates(
 
         except Exception as e:
             errors.append(f"Error applying template '{resource_name}': {str(e)}")
-
-
-async def apply_schedules(
-    db: AsyncSession,
-    schedules: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    notify_scheduler: Any = None,
-) -> None:
-    """Apply schedule configurations"""
-    for schedule_config in schedules:
-        try:
-            stmt = select(ScheduledJob).where(ScheduledJob.name == schedule_config.name)
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            # Determine target namespace and name
-            schedule_type = schedule_config.scheduleType
-            if schedule_type == "agent":
-                agent_ref = schedule_config.agentName or ""
-                if "/" in agent_ref:
-                    target_namespace, target_name = agent_ref.split("/", 1)
-                else:
-                    target_namespace, target_name = "default", agent_ref
-            elif schedule_type == "pipeline":
-                pipeline_ref = schedule_config.pipelineName or ""
-                if "/" in pipeline_ref:
-                    target_namespace, target_name = pipeline_ref.split("/", 1)
-                else:
-                    target_namespace, target_name = "default", pipeline_ref
-            else:
-                func_ref = schedule_config.functionName or ""
-                if "/" in func_ref:
-                    target_namespace, target_name = func_ref.split("/", 1)
-                else:
-                    target_namespace, target_name = "default", func_ref
-
-            config_hash = calculate_hash(
-                {
-                    "name": schedule_config.name,
-                    "schedule_type": schedule_type,
-                    "target_namespace": target_namespace,
-                    "target_name": target_name,
-                    "content": schedule_config.content,
-                    "cron_expression": schedule_config.cronExpression,
-                    "timezone": schedule_config.timezone,
-                    "input_data": schedule_config.inputData,
-                    "is_active": schedule_config.isActive,
-                }
-            )
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "schedules", schedule_config.name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    existing.schedule_type = schedule_type
-                    existing.target_namespace = target_namespace
-                    existing.target_name = target_name
-                    existing.content = schedule_config.content
-                    existing.cron_expression = schedule_config.cronExpression
-                    existing.timezone = schedule_config.timezone
-                    existing.input_data = schedule_config.inputData
-                    existing.is_active = schedule_config.isActive
-                    existing.config_checksum = config_hash
-                    if notify_scheduler:
-                        # Without this the running scheduler never learns about
-                        # config-applied schedules and keeps the old cron (or
-                        # none) until it restarts.
-                        notify_scheduler("update", str(existing.id))
-
-                track_change("update", "schedules", schedule_config.name)
-
-            else:
-                if not dry_run:
-                    new_schedule = ScheduledJob(
-                        name=schedule_config.name,
-                        schedule_type=schedule_type,
-                        target_namespace=target_namespace,
-                        target_name=target_name,
-                        content=schedule_config.content,
-                        cron_expression=schedule_config.cronExpression,
-                        timezone=schedule_config.timezone,
-                        input_data=schedule_config.inputData,
-                        is_active=schedule_config.isActive,
-                        user_id=owner_user_id,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_schedule)
-                    if notify_scheduler:
-                        # flush to obtain the generated id; the event itself is
-                        # published only after the transaction commits.
-                        await db.flush()
-                        notify_scheduler("create", str(new_schedule.id))
-
-                track_change("create", "schedules", schedule_config.name)
-
-        except Exception as e:
-            errors.append(f"Error applying schedule '{schedule_config.name}': {str(e)}")
 
 
 async def apply_database_triggers(

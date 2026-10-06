@@ -3,8 +3,12 @@ Declarative configuration endpoints
 Handles applying, validating, and exporting SINAS configuration
 """
 import logging
+import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -17,6 +21,8 @@ from app.schemas.config import (
     ConfigValidateResponse,
     ValidationError as SchemaValidationError,
 )
+from app.models.config_revision import ConfigRevision
+from app.schemas.config_history import ConfigRestoreResponse, ConfigRevisionResponse
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
@@ -166,3 +172,185 @@ async def export_config(
     except Exception as e:
         logger.error(f"Error exporting config: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error exporting config: {str(e)}")
+
+
+def _require_config_read(request: Request, permissions: dict) -> None:
+    perm = "sinas.config.read:all"
+    if not check_permission(permissions, perm):
+        set_permission_used(request, perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to read config history")
+    set_permission_used(request, perm, has_perm=True)
+
+
+@router.get("/history", response_model=list[ConfigRevisionResponse])
+async def list_config_history(
+    request: Request,
+    kind: Optional[str] = Query(None, description="Resource kind, e.g. 'schedules'"),
+    key: Optional[str] = Query(None, description="Resource key, e.g. a schedule name"),
+    resource_id: Optional[uuid.UUID] = Query(
+        None, description="Follow one resource across renames"
+    ),
+    before: Optional[int] = Query(
+        None, description="Only revisions older than this id (keyset pagination)"
+    ),
+    limit: int = Query(50, ge=1, le=500),
+    include_details: bool = Query(
+        False, description="Include each revision's field-level values and full spec"
+    ),
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Change history of configurable resources, newest first.
+
+    Every change made through any channel — console, API, config apply,
+    package install — is recorded, in the same transaction as the change.
+    """
+    _, permissions = current_user_data
+    _require_config_read(request, permissions)
+
+    stmt = select(ConfigRevision).order_by(ConfigRevision.id.desc()).limit(limit)
+    if kind:
+        stmt = stmt.where(ConfigRevision.resource_kind == kind)
+    if key:
+        stmt = stmt.where(ConfigRevision.resource_key == key)
+    if resource_id:
+        stmt = stmt.where(ConfigRevision.resource_id == resource_id)
+    if before is not None:
+        stmt = stmt.where(ConfigRevision.id < before)
+
+    revisions = (await db.execute(stmt)).scalars().all()
+    return [ConfigRevisionResponse.from_revision(r, details=include_details) for r in revisions]
+
+
+@router.get("/history/{revision_id}", response_model=ConfigRevisionResponse)
+async def get_config_revision(
+    request: Request,
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """One revision, with its field-level values and the full spec it recorded."""
+    _, permissions = current_user_data
+    _require_config_read(request, permissions)
+
+    revision = await db.get(ConfigRevision, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
+    return ConfigRevisionResponse.from_revision(revision, details=True)
+
+
+@router.post("/history/{revision_id}/restore", response_model=ConfigRestoreResponse)
+async def restore_config_revision(
+    request: Request,
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Bring a resource back to the state a revision recorded.
+
+    - A deleted resource is recreated — under its original id, so its history
+      stays one timeline, and owned by its original owner.
+    - An existing resource is reverted to that state (a rename is undone too).
+    - Already in that state: nothing happens.
+
+    A restore is a manual write: the restored resource is unmanaged, whoever
+    managed it before. Deliberately — a schedule a package upgrade removed,
+    restored under that package, would be removed again by the next upgrade,
+    and an uninstalled package isn't there to manage it at all. Same rule as
+    any manual edit of a managed resource.
+
+    The restore is itself recorded as a revision (`restored_from_id`), so it
+    can be undone the same way. It goes through the resource's normal write
+    path: the same validation, reference checks and side effects as any edit.
+    """
+    from pydantic import ValidationError
+
+    from app.services.resources import ApplierError, ApplyContext
+    from app.services.resources.registry import applier_for
+
+    user_id, permissions = current_user_data
+    perm = "sinas.config.apply:all"
+    if not check_permission(permissions, perm):
+        set_permission_used(request, perm, has_perm=False)
+        raise HTTPException(status_code=403, detail="Not authorized to restore config")
+    set_permission_used(request, perm, has_perm=True)
+
+    revision = await db.get(ConfigRevision, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=404, detail=f"Revision {revision_id} not found")
+    applier = applier_for(revision.resource_kind)
+    if applier is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Resources of kind '{revision.resource_kind}' cannot be restored yet",
+        )
+    if not revision.spec:
+        raise HTTPException(status_code=400, detail=f"Revision {revision_id} holds no state")
+
+    try:
+        spec = applier.spec_model.model_validate(revision.spec)
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"The state in revision {revision_id} is not valid today: {e.errors(include_url=False)[0]['msg']}",
+        )
+
+    # The original owner, if they can still own things; otherwise whoever
+    # restores it (a schedule owned by a deactivated user would never run as
+    # anyone sensible).
+    owner = str(user_id)
+    if revision.owner_user_id is not None:
+        from app.models.user import User
+
+        owner_active = (
+            await db.execute(select(User.is_active).where(User.id == revision.owner_user_id))
+        ).scalar_one_or_none()
+        if owner_active:
+            owner = str(revision.owner_user_id)
+    ctx = ApplyContext(
+        db=db,
+        origin="api",
+        actor_user_id=str(user_id),
+        owner_user_id=owner,
+        # Restore is an admin config operation, like config apply: references
+        # must exist, but needn't belong to anyone in particular. (Scoping them
+        # to the owner would refuse to restore a config-created schedule whose
+        # target someone else owns.)
+        reference_scope_user_id=None,
+        restored_from_id=revision.id,
+    )
+    current = (
+        await applier.find_by_id(ctx, revision.resource_id) if revision.resource_id else None
+    )
+    try:
+        if current is None:
+            ctx.restore_resource_id = revision.resource_id
+            result = await applier.apply(spec, ctx, must_create=True)
+        else:
+            result = await applier.apply(spec, ctx, existing=current)
+    except ApplierError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except IntegrityError:
+        # Something else took the resource's place meanwhile (a concurrent
+        # restore of the same revision, or a new row under its unique name).
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=f"Revision {revision_id} could not be restored: it conflicts with the current state",
+        )
+
+    await db.commit()
+    await ctx.effects.flush()
+    if result.revision is not None:
+        await db.refresh(result.revision)  # created_at is a database default
+    return ConfigRestoreResponse(
+        action=result.action,
+        resource_kind=revision.resource_kind,
+        resource_key=applier.key_of(spec),
+        resource_id=getattr(result.obj, "id", None),
+        revision=(
+            ConfigRevisionResponse.from_revision(result.revision, details=True)
+            if result.revision is not None
+            else None
+        ),
+    )
