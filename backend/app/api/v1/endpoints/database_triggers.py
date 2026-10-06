@@ -212,6 +212,7 @@ async def update_database_trigger(
     )
 
     ctx = _context(db, user_id, trigger.user_id)
+    connection_id = trigger.database_connection_id
     stored = await _applier.current_spec(ctx, trigger)
     # The API never let a PATCH move a trigger to another connection, schema
     # or table (DatabaseTriggerUpdate has no such fields); that stays so.
@@ -240,6 +241,13 @@ async def update_database_trigger(
         raise HTTPException(status_code=422, detail=e.detail)
     except ApplierError as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
+    if trigger.database_connection_id != connection_id:
+        # A PATCH never moves a trigger; the spec names its connection, so a
+        # rename-and-reuse mid-request could. Refuse rather than follow it.
+        raise HTTPException(
+            status_code=409,
+            detail="Database connection changed while this request ran; try again",
+        )
 
     await _commit_and_notify(db, ctx)
     await db.refresh(trigger)

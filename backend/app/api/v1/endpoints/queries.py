@@ -179,6 +179,7 @@ async def update_query(
 
     ctx = rest.api_context(db, user_id)
     query = await rest.locked(_applier, ctx, query)
+    original_connection = query.database_connection_id
 
     # As before: fields left out (or null) are unchanged.
     patch = {
@@ -192,8 +193,7 @@ async def update_query(
     current = _applier.spec_from_row(query, await connection_name(db, query.database_connection_id))
     spec = rest.patch_spec(_applier, query, patch, current=current)
     await rest.write(_applier, ctx, spec, existing=query)
-    if requested is not None:
-        _same_connection(query, requested)
+    _same_connection(query, requested if requested is not None else original_connection)
     await rest.commit(db, ctx)
     await db.refresh(query)
     return QueryResponse.model_validate(query)
