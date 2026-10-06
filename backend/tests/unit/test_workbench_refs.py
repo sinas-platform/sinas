@@ -118,6 +118,48 @@ class TestResolveReferences:
         assert resolved == args
 
 
+class TestReferenceBudget:
+    @pytest.mark.asyncio
+    async def test_aggregate_limit_across_references(self, db, chat, test_user, monkeypatch):
+        """Per-file cap alone would let three near-cap references triple the
+        argument size; the budget is shared across the whole call."""
+        monkeypatch.setattr(settings, "workbench_ref_max_bytes", 100)
+        await _write(db, chat, test_user, "a.txt", "a" * 60)
+        await _write(db, chat, test_user, "b.txt", "b" * 60)
+        with pytest.raises(workbench_refs.ReferenceError_, match="combined"):
+            await workbench_refs.resolve_references(
+                db, chat, str(test_user.id),
+                {"x": {"$workbench": "a.txt"}, "y": {"$workbench": "b.txt"}},
+            )
+
+    @pytest.mark.asyncio
+    async def test_same_file_referenced_twice_is_read_once_and_charged_once(
+        self, db, chat, test_user, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "workbench_ref_max_bytes", 100)
+        await _write(db, chat, test_user, "a.txt", "a" * 60)
+        resolved = await workbench_refs.resolve_references(
+            db, chat, str(test_user.id),
+            {"x": {"$workbench": "a.txt"}, "y": {"$workbench": "a.txt"}},
+        )
+        assert resolved == {"x": "a" * 60, "y": "a" * 60}
+
+
+class TestSpillFilename:
+    def test_distinct_call_ids_never_collide(self):
+        a = workbench_refs._spill_filename("q", "call_" + "x" * 11 + "AAAAAAAAAAAAA", "{}")
+        b = workbench_refs._spill_filename("q", "call_" + "x" * 11 + "BBBBBBBBBBBBB", "{}")
+        assert a != b
+        long_a = workbench_refs._spill_filename("q", "k" * 70 + "1", "{}")
+        long_b = workbench_refs._spill_filename("q", "k" * 70 + "2", "{}")
+        assert long_a != long_b
+        assert len(long_a.split("/")[-1]) < 120
+
+    def test_sanitized_ids_keep_identity(self):
+        # 'a/b' and 'a_b' sanitize alike; the hash suffix keeps them apart.
+        assert workbench_refs._spill_filename("q", "a/b", "x") != workbench_refs._spill_filename("q", "a_b", "x")
+
+
 class TestResultSpill:
     @pytest_asyncio.fixture
     async def wb_chat(self, db, test_user):
