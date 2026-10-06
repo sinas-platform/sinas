@@ -1,9 +1,33 @@
 """Manifest registration schemas."""
+import json
+import re
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+PUBLIC_INFO_MAX_BYTES = 4096
+_PUBLIC_INFO_KEY = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+
+
+def validate_public_info(value: Any) -> dict[str, Any]:
+    """public_info lands on the unauthenticated /info verbatim, so keep it a
+    small, plain JSON object with identifier keys. Values may nest."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("public_info must be a JSON object")
+    for key in value:
+        if not isinstance(key, str) or not _PUBLIC_INFO_KEY.match(key):
+            raise ValueError(f"public_info key {key!r} must be an identifier (letters, digits, underscores)")
+    try:
+        encoded = json.dumps(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"public_info must be JSON-serialisable: {exc}") from exc
+    if len(encoded.encode()) > PUBLIC_INFO_MAX_BYTES:
+        raise ValueError(f"public_info must be at most {PUBLIC_INFO_MAX_BYTES} bytes as JSON")
+    return value
 
 
 class ResourceRef(BaseModel):
@@ -32,6 +56,15 @@ class ManifestCreate(BaseModel):
     optional_permissions: list[str] = Field(default_factory=list)
     exposed_namespaces: dict[str, list[str]] = Field(default_factory=dict)
     store_dependencies: list[StoreDependency] = Field(default_factory=list)
+    public_info: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Published on the unauthenticated GET /info under services[namespace]",
+    )
+
+    @field_validator("public_info")
+    @classmethod
+    def _validate_public_info(cls, v: dict[str, Any]) -> dict[str, Any]:
+        return validate_public_info(v)
 
     @field_validator("exposed_namespaces")
     @classmethod
@@ -56,7 +89,13 @@ class ManifestUpdate(BaseModel):
     optional_permissions: Optional[list[str]] = None
     exposed_namespaces: Optional[dict[str, list[str]]] = None
     store_dependencies: Optional[list[StoreDependency]] = None
+    public_info: dict[str, Any] | None = None
     is_active: Optional[bool] = None
+
+    @field_validator("public_info")
+    @classmethod
+    def _validate_public_info(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        return None if v is None else validate_public_info(v)
 
     @field_validator("exposed_namespaces")
     @classmethod
@@ -81,6 +120,7 @@ class ManifestResponse(BaseModel):
     optional_permissions: list[str]
     exposed_namespaces: dict[str, list[str]]
     store_dependencies: list[StoreDependency]
+    public_info: dict[str, Any] = Field(default_factory=dict)
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime]
