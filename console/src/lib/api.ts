@@ -111,6 +111,12 @@ export function getComponentRenderUrl(renderToken: string, namespace: string, na
 const CONFIG_API_BASE_URL = `${API_BASE_URL}/api/v1`;
 const RUNTIME_API_BASE_URL = API_BASE_URL;
 
+/** Encode a workbench path for a URL: each segment percent-encoded so
+ * reserved characters (#, ?, %) in filenames survive, slashes preserved. */
+function encodeWorkbenchPath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
 class APIClient {
   private configClient: AxiosInstance;  // For management/config APIs
   private runtimeClient: AxiosInstance; // For runtime agent operations
@@ -355,7 +361,9 @@ class APIClient {
   }
 
   async readWorkbenchFile(chatId: string, path: string): Promise<WorkbenchFileContent> {
-    const response = await this.runtimeClient.get(`/chats/${chatId}/workbench/files/${path}`);
+    const response = await this.runtimeClient.get(
+      `/chats/${chatId}/workbench/files/${encodeWorkbenchPath(path)}`
+    );
     return response.data;
   }
 
@@ -368,7 +376,9 @@ class APIClient {
   }
 
   async deleteWorkbenchFile(chatId: string, path: string): Promise<void> {
-    await this.runtimeClient.delete(`/chats/${chatId}/workbench/files/${path}`);
+    await this.runtimeClient.delete(
+      `/chats/${chatId}/workbench/files/${encodeWorkbenchPath(path)}`
+    );
   }
 
   // Agents
