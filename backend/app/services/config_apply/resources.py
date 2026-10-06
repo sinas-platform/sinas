@@ -13,14 +13,11 @@ from datetime import timezone as tz
 
 from app.core.encryption import encryption_service
 from app.models.component import Component
-from app.models.database_connection import DatabaseConnection
 from app.models.dependency import Dependency
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.manifest import Manifest
-from app.models.query import Query
 from app.models.secret import Secret
-from app.models.skill import Skill
 from app.models.store import Store
 
 from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
@@ -119,108 +116,6 @@ async def apply_secrets(
         except Exception as e:
             errors.append(f"Failed to apply secret '{resource_name}': {e}")
             logger.exception(f"Error applying secret '{resource_name}'")
-
-
-async def apply_queries(
-    db: AsyncSession,
-    queries: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    database_connection_ids: dict[str, str],
-) -> None:
-    """Apply query configurations"""
-    for query_config in queries:
-        resource_name = f"{query_config.namespace}/{query_config.name}"
-        try:
-            stmt = select(Query).where(
-                Query.namespace == query_config.namespace,
-                Query.name == query_config.name,
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": query_config.namespace,
-                    "name": query_config.name,
-                    "description": query_config.description,
-                    "connection_name": query_config.connectionName,
-                    "operation": query_config.operation,
-                    "sql": query_config.sql,
-                    "input_schema": query_config.inputSchema,
-                    "output_schema": query_config.outputSchema,
-                    "timeout_ms": query_config.timeoutMs,
-                    "max_rows": query_config.maxRows,
-                }
-            )
-
-            # Resolve database connection name to ID
-            db_conn_id = database_connection_ids.get(query_config.connectionName)
-            if not db_conn_id:
-                # Try loading from database
-                db_conn = await DatabaseConnection.get_by_name(
-                    db, query_config.connectionName
-                )
-                if db_conn:
-                    db_conn_id = str(db_conn.id)
-                else:
-                    errors.append(
-                        f"Database connection '{query_config.connectionName}' not found for query '{resource_name}'"
-                    )
-                    continue
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "queries", resource_name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    existing.description = query_config.description
-                    existing.database_connection_id = db_conn_id
-                    existing.operation = query_config.operation
-                    existing.sql = query_config.sql
-                    existing.input_schema = query_config.inputSchema or {}
-                    existing.output_schema = query_config.outputSchema or {}
-                    existing.timeout_ms = query_config.timeoutMs
-                    existing.max_rows = query_config.maxRows
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change("update", "queries", resource_name)
-
-            else:
-                if not dry_run:
-                    new_query = Query(
-                        namespace=query_config.namespace,
-                        name=query_config.name,
-                        description=query_config.description,
-                        database_connection_id=db_conn_id,
-                        operation=query_config.operation,
-                        sql=query_config.sql,
-                        input_schema=query_config.inputSchema or {},
-                        output_schema=query_config.outputSchema or {},
-                        timeout_ms=query_config.timeoutMs,
-                        max_rows=query_config.maxRows,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_query)
-
-                track_change("create", "queries", resource_name)
-
-        except Exception as e:
-            errors.append(
-                f"Error applying query '{resource_name}': {str(e)}"
-            )
 
 
 async def apply_functions(
@@ -352,77 +247,6 @@ async def apply_functions(
 
         except Exception as e:
             errors.append(f"Error applying function '{func_config.name}': {str(e)}")
-
-
-async def apply_skills(
-    db: AsyncSession,
-    skills: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    """Apply skill configurations"""
-    for skill_config in skills:
-        try:
-            stmt = select(Skill).where(
-                Skill.namespace == skill_config.namespace, Skill.name == skill_config.name
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": skill_config.namespace,
-                    "name": skill_config.name,
-                    "description": skill_config.description,
-                    "content": skill_config.content,
-                }
-            )
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "skills", f"{skill_config.namespace}/{skill_config.name}", track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    # Update skill
-                    existing.description = skill_config.description
-                    existing.content = skill_config.content
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change(
-                    "update", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                )
-
-            else:
-                if not dry_run:
-                    new_skill = Skill(
-                        namespace=skill_config.namespace,
-                        name=skill_config.name,
-                        description=skill_config.description,
-                        content=skill_config.content,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_skill)
-
-                track_change(
-                    "create", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                )
-
-        except Exception as e:
-            errors.append(
-                f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}"
-            )
 
 
 async def apply_components(

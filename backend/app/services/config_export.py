@@ -293,29 +293,21 @@ class ConfigExportService:
         return [serialize_collection(c) for c in result.scalars().all()]
 
     async def _export_queries(self) -> list[dict]:
-        """Export queries"""
-        stmt = select(Query)
+        """Export queries, disabled ones included (as isActive: false)."""
+        from app.services.resources.queries import connection_name
+
+        stmt = select(Query).order_by(Query.namespace, Query.name)
         if self.managed_only:
             stmt = stmt.where(Query.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        queries = result.scalars().all()
-
-        exported = []
-        for query in queries:
-            conn_name = None
-            if query.database_connection_id:
-                conn_result = await self.db.execute(
-                    select(DatabaseConnection).where(DatabaseConnection.id == query.database_connection_id)
-                )
-                conn = conn_result.scalar_one_or_none()
-                if conn:
-                    conn_name = conn.name
-            exported.append(serialize_query(query, conn_name))
-        return exported
+        return [
+            serialize_query(query, await connection_name(self.db, query.database_connection_id))
+            for query in result.scalars().all()
+        ]
 
     async def _export_skills(self) -> list[dict]:
-        """Export skills"""
-        stmt = select(Skill)
+        """Export skills, disabled ones included (as isActive: false)."""
+        stmt = select(Skill).order_by(Skill.namespace, Skill.name)
         if self.managed_only:
             stmt = stmt.where(Skill.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -356,8 +348,9 @@ class ConfigExportService:
         return [serialize_webhook(w) for w in result.scalars().all()]
 
     async def _export_templates(self) -> list[dict]:
-        """Export templates"""
-        stmt = select(Template).where(Template.is_active == True)
+        """Export templates, disabled ones included (as isActive: false):
+        leaving them out dropped them from any instance restored from it."""
+        stmt = select(Template).order_by(Template.namespace, Template.name)
         if self.managed_only:
             stmt = stmt.where(Template.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

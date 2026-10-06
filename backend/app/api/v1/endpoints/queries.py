@@ -1,4 +1,8 @@
-"""Query API endpoints with namespace-based permissions."""
+"""Query API endpoints with namespace-based permissions.
+
+Writes go through QueryApplier, the path config apply and package install use
+too: the same validation, ownership and change history on every channel.
+"""
 import time
 
 import jsonschema
@@ -20,14 +24,17 @@ from app.schemas.query import (
     QueryUpdate,
 )
 from app.services.database_pool import DatabasePoolManager
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.queries import QueryApplier, connection_name
 
 router = APIRouter(prefix="/queries", tags=["queries"])
+
+_applier = QueryApplier()
 
 
 async def _authorize_connection(
     request: Request, db: AsyncSession, permissions: dict, connection_id
-) -> None:
+) -> str:
     """A query runs its SQL with the connection's credentials, so binding one
     takes the same right as seeing connections (admin-granted by default) —
     the console's editor can only list them with it. Holding queries.create
@@ -39,7 +46,7 @@ async def _authorize_connection(
     # On success the request log keeps the query permission the endpoint set.
     found = (
         await db.execute(
-            select(DatabaseConnection.id).where(
+            select(DatabaseConnection.name).where(
                 DatabaseConnection.id == connection_id,
                 DatabaseConnection.is_active == True,  # noqa: E712
             )
@@ -48,6 +55,7 @@ async def _authorize_connection(
     if found is None:
         # Previously an unknown id failed the foreign key at flush: a 500.
         raise HTTPException(status_code=404, detail="Database connection not found or inactive")
+    return found
 
 
 @router.post("", response_model=QueryResponse, status_code=status.HTTP_201_CREATED)
@@ -66,39 +74,20 @@ async def create_query(
         raise HTTPException(status_code=403, detail="Not authorized to create queries")
     set_permission_used(request, permission)
 
-    await _authorize_connection(request, db, permissions, query_data.database_connection_id)
-
-    # Check uniqueness
-    result = await db.execute(
-        select(Query).where(
-            and_(Query.namespace == query_data.namespace, Query.name == query_data.name)
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query '{query_data.namespace}/{query_data.name}' already exists",
-        )
-
-    query = Query(
-        user_id=user_id,
-        namespace=query_data.namespace,
-        name=query_data.name,
-        description=query_data.description,
-        database_connection_id=query_data.database_connection_id,
-        operation=query_data.operation,
-        sql=query_data.sql,
-        input_schema=query_data.input_schema or {},
-        output_schema=query_data.output_schema or {},
-        timeout_ms=query_data.timeout_ms,
-        max_rows=query_data.max_rows,
+    connection = await _authorize_connection(
+        request, db, permissions, query_data.database_connection_id
     )
 
-    db.add(query)
-    await db.flush()
-    await db.refresh(query)
-
-    return QueryResponse.model_validate(query)
+    data = query_data.model_dump(exclude={"database_connection_id"})
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Query 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, {**data, "connection_name": connection}),
+        must_create=True,
+    )
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return QueryResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[QueryResponse])
@@ -176,55 +165,27 @@ async def update_query(
 
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.update")
 
-    detach_if_package_managed(query)
+    ctx = rest.api_context(db, user_id)
+    query = await rest.locked(_applier, ctx, query)
 
+    # As before: fields left out (or null) are unchanged.
+    patch = {
+        key: value
+        for key, value in query_data.model_dump(exclude={"database_connection_id"}).items()
+        if value is not None
+    }
     if (
         query_data.database_connection_id is not None
         and query_data.database_connection_id != query.database_connection_id
     ):
-        await _authorize_connection(request, db, permissions, query_data.database_connection_id)
-
-    # Check for namespace/name conflicts
-    new_namespace = query_data.namespace or query.namespace
-    new_name = query_data.name or query.name
-
-    if new_namespace != query.namespace or new_name != query.name:
-        result = await db.execute(
-            select(Query).where(
-                and_(Query.namespace == new_namespace, Query.name == new_name, Query.id != query.id)
-            )
+        patch["connection_name"] = await _authorize_connection(
+            request, db, permissions, query_data.database_connection_id
         )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Query '{new_namespace}/{new_name}' already exists"
-            )
-
-    if query_data.namespace is not None:
-        query.namespace = query_data.namespace
-    if query_data.name is not None:
-        query.name = query_data.name
-    if query_data.description is not None:
-        query.description = query_data.description
-    if query_data.database_connection_id is not None:
-        query.database_connection_id = query_data.database_connection_id
-    if query_data.operation is not None:
-        query.operation = query_data.operation
-    if query_data.sql is not None:
-        query.sql = query_data.sql
-    if query_data.input_schema is not None:
-        query.input_schema = query_data.input_schema
-    if query_data.output_schema is not None:
-        query.output_schema = query_data.output_schema
-    if query_data.timeout_ms is not None:
-        query.timeout_ms = query_data.timeout_ms
-    if query_data.max_rows is not None:
-        query.max_rows = query_data.max_rows
-    if query_data.is_active is not None:
-        query.is_active = query_data.is_active
-
-    await db.flush()
+    current = _applier.spec_from_row(query, await connection_name(db, query.database_connection_id))
+    spec = rest.patch_spec(_applier, query, patch, current=current)
+    await rest.write(_applier, ctx, spec, existing=query)
+    await rest.commit(db, ctx)
     await db.refresh(query)
-
     return QueryResponse.model_validate(query)
 
 
@@ -250,8 +211,9 @@ async def delete_query(
 
     set_permission_used(request, f"sinas.queries/{namespace}/{name}.delete")
 
-    await db.delete(query)
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, query), ctx)
+    await rest.commit(db, ctx)
 
     return None
 

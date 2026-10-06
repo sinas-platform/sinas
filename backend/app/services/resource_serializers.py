@@ -37,12 +37,10 @@ def serialize_function(func) -> dict:
 
 
 def serialize_skill(skill) -> dict:
-    return _remove_none_values({
-        "namespace": skill.namespace,
-        "name": skill.name,
-        "description": skill.description,
-        "content": skill.content,
-    })
+    """Config form of a skill — delegated to its spec."""
+    from app.services.resources.skills import SkillApplier
+
+    return SkillApplier().spec_from_row(skill).to_config()
 
 
 def serialize_collection(coll) -> dict:
@@ -105,15 +103,10 @@ def serialize_manifest(manifest) -> dict:
 
 
 def serialize_template(template) -> dict:
-    return _remove_none_values({
-        "namespace": template.namespace,
-        "name": template.name,
-        "description": template.description,
-        "title": template.title,
-        "htmlContent": template.html_content,
-        "textContent": template.text_content,
-        "variableSchema": template.variable_schema if template.variable_schema else None,
-    })
+    """Config form of a template — delegated to its spec."""
+    from app.services.resources.templates import TemplateApplier
+
+    return TemplateApplier().spec_from_row(template).to_config()
 
 
 def serialize_webhook(webhook) -> dict:
@@ -202,18 +195,10 @@ def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
 
 
 def serialize_query(query, connection_name: Optional[str] = None) -> dict:
-    return _remove_none_values({
-        "namespace": query.namespace,
-        "name": query.name,
-        "description": query.description,
-        "connectionName": connection_name,
-        "operation": query.operation,
-        "sql": query.sql,
-        "inputSchema": query.input_schema,
-        "outputSchema": query.output_schema,
-        "timeoutMs": query.timeout_ms,
-        "maxRows": query.max_rows,
-    })
+    """Config form of a query — delegated to its spec."""
+    from app.services.resources.queries import QueryApplier
+
+    return QueryApplier().spec_from_row(query, connection_name).to_config()
 
 
 def serialize_database_trigger(trigger, connection_name: Optional[str] = None) -> dict:

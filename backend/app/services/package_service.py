@@ -453,10 +453,7 @@ class PackageService:
             Component: "components",
             Collection: "collections",
             Function: "functions",
-            Query: "queries",
-            Skill: "skills",
             Store: "stores",
-            Template: "templates",
         }
 
         # Children whose FK has no ON DELETE rule must be cleared first. The
@@ -682,16 +679,9 @@ class PackageService:
         return serialize_component(component)
 
     async def _export_query(self, query: Query) -> dict:
-        from app.models.database_connection import DatabaseConnection
-        conn_name = None
-        if query.database_connection_id:
-            result = await self.db.execute(
-                select(DatabaseConnection).where(DatabaseConnection.id == query.database_connection_id)
-            )
-            conn = result.scalar_one_or_none()
-            if conn:
-                conn_name = conn.name
-        return serialize_query(query, conn_name)
+        from app.services.resources.queries import connection_name
+
+        return serialize_query(query, await connection_name(self.db, query.database_connection_id))
 
     async def _export_collection(self, collection: Collection) -> dict:
         return serialize_collection(collection)
