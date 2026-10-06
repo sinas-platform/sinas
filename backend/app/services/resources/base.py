@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Generic, Iterable, Literal, Optional, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.schemas.config import OwnershipSkip
 from app.schemas.spec.base import SpecModel, diff_specs
 
 logger = logging.getLogger(__name__)
@@ -376,7 +377,7 @@ class ResourceApplier(Generic[TSpec]):
                     f"{self.label} '{new_key}' exists but is managed by "
                     f"{manager}. Skipping."
                 )
-            return ApplyResult("skipped", obj=row, warning=warning)
+            return ApplyResult("skipped", obj=row, warning=OwnershipSkip(warning))
 
         changes = diff_specs(self.history_spec(current), new_canonical)
 

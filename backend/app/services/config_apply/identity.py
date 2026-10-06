@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Role, RolePermission, User, UserIdentity, UserRole
-from app.schemas.config import ResourceChange
+from app.schemas.config import OwnershipSkip, ResourceChange
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def apply_roles(
                 # Check if config-managed
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"Role '{role_config.name}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"Role '{role_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "roles", role_config.name)
                     role_ids[role_config.name] = str(existing.id)
@@ -161,7 +161,7 @@ async def apply_users(
             if existing:
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"User '{user_config.email}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"User '{user_config.email}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "users", user_config.email)
                     user_ids[user_config.email] = str(existing.id)

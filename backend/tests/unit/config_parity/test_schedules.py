@@ -949,7 +949,7 @@ class TestPackageUpgrade:
         service = PackageService(db)
         await service.install(_package_yaml(pkg, "1.0.0", ns, [drop]), str(admin_user.id))
 
-        preview, _, _ = await service.preview(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
+        preview, _, _, _ = await service.preview(_package_yaml(pkg, "2.0.0", ns, []), str(admin_user.id))
 
         assert preview.summary.deleted == {"schedules": 1}
         assert await _row(db, drop) is not None

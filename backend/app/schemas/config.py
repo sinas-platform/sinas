@@ -598,6 +598,11 @@ class PackageMetadataConfig(BaseModel):
     description: Optional[str] = None
     author: Optional[str] = None
     url: Optional[str] = None
+    # The package may be installed more than once on one instance, each
+    # install under its own name (`instance` on install). The package must
+    # then use ${{ install.name }} wherever uniqueness matters (namespaces,
+    # role names, permission keys); it resolves to the install name.
+    multiInstance: bool = False
 
 
 class SinasConfig(BaseModel):
@@ -628,6 +633,13 @@ class SinasConfig(BaseModel):
         if kind == "SinasPackage" and v is None:
             raise ValueError("'package' is required for SinasPackage kind")
         return v
+
+
+class OwnershipSkip(str):
+    """A warning that a declared resource was left alone because someone else
+    (another config, another package, a hand edit) owns it. Still a plain
+    string in the response; the type lets callers that can't accept such a
+    skip (a multi-instance package install) find them."""
 
 
 # Response schemas
