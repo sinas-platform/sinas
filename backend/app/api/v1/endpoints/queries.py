@@ -36,7 +36,7 @@ async def _authorize_connection(
     if not check_permission(permissions, permission):
         set_permission_used(request, permission, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to use database connections")
-    set_permission_used(request, permission)
+    # On success the request log keeps the query permission the endpoint set.
     found = (
         await db.execute(
             select(DatabaseConnection.id).where(

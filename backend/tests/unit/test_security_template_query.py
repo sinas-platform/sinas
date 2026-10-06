@@ -15,6 +15,7 @@ from jinja2.exceptions import SecurityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database_connection import DatabaseConnection
+from app.models.query import Query
 from app.models.user import Role, RolePermission, User, UserRole
 from app.services.template_service import template_service
 from tests.conftest import auth_headers
@@ -93,3 +94,26 @@ class TestQueryConnections:
             headers=auth_headers(admin_user),
         )
         assert moved.status_code == 404
+
+    async def test_moving_needs_connection_access_even_with_update_rights(
+        self, client, db: AsyncSession, db_connection
+    ):
+        user = await _user_with(db, "sinas.queries/*/*.update:own")
+        other = DatabaseConnection(
+            name=f"other-{uuid.uuid4().hex[:8]}", connection_type="postgresql",
+            host="localhost", port=5432, database="test", username="test",
+        )
+        db.add(other)
+        query = Query(
+            user_id=user.id, namespace="default", name=f"q-{uuid.uuid4().hex[:8]}",
+            database_connection_id=db_connection.id, operation="read", sql="select 1",
+        )
+        db.add(query)
+        await db.flush()
+        moved = await client.put(
+            f"/api/v1/queries/{query.namespace}/{query.name}",
+            json={"database_connection_id": str(other.id)},
+            headers=auth_headers(user),
+        )
+        assert moved.status_code == 403
+        assert moved.json()["detail"] == "Not authorized to use database connections"
