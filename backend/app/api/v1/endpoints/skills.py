@@ -1,7 +1,11 @@
-"""Skills API endpoints."""
+"""Skills API endpoints.
+
+Writes go through SkillApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -9,9 +13,12 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.skill import Skill
 from app.schemas import SkillCreate, SkillResponse, SkillUpdate
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.skills import SkillApplier
 
 router = APIRouter(prefix="/skills", tags=["skills"])
+
+_applier = SkillApplier()
 
 
 @router.post("", response_model=SkillResponse, status_code=status.HTTP_201_CREATED)
@@ -31,32 +38,14 @@ async def create_skill(
         raise HTTPException(status_code=403, detail="Not authorized to create skills")
     set_permission_used(request, permission)
 
-    # Check if skill name already exists in this namespace
-    result = await db.execute(
-        select(Skill).where(
-            and_(Skill.namespace == skill_data.namespace, Skill.name == skill_data.name)
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Skill 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, skill_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Skill '{skill_data.namespace}/{skill_data.name}' already exists",
-        )
-
-    # Create skill
-    skill = Skill(
-        user_id=user_id,
-        namespace=skill_data.namespace,
-        name=skill_data.name,
-        description=skill_data.description,
-        content=skill_data.content,
-    )
-
-    db.add(skill)
-    await db.flush()
-    await db.refresh(skill)
-
-    return SkillResponse.model_validate(skill)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return SkillResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[SkillResponse])
@@ -137,38 +126,13 @@ async def update_skill(
 
     set_permission_used(request, f"sinas.skills/{namespace}/{name}.update")
 
-    detach_if_package_managed(skill)
-
-    # If namespace or name is being updated, check for conflicts
-    new_namespace = skill_data.namespace or skill.namespace
-    new_name = skill_data.name or skill.name
-
-    if new_namespace != skill.namespace or new_name != skill.name:
-        result = await db.execute(
-            select(Skill).where(
-                and_(Skill.namespace == new_namespace, Skill.name == new_name, Skill.id != skill.id)
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Skill '{new_namespace}/{new_name}' already exists"
-            )
-
-    # Update fields
-    if skill_data.namespace is not None:
-        skill.namespace = skill_data.namespace
-    if skill_data.name is not None:
-        skill.name = skill_data.name
-    if skill_data.description is not None:
-        skill.description = skill_data.description
-    if skill_data.content is not None:
-        skill.content = skill_data.content
-    if skill_data.is_active is not None:
-        skill.is_active = skill_data.is_active
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    skill = await rest.locked(_applier, ctx, skill)
+    # As before: fields left out (or null) are unchanged.
+    patch = {key: value for key, value in skill_data.model_dump().items() if value is not None}
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, skill, patch), existing=skill)
+    await rest.commit(db, ctx)
     await db.refresh(skill)
-
     return SkillResponse.model_validate(skill)
 
 
@@ -195,7 +159,7 @@ async def delete_skill(
 
     set_permission_used(request, f"sinas.skills/{namespace}/{name}.delete")
 
-    await db.delete(skill)
-    await db.flush()
-
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, skill), ctx)
+    await rest.commit(db, ctx)
     return None

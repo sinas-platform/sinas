@@ -273,8 +273,13 @@ class ResourceApplier(Generic[TSpec]):
     def write_fields(self, row: Any, spec: TSpec) -> None:
         raise NotImplementedError
 
-    async def write_row(self, row: Any, spec: TSpec, ctx: ApplyContext) -> None:
-        """Write the spec onto the row. Override where that needs a lookup."""
+    async def write_row(
+        self, row: Any, spec: TSpec, ctx: ApplyContext, current: Optional[TSpec] = None
+    ) -> None:
+        """Write the spec onto the row. Override where that needs a lookup.
+        `current` is the state the change was computed against (None on
+        create): a reference held by id that the spec leaves as it was must
+        stay that id, whatever its name resolves to by now."""
         self.write_fields(row, spec)
 
     async def check_references(self, spec: TSpec, ctx: ApplyContext) -> None:
@@ -348,7 +353,7 @@ class ResourceApplier(Generic[TSpec]):
             row = self.new_row(spec, ctx)
             if ctx.restore_resource_id is not None:
                 row.id = ctx.restore_resource_id
-            await self.write_row(row, spec, ctx)
+            await self.write_row(row, spec, ctx, None)
             self._stamp(row, spec, ctx)
             ctx.db.add(row)
             await ctx.db.flush()  # assigns the id effects and history refer to
@@ -398,7 +403,7 @@ class ResourceApplier(Generic[TSpec]):
         if ctx.dry_run:
             return ApplyResult("update", obj=row, changes=changes)
 
-        await self.write_row(row, spec, ctx)
+        await self.write_row(row, spec, ctx, current)
         if decision == "write_detach":
             row.managed_by = None
             row.config_name = None

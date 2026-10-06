@@ -111,6 +111,8 @@ class QueryConfig(BaseModel):
     outputSchema: Optional[dict[str, Any]] = None
     timeoutMs: int = 5000
     maxRows: int = 1000
+    # Unset: a new query is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class FunctionConfig(BaseModel):
@@ -135,6 +137,8 @@ class SkillConfig(BaseModel):
     name: str
     description: str  # What this skill helps with (shown to LLM)
     content: str  # Markdown instructions (retrieved on demand)
+    # Unset: a new skill is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class EnabledStoreConfigYaml(BaseModel):
@@ -379,6 +383,8 @@ class TemplateConfig(BaseModel):
     htmlContent: str
     textContent: Optional[str] = None
     variableSchema: Optional[dict[str, Any]] = None
+    # Unset: a new template is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class DatabaseTriggerConfig(BaseModel):

@@ -28,15 +28,10 @@ from app.services.config_apply.resources import (
     apply_functions,
     apply_manifests,
     apply_pipelines,
-    apply_queries,
     apply_secrets,
-    apply_skills,
     apply_stores,
 )
 from app.services.config_apply.agents import apply_agents
-from app.services.config_apply.integrations import (
-    apply_templates,
-)
 from pydantic.alias_generators import to_camel
 
 from app.services.resources import ApplyContext, SideEffectBus
@@ -249,33 +244,17 @@ class ConfigApplyService:
                     functions=config.spec.functions,
                     function_ids=self.function_ids,
                 )
-            if "skills" not in self.skip_resource_types:
-                await apply_skills(
-                    **common_with_owner,
-                    skills=config.spec.skills,
-                )
             if "components" not in self.skip_resource_types:
                 await apply_components(
                     **common_with_owner,
                     components=config.spec.components,
                     notify_compile=self._pending_component_compiles.append,
                 )
-            if "queries" not in self.skip_resource_types:
-                await apply_queries(
-                    **common_with_owner,
-                    queries=config.spec.queries,
-                    database_connection_ids=self.database_connection_ids,
-                )
             if "collections" not in self.skip_resource_types:
                 await apply_collections(
                     **common_with_owner,
                     collections=config.spec.collections,
                     collection_ids=self.collection_ids,
-                )
-            if "templates" not in self.skip_resource_types:
-                await apply_templates(
-                    **common_with_owner,
-                    templates=config.spec.templates,
                 )
             if "stores" not in self.skip_resource_types:
                 await apply_stores(
@@ -302,10 +281,11 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            # Kinds with a per-resource applier: connectors, webhooks,
-            # schedules, databaseTriggers — after everything they can point
-            # at. (Nothing checks a reference to a connector yet; when agents
-            # and pipelines migrate, connectors move ahead of them.)
+            # Kinds with a per-resource applier: connectors, skills, queries,
+            # templates, webhooks, schedules, databaseTriggers — after
+            # everything they can point at. (Nothing checks a reference to a
+            # connector, skill or query yet; when agents and pipelines
+            # migrate, those move ahead of them.)
             from app.services.resources.registry import all_appliers
 
             for applier in all_appliers():
@@ -391,6 +371,10 @@ class ConfigApplyService:
             stmt = select(model).where(model.managed_by == self.managed_by)
             if not self.managed_by.startswith("pkg:"):
                 stmt = stmt.where(model.config_name == self.config_name)
+            if not dry_run:
+                # As for uninstall: a row detached by a concurrent manual edit
+                # drops out of the filter once locked, and is kept.
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
             for row in (await self.db.execute(stmt)).scalars().all():
                 key = applier.key_of_row(row)
                 if key in declared:
