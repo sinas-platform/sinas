@@ -23,7 +23,7 @@ Components are embeddable UI widgets built with JSX/HTML/JS and compiled by Sina
 | `css_overrides` | Custom CSS |
 | `visibility` | `private`, `shared`, or `public` |
 
-Components use the `sinas-ui` library (loaded from npm/unpkg) for a consistent look and feel.
+Components are plain React (18) with the Sinas SDK (`@sinas/sdk`). The page they render in is deliberately unstyled: the system font and the browser's own light or dark colours (matching the console when embedded there). Style components however you like, or use `css_overrides`. The old `@sinas/ui` library is retired; components that still import it keep working.
 
 **Management endpoints:**
 

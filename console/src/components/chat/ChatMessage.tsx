@@ -1,6 +1,8 @@
 import { v, tokens } from './tokens';
 import { renderMarkdown } from './markdownRenderer';
 import { ToolCallCard } from './ToolCallCard';
+import { hostColorMode, useFrameTheme } from './frameTheme';
+import { useMemo, useRef } from 'react';
 import type { ChatSessionMessage, ContentPart, ComponentContentPart } from '@sinas/sdk';
 
 export interface ChatMessageProps {
@@ -57,6 +59,10 @@ function buildComponentRenderUrl(part: ComponentContentPart, apiBaseUrl: string)
   const params = new URLSearchParams();
   params.set('token', part.render_token);
   if (part.input) params.set('input', JSON.stringify(part.input));
+  // Plain rendering in the host page's light/dark mode, when it says
+  // (later switches reach the page by message: see useFrameTheme).
+  const theme = hostColorMode();
+  if (theme) params.set('theme', theme);
   return `${apiBaseUrl}/components/${part.namespace}/${part.name}/render?${params.toString()}`;
 }
 
@@ -68,8 +74,11 @@ function ComponentFrame({
   apiBaseUrl: string;
 }) {
   // The render page carries its own token, scoped to the component; the
-  // viewer's token never goes into the frame or the "Open" link.
-  const renderUrl = buildComponentRenderUrl(part, apiBaseUrl);
+  // viewer's token never goes into the frame or the "Open" link. The URL is
+  // fixed per part: a theme switch must not reload the component.
+  const renderUrl = useMemo(() => buildComponentRenderUrl(part, apiBaseUrl), [part, apiBaseUrl]);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const onFrameLoad = useFrameTheme(frameRef);
 
   return (
     <div
@@ -104,6 +113,8 @@ function ComponentFrame({
         </a>
       </div>
       <iframe
+        ref={frameRef}
+        onLoad={onFrameLoad}
         src={renderUrl}
         // Opaque origin: the component's code can't reach this page or its storage.
         sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
@@ -111,7 +122,6 @@ function ComponentFrame({
           width: '100%',
           height: '400px',
           border: 'none',
-          backgroundColor: '#fff',
         }}
         title={part.title || part.name}
       />

@@ -12,7 +12,7 @@ const ALLOWED_IMPORTS = new Set([
   "react-dom",
   "react-dom/client",
   "@sinas/sdk",
-  "@sinas/ui",
+  "@sinas/ui", // retired; still allowed so existing components keep compiling
 ]);
 
 /**
