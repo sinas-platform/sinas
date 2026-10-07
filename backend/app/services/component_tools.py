@@ -8,6 +8,7 @@ import json
 import logging
 from typing import Any, Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.component import Component
@@ -62,7 +63,10 @@ class ComponentToolConverter:
         The component's input_schema defines the tool parameters.
         When called, returns a component reference block for frontend rendering.
         """
-        safe_name = f"show_component_{component.namespace}_{component.name}".replace("-", "_")
+        # "{ns}__{name}", as functions and queries name their tools (and as
+        # tool_name_to_status_key reads them back). Replacing "-" with "_"
+        # and splitting on the first "_" lost any name containing either.
+        safe_name = f"show_component_{component.namespace}__{component.name}"
 
         description = (
             component.description
@@ -84,6 +88,16 @@ class ComponentToolConverter:
                 "parameters": parameters,
             },
         }
+
+    async def _legacy_lookup(self, db: AsyncSession, comp_id: str) -> Optional[Component]:
+        candidates = (
+            await db.execute(select(Component).where(Component.is_active == True))  # noqa: E712
+        ).scalars().all()
+        for component in candidates:
+            legacy = f"{component.namespace}_{component.name}".replace("-", "_")
+            if legacy == comp_id:
+                return component
+        return None
 
     async def handle_component_tool_call(
         self,
@@ -111,20 +125,18 @@ class ComponentToolConverter:
             logger.warning(f"Invalid component tool name: {tool_name}")
             return None
 
-        # Extract namespace/name from tool name
         comp_id = tool_name[len("show_component_"):]
-        parts = comp_id.split("_", 1)
-
-        if len(parts) != 2:
-            logger.warning(f"Could not parse component from tool name: {tool_name}")
+        if "__" in comp_id:
+            namespace, name = comp_id.split("__", 1)
+            component = await Component.get_by_name(db, namespace, name)
+        else:
+            # Tool calls recorded before the "__" form (in existing chats):
+            # match the old spelling, where "-" had become "_".
+            component = await self._legacy_lookup(db, comp_id)
+        if component is None or not component.is_active:
+            logger.warning(f"Could not resolve component from tool name: {tool_name}")
             return None
-
-        namespace, name = parts
-        # Convert back from safe name
-        namespace = namespace.replace("_", "-")
-        name = name.replace("_", "-")
-
-        component = await Component.get_by_name(db, namespace, name)
+        namespace, name = component.namespace, component.name
         if not component or not component.is_active:
             logger.warning(f"Component {namespace}/{name} not found or inactive")
             return None

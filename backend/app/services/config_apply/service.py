@@ -146,17 +146,14 @@ class ConfigApplyService:
         # Compile config-applied components in the background — the same
         # builder path the REST endpoint uses. Without this, components from
         # config apply / package install sat at compile_status="pending"
-        # forever. Fire-and-forget: _do_compile owns its own sessions and
-        # records compile errors on the row. (Helper lives in the endpoint
-        # module today; the config/CRUD unification relocates it.)
+        # forever. Fire-and-forget: compile_component owns its own sessions
+        # and records compile errors on the row.
         if pending_compiles:
-            import asyncio
-
-            from app.api.v1.endpoints.components import _do_compile
+            from app.services.component_builder import schedule_compile
 
             for component_id in pending_compiles:
                 try:
-                    asyncio.create_task(_do_compile(component_id, "", ""))
+                    schedule_compile(component_id)
                 except Exception as e:
                     logger.warning(
                         f"Failed to schedule compile for component {component_id}: {e}"

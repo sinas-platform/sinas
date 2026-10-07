@@ -318,9 +318,8 @@ async def apply_components(
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
                     if source_changed:
+                        # The last good bundle serves until the new one is built.
                         existing.compile_status = "pending"
-                        existing.compiled_bundle = None
-                        existing.source_map = None
                         existing.compile_errors = None
                         existing.version += 1
                         if notify_compile:

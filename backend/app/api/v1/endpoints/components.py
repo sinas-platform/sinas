@@ -8,7 +8,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
-from app.core.database import AsyncSessionLocal, get_db
+from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.component import Component
 from app.models.component_share import ComponentShare
@@ -21,7 +21,7 @@ from app.schemas.component import (
     ShareResponse,
 )
 from app.services.content_tokens import generate_component_render_token
-from app.services.component_builder import ComponentBuilderService
+from app.services import component_builder
 from app.services.package_service import detach_if_package_managed
 
 router = APIRouter(prefix="/components", tags=["components"])
@@ -43,47 +43,6 @@ def _component_list_response(component: Component, user_id: str) -> ComponentLis
         component.namespace, component.name, user_id
     )
     return resp
-
-
-async def _do_compile(component_id, namespace: str, name: str):
-    """Background task to compile a component via the builder service.
-
-    Uses explicit commit() — this runs outside get_db so flush() would leave
-    the transaction open indefinitely, blocking all other DB connections.
-    """
-    # Set status to "compiling" in one short transaction
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Component).where(Component.id == component_id))
-        component = result.scalar_one_or_none()
-        if not component:
-            return
-        source_code = component.source_code
-        component.compile_status = "compiling"
-        await db.commit()
-
-    # Compile (no DB connection held during this potentially slow call)
-    builder = ComponentBuilderService()
-    compile_result = await builder.compile(source_code)
-
-    # Save result in a new short transaction
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Component).where(Component.id == component_id))
-        component = result.scalar_one_or_none()
-        if not component:
-            return
-
-        if compile_result["success"]:
-            component.compiled_bundle = compile_result["bundle"]
-            component.source_map = compile_result.get("sourceMap")
-            component.compile_status = "success"
-            component.compile_errors = None
-        else:
-            component.compile_status = "error"
-            component.compile_errors = compile_result.get("errors", [])
-            component.compiled_bundle = None
-            component.source_map = None
-
-        await db.commit()
 
 
 @router.post("", response_model=ComponentResponse, status_code=status.HTTP_201_CREATED)
@@ -141,7 +100,7 @@ async def create_component(
     await db.refresh(component)
 
     # Trigger background compilation
-    background_tasks.add_task(_do_compile, component.id, component.namespace, component.name)
+    background_tasks.add_task(component_builder.compile_component, component.id)
 
     return _component_response(component, user_id)
 
@@ -258,9 +217,8 @@ async def update_component(
     if component_data.source_code is not None:
         if component_data.source_code != component.source_code:
             component.source_code = component_data.source_code
+            # The last good bundle keeps serving until the new one is built.
             component.compile_status = "pending"
-            component.compiled_bundle = None
-            component.source_map = None
             component.compile_errors = None
             component.version += 1
             source_changed = True
@@ -290,7 +248,7 @@ async def update_component(
 
     # Trigger recompilation if source changed
     if source_changed:
-        background_tasks.add_task(_do_compile, component.id, component.namespace, component.name)
+        background_tasks.add_task(component_builder.compile_component, component.id)
 
     return _component_response(component, user_id)
 
@@ -351,7 +309,7 @@ async def compile_component(
     await db.flush()
     await db.refresh(component)
 
-    background_tasks.add_task(_do_compile, component.id, component.namespace, component.name)
+    background_tasks.add_task(component_builder.compile_component, component.id)
 
     return _component_response(component, user_id)
 
