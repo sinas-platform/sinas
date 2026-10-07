@@ -14,16 +14,24 @@ export function hostColorMode(): 'light' | 'dark' | undefined {
 export function useFrameTheme(frame: RefObject<HTMLIFrameElement | null>): void {
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const observer = new MutationObserver(() => {
+    const send = () => {
       const theme = hostColorMode();
       if (theme && frame.current?.contentWindow) {
         frame.current.contentWindow.postMessage({ type: 'sinas:theme', theme }, '*');
       }
-    });
+    };
+    const observer = new MutationObserver(send);
     observer.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ['data-color-mode'],
     });
-    return () => observer.disconnect();
+    // A switch while the frame was still loading (its URL carries the old
+    // mode, its listener wasn't there yet): send the current mode on load.
+    const element = frame.current;
+    element?.addEventListener('load', send);
+    return () => {
+      observer.disconnect();
+      element?.removeEventListener('load', send);
+    };
   }, [frame]);
 }
