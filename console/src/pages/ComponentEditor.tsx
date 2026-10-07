@@ -196,11 +196,11 @@ export function ComponentEditor() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-3 border-b border-gray-800 bg-surface-0">
         <div className="flex items-center gap-3">
-          <Link to="/components" className="text-gray-400 hover:text-white transition-colors">
+          <Link to="/components" className="text-gray-400 hover:text-gray-100 transition-colors">
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <div>
-            <h1 className="text-lg font-semibold text-white">{component.title || component.name}</h1>
+            <h1 className="text-lg font-semibold text-gray-100">{component.title || component.name}</h1>
             <p className="text-xs text-gray-500">{namespace}/{name} &middot; v{component.version}</p>
           </div>
           <span className={`px-2 py-0.5 rounded text-xs font-medium border ${getStatusBadge(component.compile_status)}`}>
@@ -213,7 +213,7 @@ export function ComponentEditor() {
             className={`flex items-center gap-1 px-3 py-1.5 text-sm border rounded-lg transition-colors ${
               showResources
                 ? 'text-primary-400 border-primary-700 bg-primary-900/20'
-                : 'text-gray-400 hover:text-white border-gray-700'
+                : 'text-gray-400 hover:text-gray-100 border-gray-700'
             }`}
           >
             <Settings2 className="w-4 h-4" />
@@ -229,7 +229,7 @@ export function ComponentEditor() {
               href={getComponentRenderUrl(component.render_token!, namespace!, name!)}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors"
+              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors"
             >
               <ExternalLink className="w-4 h-4" />
               Preview
@@ -238,7 +238,7 @@ export function ComponentEditor() {
           <button
             onClick={() => compileMutation.mutate()}
             disabled={compileMutation.isPending}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-white border border-gray-700 rounded-lg transition-colors disabled:opacity-50"
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors disabled:opacity-50"
           >
             <RefreshCw className={`w-4 h-4 ${compileMutation.isPending ? 'animate-spin' : ''}`} />
             Compile
@@ -281,7 +281,7 @@ export function ComponentEditor() {
                 value={title}
                 onChange={(e) => { setTitle(e.target.value); setDirty(true); }}
                 placeholder="Title"
-                className="w-full bg-transparent text-sm text-white focus:outline-none"
+                className="w-full bg-transparent text-sm text-gray-100 focus:outline-none"
               />
             </div>
             <div className="flex-1">
@@ -330,7 +330,7 @@ export function ComponentEditor() {
           <div className="w-80 flex flex-col bg-surface-0 border-r border-gray-800 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800">
               <span className="text-sm font-medium text-gray-200">Resources</span>
-              <button onClick={() => setShowResources(false)} className="text-gray-500 hover:text-white">
+              <button onClick={() => setShowResources(false)} className="text-gray-500 hover:text-gray-100">
                 <X className="w-4 h-4" />
               </button>
             </div>

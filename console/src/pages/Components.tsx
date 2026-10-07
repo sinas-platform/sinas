@@ -86,7 +86,7 @@ export function Components() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-white">Components</h1>
+          <h1 className="text-2xl font-bold text-gray-100">Components</h1>
           <p className="text-sm text-gray-400 mt-1">Serverless UI components compiled and served as embeddable iframes</p>
         </div>
         <button
@@ -119,7 +119,7 @@ export function Components() {
                   <Layers className="w-5 h-5 text-primary-400" />
                   <Link
                     to={`/components/${comp.namespace}/${comp.name}`}
-                    className="text-white font-medium hover:text-primary-400 transition-colors"
+                    className="text-gray-100 font-medium hover:text-primary-400 transition-colors"
                   >
                     {comp.title || comp.name}
                   </Link>
@@ -188,7 +188,7 @@ export function Components() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-surface-input border border-gray-800 rounded-lg w-full max-w-lg">
             <div className="p-6 border-b border-gray-800">
-              <h2 className="text-lg font-semibold text-white">Create Component</h2>
+              <h2 className="text-lg font-semibold text-gray-100">Create Component</h2>
             </div>
             <form onSubmit={handleCreate} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -197,7 +197,7 @@ export function Components() {
                   <input
                     name="namespace"
                     defaultValue="default"
-                    className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                    className="input text-sm"
                     pattern="^[a-zA-Z][a-zA-Z0-9_-]*$"
                   />
                 </div>
@@ -206,7 +206,7 @@ export function Components() {
                   <input
                     name="name"
                     required
-                    className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                    className="input text-sm"
                     pattern="^[a-zA-Z][a-zA-Z0-9_-]*$"
                     placeholder="my-component"
                   />
@@ -216,7 +216,7 @@ export function Components() {
                 <label className="block text-sm text-gray-400 mb-1">Title</label>
                 <input
                   name="title"
-                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                  className="input text-sm"
                   placeholder="My Component"
                 />
               </div>
@@ -224,7 +224,7 @@ export function Components() {
                 <label className="block text-sm text-gray-400 mb-1">Description</label>
                 <input
                   name="description"
-                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm focus:outline-none focus:border-primary-600"
+                  className="input text-sm"
                   placeholder="What does this component do?"
                 />
               </div>
@@ -234,7 +234,7 @@ export function Components() {
                   name="source_code"
                   required
                   rows={8}
-                  className="w-full bg-surface-0 border border-gray-800 rounded px-3 py-2 text-white text-sm font-mono focus:outline-none focus:border-primary-600"
+                  className="input text-sm font-mono"
                   defaultValue={`import React from 'react';\n\nexport default function MyComponent() {\n  return (\n    <div style={{ padding: '1rem' }}>\n      <h1>Hello from SINAS!</h1>\n    </div>\n  );\n}`}
                 />
               </div>
@@ -242,7 +242,7 @@ export function Components() {
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 text-gray-400 hover:text-white transition-colors"
+                  className="px-4 py-2 text-gray-400 hover:text-gray-100 transition-colors"
                 >
                   Cancel
                 </button>
