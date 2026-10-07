@@ -89,15 +89,45 @@ class ComponentToolConverter:
             },
         }
 
+    async def _exact_lookup(self, db: AsyncSession, comp_id: str) -> Optional[Component]:
+        """The component whose tool name is exactly this. A namespace or
+        name may itself contain "__", so every split is tried; two different
+        components producing the same name is refused, not guessed."""
+        matches = []
+        start = 0
+        while (index := comp_id.find("__", start)) != -1:
+            namespace, name = comp_id[:index], comp_id[index + 2:]
+            if namespace and name:
+                component = await Component.get_by_name(db, namespace, name)
+                if component is not None and component.is_active:
+                    matches.append(component)
+            start = index + 1
+        if len(matches) > 1:
+            logger.warning(f"Ambiguous component tool name: show_component_{comp_id}")
+            return None
+        return matches[0] if matches else None
+
     async def _legacy_lookup(self, db: AsyncSession, comp_id: str) -> Optional[Component]:
+        """Tool names recorded before the "__" form. First what the old
+        handler looked up (split on the first "_", every "_" in the name
+        read as "-"), so an old chat opens what it always opened; then the
+        other spellings that produce this name, if exactly one exists."""
+        namespace, _, name = comp_id.partition("_")
+        if namespace and name:
+            component = await Component.get_by_name(db, namespace, name.replace("_", "-"))
+            if component is not None and component.is_active:
+                return component
         candidates = (
             await db.execute(select(Component).where(Component.is_active == True))  # noqa: E712
         ).scalars().all()
-        for component in candidates:
-            legacy = f"{component.namespace}_{component.name}".replace("-", "_")
-            if legacy == comp_id:
-                return component
-        return None
+        matches = [
+            c for c in candidates
+            if f"{c.namespace}_{c.name}".replace("-", "_") == comp_id
+        ]
+        if len(matches) > 1:
+            logger.warning(f"Ambiguous legacy component tool name: show_component_{comp_id}")
+            return None
+        return matches[0] if matches else None
 
     async def handle_component_tool_call(
         self,
@@ -127,8 +157,7 @@ class ComponentToolConverter:
 
         comp_id = tool_name[len("show_component_"):]
         if "__" in comp_id:
-            namespace, name = comp_id.split("__", 1)
-            component = await Component.get_by_name(db, namespace, name)
+            component = await self._exact_lookup(db, comp_id)
         else:
             # Tool calls recorded before the "__" form (in existing chats):
             # match the old spelling, where "-" had become "_".

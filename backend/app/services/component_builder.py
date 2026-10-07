@@ -111,6 +111,10 @@ async def compile_component(component_id) -> None:
             await db.commit()
 
         compile_result = await ComponentBuilderService().compile(source_code)
+        if not isinstance(compile_result, dict) or not isinstance(compile_result.get("success"), bool):
+            raise ValueError("unexpected reply from the builder")
+        if compile_result["success"] and not isinstance(compile_result.get("bundle"), str):
+            raise ValueError("the builder reported success without a bundle")
     except Exception as e:  # never leave the row at "compiling"
         logger.exception("Compiling component %s failed", component_id)
         compile_result = {

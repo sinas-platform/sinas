@@ -118,6 +118,32 @@ class TestChatToolNames:
         block = await converter.handle_component_tool_call(db, tool_name, {}, str(admin_user.id))
         assert (block["namespace"], block["name"]) == (namespace, name)
 
+    async def test_a_namespace_with_a_double_underscore(self, db, admin_user):
+        namespace = f"ops__east{_uid()}"
+        await _component(db, admin_user, namespace=namespace, name="chart")
+        block = await ComponentToolConverter().handle_component_tool_call(
+            db, f"show_component_{namespace}__chart", {}, str(admin_user.id)
+        )
+        assert (block["namespace"], block["name"]) == (namespace, "chart")
+
+    async def test_an_ambiguous_name_is_refused_not_guessed(self, db, admin_user):
+        u = _uid()
+        await _component(db, admin_user, namespace=f"a{u}__b", name="c")
+        await _component(db, admin_user, namespace=f"a{u}", name="b__c")
+        block = await ComponentToolConverter().handle_component_tool_call(
+            db, f"show_component_a{u}__b__c", {}, str(admin_user.id)
+        )
+        assert block is None
+
+    async def test_old_chats_open_what_they_always_opened(self, db, admin_user):
+        u = _uid()
+        await _component(db, admin_user, namespace=f"d{u}", name="a-b")
+        await _component(db, admin_user, namespace=f"d{u}", name="a_b")
+        block = await ComponentToolConverter().handle_component_tool_call(
+            db, f"show_component_d{u}_a_b", {}, str(admin_user.id)
+        )
+        assert block["name"] == "a-b"  # what the old handler looked up
+
     async def test_tool_calls_from_existing_chats_still_resolve(self, db, admin_user):
         namespace = f"my-ui{_uid()}"
         await _component(db, admin_user, namespace=namespace, name="chart")
@@ -186,6 +212,16 @@ class TestCompiles:
         monkeypatch.setattr(component_builder, "schedule_compile", scheduled.append)
         await component_builder.resume_interrupted_compiles()
         assert stuck.id in scheduled
+
+    @pytest.mark.parametrize("reply", [{"ok": True}, {"success": True}, None])
+    async def test_an_unexpected_builder_reply_is_an_error(
+        self, db, admin_user, monkeypatch, same_session, reply
+    ):
+        comp = await _component(db, admin_user)
+        _builder(monkeypatch, reply)
+        await component_builder.compile_component(comp.id)
+        await db.refresh(comp)
+        assert comp.compile_status == "error"
 
     async def test_no_builder_is_a_clear_error(self):
         result = await component_builder.ComponentBuilderService(builder_url="").compile("x")
