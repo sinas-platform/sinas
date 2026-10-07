@@ -11,11 +11,30 @@ context with no SDK installed. A pure ASGI middleware rather than
 `BaseHTTPMiddleware`, so the context is current in the endpoint itself.
 """
 
+from collections.abc import Iterable
+
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import extract
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 _PROPAGATED = (b"traceparent", b"tracestate", b"baggage")
+
+
+def _carrier(headers: Iterable[tuple[bytes, bytes]]) -> dict[str, str]:
+    """The propagated headers of a request, one entry per name.
+
+    W3C `baggage` and `tracestate` may each arrive split over several header
+    lines; their members are combined, in order, as one comma-separated list
+    (RFC 9110 field-line combination), so none is lost. Repeated
+    `traceparent` lines combine the same way into a value no propagator
+    accepts, so the request is served with no trace context, as the W3C
+    trace-context test suite expects of a duplicated `traceparent`.
+    """
+    values: dict[str, list[str]] = {}
+    for name, value in headers:
+        if name in _PROPAGATED:
+            values.setdefault(name.decode("latin-1"), []).append(value.decode("latin-1"))
+    return {name: ",".join(parts) for name, parts in values.items()}
 
 
 class TraceContextMiddleware:
@@ -26,11 +45,7 @@ class TraceContextMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        carrier = {
-            name.decode("latin-1"): value.decode("latin-1")
-            for name, value in scope.get("headers") or []
-            if name in _PROPAGATED
-        }
+        carrier = _carrier(scope.get("headers") or [])
         if not carrier:
             await self.app(scope, receive, send)
             return

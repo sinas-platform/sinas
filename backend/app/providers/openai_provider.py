@@ -50,10 +50,6 @@ class OpenAIProvider(BaseLLMProvider):
         # Add any additional kwargs
         params.update(kwargs)
 
-        headers = self._context_headers()
-        if headers:
-            params["extra_headers"] = {**params.get("extra_headers", {}), **headers}
-
         return params
 
     async def complete(
@@ -74,6 +70,7 @@ class OpenAIProvider(BaseLLMProvider):
             tools=tools,
             kwargs=kwargs,
         )
+        self._add_context_headers(params)
 
         response = await self.client.chat.completions.create(**params)
 
@@ -114,6 +111,7 @@ class OpenAIProvider(BaseLLMProvider):
             kwargs=kwargs,
         )
         params["stream"] = True
+        self._add_context_headers(params)
 
         stream = await self.client.chat.completions.create(**params)
 
@@ -237,7 +235,9 @@ class OpenAIProvider(BaseLLMProvider):
         files.create — its subclass replaces this with Google's Files API.
         """
         input_file = await self.client.files.create(
-            file=("batch.jsonl", jsonl), purpose="batch"
+            file=("batch.jsonl", jsonl),
+            purpose="batch",
+            extra_headers=self._context_headers() or None,
         )
         return input_file.id
 
@@ -249,6 +249,8 @@ class OpenAIProvider(BaseLLMProvider):
     async def submit_batch(self, requests: list[dict[str, Any]]) -> str:
         lines = []
         for req in requests:
+            # The request body only: the trace context goes on the calls
+            # that upload and create the batch, as headers.
             body = self._prepare_params(
                 model=req["model"],
                 messages=req["messages"],
@@ -270,6 +272,7 @@ class OpenAIProvider(BaseLLMProvider):
             input_file_id=input_file_id,
             endpoint="/v1/chat/completions",
             completion_window="24h",
+            extra_headers=self._context_headers() or None,
         )
         return batch.id
 

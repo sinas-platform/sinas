@@ -51,6 +51,7 @@ class MistralProvider(BaseLLMProvider):
             if key in kwargs:
                 params[key] = kwargs[key]
 
+        self._add_context_headers(params)
         response = await self.client.chat.completions.create(**params)
 
         message = response.choices[0].message
@@ -96,6 +97,7 @@ class MistralProvider(BaseLLMProvider):
             if key in kwargs:
                 params[key] = kwargs[key]
 
+        self._add_context_headers(params)
         stream = await self.client.chat.completions.create(**params)
 
         # Collect tool calls across chunks

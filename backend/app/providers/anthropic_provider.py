@@ -159,7 +159,7 @@ class AnthropicProvider(BaseLLMProvider):
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
 
-        self._apply_context_headers(params)
+        self._add_context_headers(params)
 
         try:
             response = await self.client.messages.create(**params)
@@ -233,7 +233,7 @@ class AnthropicProvider(BaseLLMProvider):
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
 
-        self._apply_context_headers(params)
+        self._add_context_headers(params)
 
         # Track tool calls being built across chunks
         current_tool_calls = {}
@@ -344,12 +344,6 @@ class AnthropicProvider(BaseLLMProvider):
         """
         if self.effort:
             params.setdefault("output_config", {})["effort"] = self.effort
-
-    def _apply_context_headers(self, params: dict[str, Any]) -> None:
-        """Send the current trace context with the request, when enabled."""
-        headers = self._context_headers()
-        if headers:
-            params["extra_headers"] = {**params.get("extra_headers", {}), **headers}
 
     def _apply_cache_control(self, params: dict[str, Any]) -> None:
         """Mark prompt-cache breakpoints on the request (in place).
@@ -651,7 +645,8 @@ class AnthropicProvider(BaseLLMProvider):
             requests=[
                 {"custom_id": req["custom_id"], "params": self._build_batch_params(req)}
                 for req in requests
-            ]
+            ],
+            extra_headers=self._context_headers() or None,
         )
         return batch.id
 
