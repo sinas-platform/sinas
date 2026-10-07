@@ -152,7 +152,11 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`SINAS Builder Server listening on port ${PORT}`);
-});
+module.exports = { compileSource, ALLOWED_IMPORTS };
+
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`SINAS Builder Server listening on port ${PORT}`);
+  });
+}

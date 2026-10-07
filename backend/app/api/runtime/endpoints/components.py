@@ -100,7 +100,9 @@ def _build_html_shell(
     renew_path = _script_json(
         f"/components/{quote(component.namespace, safe='')}/{quote(component.name, safe='')}/access-token"
     )
-    renew_ms = (TOKEN_TTL_SECONDS - 300) * 1000
+    # Renew 5 minutes before expiry; on failure retry every 30s until then.
+    ttl_ms, margin_ms, retry_ms = TOKEN_TTL_SECONDS * 1000, 300_000, 30_000
+    renew_ms = ttl_ms - margin_ms
     title = html.escape(component.title or component.name)
     css_overrides = component.css_overrides or ""
     bundle = component.compiled_bundle or ""
@@ -188,18 +190,38 @@ def _build_html_shell(
   // Scoped to this component: the viewer's permissions, capped to what the
   // component declares. Renewed before it expires (for a working day).
   window.__SINAS_AUTH_TOKEN__ = {token_json};
-  (function renew() {{
+  (function keepAlive() {{
     if (!window.__SINAS_AUTH_TOKEN__) return;
-    setTimeout(function() {{
+    var expiresAt = Date.now() + {ttl_ms};
+    function ended() {{
+      if (document.getElementById('sinas-session-ended')) return;
+      var note = document.createElement('div');
+      note.id = 'sinas-session-ended';
+      note.textContent = 'This session has ended. Reload the page to continue.';
+      note.setAttribute('style', 'position:fixed;top:0;left:0;right:0;z-index:10;padding:8px 12px;'
+        + 'background:#7f1d1d;color:#fff;font:13px system-ui,sans-serif;text-align:center');
+      document.body.appendChild(note);
+    }}
+    function retry() {{
+      // Network trouble or a server error: keep trying while the token lasts.
+      if (Date.now() + {retry_ms} < expiresAt) setTimeout(renew, {retry_ms});
+      else ended();
+    }}
+    function renew() {{
       fetch({renew_path}, {{
         method: 'POST',
         headers: {{ 'Authorization': 'Bearer ' + window.__SINAS_AUTH_TOKEN__ }},
-      }}).then(function(r) {{ return r.ok ? r.json() : null; }})
-        .then(function(body) {{
-          if (body && body.token) {{ window.__SINAS_AUTH_TOKEN__ = body.token; renew(); }}
-        }})
-        .catch(function() {{}});
-    }}, {renew_ms});
+      }}).then(function(r) {{
+        if (r.status === 401 || r.status === 403) return ended();  // session over
+        if (!r.ok) return retry();
+        return r.json().then(function(body) {{
+          window.__SINAS_AUTH_TOKEN__ = body.token;
+          expiresAt = Date.now() + body.expires_in * 1000;
+          setTimeout(renew, Math.max(expiresAt - Date.now() - {margin_ms}, 0));
+        }});
+      }}).catch(retry);
+    }}
+    setTimeout(renew, {renew_ms});
   }})();
 
   // Module shim for esbuild IIFE externals (require() calls)
