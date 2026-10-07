@@ -89,7 +89,7 @@ class ComponentToolConverter:
             },
         }
 
-    async def _exact_lookup(self, db: AsyncSession, comp_id: str) -> Optional[Component]:
+    async def _exact_lookup(self, db: AsyncSession, comp_id: str) -> tuple[Optional[Component], bool]:
         """The component whose tool name is exactly this. A namespace or
         name may itself contain "__", so every split is tried; two different
         components producing the same name is refused, not guessed."""
@@ -104,8 +104,8 @@ class ComponentToolConverter:
             start = index + 1
         if len(matches) > 1:
             logger.warning(f"Ambiguous component tool name: show_component_{comp_id}")
-            return None
-        return matches[0] if matches else None
+            return None, True
+        return (matches[0] if matches else None), False
 
     async def _legacy_lookup(self, db: AsyncSession, comp_id: str) -> Optional[Component]:
         """Tool names recorded before the "__" form. First what the old
@@ -156,7 +156,11 @@ class ComponentToolConverter:
             return None
 
         comp_id = tool_name[len("show_component_"):]
-        component = await self._exact_lookup(db, comp_id) if "__" in comp_id else None
+        component, ambiguous = (
+            await self._exact_lookup(db, comp_id) if "__" in comp_id else (None, False)
+        )
+        if ambiguous:
+            return None  # refused, not "not found": no fallback guess
         if component is None:
             # Tool calls recorded before the "__" form (in existing chats):
             # match the old spelling, where "-" had become "_" — which can

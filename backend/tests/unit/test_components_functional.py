@@ -173,6 +173,16 @@ class TestChatToolNames:
         )
         assert block is None
 
+    async def test_an_ambiguous_name_never_falls_back_to_a_third(self, db, admin_user):
+        u = _uid()
+        await _component(db, admin_user, namespace=f"a{u}__b", name="c")
+        await _component(db, admin_user, namespace=f"a{u}", name="b__c")
+        await _component(db, admin_user, namespace=f"a{u}_", name="b--c")  # legacy spelling of the same
+        block = await ComponentToolConverter().handle_component_tool_call(
+            db, f"show_component_a{u}__b__c", {}, str(admin_user.id)
+        )
+        assert block is None
+
     async def test_old_chats_open_what_they_always_opened(self, db, admin_user):
         u = _uid()
         await _component(db, admin_user, namespace=f"d{u}", name="a-b")
