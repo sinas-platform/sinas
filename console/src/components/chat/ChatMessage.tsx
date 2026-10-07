@@ -67,11 +67,9 @@ function ComponentFrame({
   part: ComponentContentPart;
   apiBaseUrl: string;
 }) {
+  // The render page carries its own token, scoped to the component; the
+  // viewer's token never goes into the frame or the "Open" link.
   const renderUrl = buildComponentRenderUrl(part, apiBaseUrl);
-  const token = typeof window !== 'undefined' ? window.__SINAS_AUTH_TOKEN__ : null;
-  const openUrl = token
-    ? `${renderUrl}#auth=${encodeURIComponent(token)}`
-    : renderUrl;
 
   return (
     <div
@@ -97,7 +95,7 @@ function ComponentFrame({
           {part.title || `${part.namespace}/${part.name}`}
         </span>
         <a
-          href={openUrl}
+          href={renderUrl}
           target="_blank"
           rel="noopener noreferrer"
           style={{ color: v(tokens.colorPrimary), textDecoration: 'none' }}
@@ -107,6 +105,8 @@ function ComponentFrame({
       </div>
       <iframe
         src={renderUrl}
+        // Opaque origin: the component's code can't reach this page or its storage.
+        sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
         style={{
           width: '100%',
           height: '400px',

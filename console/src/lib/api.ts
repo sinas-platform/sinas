@@ -108,6 +108,10 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL
  * Follows the same pattern as file serve tokens - purpose-scoped, short-lived JWTs
  * that allow iframe access without Authorization headers.
  */
+/** iframe sandbox for rendered components: scripts run, but in an opaque
+ * origin, so the component's code can't reach the console or its storage. */
+export const COMPONENT_SANDBOX = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads';
+
 export function getComponentRenderUrl(renderToken: string, namespace: string, name: string, input?: Record<string, unknown>): string {
   const params = new URLSearchParams();
   params.set('token', renderToken);

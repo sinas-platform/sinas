@@ -24,9 +24,20 @@ const importAllowlistPlugin = {
   setup(build) {
     // Mark allowed bare imports as external (resolved at runtime via importmap)
     build.onResolve({ filter: /.*/ }, (args) => {
-      // Allow relative imports (./foo, ../bar)
+      // The component itself (stdin) is the only file. A relative or
+      // absolute path would read files from the builder's own filesystem
+      // into the bundle.
+      if (args.kind === "entry-point") {
+        return null;
+      }
       if (args.path.startsWith(".") || args.path.startsWith("/")) {
-        return null; // Let esbuild handle normally
+        return {
+          errors: [
+            {
+              text: `Import "${args.path}" is not allowed: a component is a single file. Allowed imports: ${[...ALLOWED_IMPORTS].join(", ")}`,
+            },
+          ],
+        };
       }
 
       // Check if the import is in the allowlist
