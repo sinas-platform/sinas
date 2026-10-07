@@ -80,6 +80,23 @@ class TestStateProxy:
         rows = (await db.execute(select(State).where(State.key == "k", State.user_id == admin_user.id))).scalars().all()
         assert [row for row in rows if row.store.namespace == stores] == []
 
+    async def test_works_with_the_components_own_token(self, client, db, admin_user, stores):
+        """The page calls the proxy with its component-scoped token, whose
+        store permissions are capped to the enabled store and its access."""
+        from app.services.component_access import generate_component_access_token
+
+        comp = await _component(
+            db, admin_user, enabled_stores=[{"store": f"{stores}/notes", "access": "readwrite"}]
+        )
+        h = {"Authorization": "Bearer " + generate_component_access_token(
+            str(admin_user.id), comp.namespace, comp.name
+        )}
+        url = _proxy(comp, f"{stores}/notes")
+        r = await client.post(url, json={"action": "set", "key": "k", "value": {"n": 1}}, headers=h)
+        assert r.status_code == 200, r.text
+        got = (await client.post(url, json={"action": "get", "key": "k"}, headers=h)).json()
+        assert got["value"] == {"n": 1}
+
     async def test_a_readonly_store_refuses_writes(self, client, db, admin_user, stores):
         comp = await _component(
             db, admin_user, enabled_stores=[{"store": f"{stores}/notes", "access": "readonly"}]
