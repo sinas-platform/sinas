@@ -101,7 +101,7 @@ export function Stores() {
                       </button>
                       <HardDrive className="w-5 h-5 text-blue-500" />
                       <h3
-                        className="text-lg font-semibold text-gray-100 cursor-pointer hover:text-white"
+                        className="text-lg font-semibold text-gray-100 cursor-pointer hover:text-primary-400"
                         onClick={() => toggleExpanded(storeKey)}
                       >
                         {storeKey}
