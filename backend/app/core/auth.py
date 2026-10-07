@@ -736,10 +736,42 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, d
 http_bearer = HTTPBearer(auto_error=False)
 
 
+async def _verify_component_token(
+    claims: dict, request: Optional[Request], db: AsyncSession
+) -> tuple[str, str, dict[str, bool]]:
+    """A component access token (services/component_access): the viewer,
+    with permissions capped to the component's grants, on the component's
+    routes only."""
+    from app.models.component import Component
+    from app.services.component_access import ComponentScope, route_allowed, scoped_permissions
+
+    scope = ComponentScope(claims["namespace"], claims["name"], int(claims["session_start"]))
+    route = request.scope.get("route") if request is not None else None
+    if not route_allowed(
+        getattr(route, "path", None), dict(request.path_params) if request else {}, scope
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A component token can't be used here",
+        )
+
+    user = (await db.execute(select(User).where(User.id == claims["sub"]))).scalar_one_or_none()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    component = await Component.get_by_name(db, scope.namespace, scope.name)
+    if not component or not component.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Component not found")
+
+    permissions = scoped_permissions(component, await get_user_permissions(db, str(user.id)))
+    request.state.component_scope = scope
+    return str(user.id), user.email, permissions
+
+
 async def verify_jwt_or_api_key(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer),
     x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> tuple[str, str, dict[str, bool]]:
     """
     Verify either JWT access token or API key from Authorization or X-API-Key header.
@@ -768,13 +800,21 @@ async def verify_jwt_or_api_key(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing authorization header"
         )
 
+    from app.services.component_access import component_token_claims
+
+    component_claims = component_token_claims(token)
+    if component_claims is not None:
+        return await _verify_component_token(component_claims, request, db)
+
     # Try JWT first
     try:
         payload = decode_access_token(token)
         user_id = payload.get("sub")
         email = payload.get("email")
 
-        if not user_id or not email:
+        # Purpose tokens (render, file-serve, component access) are not
+        # access tokens, whatever else they carry.
+        if not user_id or not email or payload.get("purpose"):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload"
             )

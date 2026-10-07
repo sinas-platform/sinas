@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, RefreshCw, ExternalLink, AlertCircle, Settings2, X } from 'lucide-react';
-import { apiClient, getComponentRenderUrl } from '../lib/api';
+import { apiClient, COMPONENT_SANDBOX, getComponentRenderUrl } from '../lib/api';
 import type { ComponentUpdate, EnabledStoreConfig } from '../types';
 
 type ResourceTab = 'queries' | 'functions' | 'agents' | 'stores';
@@ -23,23 +23,6 @@ export function ComponentEditor() {
   const [dirty, setDirty] = useState(false);
   const [showResources, setShowResources] = useState(false);
   const [resourceTab, setResourceTab] = useState<ResourceTab>('queries');
-
-  // Forward auth token to component iframes via postMessage
-  useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === 'sinas:ready') {
-        const token = localStorage.getItem('auth_token');
-        if (token && event.source) {
-          (event.source as Window).postMessage(
-            { type: 'sinas:auth', token },
-            '*'
-          );
-        }
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
 
   const { data: component, isLoading } = useQuery({
     queryKey: ['component', namespace, name],
@@ -523,6 +506,7 @@ export function ComponentEditor() {
           {component.compile_status === 'success' ? (
             <iframe
               src={getComponentRenderUrl(component.render_token!, namespace!, name!)}
+              sandbox={COMPONENT_SANDBOX}
               className="flex-1 w-full border-0"
               title="Component Preview"
             />

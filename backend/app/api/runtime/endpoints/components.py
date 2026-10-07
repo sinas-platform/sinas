@@ -1,9 +1,11 @@
 """Runtime component endpoints - rendering, proxy, and scoped resource access."""
+import html
 import json
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
+from urllib.parse import quote
 
 import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -23,6 +25,11 @@ from app.models.query import Query
 from app.models.execution import TriggerType
 from app.schemas.component import ProxyExecuteRequest, StateProxyRequest
 from app.models.state import State
+from app.services.component_access import (
+    SESSION_MAX_SECONDS,
+    TOKEN_TTL_SECONDS,
+    generate_component_access_token,
+)
 from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
 from app.services.queue_service import queue_service
@@ -31,8 +38,46 @@ from app.services.user_context import load_user_context, query_param_context
 router = APIRouter()
 
 
-def _build_html_shell(component: Component, input_vars: dict) -> str:
-    """Build the HTML shell for rendering a component in an iframe."""
+def _script_json(value: Any) -> str:
+    """JSON safe to place inside a <script> element: "</script>" (or "<!--")
+    in a string must not end the element. Input comes from the URL, a share
+    link or an agent's tool call."""
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+# The component's code is its author's, not Sinas's: it runs sandboxed in an
+# opaque origin, so it can't reach the console's storage (or the parent page)
+# even where the console is served from the API's origin. Its API calls are
+# then cross-origin, which CORS (allow_origins=*, no credentials) permits.
+_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+
+
+def _html_response(html: str) -> HTMLResponse:
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Content-Security-Policy": _SANDBOX_CSP,
+            # The page embeds an access token, and its URL a render token.
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+def _build_html_shell(
+    component: Component, input_vars: dict, access_token: Optional[str] = None
+) -> str:
+    """Build the HTML shell for rendering a component in an iframe.
+
+    `access_token` is a component access token for the viewer (None for
+    share links, whose anonymous viewers can only see static components)."""
     config = {
         "apiBase": "",  # Same origin - proxy endpoints
         "component": {
@@ -50,7 +95,15 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
         "input": input_vars,
     }
 
-    config_json = json.dumps(config)
+    config_json = _script_json(config)
+    token_json = _script_json(access_token)
+    renew_path = _script_json(
+        f"/components/{quote(component.namespace, safe='')}/{quote(component.name, safe='')}/access-token"
+    )
+    # Renew 5 minutes before expiry; on failure retry every 30s until then.
+    ttl_ms, margin_ms, retry_ms = TOKEN_TTL_SECONDS * 1000, 300_000, 30_000
+    renew_ms = ttl_ms - margin_ms
+    title = html.escape(component.title or component.name)
     css_overrides = component.css_overrides or ""
     bundle = component.compiled_bundle or ""
 
@@ -59,7 +112,7 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{component.title or component.name}</title>
+<title>{title}</title>
 <style>
   body {{
     min-height: 100vh;
@@ -134,20 +187,42 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
 
   // SINAS runtime config
   window.__SINAS_CONFIG__ = {config_json};
-  window.__SINAS_AUTH_TOKEN__ = null;
-
-  // Listen for auth token from parent (postMessage auth)
-  window.addEventListener('message', function(event) {{
-    if (event.data && event.data.type === 'sinas:auth') {{
-      window.__SINAS_AUTH_TOKEN__ = event.data.token;
-      window.dispatchEvent(new CustomEvent('sinas:authenticated'));
+  // Scoped to this component: the viewer's permissions, capped to what the
+  // component declares. Renewed before it expires (for a working day).
+  window.__SINAS_AUTH_TOKEN__ = {token_json};
+  (function keepAlive() {{
+    if (!window.__SINAS_AUTH_TOKEN__) return;
+    var expiresAt = Date.now() + {ttl_ms};
+    function ended() {{
+      if (document.getElementById('sinas-session-ended')) return;
+      var note = document.createElement('div');
+      note.id = 'sinas-session-ended';
+      note.textContent = 'This session has ended. Reload the page to continue.';
+      note.setAttribute('style', 'position:fixed;top:0;left:0;right:0;z-index:10;padding:8px 12px;'
+        + 'background:#7f1d1d;color:#fff;font:13px system-ui,sans-serif;text-align:center');
+      document.body.appendChild(note);
     }}
-  }});
-
-  // Notify parent we're ready for auth
-  if (window.parent !== window) {{
-    window.parent.postMessage({{ type: 'sinas:ready', component: '{component.namespace}/{component.name}' }}, '*');
-  }}
+    function retry() {{
+      // Network trouble or a server error: keep trying while the token lasts.
+      if (Date.now() + {retry_ms} < expiresAt) setTimeout(renew, {retry_ms});
+      else ended();
+    }}
+    function renew() {{
+      fetch({renew_path}, {{
+        method: 'POST',
+        headers: {{ 'Authorization': 'Bearer ' + window.__SINAS_AUTH_TOKEN__ }},
+      }}).then(function(r) {{
+        if (r.status === 401 || r.status === 403) return ended();  // session over
+        if (!r.ok) return retry();
+        return r.json().then(function(body) {{
+          window.__SINAS_AUTH_TOKEN__ = body.token;
+          expiresAt = Date.now() + body.expires_in * 1000;
+          setTimeout(renew, Math.max(expiresAt - Date.now() - {margin_ms}, 0));
+        }});
+      }}).catch(retry);
+    }}
+    setTimeout(renew, {renew_ms});
+  }})();
 
   // Module shim for esbuild IIFE externals (require() calls)
   window.__SINAS_MODULES__ = {{
@@ -175,10 +250,7 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
     return;
   }}
 
-  var booted = false;
-  function bootstrap() {{
-    if (booted) return;
-    booted = true;
+  (function bootstrap() {{
     var root = ReactDOM.createRoot(document.getElementById('root'));
     var input = window.__SINAS_CONFIG__.input || {{}};
     var Card = window.SinasUI && window.SinasUI.Card;
@@ -189,23 +261,7 @@ def _build_html_shell(component: Component, input_vars: dict) -> str:
       );
     }}
     root.render(content);
-  }}
-
-  // If embedded in iframe, wait for auth; otherwise check URL hash for auth token
-  if (window.parent !== window) {{
-    window.addEventListener('sinas:authenticated', bootstrap, {{ once: true }});
-    // Fallback: bootstrap after 3s even without auth (for public components)
-    setTimeout(bootstrap, 3000);
-  }} else {{
-    // Opened directly (e.g. "Open" link) — read auth token from URL hash
-    var hash = window.location.hash;
-    if (hash && hash.indexOf('#auth=') === 0) {{
-      window.__SINAS_AUTH_TOKEN__ = decodeURIComponent(hash.substring(6));
-      // Clean the token from the URL bar
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }}
-    bootstrap();
-  }}
+  }})();
 }})();
 </script>
 </body>
@@ -264,8 +320,36 @@ async def render_component(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in 'input' query parameter")
 
-    html = _build_html_shell(component, input_vars)
-    return HTMLResponse(content=html)
+    access_token = generate_component_access_token(payload["sub"], namespace, name)
+    return _html_response(_build_html_shell(component, input_vars, access_token))
+
+
+@router.post(
+    "/components/{ns}/{name}/access-token",
+    tags=["runtime-components"],
+)
+async def renew_component_access_token(
+    ns: str,
+    name: str,
+    request: Request,
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """A fresh component access token, for the rendered page to keep working
+    past an hour. Only a component token for this component renews (the
+    route allowlist sees to the component), and only for a working day after
+    the render that started the session."""
+    scope = getattr(request.state, "component_scope", None)
+    if scope is None:
+        raise HTTPException(status_code=403, detail="Only a component token can be renewed")
+    if time.time() - scope.session_start > SESSION_MAX_SECONDS:
+        raise HTTPException(status_code=401, detail="Component session expired; reload the page")
+    user_id, _ = current_user_data
+    return {
+        "token": generate_component_access_token(
+            user_id, scope.namespace, scope.name, session_start=scope.session_start
+        ),
+        "expires_in": TOKEN_TTL_SECONDS,
+    }
 
 
 @router.get(
@@ -311,8 +395,7 @@ async def render_shared_component(
     await db.flush()
 
     input_vars = share.input_data or {}
-    html = _build_html_shell(component, input_vars)
-    return HTMLResponse(content=html)
+    return _html_response(_build_html_shell(component, input_vars))
 
 
 # --- Proxy Endpoints ---
