@@ -499,7 +499,7 @@ export function ComponentEditor() {
         )}
 
         {/* Preview iframe */}
-        <div className="flex-1 flex flex-col bg-white">
+        <div className="flex-1 flex flex-col bg-surface-0">
           <div className="px-4 py-2 bg-surface-input border-b border-gray-800 text-xs text-gray-500">
             Preview {component.compile_status !== 'success' && '(compile required)'}
           </div>

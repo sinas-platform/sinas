@@ -57,6 +57,9 @@ function buildComponentRenderUrl(part: ComponentContentPart, apiBaseUrl: string)
   const params = new URLSearchParams();
   params.set('token', part.render_token);
   if (part.input) params.set('input', JSON.stringify(part.input));
+  // Plain rendering in the host page's light/dark mode, when it says.
+  const theme = typeof document !== 'undefined' ? document.documentElement.dataset.colorMode : undefined;
+  if (theme === 'light' || theme === 'dark') params.set('theme', theme);
   return `${apiBaseUrl}/components/${part.namespace}/${part.name}/render?${params.toString()}`;
 }
 
@@ -111,7 +114,6 @@ function ComponentFrame({
           width: '100%',
           height: '400px',
           border: 'none',
-          backgroundColor: '#fff',
         }}
         title={part.title || part.name}
       />

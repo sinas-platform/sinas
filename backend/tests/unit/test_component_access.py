@@ -180,3 +180,25 @@ class TestRenewal:
             settings.secret_key, algorithm="HS256",
         )
         assert component_token_claims(expired) is None
+
+
+class TestPlainShell:
+    async def test_no_opinionated_styling(self, client, component, admin_user):
+        html = (await _render(client, component, admin_user)).text
+        assert "radial-gradient" not in html and "sinas-card" not in html
+        assert "color-scheme: light dark" in html
+        assert "unpkg.com/@sinas/ui" not in html  # this component does not import it
+
+    async def test_the_console_theme_is_followed(self, client, component, admin_user):
+        html = (await _render(client, component, admin_user, theme="light")).text
+        assert "color-scheme: light;" in html
+        html = (await _render(client, component, admin_user, theme="<b>")).text
+        assert "color-scheme: light dark" in html
+
+    async def test_the_retired_ui_library_loads_only_for_components_using_it(
+        self, client, db, component, admin_user
+    ):
+        component.compiled_bundle = 'var __SinasComponent__=(()=>{var u=require("@sinas/ui");})();'
+        await db.flush()
+        html = (await _render(client, component, admin_user)).text
+        assert "@sinas/ui@0.2.0" in html

@@ -116,6 +116,9 @@ export function getComponentRenderUrl(renderToken: string, namespace: string, na
   const params = new URLSearchParams();
   params.set('token', renderToken);
   if (input) params.set('input', JSON.stringify(input));
+  // Render plain, in the console's own light/dark mode.
+  const theme = document.documentElement.dataset.colorMode;
+  if (theme === 'light' || theme === 'dark') params.set('theme', theme);
   return `${API_BASE_URL}/components/${namespace}/${name}/render?${params.toString()}`;
 }
 

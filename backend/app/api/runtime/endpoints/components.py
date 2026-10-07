@@ -70,13 +70,29 @@ def _html_response(html: str) -> HTMLResponse:
     )
 
 
+# @sinas/ui is retired (the console vendored what it used). Loaded only for
+# components that still import it, with its base styles, so they look as
+# they did; everything else renders plain.
+_LEGACY_UI = """<script crossorigin src="https://unpkg.com/@sinas/ui@0.2.0/dist/sinas-ui.umd.js"></script>
+<script>if (window.SinasUI && window.SinasUI.injectBaseStyles) window.SinasUI.injectBaseStyles();</script>"""
+
+
+def _uses_legacy_ui(bundle: str) -> bool:
+    return 'require("@sinas/ui")' in bundle or "require('@sinas/ui')" in bundle
+
+
 def _build_html_shell(
-    component: Component, input_vars: dict, access_token: Optional[str] = None
+    component: Component,
+    input_vars: dict,
+    access_token: Optional[str] = None,
+    theme: Optional[str] = None,
 ) -> str:
     """Build the HTML shell for rendering a component in an iframe.
 
     `access_token` is a component access token for the viewer (None for
-    share links, whose anonymous viewers can only see static components)."""
+    share links, whose anonymous viewers can only see static components).
+    `theme` ("light"/"dark") is the embedding page's; without it the page
+    follows the viewer's system setting."""
     config = {
         "apiBase": "",  # Same origin - proxy endpoints
         "component": {
@@ -105,6 +121,8 @@ def _build_html_shell(
     title = html.escape(component.title or component.name)
     css_overrides = component.css_overrides or ""
     bundle = component.compiled_bundle or ""
+    color_scheme = theme if theme in ("light", "dark") else "light dark"
+    legacy_ui = _LEGACY_UI if _uses_legacy_ui(bundle) else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -113,77 +131,23 @@ def _build_html_shell(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
 <style>
-  body {{
-    min-height: 100vh;
-    background:
-      radial-gradient(ellipse at bottom right, rgba(249,115,22,0.35) 0%, transparent 55%),
-      radial-gradient(ellipse at top left, rgba(168,34,50,0.30) 0%, transparent 55%),
-      #0a0a0a;
-    background-attachment: fixed;
-    overflow-x: hidden;
-  }}
-
-  /* Subtle animated shimmer */
-  body::before, body::after {{
-    content: '';
-    position: fixed;
-    border-radius: 50%;
-    filter: blur(80px);
-    pointer-events: none;
-    z-index: 0;
-    animation: sinas-drift 8s ease-in-out infinite alternate;
-  }}
-  body::before {{
-    width: 500px; height: 500px;
-    bottom: -120px; right: -120px;
-    background: radial-gradient(circle, rgba(249,115,22,0.25), rgba(234,88,12,0.10), transparent);
-  }}
-  body::after {{
-    width: 400px; height: 400px;
-    top: -100px; left: -100px;
-    background: radial-gradient(circle, rgba(168,34,50,0.22), rgba(127,29,29,0.08), transparent);
-    animation-delay: -4s;
-    animation-direction: alternate-reverse;
-  }}
-
-  @keyframes sinas-drift {{
-    0%   {{ transform: translate(0, 0) scale(1); opacity: 0.7; }}
-    100% {{ transform: translate(20px, -15px) scale(1.08); opacity: 1; }}
-  }}
-
-  #root {{
-    position: relative;
-    z-index: 1;
-    min-height: 100vh;
-    padding: 24px;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-  }}
-  #sinas-card {{
-    width: 100%;
-    max-width: 960px;
-  }}
+  /* Plain by design: the browser's own colours (light or dark), system
+     font, a little room. Components style themselves; css_overrides last. */
+  :root {{ color-scheme: {color_scheme}; }}
+  body {{ margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }}
+  #root {{ padding: 16px; }}
   {css_overrides}
 </style>
 </head>
 <body>
 <div id="root"></div>
 
-<!-- React UMD (globals: React, ReactDOM) -->
-<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-
-<!-- SINAS SDK and UI (globals: SinasSDK, SinasUI) -->
-<script crossorigin src="https://unpkg.com/@sinas/sdk@0.1.1/dist/sinas-sdk.umd.js"></script>
-<script crossorigin src="https://unpkg.com/@sinas/ui@0.2.0/dist/sinas-ui.umd.js"></script>
-
+<!-- React UMD (globals: React, ReactDOM) and the Sinas SDK (SinasSDK) -->
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@sinas/sdk@0.7.0/dist/sinas-sdk.umd.js"></script>
+{legacy_ui}
 <script>
-  // Inject SINAS UI base styles (CSS variables, fonts, dark theme)
-  if (window.SinasUI && window.SinasUI.injectBaseStyles) {{
-    window.SinasUI.injectBaseStyles();
-  }}
-
   // SINAS runtime config
   window.__SINAS_CONFIG__ = {config_json};
   // Scoped to this component: the viewer's permissions, capped to what the
@@ -252,14 +216,7 @@ def _build_html_shell(
   (function bootstrap() {{
     var root = ReactDOM.createRoot(document.getElementById('root'));
     var input = window.__SINAS_CONFIG__.input || {{}};
-    var Card = window.SinasUI && window.SinasUI.Card;
-    var content = React.createElement(Component, input);
-    if (Card) {{
-      content = React.createElement('div', {{ id: 'sinas-card' }},
-        React.createElement(Card, null, content)
-      );
-    }}
-    root.render(content);
+    root.render(React.createElement(Component, input));
   }})();
 }})();
 </script>
@@ -277,10 +234,12 @@ async def render_component(
     name: str,
     token: Optional[str] = None,
     input: Optional[str] = None,
+    theme: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Render a component as an HTML page (for iframe embedding).
+    Render a component as an HTML page (for iframe embedding). `theme`
+    (light/dark) matches the embedding page; otherwise the system's.
 
     Authenticates via a signed render token (?token=), not Authorization headers,
     since iframes cannot send headers. Follows the same pattern as file serve tokens.
@@ -321,7 +280,7 @@ async def render_component(
             raise HTTPException(status_code=400, detail="Invalid JSON in 'input' query parameter")
 
     access_token = generate_component_access_token(payload["sub"], namespace, name)
-    return _html_response(_build_html_shell(component, input_vars, access_token))
+    return _html_response(_build_html_shell(component, input_vars, access_token, theme))
 
 
 @router.post(
