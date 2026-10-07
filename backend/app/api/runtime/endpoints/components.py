@@ -24,7 +24,6 @@ from app.models.function import Function
 from app.models.query import Query
 from app.models.execution import TriggerType
 from app.schemas.component import ProxyExecuteRequest, StateProxyRequest
-from app.models.state import State
 from app.services.component_access import (
     SESSION_MAX_SECONDS,
     TOKEN_TTL_SECONDS,
@@ -305,7 +304,8 @@ async def render_component(
     if not component or not component.is_active:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    if component.compile_status != "success":
+    # The last good build serves while a new one compiles (or after it failed).
+    if not component.compiled_bundle:
         raise HTTPException(
             status_code=422,
             detail=f"Component is not compiled (status: {component.compile_status}). "
@@ -387,7 +387,7 @@ async def render_shared_component(
     if not component:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    if component.compile_status != "success":
+    if not component.compiled_bundle:
         raise HTTPException(status_code=422, detail="Component is not compiled")
 
     # Increment view count
@@ -554,8 +554,39 @@ async def proxy_function_execute(
         return {"status": "error", "execution_id": execution_id, "error": str(e)}
 
 
+# Page size the state proxy's "list" reads the store API in.
+STATE_LIST_PAGE = 1000
+
+
+def _enabled_store(component: Component, store_ns: str, store_name: Optional[str]) -> dict:
+    """The enabled_stores entry a proxy call addresses. The SDK names a store
+    by namespace alone ("states/{ns}"), from before states lived in stores;
+    that still works while the component enables a single store there."""
+    entries = [e for e in component.enabled_stores or [] if isinstance(e, dict) and e.get("store")]
+    if store_name is not None:
+        matches = [e for e in entries if e["store"] == f"{store_ns}/{store_name}"]
+    else:
+        matches = [e for e in entries if e["store"].split("/", 1)[0] == store_ns]
+    if not matches:
+        ref = f"{store_ns}/{store_name}" if store_name else store_ns
+        raise HTTPException(
+            status_code=403, detail=f"Store '{ref}' is not enabled for this component"
+        )
+    if len({e["store"] for e in matches}) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Several stores in '{store_ns}' are enabled for this component; "
+            f"address one as states/{store_ns}/{{name}}",
+        )
+    return matches[0]
+
+
 @router.post(
     "/components/{ns}/{name}/proxy/states/{state_ns}",
+    tags=["runtime-components"],
+)
+@router.post(
+    "/components/{ns}/{name}/proxy/states/{state_ns}/{store_name}",
     tags=["runtime-components"],
 )
 async def proxy_state(
@@ -564,96 +595,74 @@ async def proxy_state(
     state_ns: str,
     body: StateProxyRequest,
     request: Request,
+    store_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Access state through the component proxy (scoped to enabled state namespaces)."""
-    user_id, permissions = current_user_data
+    """Access a store's states through the component proxy: the store must be
+    enabled for the component (writes need readwrite), and the call then goes
+    through the store API itself — its permissions, encryption and schema."""
+    from app.api.runtime.endpoints import stores
+    from app.schemas.state import StateCreate, StateUpdate
+
     component = await _get_component_or_404(db, ns, name)
-
-    enabled_stores = component.enabled_stores or []
-    # Build lookup: find matching store entries by namespace prefix
-    matching_stores = [s for s in enabled_stores if s.get("store", "").startswith(state_ns + "/") or s.get("store") == state_ns]
-
-    if not matching_stores:
+    entry = _enabled_store(component, state_ns, store_name)
+    if body.action in ("set", "delete") and entry.get("access") != "readwrite":
         raise HTTPException(
             status_code=403,
-            detail=f"State namespace '{state_ns}' is not enabled for this component",
+            detail=f"Store '{entry['store']}' is read-only for this component",
         )
+    store_ns, store_nm = entry["store"].split("/", 1)
+    user = current_user_data
 
-    # Write operations require readwrite access
-    readwrite_stores = [s for s in matching_stores if s.get("access") == "readwrite"]
-    if body.action in ("set", "delete") and not readwrite_stores:
-        raise HTTPException(
-            status_code=403,
-            detail=f"State namespace '{state_ns}' is read-only for this component",
-        )
+    if body.action in ("get", "set", "delete") and not body.key:
+        raise HTTPException(status_code=400, detail=f"'key' is required for {body.action} action")
 
     if body.action == "get":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for get action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
-            )
-        )
-        state = result.scalar_one_or_none()
-        if not state:
-            return {"found": False, "key": body.key, "value": None}
+        try:
+            state = await stores.get_state(store_ns, store_nm, body.key, request, db, user)
+        except HTTPException as e:
+            if e.status_code == 404 and "not found in store" in str(e.detail):
+                return {"found": False, "key": body.key, "value": None}
+            raise
         return {"found": True, "key": state.key, "value": state.value}
 
-    elif body.action == "list":
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.user_id == user_id,
+    if body.action == "list":
+        # Every state, as the proxy always returned (it has no paging).
+        items, page = [], STATE_LIST_PAGE
+        while True:
+            states = await stores.list_states(
+                store_ns, store_nm, request, search=None, tags=None, owner=None,
+                skip=len(items), limit=page, db=db, current_user_data=user,
             )
-        )
-        states = result.scalars().all()
-        return {"items": [{"key": s.key, "value": s.value} for s in states]}
+            items += [{"key": st.key, "value": st.value} for st in states]
+            if len(states) < page:
+                return {"items": items}
 
-    elif body.action == "set":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for set action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
+    if body.action == "set":
+        if body.value is None:
+            # The store API reads a null value as "leave it unchanged".
+            raise HTTPException(status_code=400, detail="'value' is required for set action")
+        try:
+            await stores.update_state(
+                store_ns, store_nm, body.key, request,
+                StateUpdate(value=body.value, visibility=body.visibility), db, user,
             )
-        )
-        state = result.scalar_one_or_none()
-        if state:
-            state.value = body.value
-        else:
-            state = State(
-                namespace=state_ns,
-                key=body.key,
-                value=body.value,
-                user_id=user_id,
-                visibility=body.visibility,
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+            await stores.create_state(
+                store_ns, store_nm, request,
+                StateCreate(key=body.key, value=body.value, visibility=body.visibility), db, user,
             )
-            db.add(state)
-        await db.flush()
         return {"success": True, "key": body.key}
 
-    elif body.action == "delete":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for delete action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
-            )
-        )
-        state = result.scalar_one_or_none()
-        if state:
-            await db.delete(state)
-            await db.flush()
+    if body.action == "delete":
+        try:
+            await stores.delete_state(store_ns, store_nm, body.key, request, db, user)
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
         return {"success": True, "key": body.key}
 
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")
+    raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")

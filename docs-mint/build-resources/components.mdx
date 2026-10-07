@@ -62,5 +62,8 @@ GET    /components/shared/{token}                          # Render via share to
 ```
 POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
 POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
-POST   /components/{ns}/{name}/proxy/states/{state_ns}                   # Access state
+POST   /components/{ns}/{name}/proxy/states/{store_ns}/{store_name}      # Access a store's states
+POST   /components/{ns}/{name}/proxy/states/{store_ns}                   # Same, when one store in that namespace is enabled
 ```
+
+State calls go through the store API itself (its permissions, encryption and schema); writes need the store enabled with `readwrite`. While a new build compiles, or after one fails, a component keeps serving its last good build.
