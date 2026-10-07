@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Save, RefreshCw, ExternalLink, AlertCircle, Settings2, X } from 'lucide-react';
 import { apiClient, COMPONENT_SANDBOX, getComponentRenderUrl } from '../lib/api';
+import { useFrameTheme } from '../components/chat/frameTheme';
 import type { ComponentUpdate, EnabledStoreConfig } from '../types';
 
 type ResourceTab = 'queries' | 'functions' | 'agents' | 'stores';
@@ -34,6 +35,15 @@ export function ComponentEditor() {
       return false;
     },
   });
+
+  // Fixed per render token, so a theme switch reaches the preview by message
+  // (useFrameTheme) instead of reloading it.
+  const previewRef = useRef<HTMLIFrameElement>(null);
+  const previewUrl = useMemo(
+    () => (component?.render_token ? getComponentRenderUrl(component.render_token, namespace!, name!) : ''),
+    [component?.render_token, namespace, name],
+  );
+  useFrameTheme(previewRef);
 
   // Fetch available resources (lazy — only when panel is open)
   const { data: queries } = useQuery({
@@ -505,7 +515,8 @@ export function ComponentEditor() {
           </div>
           {component.compile_status === 'success' ? (
             <iframe
-              src={getComponentRenderUrl(component.render_token!, namespace!, name!)}
+              ref={previewRef}
+              src={previewUrl}
               sandbox={COMPONENT_SANDBOX}
               className="flex-1 w-full border-0"
               title="Component Preview"

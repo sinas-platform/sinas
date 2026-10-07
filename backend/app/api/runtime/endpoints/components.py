@@ -148,6 +148,15 @@ def _build_html_shell(
 <script crossorigin src="https://unpkg.com/@sinas/sdk@0.7.0/dist/sinas-sdk.umd.js"></script>
 {legacy_ui}
 <script>
+  // The embedding page's light/dark switches arrive by message (no reload).
+  window.addEventListener('message', function(event) {{
+    var data = event.data;
+    if (event.source !== window.parent || !data || data.type !== 'sinas:theme') return;
+    if (data.theme === 'light' || data.theme === 'dark') {{
+      document.documentElement.style.colorScheme = data.theme;
+    }}
+  }});
+
   // SINAS runtime config
   window.__SINAS_CONFIG__ = {config_json};
   // Scoped to this component: the viewer's permissions, capped to what the
