@@ -554,6 +554,10 @@ async def proxy_function_execute(
         return {"status": "error", "execution_id": execution_id, "error": str(e)}
 
 
+# Page size the state proxy's "list" reads the store API in.
+STATE_LIST_PAGE = 1000
+
+
 def _enabled_store(component: Component, store_ns: str, store_name: Optional[str]) -> dict:
     """The enabled_stores entry a proxy call addresses. The SDK names a store
     by namespace alone ("states/{ns}"), from before states lived in stores;
@@ -624,13 +628,21 @@ async def proxy_state(
         return {"found": True, "key": state.key, "value": state.value}
 
     if body.action == "list":
-        states = await stores.list_states(
-            store_ns, store_nm, request, search=None, tags=None, owner=None,
-            skip=0, limit=1000, db=db, current_user_data=user,
-        )
-        return {"items": [{"key": st.key, "value": st.value} for st in states]}
+        # Every state, as the proxy always returned (it has no paging).
+        items, page = [], STATE_LIST_PAGE
+        while True:
+            states = await stores.list_states(
+                store_ns, store_nm, request, search=None, tags=None, owner=None,
+                skip=len(items), limit=page, db=db, current_user_data=user,
+            )
+            items += [{"key": st.key, "value": st.value} for st in states]
+            if len(states) < page:
+                return {"items": items}
 
     if body.action == "set":
+        if body.value is None:
+            # The store API reads a null value as "leave it unchanged".
+            raise HTTPException(status_code=400, detail="'value' is required for set action")
         try:
             await stores.update_state(
                 store_ns, store_nm, body.key, request,

@@ -97,6 +97,27 @@ class TestStateProxy:
         got = (await client.post(url, json={"action": "get", "key": "k"}, headers=h)).json()
         assert got["value"] == {"n": 1}
 
+    async def test_set_without_a_value_is_refused(self, client, db, admin_user, stores):
+        comp = await _component(
+            db, admin_user, enabled_stores=[{"store": f"{stores}/notes", "access": "readwrite"}]
+        )
+        r = await client.post(
+            _proxy(comp, stores), json={"action": "set", "key": "k", "value": None},
+            headers=auth_headers(admin_user),
+        )
+        assert r.status_code == 400
+
+    async def test_list_returns_every_state(self, client, db, admin_user, stores, monkeypatch):
+        comp = await _component(
+            db, admin_user, enabled_stores=[{"store": f"{stores}/notes", "access": "readwrite"}]
+        )
+        h = auth_headers(admin_user)
+        for i in range(5):
+            await client.post(_proxy(comp, stores), json={"action": "set", "key": f"k{i}", "value": {"i": i}}, headers=h)
+        monkeypatch.setattr("app.api.runtime.endpoints.components.STATE_LIST_PAGE", 2)
+        listed = (await client.post(_proxy(comp, stores), json={"action": "list"}, headers=h)).json()
+        assert sorted(item["key"] for item in listed["items"]) == [f"k{i}" for i in range(5)]
+
     async def test_a_readonly_store_refuses_writes(self, client, db, admin_user, stores):
         comp = await _component(
             db, admin_user, enabled_stores=[{"store": f"{stores}/notes", "access": "readonly"}]
@@ -160,6 +181,14 @@ class TestChatToolNames:
             db, f"show_component_d{u}_a_b", {}, str(admin_user.id)
         )
         assert block["name"] == "a-b"  # what the old handler looked up
+
+    async def test_an_old_name_containing_a_double_underscore(self, db, admin_user):
+        u = _uid()
+        await _component(db, admin_user, namespace=f"d{u}", name="a--b")
+        block = await ComponentToolConverter().handle_component_tool_call(
+            db, f"show_component_d{u}_a__b", {}, str(admin_user.id)
+        )
+        assert block["name"] == "a--b"
 
     async def test_tool_calls_from_existing_chats_still_resolve(self, db, admin_user):
         namespace = f"my-ui{_uid()}"

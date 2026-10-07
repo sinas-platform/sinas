@@ -101,8 +101,12 @@ async def compile_component(component_id) -> None:
     source_code = None
     try:
         async with AsyncSessionLocal() as db:
+            # Locked with the status write: an edit (and its own compile)
+            # waits, so this can't mark a newer, finished build "compiling".
             component = (
-                await db.execute(select(Component).where(Component.id == component_id))
+                await db.execute(
+                    select(Component).where(Component.id == component_id).with_for_update()
+                )
             ).scalar_one_or_none()
             if not component:
                 return

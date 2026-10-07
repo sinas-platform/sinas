@@ -156,11 +156,11 @@ class ComponentToolConverter:
             return None
 
         comp_id = tool_name[len("show_component_"):]
-        if "__" in comp_id:
-            component = await self._exact_lookup(db, comp_id)
-        else:
+        component = await self._exact_lookup(db, comp_id) if "__" in comp_id else None
+        if component is None:
             # Tool calls recorded before the "__" form (in existing chats):
-            # match the old spelling, where "-" had become "_".
+            # match the old spelling, where "-" had become "_" — which can
+            # itself contain "__" (a name like "a--b").
             component = await self._legacy_lookup(db, comp_id)
         if component is None or not component.is_active:
             logger.warning(f"Could not resolve component from tool name: {tool_name}")
