@@ -31,4 +31,3 @@ export function useFrameTheme(frame: RefObject<HTMLIFrameElement | null>): () =>
   // (its URL carries the old mode, its listener wasn't there yet).
   return send;
 }
-}
