@@ -43,7 +43,7 @@ export function ComponentEditor() {
     () => (component?.render_token ? getComponentRenderUrl(component.render_token, namespace!, name!) : ''),
     [component?.render_token, namespace, name],
   );
-  useFrameTheme(previewRef);
+  const onPreviewLoad = useFrameTheme(previewRef);
 
   // Fetch available resources (lazy — only when panel is open)
   const { data: queries } = useQuery({
@@ -516,6 +516,7 @@ export function ComponentEditor() {
           {component.compile_status === 'success' ? (
             <iframe
               ref={previewRef}
+              onLoad={onPreviewLoad}
               src={previewUrl}
               sandbox={COMPONENT_SANDBOX}
               className="flex-1 w-full border-0"

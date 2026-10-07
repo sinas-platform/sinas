@@ -78,7 +78,7 @@ function ComponentFrame({
   // fixed per part: a theme switch must not reload the component.
   const renderUrl = useMemo(() => buildComponentRenderUrl(part, apiBaseUrl), [part, apiBaseUrl]);
   const frameRef = useRef<HTMLIFrameElement>(null);
-  useFrameTheme(frameRef);
+  const onFrameLoad = useFrameTheme(frameRef);
 
   return (
     <div
@@ -114,6 +114,7 @@ function ComponentFrame({
       </div>
       <iframe
         ref={frameRef}
+        onLoad={onFrameLoad}
         src={renderUrl}
         // Opaque origin: the component's code can't reach this page or its storage.
         sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
