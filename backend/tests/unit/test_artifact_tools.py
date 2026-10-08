@@ -20,6 +20,7 @@ def _agent(**extra):
     values = dict(
         system_tools=["artifacts"], enabled_queries=["sales/orders"], enabled_functions=[],
         enabled_stores=[{"store": "sales/notes", "access": "readonly"}],
+        query_parameters={}, function_parameters={},
     )
     values.update(extra)
     return types.SimpleNamespace(**values)
@@ -142,3 +143,33 @@ class TestReviewFixes:
         block = await _call(db, admin_user, "create_artifact", title="t", html="<p/>")
         await _call(db, admin_user, "update_artifact", name=block["name"], html="<p>2</p>")
         assert len(commits) == 2
+
+
+class TestWhatAPageCannotEnforce:
+    async def test_a_wildcard_declaration_is_refused(self, db, admin_user):
+        result = await _call(
+            db, admin_user, "create_artifact", agent=_agent(enabled_queries=["sales/*"]),
+            title="t", html="<p/>", queries=["sales/*"],
+        )
+        assert result["error"] == "permission_denied"
+        assert "wildcard" in result["detail"]
+
+    async def test_a_query_with_agent_set_parameters_is_refused(self, db, admin_user):
+        agent = _agent(query_parameters={"sales/orders": {"account_id": {"value": "42", "locked": True}}})
+        result = await _call(db, admin_user, "create_artifact", agent=agent, title="t", html="<p/>", queries=["sales/orders"])
+        assert result["error"] == "permission_denied"
+
+    async def test_a_function_needing_approval_is_refused(self, db, admin_user):
+        from app.models.function import Function
+
+        db.add(Function(
+            user_id=admin_user.id, namespace="ops", name="purge", code="def handler(input, ctx): pass",
+            input_schema={}, output_schema={}, requires_approval=True,
+        ))
+        await db.flush()
+        result = await _call(
+            db, admin_user, "create_artifact", agent=_agent(enabled_functions=["ops/purge"]),
+            title="t", html="<p/>", functions=["ops/purge"],
+        )
+        assert result["error"] == "permission_denied"
+        assert "approval" in result["detail"]

@@ -149,19 +149,43 @@ def _declared_resources(arguments: dict[str, Any]) -> dict[str, Any]:
     return declared
 
 
-def _check_within_agent(spec, agent) -> None:
+async def _check_within_agent(db: AsyncSession, spec, agent) -> None:
     """Everything the artifact will be able to reach — the whole resulting
     set, not just what this call names (an update keeps what it leaves out)
-    — must be within what the calling agent may reach. Wildcard grants
-    ("sales/*") match as they do in tool discovery."""
+    — must be within what the calling agent may reach, under the same
+    conditions. Wildcard grants ("sales/*") match as in tool discovery.
+
+    A page calls its resources directly, outside the agent's tool loop, so
+    what that loop enforces can't follow: a query or function the agent has
+    parameters for (pre-filled or locked inputs, e.g. an account id) and a
+    function that needs approval are refused rather than run unguarded."""
+    from app.models.function import Function
     from app.services.resource_resolver import matches_ref_pattern
 
+    refs = [*spec.enabled_queries, *spec.enabled_functions, *(e.store for e in spec.enabled_stores)]
+    for ref in refs:
+        if "*" in ref:
+            raise PermissionError(f"Name {ref} exactly: an artifact can't declare a wildcard")
+    query_params = agent.query_parameters or {}
+    function_params = agent.function_parameters or {}
     for ref in spec.enabled_queries:
         if not matches_ref_pattern(ref, agent.enabled_queries or []):
             raise PermissionError(f"Query {ref} is not enabled for this agent")
+        if ref in query_params:
+            raise PermissionError(
+                f"Query {ref} has parameters set by this agent, which a page can't enforce"
+            )
     for ref in spec.enabled_functions:
         if not matches_ref_pattern(ref, agent.enabled_functions or []):
             raise PermissionError(f"Function {ref} is not enabled for this agent")
+        if ref in function_params:
+            raise PermissionError(
+                f"Function {ref} has parameters set by this agent, which a page can't enforce"
+            )
+        namespace, _, name = ref.partition("/")
+        function = await Function.get_by_name(db, namespace, name)
+        if function is not None and function.requires_approval:
+            raise PermissionError(f"Function {ref} needs approval, which a page can't ask for")
     if spec.enabled_agents or spec.enabled_components:
         raise PermissionError("Artifacts can't declare agents or components")
     agent_stores = [e for e in (agent.enabled_stores or []) if isinstance(e, dict)]
@@ -223,7 +247,7 @@ async def execute_artifact_tool(
                 "source_code": arguments.get("html", ""),
                 **_declared_resources(arguments),
             })
-            _check_within_agent(spec, agent)
+            await _check_within_agent(db, spec, agent)
             async with db.begin_nested():
                 result = await applier.apply(spec, ctx, must_create=True)
             # Tool calls run in their own session: commit, or it's gone.
@@ -254,7 +278,7 @@ async def execute_artifact_tool(
                 spec = patched_spec(applier.spec_from_row(locked), patch)
             except PatchRejected as e:
                 return {"error": "validation_error", "detail": str(e.detail)}
-            _check_within_agent(spec, agent)
+            await _check_within_agent(db, spec, agent)
             async with db.begin_nested():
                 await applier.apply(spec, ctx, existing=locked)
             await db.commit()

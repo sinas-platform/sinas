@@ -35,7 +35,7 @@ agents:
 - `create_artifact(title, html, input?, description?, queries?, functions?, stores?)` — Create a page in the `artifacts` namespace, owned by the chat's user, and show it in the chat
 - `update_artifact(name, html?, title?, input?, queries?, functions?, stores?)` — Change one and show the new version
 
-An artifact is an ordinary component: written through the same path as the API (validation, change history), editable in the console, and shareable with its Share button. It may only declare queries, functions and stores the agent itself has enabled (a store no more writable than the agent has it); viewers' own permissions cap it further. Creating one needs the user's `sinas.components.create:own` permission.
+An artifact is an ordinary component: written through the same path as the API (validation, change history), editable in the console, and shareable with its Share button. It may only declare queries, functions and stores the agent itself has enabled, by exact name (a store no more writable than the agent has it); viewers' own permissions cap it further. Because a page calls its resources directly, outside the agent's tool loop, an artifact can't use a query or function the agent has parameters set for (pre-filled or locked inputs), nor a function that requires approval. Creating one needs the user's `sinas.components.create:own` permission.
 
 **Config introspection tools:**
 
