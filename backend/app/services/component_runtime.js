@@ -85,13 +85,20 @@
 
     agent: function (name) {
       var path = ref(name, "agent");
-      var chatId = null;
+      // One conversation per agent handle: overlapping first sends share the
+      // pending chat instead of each creating one. A failed create is retried.
+      var chat = null;
+      function ensureChat() {
+        if (!chat) {
+          chat = call("/agents/" + path + "/chats", {})
+            .then(function (created) { return created.id; })
+            .catch(function (error) { chat = null; throw error; });
+        }
+        return chat;
+      }
       return {
         send: function (content) {
-          var ready = chatId
-            ? Promise.resolve(chatId)
-            : call("/agents/" + path + "/chats", {}).then(function (chat) { chatId = chat.id; return chatId; });
-          return ready.then(function (id) {
+          return ensureChat().then(function (id) {
             return call("/chats/" + enc(id) + "/messages", { content: content });
           }).then(function (message) { return message.content; });
         },

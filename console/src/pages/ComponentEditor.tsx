@@ -22,6 +22,9 @@ export function ComponentEditor() {
   const [enabledStores, setEnabledStores] = useState<EnabledStoreConfig[]>([]);
   const [dirty, setDirty] = useState(false);
   const [showResources, setShowResources] = useState(false);
+  // Bumped on every save: remounts the preview even when the new render
+  // token happens to equal the last one (two saves within a second).
+  const [saveCount, setSaveCount] = useState(0);
   const [resourceTab, setResourceTab] = useState<ResourceTab>('queries');
 
   const { data: component, isLoading } = useQuery({
@@ -89,6 +92,7 @@ export function ComponentEditor() {
       queryClient.invalidateQueries({ queryKey: ['components'] });
       queryClient.invalidateQueries({ queryKey: ['component', namespace, name] });
       setDirty(false);
+      setSaveCount((n) => n + 1);
       if (updated.namespace !== namespace || updated.name !== name) {
         navigate(`/components/${updated.namespace}/${updated.name}`, { replace: true });
       }
@@ -448,6 +452,7 @@ export function ComponentEditor() {
             Preview {dirty && '(save to update)'}
           </div>
           <iframe
+            key={saveCount}
             ref={previewRef}
             onLoad={onPreviewLoad}
             src={previewUrl}
