@@ -340,6 +340,9 @@ async def get_available_tools(
     if has_system_tool(system_tools, "packageManagement"):
         from app.services.package_tools import get_package_tool_definitions
         tools.extend(get_package_tool_definitions())
+    if has_system_tool(system_tools, "artifacts"):
+        from app.services.artifact_tools import get_artifact_tool_definitions
+        tools.extend(get_artifact_tool_definitions())
     if has_system_tool(system_tools, "configIntrospection"):
         from app.services.config_tools import get_config_tool_definitions
         tools.extend(get_config_tool_definitions())

@@ -27,6 +27,7 @@ from app.services.execution_engine import executor as fn_executor
 from app.services.function_tools import FunctionToolConverter
 from app.services.config_tools import execute_config_tool, is_config_tool
 from app.services.db_introspection_tools import execute_db_introspection_tool, is_db_introspection_tool
+from app.services.artifact_tools import execute_artifact_tool, is_artifact_tool
 from app.services.package_tools import execute_package_tool, is_package_tool
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -279,6 +280,9 @@ def is_sequential_tool(tool_name: str) -> bool:
         return True
     # Package management tools mutate global state — always sequential
     if is_package_tool(tool_name):
+        return True
+    # Two calls changing one artifact must not interleave
+    if is_artifact_tool(tool_name):
         return True
     return False
 
@@ -774,6 +778,22 @@ async def execute_single_tool(
                 )
                 logger.debug(f"Code execution completed in {time.time() - start_time:.3f}s")
 
+            elif is_artifact_tool(tool_name):
+                start_time = time.time()
+                chat_agent = None
+                if chat and chat.agent_id:
+                    chat_agent = (
+                        await db.execute(select(Agent).where(Agent.id == chat.agent_id))
+                    ).scalar_one_or_none()
+                result = await execute_artifact_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    permissions=await get_user_permissions(db, user_id),
+                    agent=chat_agent,
+                )
+                logger.debug(f"Artifact tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif is_package_tool(tool_name):
                 start_time = time.time()
                 # Load the calling agent's system_tools and the user's permissions

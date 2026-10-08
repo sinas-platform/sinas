@@ -228,7 +228,7 @@ class AgentConfig(BaseModel):
         default_factory=list,
         description=(
             "Opt-in Sinas platform tools. Simple string or {name, ...config}. "
-            "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
+            "Supported: 'codeExecution', 'packageManagement', 'artifacts', 'configIntrospection', "
             "'databaseIntrospection' (requires connections list)."
         ),
     )
