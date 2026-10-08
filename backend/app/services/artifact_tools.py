@@ -7,9 +7,10 @@ so it is validated, recorded in change history, editable and shareable like
 any other component. It shows in the chat the moment it is made.
 
 What an artifact may reach is bounded by the agent: it can only declare
-queries, functions and stores the agent itself has enabled (and a store no
-more writable than the agent has it). Viewers' own permissions cap it
-further, as for every component.
+queries, functions and stores the agent itself has enabled (wildcards as in
+tool discovery; a store no more writable than the agent has it), checked on
+the whole resulting set on every create and update. Viewers' own permissions
+cap it further, as for every component.
 """
 
 from __future__ import annotations
@@ -130,38 +131,47 @@ def _slug(title: str) -> str:
     return f"{slug or 'artifact'}-{secrets.token_hex(3)}"
 
 
-def _bounded_resources(arguments: dict[str, Any], agent) -> dict[str, Any]:
-    """The resources an artifact declares, refused beyond the agent's own."""
+def _declared_resources(arguments: dict[str, Any]) -> dict[str, Any]:
+    """The resource fields a call sets (left out: unchanged on update)."""
     declared: dict[str, Any] = {}
-    allowed_queries = set(agent.enabled_queries or [])
-    allowed_functions = set(agent.enabled_functions or [])
-    agent_stores = {
-        entry.get("store"): entry.get("access") or "readonly"
-        for entry in (agent.enabled_stores or [])
-        if isinstance(entry, dict)
-    }
     if "queries" in arguments:
-        extra = set(arguments["queries"] or []) - allowed_queries
-        if extra:
-            raise PermissionError(f"Not enabled for this agent: queries {sorted(extra)}")
         declared["enabled_queries"] = list(arguments["queries"] or [])
     if "functions" in arguments:
-        extra = set(arguments["functions"] or []) - allowed_functions
-        if extra:
-            raise PermissionError(f"Not enabled for this agent: functions {sorted(extra)}")
         declared["enabled_functions"] = list(arguments["functions"] or [])
     if "stores" in arguments:
-        stores = []
-        for entry in arguments["stores"] or []:
-            store = entry.get("store") if isinstance(entry, dict) else entry
-            access = (entry.get("access") if isinstance(entry, dict) else None) or "readonly"
-            if store not in agent_stores:
-                raise PermissionError(f"Not enabled for this agent: store {store}")
-            if access == "readwrite" and agent_stores[store] != "readwrite":
-                raise PermissionError(f"Store {store} is read-only for this agent")
-            stores.append({"store": store, "access": access})
-        declared["enabled_stores"] = stores
+        declared["enabled_stores"] = [
+            {
+                "store": entry.get("store") if isinstance(entry, dict) else entry,
+                "access": (entry.get("access") if isinstance(entry, dict) else None) or "readonly",
+            }
+            for entry in arguments["stores"] or []
+        ]
     return declared
+
+
+def _check_within_agent(spec, agent) -> None:
+    """Everything the artifact will be able to reach — the whole resulting
+    set, not just what this call names (an update keeps what it leaves out)
+    — must be within what the calling agent may reach. Wildcard grants
+    ("sales/*") match as they do in tool discovery."""
+    from app.services.resource_resolver import matches_ref_pattern
+
+    for ref in spec.enabled_queries:
+        if not matches_ref_pattern(ref, agent.enabled_queries or []):
+            raise PermissionError(f"Query {ref} is not enabled for this agent")
+    for ref in spec.enabled_functions:
+        if not matches_ref_pattern(ref, agent.enabled_functions or []):
+            raise PermissionError(f"Function {ref} is not enabled for this agent")
+    if spec.enabled_agents or spec.enabled_components:
+        raise PermissionError("Artifacts can't declare agents or components")
+    agent_stores = [e for e in (agent.enabled_stores or []) if isinstance(e, dict)]
+    for entry in spec.enabled_stores:
+        matching = [e for e in agent_stores if matches_ref_pattern(entry.store, [e])]
+        if not matching:
+            raise PermissionError(f"Store {entry.store} is not enabled for this agent")
+        writable = any(e.get("access") == "readwrite" for e in matching)
+        if entry.access == "readwrite" and not writable:
+            raise PermissionError(f"Store {entry.store} is read-only for this agent")
 
 
 def _shown(component: Component, user_id: str, input_values: Optional[dict]) -> dict[str, Any]:
@@ -211,11 +221,13 @@ async def execute_artifact_tool(
                 "title": arguments.get("title"),
                 "description": arguments.get("description"),
                 "source_code": arguments.get("html", ""),
-                **_bounded_resources(arguments, agent),
+                **_declared_resources(arguments),
             })
+            _check_within_agent(spec, agent)
             async with db.begin_nested():
                 result = await applier.apply(spec, ctx, must_create=True)
-            await db.flush()
+            # Tool calls run in their own session: commit, or it's gone.
+            await db.commit()
             return _shown(result.obj, user_id, arguments.get("input"))
 
         if tool_name == "update_artifact":
@@ -236,15 +248,16 @@ async def execute_artifact_tool(
                 patch["source_code"] = arguments["html"]
             if "title" in arguments:
                 patch["title"] = arguments["title"]
-            patch.update(_bounded_resources(arguments, agent))
+            patch.update(_declared_resources(arguments))
             locked = await applier.find_by_id(ctx, component.id)
             try:
                 spec = patched_spec(applier.spec_from_row(locked), patch)
             except PatchRejected as e:
                 return {"error": "validation_error", "detail": str(e.detail)}
+            _check_within_agent(spec, agent)
             async with db.begin_nested():
                 await applier.apply(spec, ctx, existing=locked)
-            await db.flush()
+            await db.commit()
             return _shown(locked, user_id, arguments.get("input"))
 
         return {"error": "unknown_tool", "detail": f"Unknown artifact tool: {tool_name}"}

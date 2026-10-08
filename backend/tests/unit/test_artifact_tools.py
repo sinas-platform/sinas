@@ -108,3 +108,37 @@ class TestUpdate:
 def test_tool_names():
     assert is_artifact_tool("create_artifact") and is_artifact_tool("update_artifact")
     assert not is_artifact_tool("show_component_ui__x")
+
+
+class TestReviewFixes:
+    async def test_a_wildcard_grant_covers_its_namespace(self, db, admin_user):
+        block = await _call(
+            db, admin_user, "create_artifact", agent=_agent(enabled_queries=["sales/*"]),
+            title="t", html="<p/>", queries=["sales/orders"],
+        )
+        assert block["type"] == "component", block
+
+    async def test_an_update_never_keeps_more_than_the_calling_agent_may_reach(self, db, admin_user):
+        block = await _call(db, admin_user, "create_artifact", title="t", html="<p/>", queries=["sales/orders"])
+        # Another agent, without sales/orders, only changes the title:
+        result = await _call(
+            db, admin_user, "update_artifact", agent=_agent(enabled_queries=[]),
+            name=block["name"], title="renamed",
+        )
+        assert result["error"] == "permission_denied"
+        assert (await _row(db, block["name"])).title == "t"
+
+    async def test_writes_are_committed(self, db, admin_user, monkeypatch):
+        """Tool calls run in a session of their own, closed without a commit
+        unless the tool commits."""
+        commits = []
+        original = db.commit
+
+        async def counting_commit():
+            commits.append(True)
+            await original()
+
+        monkeypatch.setattr(db, "commit", counting_commit)
+        block = await _call(db, admin_user, "create_artifact", title="t", html="<p/>")
+        await _call(db, admin_user, "update_artifact", name=block["name"], html="<p>2</p>")
+        assert len(commits) == 2
