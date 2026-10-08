@@ -69,17 +69,6 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as db:
         await initialize_default_templates(db)
 
-    # Component compiles a restart interrupted would otherwise stay
-    # "compiling" forever.
-    try:
-        from app.services.component_builder import resume_interrupted_compiles
-
-        resumed = await resume_interrupted_compiles()
-        if resumed:
-            print(f"✅ Resumed {resumed} interrupted component compile(s)")
-    except Exception as e:
-        print(f"⚠️  Resuming component compiles skipped: {e}")
-
     # Discover existing Docker containers so /api/v1/containers and /workers
     # endpoints can report accurate state.  The workers/pool are *created* by
     # the arq worker process or explicit scale calls; here we only discover.

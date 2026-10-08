@@ -169,8 +169,9 @@ class ComponentConfig(BaseModel):
     enabledQueries: list[str] = Field(default_factory=list)
     enabledComponents: list[str] = Field(default_factory=list)
     enabledStores: list[Union[str, EnabledStoreConfigYaml]] = Field(default_factory=list)
-    cssOverrides: Optional[str] = None
     visibility: str = "private"
+    # Unset: a new component is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class EnabledSkillConfigYaml(BaseModel):

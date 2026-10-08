@@ -70,25 +70,6 @@ jobs:
       - name: Run unit tests
         run: pytest tests/unit -q
 
-  builder-tests:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "20"
-
-      - name: Install esbuild (the version Dockerfile.builder pins)
-        run: npm install --no-save --no-package-lock --no-audit --no-fund esbuild@0.28.0
-
-      - name: Import rules
-        run: node --test builder_server.test.js
-
   console-build:
     runs-on: ubuntu-latest
     timeout-minutes: 10

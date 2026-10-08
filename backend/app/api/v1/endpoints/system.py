@@ -29,7 +29,6 @@ COMPOSE_SERVICES = [
     "console",
     "caddy",
     "cdc-worker",
-    "builder",
 ]
 
 

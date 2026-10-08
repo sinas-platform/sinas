@@ -1,11 +1,10 @@
 """Runtime component endpoints - rendering, proxy, and scoped resource access."""
 import html
 import json
+from pathlib import Path
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
-from urllib.parse import quote
 
 import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -29,7 +28,6 @@ from app.services.component_access import (
     TOKEN_TTL_SECONDS,
     generate_component_access_token,
 )
-from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
 from app.services.queue_service import queue_service
 from app.services.user_context import load_user_context, query_param_context
@@ -70,15 +68,7 @@ def _html_response(html: str) -> HTMLResponse:
     )
 
 
-# @sinas/ui is retired (the console vendored what it used). Loaded only for
-# components that still import it, with its base styles, so they look as
-# they did; everything else renders plain.
-_LEGACY_UI = """<script crossorigin src="https://unpkg.com/@sinas/ui@0.2.0/dist/sinas-ui.umd.js"></script>
-<script>if (window.SinasUI && window.SinasUI.injectBaseStyles) window.SinasUI.injectBaseStyles();</script>"""
-
-
-def _uses_legacy_ui(bundle: str) -> bool:
-    return 'require("@sinas/ui")' in bundle or "require('@sinas/ui')" in bundle
+_RUNTIME_JS = (Path(__file__).resolve().parents[3] / "services" / "component_runtime.js").read_text()
 
 
 def _build_html_shell(
@@ -87,43 +77,23 @@ def _build_html_shell(
     access_token: Optional[str] = None,
     theme: Optional[str] = None,
 ) -> str:
-    """Build the HTML shell for rendering a component in an iframe.
+    """The page a component renders in: its own HTML as the body, after a
+    plain base (system font, the browser's light/dark colours) and the
+    `sinas` client. Nothing is built or bundled.
 
     `access_token` is a component access token for the viewer (None for
     share links, whose anonymous viewers can only see static components).
     `theme` ("light"/"dark") is the embedding page's; without it the page
     follows the viewer's system setting."""
     config = {
-        "apiBase": "",  # Same origin - proxy endpoints
-        "component": {
-            "namespace": component.namespace,
-            "name": component.name,
-            "version": component.version,
-        },
-        "resources": {
-            "enabledAgents": component.enabled_agents,
-            "enabledFunctions": component.enabled_functions,
-            "enabledQueries": component.enabled_queries,
-            "enabledComponents": component.enabled_components,
-            "enabledStores": component.enabled_stores,
-        },
+        "component": {"namespace": component.namespace, "name": component.name},
         "input": input_vars,
+        "tokenTtlSeconds": TOKEN_TTL_SECONDS,
     }
-
-    config_json = _script_json(config)
-    token_json = _script_json(access_token)
-    renew_path = _script_json(
-        f"/components/{quote(component.namespace, safe='')}/{quote(component.name, safe='')}/access-token"
-    )
-    # Renew 5 minutes before expiry; on failure retry every 30s until then.
-    ttl_ms, margin_ms, retry_ms = TOKEN_TTL_SECONDS * 1000, 300_000, 30_000
-    renew_ms = ttl_ms - margin_ms
-    title = html.escape(component.title or component.name)
-    css_overrides = component.css_overrides or ""
-    bundle = component.compiled_bundle or ""
     color_scheme = theme if theme in ("light", "dark") else "light dark"
-    legacy_ui = _LEGACY_UI if _uses_legacy_ui(bundle) else ""
-
+    title = html.escape(component.title or component.name)
+    # The runtime is ours (no user data): only "</script" needs breaking up.
+    runtime = _RUNTIME_JS.replace("</script", "<\\/script")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -131,104 +101,19 @@ def _build_html_shell(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
 <style>
-  /* Plain by design: the browser's own colours (light or dark), system
-     font, a little room. Components style themselves; css_overrides last. */
   :root {{ color-scheme: {color_scheme}; }}
-  body {{ margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }}
-  #root {{ padding: 16px; }}
-  {css_overrides}
+  body {{ margin: 0; padding: 16px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }}
 </style>
+<script>
+  window.__SINAS_CONFIG__ = {_script_json(config)};
+  window.__SINAS_AUTH_TOKEN__ = {_script_json(access_token)};
+</script>
+<script>
+{runtime}
+</script>
 </head>
 <body>
-<div id="root"></div>
-
-<!-- React UMD (globals: React, ReactDOM) and the Sinas SDK (SinasSDK) -->
-<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-<script crossorigin src="https://unpkg.com/@sinas/sdk@0.7.0/dist/sinas-sdk.umd.js"></script>
-{legacy_ui}
-<script>
-  // The embedding page's light/dark switches arrive by message (no reload).
-  window.addEventListener('message', function(event) {{
-    var data = event.data;
-    if (event.source !== window.parent || !data || data.type !== 'sinas:theme') return;
-    if (data.theme === 'light' || data.theme === 'dark') {{
-      document.documentElement.style.colorScheme = data.theme;
-    }}
-  }});
-
-  // SINAS runtime config
-  window.__SINAS_CONFIG__ = {config_json};
-  // Scoped to this component: the viewer's permissions, capped to what the
-  // component declares. Renewed before it expires (for a working day).
-  window.__SINAS_AUTH_TOKEN__ = {token_json};
-  (function keepAlive() {{
-    if (!window.__SINAS_AUTH_TOKEN__) return;
-    var expiresAt = Date.now() + {ttl_ms};
-    function ended() {{
-      if (document.getElementById('sinas-session-ended')) return;
-      var note = document.createElement('div');
-      note.id = 'sinas-session-ended';
-      note.textContent = 'This session has ended. Reload the page to continue.';
-      note.setAttribute('style', 'position:fixed;top:0;left:0;right:0;z-index:10;padding:8px 12px;'
-        + 'background:#7f1d1d;color:#fff;font:13px system-ui,sans-serif;text-align:center');
-      document.body.appendChild(note);
-    }}
-    function retry() {{
-      // Network trouble or a server error: keep trying while the token lasts.
-      if (Date.now() + {retry_ms} < expiresAt) setTimeout(renew, {retry_ms});
-      else ended();
-    }}
-    function renew() {{
-      fetch({renew_path}, {{
-        method: 'POST',
-        headers: {{ 'Authorization': 'Bearer ' + window.__SINAS_AUTH_TOKEN__ }},
-      }}).then(function(r) {{
-        if (r.status === 401 || r.status === 403) return ended();  // session over
-        if (!r.ok) return retry();
-        return r.json().then(function(body) {{
-          window.__SINAS_AUTH_TOKEN__ = body.token;
-          expiresAt = Date.now() + body.expires_in * 1000;
-          setTimeout(renew, Math.max(expiresAt - Date.now() - {margin_ms}, 0));
-        }});
-      }}).catch(retry);
-    }}
-    setTimeout(renew, {renew_ms});
-  }})();
-
-  // Module shim for esbuild IIFE externals (require() calls)
-  window.__SINAS_MODULES__ = {{
-    "react": window.React,
-    "react-dom": window.ReactDOM,
-    "react-dom/client": window.ReactDOM,
-    "@sinas/sdk": window.SinasSDK,
-    "@sinas/ui": window.SinasUI,
-  }};
-  var require = function(name) {{
-    if (window.__SINAS_MODULES__[name]) return window.__SINAS_MODULES__[name];
-    console.warn('[SINAS] Module not found:', name);
-    return {{}};
-  }};
-</script>
-
-<!-- Compiled component bundle (IIFE) -->
-<script>{bundle}</script>
-
-<script>
-(function() {{
-  var Component = window.__SinasComponent__ && (window.__SinasComponent__.default || window.__SinasComponent__);
-  if (!Component) {{
-    document.getElementById('root').innerHTML = '<p style="color:red;padding:1rem;">Component failed to load.</p>';
-    return;
-  }}
-
-  (function bootstrap() {{
-    var root = ReactDOM.createRoot(document.getElementById('root'));
-    var input = window.__SINAS_CONFIG__.input || {{}};
-    root.render(React.createElement(Component, input));
-  }})();
-}})();
-</script>
+{component.source_code}
 </body>
 </html>"""
 
@@ -272,13 +157,6 @@ async def render_component(
     if not component or not component.is_active:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    # The last good build serves while a new one compiles (or after it failed).
-    if not component.compiled_bundle:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Component is not compiled (status: {component.compile_status}). "
-            f"Trigger compilation first.",
-        )
 
     # Parse input vars from query param
     input_vars = {}
@@ -355,8 +233,6 @@ async def render_shared_component(
     if not component:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    if not component.compiled_bundle:
-        raise HTTPException(status_code=422, detail="Component is not compiled")
 
     # Increment view count
     share.view_count += 1

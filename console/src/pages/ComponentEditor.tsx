@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Save, RefreshCw, ExternalLink, AlertCircle, Settings2, X } from 'lucide-react';
+import { ArrowLeft, Save, ExternalLink, Settings2, X } from 'lucide-react';
 import { apiClient, COMPONENT_SANDBOX, getComponentRenderUrl } from '../lib/api';
 import { useFrameTheme } from '../components/chat/frameTheme';
 import type { ComponentUpdate, EnabledStoreConfig } from '../types';
@@ -15,7 +15,6 @@ export function ComponentEditor() {
   const [sourceCode, setSourceCode] = useState('');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [cssOverrides, setCssOverrides] = useState('');
   const [visibility, setVisibility] = useState('private');
   const [enabledQueries, setEnabledQueries] = useState<string[]>([]);
   const [enabledFunctions, setEnabledFunctions] = useState<string[]>([]);
@@ -29,11 +28,6 @@ export function ComponentEditor() {
     queryKey: ['component', namespace, name],
     queryFn: () => apiClient.getComponent(namespace!, name!),
     enabled: !!namespace && !!name,
-    refetchInterval: (query) => {
-      const status = query.state.data?.compile_status;
-      if (status === 'pending' || status === 'compiling') return 2000;
-      return false;
-    },
   });
 
   // Fixed per render token, so a theme switch reaches the preview by message
@@ -79,7 +73,6 @@ export function ComponentEditor() {
       setSourceCode(component.source_code);
       setTitle(component.title || '');
       setDescription(component.description || '');
-      setCssOverrides(component.css_overrides || '');
       setVisibility(component.visibility);
       setEnabledQueries(component.enabled_queries || []);
       setEnabledFunctions(component.enabled_functions || []);
@@ -102,19 +95,11 @@ export function ComponentEditor() {
     },
   });
 
-  const compileMutation = useMutation({
-    mutationFn: () => apiClient.compileComponent(namespace!, name!),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['component', namespace, name] });
-    },
-  });
-
   const handleSave = useCallback(() => {
     const data: ComponentUpdate = {};
     if (sourceCode !== component?.source_code) data.source_code = sourceCode;
     if (title !== (component?.title || '')) data.title = title || undefined;
     if (description !== (component?.description || '')) data.description = description || undefined;
-    if (cssOverrides !== (component?.css_overrides || '')) data.css_overrides = cssOverrides || undefined;
     if (visibility !== component?.visibility) data.visibility = visibility;
 
     // Always send resource arrays so they can be updated
@@ -129,7 +114,7 @@ export function ComponentEditor() {
 
     if (Object.keys(data).length === 0) return;
     updateMutation.mutate(data);
-  }, [sourceCode, title, description, cssOverrides, visibility, enabledQueries, enabledFunctions, enabledAgents, enabledStores, component, updateMutation]);
+  }, [sourceCode, title, description, visibility, enabledQueries, enabledFunctions, enabledAgents, enabledStores, component, updateMutation]);
 
   // Ctrl+S save shortcut
   useEffect(() => {
@@ -146,16 +131,6 @@ export function ComponentEditor() {
   // Count total enabled resources for the badge
   const resourceCount = enabledQueries.length + enabledFunctions.length + enabledAgents.length
     + enabledStores.length;
-
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      success: 'bg-green-900/30 text-green-400 border-green-800',
-      pending: 'bg-yellow-900/30 text-yellow-400 border-yellow-800',
-      compiling: 'bg-blue-900/30 text-blue-400 border-blue-800',
-      error: 'bg-red-900/30 text-red-400 border-red-800',
-    };
-    return colors[status] || 'bg-gray-900/30 text-gray-400 border-gray-800';
-  };
 
   // Helper to toggle item in array
   const toggleItem = (
@@ -194,11 +169,8 @@ export function ComponentEditor() {
           </Link>
           <div>
             <h1 className="text-lg font-semibold text-gray-100">{component.title || component.name}</h1>
-            <p className="text-xs text-gray-500">{namespace}/{name} &middot; v{component.version}</p>
+            <p className="text-xs text-gray-500">{namespace}/{name}</p>
           </div>
-          <span className={`px-2 py-0.5 rounded text-xs font-medium border ${getStatusBadge(component.compile_status)}`}>
-            {component.compile_status}
-          </span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -217,25 +189,15 @@ export function ComponentEditor() {
               </span>
             )}
           </button>
-          {component.compile_status === 'success' && (
-            <a
-              href={getComponentRenderUrl(component.render_token!, namespace!, name!)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors"
-            >
-              <ExternalLink className="w-4 h-4" />
-              Preview
-            </a>
-          )}
-          <button
-            onClick={() => compileMutation.mutate()}
-            disabled={compileMutation.isPending}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors disabled:opacity-50"
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors"
           >
-            <RefreshCw className={`w-4 h-4 ${compileMutation.isPending ? 'animate-spin' : ''}`} />
-            Compile
-          </button>
+            <ExternalLink className="w-4 h-4" />
+            Open
+          </a>
           <button
             onClick={handleSave}
             disabled={!dirty || updateMutation.isPending}
@@ -246,22 +208,6 @@ export function ComponentEditor() {
           </button>
         </div>
       </div>
-
-      {/* Compile errors */}
-      {component.compile_status === 'error' && component.compile_errors?.length && (
-        <div className="px-6 py-2 bg-red-900/10 border-b border-red-900/30">
-          <div className="flex items-center gap-2 text-red-400 text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <div>
-              {component.compile_errors.map((err, i) => (
-                <div key={i}>
-                  {err.location ? `Line ${err.location.line}: ` : ''}{err.text}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
@@ -296,7 +242,7 @@ export function ComponentEditor() {
             </select>
           </div>
 
-          {/* Source code textarea */}
+          {/* The page's HTML: markup, <style> and <script> (window.sinas is there) */}
           <textarea
             value={sourceCode}
             onChange={(e) => { setSourceCode(e.target.value); setDirty(true); }}
@@ -304,18 +250,6 @@ export function ComponentEditor() {
             spellCheck={false}
           />
 
-          {/* CSS overrides */}
-          <div className="border-t border-gray-800">
-            <div className="px-4 py-1 text-xs text-gray-500">CSS Overrides</div>
-            <textarea
-              value={cssOverrides}
-              onChange={(e) => { setCssOverrides(e.target.value); setDirty(true); }}
-              rows={3}
-              className="w-full bg-surface-page text-gray-300 text-xs font-mono px-4 py-2 resize-none focus:outline-none"
-              placeholder="body { background: #1a1a2e; }"
-              spellCheck={false}
-            />
-          </div>
         </div>
 
         {/* Resources panel (toggled) */}
@@ -511,22 +445,16 @@ export function ComponentEditor() {
         {/* Preview iframe */}
         <div className="flex-1 flex flex-col bg-surface-0">
           <div className="px-4 py-2 bg-surface-input border-b border-gray-800 text-xs text-gray-500">
-            Preview {component.compile_status !== 'success' && '(compile required)'}
+            Preview {dirty && '(save to update)'}
           </div>
-          {component.compile_status === 'success' ? (
-            <iframe
-              ref={previewRef}
-              onLoad={onPreviewLoad}
-              src={previewUrl}
-              sandbox={COMPONENT_SANDBOX}
-              className="flex-1 w-full border-0"
-              title="Component Preview"
-            />
-          ) : (
-            <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-              Compile the component to see a preview
-            </div>
-          )}
+          <iframe
+            ref={previewRef}
+            onLoad={onPreviewLoad}
+            src={previewUrl}
+            sandbox={COMPONENT_SANDBOX}
+            className="flex-1 w-full border-0"
+            title="Component Preview"
+          />
         </div>
       </div>
     </div>

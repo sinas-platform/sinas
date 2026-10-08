@@ -1,9 +1,12 @@
-"""Components API endpoints."""
-import secrets
-from datetime import datetime
-from typing import Any, Optional
+"""Components API endpoints.
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+Writes go through ComponentApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+There is no build step: a component's source is served as is.
+"""
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,10 +24,12 @@ from app.schemas.component import (
     ShareResponse,
 )
 from app.services.content_tokens import generate_component_render_token
-from app.services import component_builder
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.components import ComponentApplier
 
 router = APIRouter(prefix="/components", tags=["components"])
+
+_applier = ComponentApplier()
 
 
 def _component_response(component: Component, user_id: str) -> ComponentResponse:
@@ -49,7 +54,6 @@ def _component_list_response(component: Component, user_id: str) -> ComponentLis
 async def create_component(
     request: Request,
     component_data: ComponentCreate,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
@@ -62,45 +66,14 @@ async def create_component(
         raise HTTPException(status_code=403, detail="Not authorized to create components")
     set_permission_used(request, permission)
 
-    # Check for existing component with same namespace/name
-    result = await db.execute(
-        select(Component).where(
-            and_(
-                Component.namespace == component_data.namespace,
-                Component.name == component_data.name,
-            )
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Component 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, component_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Component '{component_data.namespace}/{component_data.name}' already exists",
-        )
-
-    component = Component(
-        user_id=user_id,
-        namespace=component_data.namespace,
-        name=component_data.name,
-        title=component_data.title,
-        description=component_data.description,
-        source_code=component_data.source_code,
-        input_schema=component_data.input_schema,
-        enabled_agents=component_data.enabled_agents or [],
-        enabled_functions=component_data.enabled_functions or [],
-        enabled_queries=component_data.enabled_queries or [],
-        enabled_components=component_data.enabled_components or [],
-        enabled_stores=component_data.enabled_stores or [],
-        css_overrides=component_data.css_overrides,
-        visibility=component_data.visibility,
-        compile_status="pending",
-    )
-
-    db.add(component)
-    await db.flush()
-    await db.refresh(component)
-
-    # Trigger background compilation
-    background_tasks.add_task(component_builder.compile_component, component.id)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    component = result.obj
 
     return _component_response(component, user_id)
 
@@ -163,7 +136,6 @@ async def update_component(
     name: str,
     component_data: ComponentUpdate,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
@@ -181,74 +153,13 @@ async def update_component(
 
     set_permission_used(request, f"sinas.components/{namespace}/{name}.update")
 
-    detach_if_package_managed(component)
-
-    # Check for namespace/name conflicts if changing
-    new_namespace = component_data.namespace or component.namespace
-    new_name = component_data.name or component.name
-
-    if new_namespace != component.namespace or new_name != component.name:
-        result = await db.execute(
-            select(Component).where(
-                and_(
-                    Component.namespace == new_namespace,
-                    Component.name == new_name,
-                    Component.id != component.id,
-                )
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400,
-                detail=f"Component '{new_namespace}/{new_name}' already exists",
-            )
-
-    source_changed = False
-
-    # Update fields
-    if component_data.namespace is not None:
-        component.namespace = component_data.namespace
-    if component_data.name is not None:
-        component.name = component_data.name
-    if component_data.title is not None:
-        component.title = component_data.title
-    if component_data.description is not None:
-        component.description = component_data.description
-    if component_data.source_code is not None:
-        if component_data.source_code != component.source_code:
-            component.source_code = component_data.source_code
-            # The last good bundle keeps serving until the new one is built.
-            component.compile_status = "pending"
-            component.compile_errors = None
-            component.version += 1
-            source_changed = True
-    if component_data.input_schema is not None:
-        component.input_schema = component_data.input_schema
-    if component_data.enabled_agents is not None:
-        component.enabled_agents = component_data.enabled_agents
-    if component_data.enabled_functions is not None:
-        component.enabled_functions = component_data.enabled_functions
-    if component_data.enabled_queries is not None:
-        component.enabled_queries = component_data.enabled_queries
-    if component_data.enabled_components is not None:
-        component.enabled_components = component_data.enabled_components
-    if component_data.enabled_stores is not None:
-        component.enabled_stores = component_data.enabled_stores
-    if component_data.css_overrides is not None:
-        component.css_overrides = component_data.css_overrides
-    if component_data.visibility is not None:
-        component.visibility = component_data.visibility
-    if component_data.is_active is not None:
-        component.is_active = component_data.is_active
-    if component_data.is_published is not None:
-        component.is_published = component_data.is_published
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    component = await rest.locked(_applier, ctx, component)
+    # As before: fields left out (or null) are unchanged.
+    patch = {key: value for key, value in component_data.model_dump().items() if value is not None}
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, component, patch), existing=component)
+    await rest.commit(db, ctx)
     await db.refresh(component)
-
-    # Trigger recompilation if source changed
-    if source_changed:
-        background_tasks.add_task(component_builder.compile_component, component.id)
 
     return _component_response(component, user_id)
 
@@ -261,7 +172,8 @@ async def delete_component(
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Soft-delete a component."""
+    """Delete a component (recorded in change history, so it can be restored;
+    its share links go with it)."""
     user_id, permissions = current_user_data
 
     component = await Component.get_with_permissions(
@@ -275,43 +187,11 @@ async def delete_component(
 
     set_permission_used(request, f"sinas.components/{namespace}/{name}.delete")
 
-    component.is_active = False
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, component), ctx)
+    await rest.commit(db, ctx)
 
     return None
-
-
-@router.post("/{namespace}/{name}/compile", response_model=ComponentResponse)
-async def compile_component(
-    namespace: str,
-    name: str,
-    request: Request,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    current_user_data=Depends(get_current_user_with_permissions),
-):
-    """Trigger compilation of a component."""
-    user_id, permissions = current_user_data
-
-    component = await Component.get_with_permissions(
-        db=db,
-        user_id=user_id,
-        permissions=permissions,
-        action="update",
-        namespace=namespace,
-        name=name,
-    )
-
-    set_permission_used(request, f"sinas.components/{namespace}/{name}.update")
-
-    component.compile_status = "pending"
-    component.compile_errors = None
-    await db.flush()
-    await db.refresh(component)
-
-    background_tasks.add_task(component_builder.compile_component, component.id)
-
-    return _component_response(component, user_id)
 
 
 # --- Share Link Endpoints ---

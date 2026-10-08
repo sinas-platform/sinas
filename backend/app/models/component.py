@@ -1,4 +1,4 @@
-"""Component model - serverless UI components stored in DB, compiled via esbuild."""
+"""Component model - small HTML+JS pages rendered sandboxed, stored in DB."""
 import uuid
 from typing import Any, Optional
 
@@ -6,7 +6,6 @@ from sqlalchemy import (
     JSON,
     Boolean,
     ForeignKey,
-    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -20,7 +19,8 @@ from .mixins import PermissionMixin
 
 
 class Component(Base, PermissionMixin):
-    """Interactive React components compiled server-side and served as embeddable iframes."""
+    """An HTML page (markup, styles, scripts) served as is in a sandboxed frame,
+    with a small `sinas` client for the resources it declares. No build step."""
 
     __tablename__ = "components"
     __table_args__ = (UniqueConstraint("namespace", "name", name="uix_component_namespace_name"),)
@@ -32,12 +32,8 @@ class Component(Base, PermissionMixin):
     title: Mapped[Optional[str]] = mapped_column(String(500))
     description: Mapped[Optional[str]] = mapped_column(Text)
 
-    # Source and compiled output
+    # The page body: HTML with <style> and <script> as the author likes
     source_code: Mapped[str] = mapped_column(Text, nullable=False)
-    compiled_bundle: Mapped[Optional[str]] = mapped_column(Text)
-    source_map: Mapped[Optional[str]] = mapped_column(Text)
-    compile_status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
-    compile_errors: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON)
 
     # Input schema for component props
     input_schema: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON)
@@ -51,11 +47,8 @@ class Component(Base, PermissionMixin):
         JSON, nullable=False, default=list, server_default="[]"
     )  # List of {"store": "namespace/name", "access": "readonly|readwrite"}
 
-    # Display and publishing
-    css_overrides: Mapped[Optional[str]] = mapped_column(Text)
+    # Who besides the owner may see it (PermissionMixin): private | shared | public
     visibility: Mapped[str] = mapped_column(String(50), nullable=False, default="private")
-    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Lifecycle
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

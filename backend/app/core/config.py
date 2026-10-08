@@ -404,8 +404,6 @@ class Settings(BaseSettings):
     metering_snapshot_minutes: int = 5  # Redis -> usage_periods cadence
     metering_push_minutes: int = 15  # heartbeat cadence (jittered per instance)
 
-    # Component builder
-    builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service
 
     # OpenTelemetry (opt-in observability — e.g. Langwatch)
     otel_enabled: bool = False

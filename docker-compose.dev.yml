@@ -19,11 +19,6 @@ services:
     deploy:
       replicas: 1
 
-  builder:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.builder
-
   backend:
     build:
       context: ./backend

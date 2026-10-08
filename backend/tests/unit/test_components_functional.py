@@ -1,17 +1,13 @@
-"""Components: state from the browser, chat tools, and compiles.
+"""Components: state from the browser and chat tools.
 
 - The state proxy still queried `State.namespace`, a column gone since states
   moved into stores: every state call from a component was a 500.
 - Chat tool names turned "-" into "_" and were parsed back by splitting on
   the first "_": a component named sales_chart, or in namespace my-ui, was
   "not found".
-- A compile interrupted by a restart stayed "compiling" for good, an older
-  compile could overwrite a newer one, and an edit took a working component
-  offline until its rebuild finished (for good, if the builder was down).
 """
 
 import uuid
-from contextlib import asynccontextmanager
 
 import pytest
 import pytest_asyncio
@@ -21,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.component import Component
 from app.models.state import State
 from app.models.store import Store
-from app.services import component_builder
 from app.services.component_tools import ComponentToolConverter
 from tests.conftest import auth_headers
 
@@ -33,9 +28,7 @@ def _uid() -> str:
 async def _component(db, owner, **extra) -> Component:
     comp = Component(
         user_id=owner.id, namespace=extra.pop("namespace", f"ui{_uid()}"),
-        name=extra.pop("name", "board"), source_code="export default () => null;",
-        compiled_bundle="var __SinasComponent__={};",
-        compile_status=extra.pop("compile_status", "success"), **extra,
+        name=extra.pop("name", "board"), source_code="<p>board</p>", **extra,
     )
     db.add(comp)
     await db.flush()
@@ -206,92 +199,3 @@ class TestChatToolNames:
         legacy = f"show_component_{namespace}_chart".replace("-", "_")
         block = await ComponentToolConverter().handle_component_tool_call(db, legacy, {}, str(admin_user.id))
         assert block["namespace"] == namespace
-
-
-@pytest.fixture
-def same_session(db, monkeypatch):
-    """compile_component opens its own sessions; give it the test's."""
-
-    @asynccontextmanager
-    async def factory():
-        yield db
-
-    monkeypatch.setattr("app.core.database.AsyncSessionLocal", factory)
-    monkeypatch.setattr(db, "commit", db.flush)
-
-
-def _builder(monkeypatch, result=None, raises=None, during=None):
-    async def compile(self, source):
-        if during:
-            await during()
-        if raises:
-            raise raises
-        return result
-
-    monkeypatch.setattr(component_builder.ComponentBuilderService, "compile", compile)
-
-
-class TestCompiles:
-    async def test_a_failed_build_keeps_the_last_good_bundle(self, db, admin_user, monkeypatch, same_session):
-        comp = await _component(db, admin_user)
-        _builder(monkeypatch, {"success": False, "errors": [{"text": "boom", "location": None}]})
-        await component_builder.compile_component(comp.id)
-        await db.refresh(comp)
-        assert comp.compile_status == "error"
-        assert comp.compiled_bundle == "var __SinasComponent__={};"
-
-    async def test_an_exception_never_leaves_it_compiling(self, db, admin_user, monkeypatch, same_session):
-        comp = await _component(db, admin_user)
-        _builder(monkeypatch, raises=RuntimeError("builder exploded"))
-        await component_builder.compile_component(comp.id)
-        await db.refresh(comp)
-        assert comp.compile_status == "error"
-        assert "builder exploded" in comp.compile_errors[0]["text"]
-
-    async def test_an_older_compile_does_not_overwrite_a_newer_edit(
-        self, db, admin_user, monkeypatch, same_session
-    ):
-        comp = await _component(db, admin_user)
-
-        async def edit_meanwhile():
-            comp.source_code = "export default () => 'v2';"
-            await db.flush()
-
-        _builder(monkeypatch, {"success": True, "bundle": "OLD", "sourceMap": None}, during=edit_meanwhile)
-        await component_builder.compile_component(comp.id)
-        await db.refresh(comp)
-        assert comp.compiled_bundle != "OLD"
-
-    async def test_interrupted_compiles_resume_at_startup(self, db, admin_user, monkeypatch, same_session):
-        stuck = await _component(db, admin_user, compile_status="compiling")
-        scheduled = []
-        monkeypatch.setattr(component_builder, "schedule_compile", scheduled.append)
-        await component_builder.resume_interrupted_compiles()
-        assert stuck.id in scheduled
-
-    @pytest.mark.parametrize("reply", [{"ok": True}, {"success": True}, None])
-    async def test_an_unexpected_builder_reply_is_an_error(
-        self, db, admin_user, monkeypatch, same_session, reply
-    ):
-        comp = await _component(db, admin_user)
-        _builder(monkeypatch, reply)
-        await component_builder.compile_component(comp.id)
-        await db.refresh(comp)
-        assert comp.compile_status == "error"
-
-    async def test_no_builder_is_a_clear_error(self):
-        result = await component_builder.ComponentBuilderService(builder_url="").compile("x")
-        assert not result["success"]
-        assert "No component builder is configured" in result["errors"][0]["text"]
-
-    async def test_an_edit_keeps_serving_the_last_build(self, client, db, admin_user, monkeypatch):
-        monkeypatch.setattr(component_builder, "compile_component", lambda *_: None)
-        comp = await _component(db, admin_user)
-        r = await client.put(
-            f"/api/v1/components/{comp.namespace}/{comp.name}",
-            json={"source_code": "export default () => 'v2';"}, headers=auth_headers(admin_user),
-        )
-        assert r.status_code == 200, r.text
-        await db.refresh(comp)
-        assert comp.compile_status == "pending"
-        assert comp.compiled_bundle == "var __SinasComponent__={};"

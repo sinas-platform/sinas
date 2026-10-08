@@ -522,6 +522,23 @@ invalidation effect).
   of that name in any other namespace crashed startup. It is scoped to
   `default` now.
 
+### Slice 5: components (decisions)
+
+- **No build step.** A component is an HTML page (`source_code` is its body:
+  markup, `<style>`, `<script>`), served as is with a small vanilla `sinas`
+  client inlined by the render endpoint (no npm, no CDN). The esbuild builder
+  service, the compile pipeline and its statuses, and React/`@sinas/ui` from
+  unpkg are gone — so the compile effect this design anticipated isn't
+  needed. Migration `h1t2m3l4c5p6` drops the build columns, folds
+  `css_overrides` into the page as a `<style>`, and drops the unused
+  `version`/`is_published`.
+- **One write path** like every applier kind: REST, config and packages
+  share validation, ownership and history. A REST delete is a real delete
+  (recorded, restorable from history) instead of flagging the row inactive,
+  which kept the name taken and could not be undone. `is_active` is operator
+  state unless declared. A bare store reference in config still means
+  read-write.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

@@ -196,65 +196,6 @@ class TestApplyNotifications:
 
 
 # --------------------------------------------------------------------------
-# 6. Config-applied components must reach the compiler
-# --------------------------------------------------------------------------
-
-class TestComponentCompileNotification:
-    async def _apply(self, db, owner_id, comp_config, notify):
-        from app.services.config_apply.resources import apply_components
-
-        await apply_components(
-            db=db,
-            components=[comp_config],
-            dry_run=False,
-            managed_by="config",
-            config_name="test",
-            owner_user_id=owner_id,
-            calculate_hash=lambda d: "hash-" + str(sorted(str(d))),
-            track_change=lambda *a: None,
-            errors=[],
-            warnings=[],
-            notify_compile=notify,
-        )
-
-    def _config(self, name, source="export default () => null"):
-        from app.schemas.config import ComponentConfig
-
-        return ComponentConfig(namespace="default", name=name, sourceCode=source)
-
-    async def test_created_component_is_queued_for_compile(self, db, admin_user):
-        """Config/package components sat at compile_status="pending" forever —
-        only the REST path ever invoked the builder."""
-        import uuid as _uuid
-
-        queued = []
-        name = f"comp_{_uuid.uuid4().hex[:6]}"
-        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
-        assert len(queued) == 1  # the new component's id
-
-    async def test_source_change_requeues_but_metadata_change_does_not(
-        self, db, admin_user
-    ):
-        import uuid as _uuid
-
-        queued = []
-        name = f"comp_{_uuid.uuid4().hex[:6]}"
-        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
-        await db.flush()
-
-        # Same source, new title → no recompile
-        cfg = self._config(name)
-        cfg.title = "New title"
-        await self._apply(db, str(admin_user.id), cfg, queued.append)
-        assert len(queued) == 1
-
-        # Changed source → recompile
-        cfg2 = self._config(name, source="export default () => 42")
-        await self._apply(db, str(admin_user.id), cfg2, queued.append)
-        assert len(queued) == 2
-
-
-# --------------------------------------------------------------------------
 # 7. FunctionVersion churn: metadata-only updates must not mint versions
 # --------------------------------------------------------------------------
 

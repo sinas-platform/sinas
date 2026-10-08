@@ -173,7 +173,6 @@ export type ComponentContent = {
   name: string;
   title?: string;
   input?: Record<string, unknown>;
-  compile_status?: string;
   render_token?: string;
 };
 
@@ -762,20 +761,13 @@ export interface Component {
   title?: string;
   description?: string;
   source_code: string;
-  compiled_bundle?: string;
-  source_map?: string;
-  compile_status: string;
-  compile_errors?: Array<{ text: string; location?: { line: number; column: number } | null }>;
   input_schema?: Record<string, unknown>;
   enabled_agents: string[];
   enabled_functions: string[];
   enabled_queries: string[];
   enabled_components: string[];
   enabled_stores: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility: string;
-  version: number;
-  is_published: boolean;
   is_active: boolean;
   render_token?: string;
   created_at: string;
@@ -794,7 +786,6 @@ export interface ComponentCreate {
   enabled_queries?: string[];
   enabled_components?: string[];
   enabled_stores?: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility?: string;
 }
 
@@ -810,10 +801,8 @@ export interface ComponentUpdate {
   enabled_queries?: string[];
   enabled_components?: string[];
   enabled_stores?: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility?: string;
   is_active?: boolean;
-  is_published?: boolean;
 }
 
 // Collections

@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timezone as tz
 
 from app.core.encryption import encryption_service
-from app.models.component import Component
 from app.models.dependency import Dependency
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
@@ -20,7 +19,7 @@ from app.models.manifest import Manifest
 from app.models.secret import Secret
 from app.models.store import Store
 
-from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
+from app.services.config_apply.normalizers import should_skip_existing
 from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
@@ -247,118 +246,6 @@ async def apply_functions(
 
         except Exception as e:
             errors.append(f"Error applying function '{func_config.name}': {str(e)}")
-
-
-async def apply_components(
-    db: AsyncSession,
-    components: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    notify_compile: Any = None,
-) -> None:
-    """Apply component configurations.
-
-    `notify_compile(component_id)` is called for every component whose source
-    was created/changed, so the caller can trigger compilation post-commit —
-    without it, config-applied components sat at compile_status="pending"
-    forever (only the REST path ever compiled).
-    """
-    for comp_config in components:
-        resource_name = f"{comp_config.namespace}/{comp_config.name}"
-        try:
-            stmt = select(Component).where(
-                Component.namespace == comp_config.namespace,
-                Component.name == comp_config.name,
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": comp_config.namespace,
-                    "name": comp_config.name,
-                    "title": comp_config.title,
-                    "description": comp_config.description,
-                    "source_code": comp_config.sourceCode,
-                    "input_schema": comp_config.inputSchema or {},
-                    "enabled_agents": comp_config.enabledAgents,
-                    "enabled_functions": comp_config.enabledFunctions,
-                    "enabled_queries": comp_config.enabledQueries,
-                    "enabled_components": comp_config.enabledComponents,
-                    "enabled_stores": normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
-                    "css_overrides": comp_config.cssOverrides,
-                    "visibility": comp_config.visibility,
-                }
-            )
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "components", resource_name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    source_changed = existing.source_code != comp_config.sourceCode
-                    existing.title = comp_config.title
-                    existing.description = comp_config.description
-                    existing.source_code = comp_config.sourceCode
-                    existing.input_schema = comp_config.inputSchema
-                    existing.enabled_agents = comp_config.enabledAgents
-                    existing.enabled_functions = comp_config.enabledFunctions
-                    existing.enabled_queries = comp_config.enabledQueries
-                    existing.enabled_components = comp_config.enabledComponents
-                    existing.enabled_stores = normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else []
-                    existing.css_overrides = comp_config.cssOverrides
-                    existing.visibility = comp_config.visibility
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-                    if source_changed:
-                        # The last good bundle serves until the new one is built.
-                        existing.compile_status = "pending"
-                        existing.compile_errors = None
-                        existing.version += 1
-                        if notify_compile:
-                            notify_compile(existing.id)
-
-                track_change("update", "components", resource_name)
-
-            else:
-                if not dry_run:
-                    new_component = Component(
-                        namespace=comp_config.namespace,
-                        name=comp_config.name,
-                        title=comp_config.title,
-                        description=comp_config.description,
-                        source_code=comp_config.sourceCode,
-                        input_schema=comp_config.inputSchema,
-                        enabled_agents=comp_config.enabledAgents,
-                        enabled_functions=comp_config.enabledFunctions,
-                        enabled_queries=comp_config.enabledQueries,
-                        enabled_components=comp_config.enabledComponents,
-                        enabled_stores=normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
-                        css_overrides=comp_config.cssOverrides,
-                        visibility=comp_config.visibility,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                        compile_status="pending",
-                    )
-                    db.add(new_component)
-                    if notify_compile:
-                        await db.flush()  # assign the id for the compile queue
-                        notify_compile(new_component.id)
-
-                track_change("create", "components", resource_name)
-
-        except Exception as e:
-            errors.append(f"Error applying component '{resource_name}': {str(e)}")
 
 
 async def apply_collections(
