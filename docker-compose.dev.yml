@@ -29,6 +29,8 @@ services:
       - file_storage:/var/sinas/files
     environment:
       FUNCTION_CONTAINER_IMAGE: sinas-executor
+      # No Caddy here: the console is plain HTTP on its own port.
+      CONSOLE_URL: ${CONSOLE_URL:-http://localhost:51245/ui}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   queue-worker:
