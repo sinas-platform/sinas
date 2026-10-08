@@ -774,6 +774,41 @@ export interface Component {
   updated_at: string;
 }
 
+export type ComponentShareMode = 'snapshot' | 'viewer' | 'creator';
+
+export interface ComponentShare {
+  id: string;
+  token: string;
+  component_id: string;
+  input_data?: Record<string, unknown> | null;
+  expires_at?: string | null;
+  max_views?: number | null;
+  view_count: number;
+  label?: string | null;
+  mode: ComponentShareMode;
+  allow_writes: boolean;
+  created_at: string;
+  share_url: string;
+}
+
+export interface ComponentShareCreate {
+  mode: ComponentShareMode;
+  allow_writes?: boolean;
+  input_data?: Record<string, unknown>;
+  expires_at?: string;
+  max_views?: number;
+  label?: string;
+}
+
+/** What the console gets to render a "viewer" share link for the signed-in user. */
+export interface SharedComponent {
+  namespace: string;
+  name: string;
+  title: string;
+  input: Record<string, unknown>;
+  render_token: string;
+}
+
 export interface ComponentCreate {
   namespace?: string;
   name: string;

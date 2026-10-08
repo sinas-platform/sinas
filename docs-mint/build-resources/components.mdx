@@ -64,10 +64,18 @@ PUT    /api/v1/components/{namespace}/{name}               # Update component
 DELETE /api/v1/components/{namespace}/{name}               # Delete component (restorable from history)
 ```
 
-**Share links** allow embedding components outside Sinas with optional expiration and view limits:
+**Share links** (the Share button in the editor, or the API) turn a component into a shareable page, with optional expiry, view limit, label and fixed inputs. Each link has a mode:
+
+| Mode | Who can open it | Live data |
+|---|---|---|
+| `snapshot` | Anyone with the link | None: the page shows its fixed inputs only |
+| `viewer` | Signed-in Sinas users (the link opens in the console) | Each viewer's own permissions, capped to what the component declares |
+| `creator` | Anyone with the link | **Your** permissions, capped to what the component declares. Read only — read queries and store reads — unless the link sets `allow_writes` (then also functions, agents, write queries, store writes) |
+
+A `creator` link is a credential: treat it like a password. Revoking it, or its expiry, ends live access at once, even on pages already open.
 
 ```
-POST   /api/v1/components/{namespace}/{name}/shares        # Create share link
+POST   /api/v1/components/{namespace}/{name}/shares        # Create: {mode, allow_writes, input_data, expires_at, max_views, label}
 GET    /api/v1/components/{namespace}/{name}/shares        # List share links
 DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
 ```
@@ -76,14 +84,15 @@ DELETE /api/v1/components/{namespace}/{name}/shares/{token} # Revoke share link
 
 ```
 GET    /components/{namespace}/{name}/render               # Render as full HTML page
-GET    /components/shared/{token}                          # Render via share token
+GET    /components/shared/{token}                          # Open a share link (a viewer link forwards to the console)
+POST   /components/shared/{token}/open                     # Viewer links: what the console needs to render it for the signed-in user
 ```
 
 **Security model.** A component is code its author wrote, running in every viewer's browser, so it never gets the viewer's own session:
 
 - It renders **sandboxed** (an opaque origin): it can't reach the console, its storage, or the page embedding it. `localStorage`/`sessionStorage` are unavailable inside a component; keep state in a store.
 - The page embeds a **component access token**: the viewer's permissions, capped to what the component declares (`enabled_queries`, `enabled_functions`, `enabled_agents`, `enabled_stores` with their access mode). It is accepted only on that component's proxy endpoints and on chats with its enabled agents, lasts an hour, and the page renews it for up to 12 hours.
-- Share links render without a token: anonymous viewers see static components only.
+- Share links follow their mode (above): a snapshot page has no token; a creator page carries a token bound to the link, so it stops working when the link is revoked or expires.
 
 **Proxy endpoints** (what the `sinas` client calls) enforce the component's `enabled_*` declarations:
 

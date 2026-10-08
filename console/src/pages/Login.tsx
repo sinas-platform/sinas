@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Logo } from '../components/Logo';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { returnPath } from '../lib/returnPath';
 import { useAuth } from '../lib/auth-context';
 import { Mail, Lock, Loader2, KeyRound } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
@@ -8,6 +9,7 @@ import ThemeToggle from '../components/ThemeToggle';
 export function Login() {
   const { authMode, login, verifyOTP } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,7 +34,7 @@ export function Login() {
         setStep('otp');
       } else {
         // password-only mode: tokens are already in storage
-        navigate('/');
+        navigate(returnPath(location.state));
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || err.message || 'Login failed');
@@ -48,7 +50,7 @@ export function Login() {
 
     try {
       await verifyOTP(sessionId, otpCode);
-      navigate('/');
+      navigate(returnPath(location.state));
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Invalid OTP code');
     } finally {

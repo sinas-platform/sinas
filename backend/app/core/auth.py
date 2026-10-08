@@ -743,7 +743,13 @@ async def _verify_component_token(
     with permissions capped to the component's grants, on the component's
     routes only."""
     from app.models.component import Component
-    from app.services.component_access import ComponentScope, route_allowed, scoped_permissions
+    from app.models.component_share import ComponentShare
+    from app.services.component_access import (
+        ComponentScope,
+        route_allowed,
+        scoped_permissions,
+        share_is_live,
+    )
 
     scope = ComponentScope(claims["namespace"], claims["name"], int(claims["session_start"]))
     route = request.scope.get("route") if request is not None else None
@@ -762,7 +768,29 @@ async def _verify_component_token(
     if not component or not component.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Component not found")
 
-    permissions = scoped_permissions(component, await get_user_permissions(db, str(user.id)))
+    read_only = False
+    if claims.get("share_id"):
+        # A creator link: it acts for its creator only while the link lives
+        # (revoking or expiring it ends access at once), for this component.
+        share = await db.get(ComponentShare, claims["share_id"])
+        if (
+            not share_is_live(share)
+            or share.mode != "creator"
+            or share.component_id != component.id
+            or str(share.created_by) != str(user.id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Share link no longer valid"
+            )
+        read_only = not share.allow_writes
+        scope = ComponentScope(
+            scope.namespace, scope.name, scope.session_start,
+            share_id=str(share.id), read_only=read_only,
+        )
+
+    permissions = scoped_permissions(
+        component, await get_user_permissions(db, str(user.id)), read_only
+    )
     request.state.component_scope = scope
     return str(user.id), user.email, permissions
 

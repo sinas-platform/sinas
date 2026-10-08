@@ -197,6 +197,24 @@ async def delete_component(
 # --- Share Link Endpoints ---
 
 
+def _share_response(share: ComponentShare) -> ShareResponse:
+    return ShareResponse(
+        id=str(share.id),
+        token=share.token,
+        component_id=str(share.component_id),
+        input_data=share.input_data,
+        expires_at=share.expires_at,
+        max_views=share.max_views,
+        view_count=share.view_count,
+        label=share.label,
+        mode=share.mode,
+        allow_writes=share.allow_writes,
+        created_at=share.created_at,
+        # Every mode opens here; a viewer link forwards to the console.
+        share_url=f"/components/shared/{share.token}",
+    )
+
+
 @router.post("/{namespace}/{name}/shares", response_model=ShareResponse)
 async def create_share_link(
     namespace: str,
@@ -229,24 +247,15 @@ async def create_share_link(
         expires_at=body.expires_at,
         max_views=body.max_views,
         label=body.label,
+        mode=body.mode,
+        allow_writes=body.allow_writes,
     )
 
     db.add(share)
     await db.flush()
     await db.refresh(share)
 
-    return ShareResponse(
-        id=str(share.id),
-        token=share.token,
-        component_id=str(share.component_id),
-        input_data=share.input_data,
-        expires_at=share.expires_at,
-        max_views=share.max_views,
-        view_count=share.view_count,
-        label=share.label,
-        created_at=share.created_at,
-        share_url=f"/components/shared/{share.token}",
-    )
+    return _share_response(share)
 
 
 @router.get("/{namespace}/{name}/shares", response_model=list[ShareResponse])
@@ -272,25 +281,11 @@ async def list_share_links(
     set_permission_used(request, f"sinas.components/{namespace}/{name}.read")
 
     result = await db.execute(
-        select(ComponentShare).where(ComponentShare.component_id == component.id)
+        select(ComponentShare)
+        .where(ComponentShare.component_id == component.id)
+        .order_by(ComponentShare.created_at.desc())
     )
-    shares = result.scalars().all()
-
-    return [
-        ShareResponse(
-            id=str(s.id),
-            token=s.token,
-            component_id=str(s.component_id),
-            input_data=s.input_data,
-            expires_at=s.expires_at,
-            max_views=s.max_views,
-            view_count=s.view_count,
-            label=s.label,
-            created_at=s.created_at,
-            share_url=f"/components/shared/{s.token}",
-        )
-        for s in shares
-    ]
+    return [_share_response(share) for share in result.scalars().all()]
 
 
 @router.delete("/{namespace}/{name}/shares/{token}", status_code=204)

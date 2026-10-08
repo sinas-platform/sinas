@@ -1,9 +1,9 @@
 """Component schemas."""
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ComponentCreate(BaseModel):
@@ -93,12 +93,24 @@ class ComponentListResponse(BaseModel):
 
 
 class ShareCreateRequest(BaseModel):
-    """Request to create a share link for a component."""
+    """Request to create a share link for a component.
+
+    mode: "snapshot" (fixed inputs, no live access), "viewer" (signed-in
+    users, their own permissions) or "creator" (anyone with the link, the
+    creator's permissions; read only unless allow_writes)."""
 
     input_data: Optional[dict[str, Any]] = None
     expires_at: Optional[datetime] = None
-    max_views: Optional[int] = None
-    label: Optional[str] = None
+    max_views: Optional[int] = Field(None, ge=1)
+    label: Optional[str] = Field(None, max_length=255)
+    mode: Literal["snapshot", "viewer", "creator"] = "snapshot"
+    allow_writes: bool = False
+
+    @model_validator(mode="after")
+    def _writes_only_as_creator(self) -> "ShareCreateRequest":
+        if self.allow_writes and self.mode != "creator":
+            raise ValueError("allow_writes applies to creator links only")
+        return self
 
 
 class ShareResponse(BaseModel):
@@ -112,6 +124,8 @@ class ShareResponse(BaseModel):
     max_views: Optional[int]
     view_count: int
     label: Optional[str]
+    mode: str
+    allow_writes: bool
     created_at: datetime
     share_url: str
 
