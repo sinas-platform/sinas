@@ -2,20 +2,26 @@ import { useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient, COMPONENT_SANDBOX, getComponentRenderUrl } from '../lib/api';
+import { useAuth } from '../lib/auth-context';
 import { useFrameTheme } from '../components/chat/frameTheme';
 
 /** A component shared "with signed-in users": rendered for whoever is signed
  * in, with their own permissions (capped to what the component declares). */
 export function SharedComponent() {
   const { token } = useParams<{ token: string }>();
+  const { user } = useAuth();
   const { data, error, isLoading } = useQuery({
-    queryKey: ['shared-component', token],
+    // The answer carries a token for this user: keyed by user, opened anew
+    // on every visit (expiry and view limits apply each time), and never
+    // kept once the page is left — not for the next person to sign in.
+    queryKey: ['shared-component', token, user?.id],
     queryFn: () => apiClient.openSharedComponent(token!),
-    enabled: !!token,
+    enabled: !!token && !!user,
     retry: false,
-    // Each open counts as a view; don't re-open on focus.
     refetchOnWindowFocus: false,
-    staleTime: Infinity,
+    refetchOnMount: 'always',
+    staleTime: 0,
+    gcTime: 0,
   });
   const frameRef = useRef<HTMLIFrameElement>(null);
   const onFrameLoad = useFrameTheme(frameRef);

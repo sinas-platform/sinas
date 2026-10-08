@@ -280,9 +280,15 @@ async def list_share_links(
 
     set_permission_used(request, f"sinas.components/{namespace}/{name}.read")
 
+    # Your own links only: a link's token is a credential (a creator link
+    # acts with its creator's permissions), so reading the component must
+    # not hand out other people's.
     result = await db.execute(
         select(ComponentShare)
-        .where(ComponentShare.component_id == component.id)
+        .where(
+            ComponentShare.component_id == component.id,
+            ComponentShare.created_by == user_id,
+        )
         .order_by(ComponentShare.created_at.desc())
     )
     return [_share_response(share) for share in result.scalars().all()]

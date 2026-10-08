@@ -260,7 +260,7 @@ async def render_shared_component(
     share = await ComponentShare.get_by_token(db, token)
     if share is not None and share.mode == "viewer":
         return RedirectResponse(
-            f"{settings.public_base_url}/ui/shared/{quote(token, safe='')}", status_code=302
+            f"{settings.public_console_url}/shared/{quote(token, safe='')}", status_code=302
         )
     share, component = await _open_share(db, token)
     access_token = None

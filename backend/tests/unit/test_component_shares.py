@@ -142,3 +142,35 @@ class TestLinks:
         )
         [link] = r.json()
         assert (link["mode"], link["allow_writes"], link["label"]) == ("creator", True, "board")
+
+    async def test_others_links_are_not_listed(self, client, db, component, admin_user):
+        """A link's token is a credential (a creator link acts as its
+        creator): reading the component must not reveal other people's."""
+        from app.models.user import Role, RolePermission, User, UserRole
+
+        await _share(client, component, admin_user, mode="creator")
+        role = Role(name=f"reader-{_uid()}", description="reads components")
+        db.add(role)
+        await db.flush()
+        db.add(RolePermission(role_id=role.id, permission_key="sinas.components/*/*.read:all", permission_value=True))
+        reader = User(email=f"reader-{_uid()}@example.com")
+        db.add(reader)
+        await db.flush()
+        db.add(UserRole(role_id=role.id, user_id=reader.id, active=True))
+        await db.flush()
+        r = await client.get(
+            f"/api/v1/components/{component.namespace}/{component.name}/shares",
+            headers=auth_headers(reader),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json() == []
+
+    async def test_viewer_links_redirect_to_the_configured_console(
+        self, client, component, admin_user, monkeypatch
+    ):
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "console_url", "https://console.example.com:51245/ui/")
+        share = await _share(client, component, admin_user, mode="viewer")
+        r = await client.get(share["share_url"], follow_redirects=False)
+        assert r.headers["location"] == f"https://console.example.com:51245/ui/shared/{share['token']}"

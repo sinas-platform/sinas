@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Trash2, X } from 'lucide-react';
-import { API_BASE_URL, apiClient } from '../lib/api';
+import { API_BASE_URL, apiClient, getApiErrorMessage } from '../lib/api';
 import { useToast } from '../lib/toast-context';
 import type { ComponentShare, ComponentShareMode } from '../types';
 
@@ -37,6 +37,9 @@ const MODE_LABEL: Record<ComponentShareMode, string> = {
 };
 
 function linkFor(share: ComponentShare): string {
+  // Viewer links open in this console (wherever it is served); the others
+  // are pages served by the API.
+  if (share.mode === 'viewer') return `${window.location.origin}/ui/shared/${share.token}`;
   return `${API_BASE_URL}${share.share_url}`;
 }
 
@@ -66,8 +69,13 @@ export function ShareDialog({
   });
 
   const copy = async (share: ComponentShare) => {
-    await navigator.clipboard.writeText(linkFor(share));
-    showToast('Link copied', 'success');
+    try {
+      await navigator.clipboard.writeText(linkFor(share));
+      showToast('Link copied', 'success');
+    } catch {
+      // The link exists either way; don't make it look like it failed.
+      window.prompt('Copy the link:', linkFor(share));
+    }
   };
 
   const create = useMutation({
@@ -88,7 +96,7 @@ export function ShareDialog({
       setLabel('');
       await copy(share);
     },
-    onError: (err: any) => showToast(err.response?.data?.detail || 'Could not create the link', 'error'),
+    onError: (err: unknown) => showToast(getApiErrorMessage(err, 'Could not create the link'), 'error'),
   });
 
   const revoke = useMutation({
