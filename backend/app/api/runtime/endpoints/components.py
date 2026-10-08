@@ -14,7 +14,7 @@ from jose import JWTError, jwt
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.auth import get_current_user_with_permissions, set_permission_used, via_api_key
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
@@ -279,6 +279,7 @@ async def render_shared_component(
 )
 async def open_viewer_share(
     token: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
@@ -286,6 +287,9 @@ async def open_viewer_share(
     console needs to render it with that user's own permissions (capped to
     what the component declares, like any component page)."""
     user_id, _ = current_user_data
+    if via_api_key(request):
+        # The page would act with the key owner's permissions, beyond the key's.
+        raise HTTPException(status_code=403, detail="Open shared components signed in, not with an API key")
     share, component = await _open_share(db, token, mode="viewer")
     return {
         "namespace": component.namespace,

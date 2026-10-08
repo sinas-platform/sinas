@@ -961,6 +961,14 @@ async def get_current_user_with_permissions(
 
 
 
+def via_api_key(request: Optional[Request]) -> bool:
+    """Whether this request authenticated with an API key. A key's
+    permissions are narrower than its owner's, so endpoints that would hand
+    out a credential acting with the owner's (component render tokens, share
+    links that act as their creator) refuse or withhold it for keys."""
+    return bool(request is not None and getattr(request.state, "via_api_key", False))
+
+
 def set_permission_used(request: Request, permission: str, has_perm: bool = True):
     """
     Store permission decision in request state for compliance logging.

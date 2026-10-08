@@ -188,3 +188,42 @@ class TestLinks:
         assert r.status_code == 403
         r = await client.post(url, json={"mode": "snapshot"}, headers={"X-API-Key": key})
         assert r.status_code == 200, r.text
+
+
+class TestApiKeysNeverActAsTheOwner:
+    """A key's permissions are narrower than its owner's; nothing that acts
+    with the owner's full permissions is handed to a key."""
+
+    async def _key(self, db, owner, permissions):
+        from app.core.auth import create_api_key
+
+        _, key = await create_api_key(db, owner, f"k-{_uid()}", permissions)
+        return {"X-API-Key": key}
+
+    async def test_creator_links_are_not_listed_to_a_key(self, client, db, component, admin_user):
+        await _share(client, component, admin_user, mode="creator")
+        await _share(client, component, admin_user, mode="snapshot")
+        h = await self._key(db, admin_user, {"sinas.components/*/*.read:all": True})
+        r = await client.get(
+            f"/api/v1/components/{component.namespace}/{component.name}/shares", headers=h
+        )
+        assert r.status_code == 200, r.text
+        assert [link["mode"] for link in r.json()] == ["snapshot"]
+
+    async def test_a_key_cannot_open_a_viewer_link(self, client, db, component, admin_user):
+        share = await _share(client, component, admin_user, mode="viewer")
+        h = await self._key(db, admin_user, {"sinas.components/*/*.read:all": True})
+        r = await client.post(f"/components/shared/{share['token']}/open", headers=h)
+        assert r.status_code == 403
+
+    async def test_component_responses_carry_no_render_token_for_a_key(
+        self, client, db, component, admin_user
+    ):
+        h = await self._key(db, admin_user, {"sinas.components/*/*.read:all": True})
+        r = await client.get(f"/api/v1/components/{component.namespace}/{component.name}", headers=h)
+        assert r.status_code == 200, r.text
+        assert r.json()["render_token"] is None
+        r = await client.get(
+            f"/api/v1/components/{component.namespace}/{component.name}", headers=auth_headers(admin_user)
+        )
+        assert r.json()["render_token"]
