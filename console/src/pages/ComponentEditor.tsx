@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Save, ExternalLink, Settings2, X } from 'lucide-react';
+import { ArrowLeft, Save, ExternalLink, Settings2, Share2, X } from 'lucide-react';
+import { ShareDialog } from '../components/ShareDialog';
 import { apiClient, COMPONENT_SANDBOX, getComponentRenderUrl } from '../lib/api';
 import { useFrameTheme } from '../components/chat/frameTheme';
 import type { ComponentUpdate, EnabledStoreConfig } from '../types';
@@ -22,6 +23,7 @@ export function ComponentEditor() {
   const [enabledStores, setEnabledStores] = useState<EnabledStoreConfig[]>([]);
   const [dirty, setDirty] = useState(false);
   const [showResources, setShowResources] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   // Bumped on every save: remounts the preview even when the new render
   // token happens to equal the last one (two saves within a second).
   const [saveCount, setSaveCount] = useState(0);
@@ -192,6 +194,13 @@ export function ComponentEditor() {
                 {resourceCount}
               </span>
             )}
+          </button>
+          <button
+            onClick={() => setShowShare(true)}
+            className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-400 hover:text-gray-100 border border-gray-700 rounded-lg transition-colors"
+          >
+            <Share2 className="w-4 h-4" />
+            Share
           </button>
           <a
             href={previewUrl}
@@ -462,6 +471,9 @@ export function ComponentEditor() {
           />
         </div>
       </div>
+      {showShare && (
+        <ShareDialog namespace={namespace!} name={name!} onClose={() => setShowShare(false)} />
+      )}
     </div>
   );
 }

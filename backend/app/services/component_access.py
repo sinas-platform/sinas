@@ -50,6 +50,11 @@ class ComponentScope:
     namespace: str
     name: str
     session_start: int
+    # Set for a "creator" share link: the token acts for the link's creator,
+    # is checked against the link on every call, and is read only unless the
+    # link allows writes.
+    share_id: Optional[str] = None
+    read_only: bool = False
 
     @property
     def ref(self) -> str:
@@ -57,7 +62,11 @@ class ComponentScope:
 
 
 def generate_component_access_token(
-    user_id: str, namespace: str, name: str, session_start: Optional[int] = None
+    user_id: str,
+    namespace: str,
+    name: str,
+    session_start: Optional[int] = None,
+    share_id: Optional[str] = None,
 ) -> str:
     now = int(time.time())
     payload = {
@@ -68,6 +77,8 @@ def generate_component_access_token(
         "session_start": session_start or now,
         "exp": now + TOKEN_TTL_SECONDS,
     }
+    if share_id:
+        payload["share_id"] = str(share_id)
     # Internal purpose token, like render and file-serve tokens: HS256.
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
@@ -94,32 +105,50 @@ def route_allowed(route_path: Optional[str], path_params: dict[str, Any], scope:
     return route_path in _CHAT_ROUTES
 
 
-def component_grants(component) -> list[str]:
-    """Every permission the component's declarations could need."""
+def component_grants(component, read_only: bool = False) -> list[str]:
+    """Every permission the component's declarations could need. Read only
+    (a creator link without writes): queries and store reads — functions and
+    agents can change things, and write queries are refused at the proxy."""
     grants: list[str] = []
     for ref in component.enabled_queries or []:
         grants += [f"sinas.queries/{ref}.execute:own", f"sinas.queries/{ref}.execute:all"]
-    for ref in component.enabled_functions or []:
-        grants += [f"sinas.functions/{ref}.execute:own", f"sinas.functions/{ref}.execute:all"]
-    for ref in component.enabled_agents or []:
-        grants += [f"sinas.agents/{ref}.chat:own", f"sinas.agents/{ref}.chat:all"]
     for entry in component.enabled_stores or []:
         store = entry.get("store") if isinstance(entry, dict) else None
         if not store:
             continue
         actions = ["read_state"]
-        if entry.get("access") == "readwrite":
+        if entry.get("access") == "readwrite" and not read_only:
             actions.append("write_state")  # set and delete
         for action in actions:
             grants += [f"sinas.stores/{store}.{action}:own", f"sinas.stores/{store}.{action}:all"]
+    if read_only:
+        return grants
+    for ref in component.enabled_functions or []:
+        grants += [f"sinas.functions/{ref}.execute:own", f"sinas.functions/{ref}.execute:all"]
+    for ref in component.enabled_agents or []:
+        grants += [f"sinas.agents/{ref}.chat:own", f"sinas.agents/{ref}.chat:all"]
     return grants
 
 
-def scoped_permissions(component, user_permissions: dict[str, bool]) -> dict[str, bool]:
+def scoped_permissions(
+    component, user_permissions: dict[str, bool], read_only: bool = False
+) -> dict[str, bool]:
     """The viewer's live permissions, capped to the component's grants (as an
     API key's are capped to its owner's)."""
     return {
         grant: True
-        for grant in component_grants(component)
+        for grant in component_grants(component, read_only)
         if check_permission(user_permissions, grant)
     }
+
+
+def share_is_live(share, now: Optional[float] = None) -> bool:
+    """Whether a share link still grants access (not expired). View limits
+    count page loads, not the calls a loaded page makes."""
+    if share is None:
+        return False
+    if share.expires_at is not None:
+        expires = share.expires_at.timestamp()
+        if expires <= (now if now is not None else time.time()):
+            return False
+    return True

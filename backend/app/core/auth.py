@@ -743,7 +743,13 @@ async def _verify_component_token(
     with permissions capped to the component's grants, on the component's
     routes only."""
     from app.models.component import Component
-    from app.services.component_access import ComponentScope, route_allowed, scoped_permissions
+    from app.models.component_share import ComponentShare
+    from app.services.component_access import (
+        ComponentScope,
+        route_allowed,
+        scoped_permissions,
+        share_is_live,
+    )
 
     scope = ComponentScope(claims["namespace"], claims["name"], int(claims["session_start"]))
     route = request.scope.get("route") if request is not None else None
@@ -762,7 +768,29 @@ async def _verify_component_token(
     if not component or not component.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Component not found")
 
-    permissions = scoped_permissions(component, await get_user_permissions(db, str(user.id)))
+    read_only = False
+    if claims.get("share_id"):
+        # A creator link: it acts for its creator only while the link lives
+        # (revoking or expiring it ends access at once), for this component.
+        share = await db.get(ComponentShare, claims["share_id"])
+        if (
+            not share_is_live(share)
+            or share.mode != "creator"
+            or share.component_id != component.id
+            or str(share.created_by) != str(user.id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Share link no longer valid"
+            )
+        read_only = not share.allow_writes
+        scope = ComponentScope(
+            scope.namespace, scope.name, scope.session_start,
+            share_id=str(share.id), read_only=read_only,
+        )
+
+    permissions = scoped_permissions(
+        component, await get_user_permissions(db, str(user.id)), read_only
+    )
     request.state.component_scope = scope
     return str(user.id), user.email, permissions
 
@@ -842,6 +870,10 @@ async def verify_jwt_or_api_key(
             )
 
         user, permissions = result
+        if request is not None:
+            # A key's permissions are narrower than its owner's; endpoints
+            # that hand out the owner's (creator share links) refuse keys.
+            request.state.via_api_key = True
         return str(user.id), user.email, permissions
 
 
@@ -927,6 +959,14 @@ async def get_current_user_with_permissions(
     return user_id, permissions
 
 
+
+
+def via_api_key(request: Optional[Request]) -> bool:
+    """Whether this request authenticated with an API key. A key's
+    permissions are narrower than its owner's, so endpoints that would hand
+    out a credential acting with the owner's (component render tokens, share
+    links that act as their creator) refuse or withhold it for keys."""
+    return bool(request is not None and getattr(request.state, "via_api_key", False))
 
 
 def set_permission_used(request: Request, permission: str, has_perm: bool = True):
@@ -1118,7 +1158,7 @@ async def _issue_superadmin_setup_link(db: AsyncSession, user: User, logger) -> 
         return
 
     plain_token, _ = await create_password_reset_token(db, str(user.id))
-    url = f"{settings.public_base_url}/ui/reset-password?token={plain_token}"
+    url = f"{settings.public_console_url}/reset-password?token={plain_token}"
     logger.warning(
         "\n"
         "==================== SUPERADMIN SETUP ====================\n"

@@ -2,18 +2,19 @@
 import html
 import json
 from pathlib import Path
+from urllib.parse import quote
 import time
 import uuid
 from typing import Any, Optional
 
 import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.auth import get_current_user_with_permissions, set_permission_used, via_api_key
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
@@ -27,7 +28,9 @@ from app.services.component_access import (
     SESSION_MAX_SECONDS,
     TOKEN_TTL_SECONDS,
     generate_component_access_token,
+    share_is_live,
 )
+from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
 from app.services.queue_service import queue_service
 from app.services.user_context import load_user_context, query_param_context
@@ -192,10 +195,47 @@ async def renew_component_access_token(
     user_id, _ = current_user_data
     return {
         "token": generate_component_access_token(
-            user_id, scope.namespace, scope.name, session_start=scope.session_start
+            user_id, scope.namespace, scope.name,
+            session_start=scope.session_start, share_id=scope.share_id,
         ),
         "expires_in": TOKEN_TTL_SECONDS,
     }
+
+
+async def _open_share(db: AsyncSession, token: str, mode: Optional[str] = None):
+    """The share link and its component, counting one view — atomically, so
+    concurrent loads can't exceed max_views. 404/410 as the link warrants."""
+    share = await ComponentShare.get_by_token(db, token)
+    if not share or (mode is not None and share.mode != mode):
+        raise HTTPException(status_code=404, detail="Share link not found")
+    if not share_is_live(share):
+        raise HTTPException(status_code=410, detail="Share link has expired")
+    counted = (
+        await db.execute(
+            update(ComponentShare)
+            .where(
+                ComponentShare.id == share.id,
+                or_(
+                    ComponentShare.max_views.is_(None),
+                    ComponentShare.view_count < ComponentShare.max_views,
+                ),
+            )
+            .values(view_count=ComponentShare.view_count + 1)
+            .returning(ComponentShare.id)
+        )
+    ).scalar_one_or_none()
+    if counted is None:
+        raise HTTPException(status_code=410, detail="Share link has reached maximum views")
+    component = (
+        await db.execute(
+            select(Component).where(
+                Component.id == share.component_id, Component.is_active == True  # noqa: E712
+            )
+        )
+    ).scalar_one_or_none()
+    if not component:
+        raise HTTPException(status_code=404, detail="Component not found")
+    return share, component
 
 
 @router.get(
@@ -205,41 +245,61 @@ async def renew_component_access_token(
 )
 async def render_shared_component(
     token: str,
+    theme: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Render a component via share token (no JWT needed)."""
-    from datetime import datetime, timezone
+    """Render a component through a share link (no sign-in needed).
 
+    - snapshot: the link's inputs, no live access
+    - creator: live access as the link's creator, capped to what the
+      component declares, read only unless the link allows writes; ends
+      the moment the link is revoked or expires
+    - viewer: needs a signed-in Sinas user, so the link opens in the console
+      (which renders it for that user)
+    """
     share = await ComponentShare.get_by_token(db, token)
-    if not share:
-        raise HTTPException(status_code=404, detail="Share link not found")
-
-    # Check expiry
-    if share.expires_at and share.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=410, detail="Share link has expired")
-
-    # Check max views
-    if share.max_views is not None and share.view_count >= share.max_views:
-        raise HTTPException(status_code=410, detail="Share link has reached maximum views")
-
-    # Load component
-    result = await db.execute(
-        select(Component).where(
-            Component.id == share.component_id,
-            Component.is_active == True,
+    if share is not None and share.mode == "viewer":
+        return RedirectResponse(
+            f"{settings.public_console_url}/shared/{quote(token, safe='')}", status_code=302
         )
+    share, component = await _open_share(db, token)
+    access_token = None
+    if share.mode == "creator":
+        access_token = generate_component_access_token(
+            str(share.created_by), component.namespace, component.name, share_id=str(share.id)
+        )
+    return _html_response(
+        _build_html_shell(component, share.input_data or {}, access_token, theme)
     )
-    component = result.scalar_one_or_none()
-    if not component:
-        raise HTTPException(status_code=404, detail="Component not found")
 
 
-    # Increment view count
-    share.view_count += 1
-    await db.flush()
-
-    input_vars = share.input_data or {}
-    return _html_response(_build_html_shell(component, input_vars))
+@router.post(
+    "/components/shared/{token}/open",
+    tags=["runtime-components"],
+)
+async def open_viewer_share(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """A "viewer" share link, for the signed-in user opening it: what the
+    console needs to render it with that user's own permissions (capped to
+    what the component declares, like any component page)."""
+    user_id, _ = current_user_data
+    if via_api_key(request):
+        # The page would act with the key owner's permissions, beyond the key's.
+        raise HTTPException(status_code=403, detail="Open shared components signed in, not with an API key")
+    share, component = await _open_share(db, token, mode="viewer")
+    return {
+        "namespace": component.namespace,
+        "name": component.name,
+        "title": component.title or component.name,
+        "input": share.input_data or {},
+        "render_token": generate_component_render_token(
+            component.namespace, component.name, user_id
+        ),
+    }
 
 
 # --- Proxy Endpoints ---
@@ -292,6 +352,9 @@ async def proxy_query_execute(
         db=db, user_id=user_id, permissions=permissions, action="execute",
         namespace=q_ns, name=q_name,
     )
+    scope = getattr(request.state, "component_scope", None)
+    if scope is not None and scope.read_only and query.operation != "read":
+        raise HTTPException(status_code=403, detail="This share link is read only")
 
     set_permission_used(request, f"sinas.queries/{q_ns}/{q_name}.execute")
 
@@ -355,6 +418,10 @@ async def proxy_function_execute(
     """Execute a function through the component proxy (scoped to enabled_functions)."""
     user_id, permissions = current_user_data
     component = await _get_component_or_404(db, ns, name)
+
+    scope = getattr(request.state, "component_scope", None)
+    if scope is not None and scope.read_only:
+        raise HTTPException(status_code=403, detail="This share link is read only")
 
     func_ref = f"{fn_ns}/{fn_name}"
     if func_ref not in component.enabled_functions:
@@ -451,6 +518,9 @@ async def proxy_state(
 
     component = await _get_component_or_404(db, ns, name)
     entry = _enabled_store(component, state_ns, store_name)
+    scope = getattr(request.state, "component_scope", None)
+    if body.action in ("set", "delete") and scope is not None and scope.read_only:
+        raise HTTPException(status_code=403, detail="This share link is read only")
     if body.action in ("set", "delete") and entry.get("access") != "readwrite":
         raise HTTPException(
             status_code=403,

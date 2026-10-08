@@ -45,6 +45,9 @@ import type {
   SkillUpdate,
   Component,
   ComponentCreate,
+  ComponentShare,
+  ComponentShareCreate,
+  SharedComponent,
   ComponentUpdate,
   Collection,
   CollectionCreate,
@@ -1194,6 +1197,26 @@ class APIClient {
 
   async deleteComponent(namespace: string, name: string): Promise<void> {
     await this.configClient.delete(`/components/${namespace}/${name}`);
+  }
+
+  async listComponentShares(namespace: string, name: string): Promise<ComponentShare[]> {
+    const response = await this.configClient.get(`/components/${namespace}/${name}/shares`);
+    return response.data;
+  }
+
+  async createComponentShare(namespace: string, name: string, data: ComponentShareCreate): Promise<ComponentShare> {
+    const response = await this.configClient.post(`/components/${namespace}/${name}/shares`, data);
+    return response.data;
+  }
+
+  async revokeComponentShare(namespace: string, name: string, token: string): Promise<void> {
+    await this.configClient.delete(`/components/${namespace}/${name}/shares/${token}`);
+  }
+
+  /** A "viewer" share link, for the signed-in user. */
+  async openSharedComponent(token: string): Promise<SharedComponent> {
+    const response = await this.runtimeClient.post(`/components/shared/${encodeURIComponent(token)}/open`);
+    return response.data;
   }
 
   // Templates
