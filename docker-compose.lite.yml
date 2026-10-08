@@ -4,8 +4,7 @@
 # that runs the API, queue workers, scheduler, CDC poller AND serves the
 # console at /ui. No pgbouncer (one process needs no cross-process pooling),
 # no clickhouse (request logging off; point CLICKHOUSE_HOST at a shared
-# instance to re-enable), no builder (set BUILDER_URL at a shared one to
-# enable Component builds), no caddy (the sinas container terminates HTTP —
+# instance to re-enable), no caddy (the sinas container terminates HTTP —
 # put your own TLS proxy or ingress in front).
 #
 # Code execution is OFF by default and the host Docker socket is NOT
@@ -85,8 +84,6 @@ services:
       QUEUE_AGENT_CONCURRENCY: ${QUEUE_AGENT_CONCURRENCY:-3}
       QUEUE_AGENT_SUB_CONCURRENCY: ${QUEUE_AGENT_SUB_CONCURRENCY:-3}
       QUEUE_PIPELINE_CONCURRENCY: ${QUEUE_PIPELINE_CONCURRENCY:-5}
-      # No embedded builder — Component builds need a shared one.
-      BUILDER_URL: ${BUILDER_URL:-}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set in .env file}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set in .env file}
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}

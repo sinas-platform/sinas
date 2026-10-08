@@ -1196,11 +1196,6 @@ class APIClient {
     await this.configClient.delete(`/components/${namespace}/${name}`);
   }
 
-  async compileComponent(namespace: string, name: string): Promise<Component> {
-    const response = await this.configClient.post(`/components/${namespace}/${name}/compile`);
-    return response.data;
-  }
-
   // Templates
   async listTemplates(): Promise<Template[]> {
     const response = await this.configClient.get('/templates');

@@ -189,7 +189,6 @@ class ComponentToolConverter:
             "name": component.name,
             "title": display_name,
             "input": arguments,
-            "compile_status": component.compile_status,
             "render_token": render_token,
             "display": f"[USER WILL SEE COMPONENT '{display_name}' HERE]",
         }

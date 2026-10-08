@@ -314,8 +314,8 @@ class ConfigExportService:
         return [serialize_skill(s) for s in result.scalars().all()]
 
     async def _export_components(self) -> list[dict]:
-        """Export components"""
-        stmt = select(Component)
+        """Export components, disabled ones included (as isActive: false)."""
+        stmt = select(Component).order_by(Component.namespace, Component.name)
         if self.managed_only:
             stmt = stmt.where(Component.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

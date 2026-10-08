@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Layers, Plus, Trash2, ExternalLink, RefreshCw, Edit } from 'lucide-react';
+import { Layers, Plus, Trash2, ExternalLink, Edit } from 'lucide-react';
 import { apiClient, getComponentRenderUrl } from '../lib/api';
 import type { ComponentCreate } from '../types';
 
@@ -13,13 +13,6 @@ export function Components() {
     queryKey: ['components'],
     queryFn: () => apiClient.listComponents(),
     retry: false,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data?.some((c: { compile_status: string }) => c.compile_status === 'pending' || c.compile_status === 'compiling')) {
-        return 2000;
-      }
-      return false;
-    },
   });
 
   const createMutation = useMutation({
@@ -36,12 +29,6 @@ export function Components() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['components'] }),
   });
 
-  const compileMutation = useMutation({
-    mutationFn: ({ namespace, name }: { namespace: string; name: string }) =>
-      apiClient.compileComponent(namespace, name),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['components'] }),
-  });
-
   const handleCreate = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
@@ -52,16 +39,6 @@ export function Components() {
       description: form.get('description') as string || undefined,
       source_code: form.get('source_code') as string,
     });
-  };
-
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      success: 'bg-green-900/30 text-green-400',
-      pending: 'bg-yellow-900/30 text-yellow-400',
-      compiling: 'bg-blue-900/30 text-blue-400',
-      error: 'bg-red-900/30 text-red-400',
-    };
-    return colors[status] || 'bg-gray-900/30 text-gray-400';
   };
 
   if (isLoading) {
@@ -124,9 +101,6 @@ export function Components() {
                     {comp.title || comp.name}
                   </Link>
                 </div>
-                <span className={`px-2 py-0.5 rounded text-xs font-medium ${getStatusBadge(comp.compile_status)}`}>
-                  {comp.compile_status}
-                </span>
               </div>
 
               <p className="text-xs text-gray-500 mb-2">{comp.namespace}/{comp.name}</p>
@@ -136,7 +110,7 @@ export function Components() {
               )}
 
               <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-800">
-                <span className="text-xs text-gray-500">v{comp.version}</span>
+                <span className="text-xs text-gray-500">{comp.visibility}</span>
                 <div className="flex items-center gap-2">
                   <Link
                     to={`/components/${comp.namespace}/${comp.name}`}
@@ -145,26 +119,15 @@ export function Components() {
                   >
                     <Edit className="w-4 h-4" />
                   </Link>
-                  {comp.compile_status !== 'compiling' && (
-                    <button
-                      onClick={() => compileMutation.mutate({ namespace: comp.namespace, name: comp.name })}
-                      className="p-1 text-gray-500 hover:text-primary-400 transition-colors"
-                      title="Recompile"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
-                  )}
-                  {comp.compile_status === 'success' && (
-                    <a
-                      href={getComponentRenderUrl(comp.render_token!, comp.namespace, comp.name)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-1 text-gray-500 hover:text-green-400 transition-colors"
-                      title="Preview"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                    </a>
-                  )}
+                  <a
+                    href={getComponentRenderUrl(comp.render_token!, comp.namespace, comp.name)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1 text-gray-500 hover:text-green-400 transition-colors"
+                    title="Open"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
                   <button
                     onClick={() => {
                       if (confirm(`Delete component "${comp.namespace}/${comp.name}"?`)) {
@@ -229,13 +192,13 @@ export function Components() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Source Code (TSX)</label>
+                <label className="block text-sm text-gray-400 mb-1">Page (HTML, with &lt;style&gt; and &lt;script&gt;)</label>
                 <textarea
                   name="source_code"
                   required
                   rows={8}
                   className="input text-sm font-mono"
-                  defaultValue={`import React from 'react';\n\nexport default function MyComponent() {\n  return (\n    <div style={{ padding: '1rem' }}>\n      <h1>Hello from SINAS!</h1>\n    </div>\n  );\n}`}
+                  defaultValue={`<h1>Hello</h1>\n<p id="inputs"></p>\n\n<script>\n  // window.sinas: input, query(), run(), store(), agent()\n  document.getElementById("inputs").textContent =\n    "Inputs: " + JSON.stringify(sinas.input);\n</script>`}
                 />
               </div>
               <div className="flex justify-end gap-3 pt-2">

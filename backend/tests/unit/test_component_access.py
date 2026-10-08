@@ -37,8 +37,7 @@ def _uid() -> str:
 async def component(db: AsyncSession, admin_user) -> Component:
     comp = Component(
         user_id=admin_user.id, namespace=f"ui{_uid()}", name="board", title="Board <b>",
-        source_code="export default () => null;", compiled_bundle="var __SinasComponent__={};",
-        compile_status="success", enabled_queries=["sales/totals"],
+        source_code="<p>board</p>", enabled_queries=["sales/totals"],
         enabled_stores=[{"store": "sales/notes", "access": "readonly"}],
     )
     db.add(comp)
@@ -183,22 +182,15 @@ class TestRenewal:
 
 
 class TestPlainShell:
-    async def test_no_opinionated_styling(self, client, component, admin_user):
+    async def test_the_page_is_the_components_html_with_the_client(self, client, component, admin_user):
         html = (await _render(client, component, admin_user)).text
-        assert "radial-gradient" not in html and "sinas-card" not in html
+        assert "<p>board</p>" in html
+        assert "window.sinas = sinas" in html  # the runtime, inlined
+        assert "unpkg.com" not in html  # nothing from a CDN
         assert "color-scheme: light dark" in html
-        assert "unpkg.com/@sinas/ui" not in html  # this component does not import it
 
     async def test_the_console_theme_is_followed(self, client, component, admin_user):
         html = (await _render(client, component, admin_user, theme="light")).text
         assert "color-scheme: light;" in html
         html = (await _render(client, component, admin_user, theme="<b>")).text
         assert "color-scheme: light dark" in html
-
-    async def test_the_retired_ui_library_loads_only_for_components_using_it(
-        self, client, db, component, admin_user
-    ):
-        component.compiled_bundle = 'var __SinasComponent__=(()=>{var u=require("@sinas/ui");})();'
-        await db.flush()
-        html = (await _render(client, component, admin_user)).text
-        assert "@sinas/ui@0.2.0" in html

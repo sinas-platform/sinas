@@ -26,7 +26,7 @@ ingress:
 ## backend is pinned to 1 replica / 1 uvicorn worker (the embedded
 ## scheduler/CDC loops are singletons) and uses the `lite` image (backend +
 ## console build). Pair with values-lite.yaml for the full small-footprint
-## preset (no ClickHouse, no builder, small resource requests).
+## preset (no ClickHouse, small resource requests).
 allInOne: false
 
 ## Secrets (required — provide via --set or a secrets values file)
@@ -188,7 +188,7 @@ networkPolicy:
   ##       ports: [5432]
   egressCidrs: []
 
-## Scheduling — where the STATELESS workloads run (backend, builder,
+## Scheduling — where the STATELESS workloads run (backend,
 ## console, pgbouncer, queue-worker, queue-agent, scheduler, cdc-worker).
 ## The single biggest cost lever on managed Kubernetes: moving these onto
 ## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
@@ -220,21 +220,6 @@ scheduling:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-
-## Builder (Node.js esbuild server). enabled=false skips the Deployment;
-## set url to a shared builder to keep Component builds working, or leave it
-## empty to have builds fail with a clear connect error (nothing else is
-## affected — the builder is only used when someone builds a Component).
-builder:
-  enabled: true
-  url: ""
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "96Mi"
-    limits:
-      cpu: "500m"
-      memory: "384Mi"
 
 ## Backend (FastAPI)
 backend:

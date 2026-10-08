@@ -1,29 +1,58 @@
 ---
 title: "Components"
-description: "Renderable UI components"
+description: "Small interactive pages: plain HTML and JavaScript"
 ---
 
 
-Components are embeddable UI widgets built with JSX/HTML/JS and compiled by Sinas into browser-ready bundles. They can call agents, functions, queries, and access state through proxy endpoints.
+A component is a small page — a table, a form, a chart, a few buttons — that agents show in chat, that you preview in the console, and that you can share by link. It is **plain HTML**: markup, `<style>` and `<script>`, stored and served as is. There is no build step.
+
+Every component page gets a small `sinas` client (served by Sinas itself, so it works offline) for the resources the component declares.
+
+```html
+<h2 id="title">Orders</h2>
+<table id="orders"></table>
+
+<script>
+  document.getElementById("title").textContent = "Orders for " + sinas.input.customer;
+
+  sinas.query("sales/orders", { customer: sinas.input.customer }).then(({ data }) => {
+    document.getElementById("orders").innerHTML = data
+      .map((row) => `<tr><td>${row.id}</td><td>${row.total}</td></tr>`)
+      .join("");
+  });
+</script>
+```
+
+(Build markup from data with `textContent` or by escaping values, not by interpolating untrusted strings into HTML, as you would on any page.)
+
+**The `sinas` client:**
+
+| | |
+|---|---|
+| `sinas.input` | The inputs the page was opened with (validated by an agent against `input_schema`) |
+| `await sinas.query("ns/name", input)` | Run an enabled query: `{ data, row_count, ... }` |
+| `await sinas.run("ns/name", input, { timeout })` | Run an enabled function: its result |
+| `sinas.store("ns/name")` | An enabled store: `await get(key)`, `set(key, value)`, `delete(key)`, `list()` |
+| `sinas.agent("ns/name")` | An enabled agent: `await send(text)` returns the reply text (one conversation per page) |
+
+Want a framework? Import one yourself, e.g. `<script type="module">import { html, render } from "https://esm.sh/htm/preact/standalone"</script>`. The page then needs internet; plain components don't. The page is deliberately unstyled — the system font and the browser's own light or dark colours, matching the console when embedded there.
 
 **Key properties:**
 
 | Property | Description |
 |---|---|
 | `namespace` / `name` | Unique identifier |
-| `title` | Display title |
-| `source_code` | JSX/HTML/JS source |
-| `compiled_bundle` | Auto-generated browser-ready JS |
-| `input_schema` | JSON Schema for component configuration |
-| `enabled_agents` | Agents the component can call |
-| `enabled_functions` | Functions the component can call |
-| `enabled_queries` | Queries the component can execute |
-| `enabled_components` | Other components it can embed |
-| `enabled_stores` | Stores the component can access (`{"store": "ns/name", "access": "readonly\|readwrite"}`) |
-| `css_overrides` | Custom CSS |
+| `title` / `description` | Display title; what it's for (agents read the description) |
+| `source_code` | The page body: HTML, `<style>`, `<script>` |
+| `input_schema` | JSON Schema for its inputs (an agent showing it fills them in) |
+| `enabled_agents` | Agents it can chat with |
+| `enabled_functions` | Functions it can run |
+| `enabled_queries` | Queries it can execute |
+| `enabled_stores` | Stores it can use: `{"store": "ns/name", "access": "readonly\|readwrite"}` (in config, a bare `"ns/name"` means read-write) |
 | `visibility` | `private`, `shared`, or `public` |
+| `is_active` | Switched off by hand, a component stays off on the next config apply unless the config says otherwise |
 
-Components are plain React (18) with the Sinas SDK (`@sinas/sdk`). The page they render in is deliberately unstyled: the system font and the browser's own light or dark colours (matching the console when embedded there). Style components however you like, or use `css_overrides`. The old `@sinas/ui` library is retired; components that still import it keep working.
+Components are managed like every other resource: the same validation and ownership from the API, config files and packages, every change in the change history (`GET /api/v1/config/history`), and a deleted component can be restored from there.
 
 **Management endpoints:**
 
@@ -32,8 +61,7 @@ POST   /api/v1/components                                  # Create component
 GET    /api/v1/components                                  # List components
 GET    /api/v1/components/{namespace}/{name}               # Get component
 PUT    /api/v1/components/{namespace}/{name}               # Update component
-DELETE /api/v1/components/{namespace}/{name}               # Delete component
-POST   /api/v1/components/{namespace}/{name}/compile       # Trigger compilation
+DELETE /api/v1/components/{namespace}/{name}               # Delete component (restorable from history)
 ```
 
 **Share links** allow embedding components outside Sinas with optional expiration and view limits:
@@ -54,16 +82,15 @@ GET    /components/shared/{token}                          # Render via share to
 **Security model.** A component is code its author wrote, running in every viewer's browser, so it never gets the viewer's own session:
 
 - It renders **sandboxed** (an opaque origin): it can't reach the console, its storage, or the page embedding it. `localStorage`/`sessionStorage` are unavailable inside a component; keep state in a store.
-- The render page embeds a **component access token**: the viewer's permissions, capped to what the component declares (`enabled_queries`, `enabled_functions`, `enabled_agents`, `enabled_stores` with their access mode). It is accepted only on that component's proxy endpoints and on chats with its enabled agents, lasts an hour, and the page renews it for up to 12 hours.
+- The page embeds a **component access token**: the viewer's permissions, capped to what the component declares (`enabled_queries`, `enabled_functions`, `enabled_agents`, `enabled_stores` with their access mode). It is accepted only on that component's proxy endpoints and on chats with its enabled agents, lasts an hour, and the page renews it for up to 12 hours.
 - Share links render without a token: anonymous viewers see static components only.
 
-**Proxy endpoints** allow components to call backend resources from the browser securely — the proxy enforces the component's `enabled_*` permissions:
+**Proxy endpoints** (what the `sinas` client calls) enforce the component's `enabled_*` declarations:
 
 ```
 POST   /components/{ns}/{name}/proxy/queries/{q_ns}/{q_name}/execute    # Execute query
 POST   /components/{ns}/{name}/proxy/functions/{fn_ns}/{fn_name}/execute # Execute function
 POST   /components/{ns}/{name}/proxy/states/{store_ns}/{store_name}      # Access a store's states
-POST   /components/{ns}/{name}/proxy/states/{store_ns}                   # Same, when one store in that namespace is enabled
 ```
 
-State calls go through the store API itself (its permissions, encryption and schema); writes need the store enabled with `readwrite`. While a new build compiles, or after one fails, a component keeps serving its last good build.
+State calls go through the store API itself (its permissions, encryption and schema); writes need the store enabled with `readwrite`.

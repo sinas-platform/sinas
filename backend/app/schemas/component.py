@@ -20,7 +20,6 @@ class ComponentCreate(BaseModel):
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
     enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
-    css_overrides: Optional[str] = None
     visibility: str = Field(default="private", pattern=r"^(private|shared|public)$")
 
 
@@ -40,10 +39,8 @@ class ComponentUpdate(BaseModel):
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
     enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
-    css_overrides: Optional[str] = None
     visibility: Optional[str] = Field(None, pattern=r"^(private|shared|public)$")
     is_active: Optional[bool] = None
-    is_published: Optional[bool] = None
 
 
 class ComponentResponse(BaseModel):
@@ -54,20 +51,13 @@ class ComponentResponse(BaseModel):
     title: Optional[str]
     description: Optional[str]
     source_code: str
-    compiled_bundle: Optional[str]
-    source_map: Optional[str]
-    compile_status: str
-    compile_errors: Optional[list[dict[str, Any]]]
     input_schema: Optional[dict[str, Any]]
     enabled_agents: list[str]
     enabled_functions: list[str]
     enabled_queries: list[str]
     enabled_components: list[str]
     enabled_stores: list[dict]
-    css_overrides: Optional[str]
     visibility: str
-    version: int
-    is_published: bool
     is_active: bool
     render_token: Optional[str] = None
     created_at: datetime
@@ -86,8 +76,6 @@ class ComponentListResponse(BaseModel):
     name: str
     title: Optional[str]
     description: Optional[str]
-    compile_status: str
-    compile_errors: Optional[list[dict[str, Any]]]
     input_schema: Optional[dict[str, Any]]
     enabled_agents: list[str]
     enabled_functions: list[str]
@@ -95,8 +83,6 @@ class ComponentListResponse(BaseModel):
     enabled_components: list[str]
     enabled_stores: list[dict]
     visibility: str
-    version: int
-    is_published: bool
     is_active: bool
     render_token: Optional[str] = None
     created_at: datetime

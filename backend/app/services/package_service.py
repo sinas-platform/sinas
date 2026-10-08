@@ -450,7 +450,6 @@ class PackageService:
         model_names = {
             Agent: "agents",
             Manifest: "manifests",
-            Component: "components",
             Collection: "collections",
             Function: "functions",
             Store: "stores",

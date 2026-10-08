@@ -71,21 +71,10 @@ def serialize_store(store) -> dict:
 
 
 def serialize_component(comp) -> dict:
-    return _remove_none_values({
-        "namespace": comp.namespace,
-        "name": comp.name,
-        "title": comp.title,
-        "description": comp.description,
-        "sourceCode": comp.source_code,
-        "inputSchema": comp.input_schema,
-        "enabledAgents": comp.enabled_agents or None,
-        "enabledFunctions": comp.enabled_functions or None,
-        "enabledQueries": comp.enabled_queries or None,
-        "enabledComponents": comp.enabled_components or None,
-        "enabledStores": comp.enabled_stores or None,
-        "cssOverrides": comp.css_overrides,
-        "visibility": comp.visibility,
-    })
+    """Config form of a component — delegated to its spec."""
+    from app.services.resources.components import ComponentApplier
+
+    return ComponentApplier().spec_from_row(comp).to_config()
 
 
 def serialize_manifest(manifest) -> dict:

@@ -23,7 +23,6 @@ from app.services.config_apply.data_sources import (
 )
 from app.services.config_apply.resources import (
     apply_collections,
-    apply_components,
     apply_dependencies,
     apply_functions,
     apply_manifests,
@@ -74,7 +73,6 @@ class ConfigApplyService:
         # move over.
         self.effects = SideEffectBus()
         self._pending_references: dict[str, dict[str, bool]] = {}
-        self._pending_component_compiles: list[Any] = []  # component ids
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
@@ -138,26 +136,6 @@ class ConfigApplyService:
         notification failure must not fail an apply that already committed.
         """
         await self.effects.flush()
-
-        pending_compiles, self._pending_component_compiles = (
-            self._pending_component_compiles, []
-        )
-
-        # Compile config-applied components in the background — the same
-        # builder path the REST endpoint uses. Without this, components from
-        # config apply / package install sat at compile_status="pending"
-        # forever. Fire-and-forget: compile_component owns its own sessions
-        # and records compile errors on the row.
-        if pending_compiles:
-            from app.services.component_builder import schedule_compile
-
-            for component_id in pending_compiles:
-                try:
-                    schedule_compile(component_id)
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to schedule compile for component {component_id}: {e}"
-                    )
 
     async def apply_config(self, config: SinasConfig, dry_run: bool = False) -> ConfigApplyResponse:
         """
@@ -241,12 +219,6 @@ class ConfigApplyService:
                     functions=config.spec.functions,
                     function_ids=self.function_ids,
                 )
-            if "components" not in self.skip_resource_types:
-                await apply_components(
-                    **common_with_owner,
-                    components=config.spec.components,
-                    notify_compile=self._pending_component_compiles.append,
-                )
             if "collections" not in self.skip_resource_types:
                 await apply_collections(
                     **common_with_owner,
@@ -279,7 +251,7 @@ class ConfigApplyService:
                     pipelines=config.spec.pipelines,
                 )
             # Kinds with a per-resource applier: connectors, skills, queries,
-            # templates, webhooks, schedules, databaseTriggers — after
+            # templates, components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
             # connector, skill or query yet; when agents and pipelines
             # migrate, those move ahead of them.)
@@ -389,7 +361,6 @@ class ConfigApplyService:
     def _discard_pending(self) -> None:
         """Forget every queued notification: the transaction won't commit."""
         self.effects.discard()
-        self._pending_component_compiles = []
 
     def _resource_context(self, dry_run: bool) -> ApplyContext:
         return ApplyContext(
