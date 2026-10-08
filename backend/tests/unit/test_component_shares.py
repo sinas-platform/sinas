@@ -174,3 +174,17 @@ class TestLinks:
         share = await _share(client, component, admin_user, mode="viewer")
         r = await client.get(share["share_url"], follow_redirects=False)
         assert r.headers["location"] == f"https://console.example.com:51245/ui/shared/{share['token']}"
+
+    async def test_an_api_key_cannot_mint_a_creator_link(self, client, db, component, admin_user):
+        """A creator link acts with its creator's full live permissions; a
+        key's are deliberately narrower."""
+        from app.core.auth import create_api_key
+
+        _, key = await create_api_key(
+            db, admin_user, "narrow", {"sinas.components/*/*.update:all": True}
+        )
+        url = f"/api/v1/components/{component.namespace}/{component.name}/shares"
+        r = await client.post(url, json={"mode": "creator"}, headers={"X-API-Key": key})
+        assert r.status_code == 403
+        r = await client.post(url, json={"mode": "snapshot"}, headers={"X-API-Key": key})
+        assert r.status_code == 200, r.text

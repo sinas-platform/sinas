@@ -870,6 +870,10 @@ async def verify_jwt_or_api_key(
             )
 
         user, permissions = result
+        if request is not None:
+            # A key's permissions are narrower than its owner's; endpoints
+            # that hand out the owner's (creator share links) refuse keys.
+            request.state.via_api_key = True
         return str(user.id), user.email, permissions
 
 
@@ -1146,7 +1150,7 @@ async def _issue_superadmin_setup_link(db: AsyncSession, user: User, logger) -> 
         return
 
     plain_token, _ = await create_password_reset_token(db, str(user.id))
-    url = f"{settings.public_base_url}/ui/reset-password?token={plain_token}"
+    url = f"{settings.public_console_url}/reset-password?token={plain_token}"
     logger.warning(
         "\n"
         "==================== SUPERADMIN SETUP ====================\n"

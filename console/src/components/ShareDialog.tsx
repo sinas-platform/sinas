@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, Trash2, X } from 'lucide-react';
 import { API_BASE_URL, apiClient, getApiErrorMessage } from '../lib/api';
 import { useToast } from '../lib/toast-context';
+import { useAuth } from '../lib/auth-context';
 import type { ComponentShare, ComponentShareMode } from '../types';
 
 const MODES: { value: ComponentShareMode; title: string; help: string }[] = [
@@ -62,7 +63,9 @@ export function ShareDialog({
   const [input, setInput] = useState('');
   const [inputError, setInputError] = useState('');
 
-  const sharesKey = ['component-shares', namespace, name];
+  const { user } = useAuth();
+  // Links are credentials: cached per user, never shown to the next one.
+  const sharesKey = ['component-shares', namespace, name, user?.id];
   const { data: shares } = useQuery({
     queryKey: sharesKey,
     queryFn: () => apiClient.listComponentShares(namespace, name),

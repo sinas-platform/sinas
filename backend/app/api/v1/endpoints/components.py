@@ -238,6 +238,13 @@ async def create_share_link(
 
     set_permission_used(request, f"sinas.components/{namespace}/{name}.update")
 
+    if body.mode == "creator" and getattr(request.state, "via_api_key", False):
+        # A creator link acts with its creator's full live permissions; an API
+        # key's are deliberately narrower, so it may not mint one.
+        raise HTTPException(
+            status_code=403, detail="Creator links can't be created with an API key; sign in"
+        )
+
     token = secrets.token_urlsafe(32)
     share = ComponentShare(
         token=token,
