@@ -1956,6 +1956,7 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                       },
                       { key: 'configIntrospection', label: 'Config Introspection', desc: 'Read-only access to inspect the current configuration: list resource types, browse agents/queries/functions, read full details.' },
                       { key: 'packageManagement', label: 'Package Management', desc: 'Validate, preview, install/uninstall Sinas packages. Requires approval for writes.' },
+                      { key: 'artifacts', label: 'Artifacts', desc: 'Create and update artifacts: small interactive pages shown in the chat, which the user can keep and share. Limited to the queries, functions and stores this agent has enabled.' },
                     ];
 
                     return (

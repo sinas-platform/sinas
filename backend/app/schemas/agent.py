@@ -127,7 +127,7 @@ class AgentCreate(BaseModel):
         description=(
             "Opt-in Sinas platform tools. Simple string for tools with no config, "
             "or {name, ...config} for tools that need parameters. "
-            "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
+            "Supported: 'codeExecution', 'packageManagement', 'artifacts', 'configIntrospection', "
             "'databaseIntrospection' (requires connections list)."
         ),
     )
