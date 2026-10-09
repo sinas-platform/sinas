@@ -40,7 +40,11 @@ class Store(Base, PermissionMixin):
     updated_at: Mapped[updated_at]
 
     # Relationships
-    states: Mapped[list["State"]] = relationship("State", back_populates="store", cascade="all, delete-orphan")
+    # passive_deletes: the database cascades (states.store_id ON DELETE
+    # CASCADE), so deleting a store doesn't load every state first.
+    states: Mapped[list["State"]] = relationship(
+        "State", back_populates="store", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     __table_args__ = (
         UniqueConstraint("namespace", "name", name="uq_store_namespace_name"),

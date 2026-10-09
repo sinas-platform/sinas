@@ -22,13 +22,10 @@ from app.services.config_apply.data_sources import (
     apply_llm_providers,
 )
 from app.services.config_apply.resources import (
-    apply_collections,
     apply_dependencies,
     apply_functions,
-    apply_manifests,
     apply_pipelines,
     apply_secrets,
-    apply_stores,
 )
 from app.services.config_apply.agents import apply_agents
 from pydantic.alias_generators import to_camel
@@ -85,9 +82,6 @@ class ConfigApplyService:
         self.llm_provider_ids: dict[str, str] = {}
         self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
-        self.collection_ids: dict[str, str] = {}
-        self.store_ids: dict[str, str] = {}
-        self.folder_ids: dict[str, str] = {}  # Alias for collection_ids
 
     def _calculate_hash(self, data: dict[str, Any]) -> str:
         """Calculate hash for change detection"""
@@ -219,23 +213,6 @@ class ConfigApplyService:
                     functions=config.spec.functions,
                     function_ids=self.function_ids,
                 )
-            if "collections" not in self.skip_resource_types:
-                await apply_collections(
-                    **common_with_owner,
-                    collections=config.spec.collections,
-                    collection_ids=self.collection_ids,
-                )
-            if "stores" not in self.skip_resource_types:
-                await apply_stores(
-                    **common_with_owner,
-                    stores=config.spec.stores,
-                    store_ids=self.store_ids,
-                )
-            if "manifests" not in self.skip_resource_types:
-                await apply_manifests(
-                    **common_with_owner,
-                    manifests=config.spec.manifests,
-                )
             if "agents" not in self.skip_resource_types:
                 await apply_agents(
                     **common_with_owner,
@@ -251,7 +228,8 @@ class ConfigApplyService:
                     pipelines=config.spec.pipelines,
                 )
             # Kinds with a per-resource applier: connectors, skills, queries,
-            # templates, components, webhooks, schedules, databaseTriggers — after
+            # templates, collections, stores, manifests, components, webhooks,
+            # schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
             # connector, skill or query yet; when agents and pipelines
             # migrate, those move ahead of them.)

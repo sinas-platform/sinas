@@ -285,8 +285,8 @@ class ConfigExportService:
         return exported
 
     async def _export_collections(self) -> list[dict]:
-        """Export collections"""
-        stmt = select(Collection)
+        """Export collections."""
+        stmt = select(Collection).order_by(Collection.namespace, Collection.name)
         if self.managed_only:
             stmt = stmt.where(Collection.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -322,16 +322,16 @@ class ConfigExportService:
         return [serialize_component(c) for c in result.scalars().all()]
 
     async def _export_manifests(self) -> list[dict]:
-        """Export manifests"""
-        stmt = select(Manifest)
+        """Export manifests, disabled ones included (as isActive: false)."""
+        stmt = select(Manifest).order_by(Manifest.namespace, Manifest.name)
         if self.managed_only:
             stmt = stmt.where(Manifest.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_manifest(m) for m in result.scalars().all()]
 
     async def _export_stores(self) -> list[dict]:
-        """Export stores"""
-        stmt = select(Store)
+        """Export stores."""
+        stmt = select(Store).order_by(Store.namespace, Store.name)
         if self.managed_only:
             stmt = stmt.where(Store.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
