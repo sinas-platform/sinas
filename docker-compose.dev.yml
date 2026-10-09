@@ -19,11 +19,6 @@ services:
     deploy:
       replicas: 1
 
-  builder:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.builder
-
   backend:
     build:
       context: ./backend
@@ -34,6 +29,8 @@ services:
       - file_storage:/var/sinas/files
     environment:
       FUNCTION_CONTAINER_IMAGE: sinas-executor
+      # No Caddy here: the console is plain HTTP on its own port.
+      CONSOLE_URL: ${CONSOLE_URL:-http://localhost:51245/ui}
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
 
   queue-worker:
@@ -100,6 +97,7 @@ services:
       context: ./console
       args:
         USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
+        VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "51245:80"
 

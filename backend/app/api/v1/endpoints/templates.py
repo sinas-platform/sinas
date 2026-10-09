@@ -1,15 +1,20 @@
-"""Template endpoints."""
+"""Template endpoints.
+
+Writes go through TemplateApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models import Template
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.templates import TemplateApplier
 from app.services.template_renderer import render_template
 from app.schemas.template import (
     TemplateCreate,
@@ -21,6 +26,8 @@ from app.schemas.template import (
 
 router = APIRouter()
 
+_applier = TemplateApplier()
+
 
 @router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 async def create_template(
@@ -31,7 +38,6 @@ async def create_template(
 ):
     """Create a new template."""
     user_id, permissions = current_user_data
-    user_uuid = uuid.UUID(user_id)
 
     # Check create permission
     perm = "sinas.templates.create:own"
@@ -41,37 +47,14 @@ async def create_template(
         raise HTTPException(status_code=403, detail="Not authorized to create templates")
     set_permission_used(req, perm)
 
-    # Check if template namespace+name already exists
-    result = await db.execute(
-        select(Template).where(
-            and_(Template.namespace == template_data.namespace, Template.name == template_data.name)
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Template 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, template_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Template '{template_data.namespace}/{template_data.name}' already exists",
-        )
-
-    template = Template(
-        namespace=template_data.namespace,
-        name=template_data.name,
-        description=template_data.description,
-        title=template_data.title,
-        html_content=template_data.html_content,
-        text_content=template_data.text_content,
-        variable_schema=template_data.variable_schema or {},
-        is_active=True,
-        user_id=user_uuid,
-        created_by=user_uuid,
-        updated_by=user_uuid,
-    )
-
-    db.add(template)
-    await db.flush()
-    await db.refresh(template)
-
-    return TemplateResponse.model_validate(template)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return TemplateResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[TemplateResponse])
@@ -157,7 +140,6 @@ async def update_template(
 ):
     """Update a template."""
     user_id, permissions = current_user_data
-    user_uuid = uuid.UUID(user_id)
 
     # Load template
     result = await db.execute(select(Template).where(Template.id == template_id))
@@ -173,35 +155,14 @@ async def update_template(
 
     set_permission_used(req, f"sinas.templates/{template.namespace}/{template.name}.update")
 
-    detach_if_package_managed(template)
-
-    # Check for namespace/name conflict if renaming
-    new_namespace = template_data.namespace or template.namespace
-    new_name = template_data.name or template.name
-    if new_namespace != template.namespace or new_name != template.name:
-        result = await db.execute(
-            select(Template).where(
-                and_(
-                    Template.namespace == new_namespace,
-                    Template.name == new_name,
-                    Template.id != template_id,
-                )
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Template '{new_namespace}/{new_name}' already exists"
-            )
-
-    # Update fields
-    for field, value in template_data.model_dump(exclude_unset=True).items():
-        setattr(template, field, value)
-
-    template.updated_by = user_uuid
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    template = await rest.locked(_applier, ctx, template)
+    # As before: only the fields sent change, and null clears an optional
+    # one. Nulling html_content (NOT NULL) used to be a 500; now a 422.
+    patch = template_data.model_dump(exclude_unset=True)
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, template, patch), existing=template)
+    await rest.commit(db, ctx)
     await db.refresh(template)
-
     return TemplateResponse.model_validate(template)
 
 
@@ -229,8 +190,9 @@ async def delete_template(
 
     set_permission_used(req, f"sinas.templates/{template.namespace}/{template.name}.delete")
 
-    await db.delete(template)
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, template), ctx)
+    await rest.commit(db, ctx)
 
 
 @router.post("/{template_id}/render", response_model=TemplateRenderResponse)

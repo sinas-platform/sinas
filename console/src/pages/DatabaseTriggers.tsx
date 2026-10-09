@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiClient } from '../lib/api';
+import { apiClient, getApiErrorMessage } from '../lib/api';
 import { Activity, Plus, Trash2, PlayCircle, PauseCircle, AlertTriangle, Database } from 'lucide-react';
 import { useState } from 'react';
 import type { DatabaseTrigger, DatabaseConnection } from '../types';
@@ -47,7 +47,7 @@ function CreateTriggerModal({
       onClose();
     },
     onError: (err: any) => {
-      setError(err.response?.data?.detail || 'Failed to create trigger');
+      setError(getApiErrorMessage(err, 'Failed to create trigger'));
     },
   });
 

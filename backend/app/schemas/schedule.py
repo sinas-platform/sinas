@@ -10,7 +10,8 @@ class ScheduledJobCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     schedule_type: Literal["function", "agent", "pipeline"] = "function"
     target_namespace: str = Field(
-        default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+        # Agent and pipeline namespaces may contain "-"; see schemas/spec/schedule.py.
+        default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$"
     )
     target_name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
@@ -45,15 +46,9 @@ class ScheduledJobUpdate(BaseModel):
     input_data: Optional[dict[str, Any]] = None
     content: Optional[str] = None
     is_active: Optional[bool] = None
-
-    @validator("cron_expression")
-    def validate_cron(cls, v):
-        if v is not None:
-            from croniter import croniter
-
-            if not croniter.is_valid(v):
-                raise ValueError("Invalid cron expression")
-        return v
+    # cron_expression is validated by ScheduleSpec when the patch is merged:
+    # a form that resends a stored (legacy, invalid) cron unchanged must not
+    # be refused for it.
 
 
 class ScheduledJobResponse(BaseModel):

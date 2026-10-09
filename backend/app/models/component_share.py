@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -12,8 +12,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base, created_at, uuid_pk
 
 
+SHARE_MODES = ("snapshot", "viewer", "creator")
+
+
 class ComponentShare(Base):
-    """A share link that grants access to a component without requiring authentication."""
+    """A link to a component. What the page can reach depends on `mode`:
+
+    - snapshot: its fixed inputs only, no live access (anyone with the link)
+    - viewer:   signed-in Sinas users, each with their own permissions
+    - creator:  anyone with the link, with the creator's permissions — read
+                only (read queries, store reads) unless `allow_writes`
+    In every mode, live access is capped to what the component declares.
+    """
 
     __tablename__ = "component_shares"
 
@@ -36,6 +46,13 @@ class ComponentShare(Base):
 
     # Label for management
     label: Mapped[Optional[str]] = mapped_column(String(255))
+
+    mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="snapshot", server_default="snapshot"
+    )
+    allow_writes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     created_at: Mapped[created_at]
 

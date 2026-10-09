@@ -6,21 +6,16 @@
 #
 # One sinas pod (API + queue workers + scheduler + CDC + console at /ui),
 # postgres, redis, pgbouncer. No ClickHouse (request logging off), no
-# builder (set builder.url to a shared one to enable Component builds), no
 # console pod. Sandbox code still runs in ephemeral hardened pods; there is
 # no warm trusted pool — set executor.trusted to k8s_shared to bring it back.
 #
 # For fleet hosting, also point postgres.external.host at a shared cluster
-# (database per tenant) and clickhouse/builder at shared services.
+# (database per tenant) and clickhouse at shared services.
 
 allInOne: true
 
 clickhouse:
   enabled: false
-
-builder:
-  enabled: false
-  url: ""
 
 executor:
   sandbox: "k8s_pod"

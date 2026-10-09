@@ -23,24 +23,17 @@ from app.services.config_apply.data_sources import (
 )
 from app.services.config_apply.resources import (
     apply_collections,
-    apply_components,
-    apply_connectors,
     apply_dependencies,
     apply_functions,
     apply_manifests,
     apply_pipelines,
-    apply_queries,
     apply_secrets,
-    apply_skills,
     apply_stores,
 )
 from app.services.config_apply.agents import apply_agents
-from app.services.config_apply.integrations import (
-    apply_database_triggers,
-    apply_schedules,
-    apply_templates,
-    apply_webhooks,
-)
+from pydantic.alias_generators import to_camel
+
+from app.services.resources import ApplyContext, SideEffectBus
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +49,7 @@ class ConfigApplyService:
         managed_by: str = "config",
         auto_commit: bool = True,
         skip_resource_types: Optional[set[str]] = None,
+        prune_missing: bool = False,
     ):
         self.db = db
         self.config_name = config_name
@@ -63,15 +57,22 @@ class ConfigApplyService:
         self.managed_by = managed_by
         self.auto_commit = auto_commit
         self.skip_resource_types = skip_resource_types or set()
+        # Remove resources this source manages but no longer declares (package
+        # upgrades). Only for kinds with an applier: their removals are
+        # recorded in the change history, so they can be restored.
+        self.prune_missing = prune_missing
         self.summary = ConfigApplySummary()
         self.changes: list[ResourceChange] = []
         # Post-commit notifications. Collected during apply and published only
         # after the transaction commits, so a worker can never observe an event
         # for a row it cannot read yet. When auto_commit is False the caller
         # owns the commit and must call flush_notifications() itself.
-        self._pending_scheduler: list[tuple[str, str]] = []
-        self._pending_cdc_reload = False
-        self._pending_component_compiles: list[Any] = []  # component ids
+        # Effects from resources already migrated to the per-resource
+        # appliers (docs/design/config-apply-unification.md); the two lists
+        # below are the not-yet-migrated kinds and fold into this bus as they
+        # move over.
+        self.effects = SideEffectBus()
+        self._pending_references: dict[str, dict[str, bool]] = {}
         self.errors: list[str] = []
         self.warnings: list[str] = []
 
@@ -134,49 +135,7 @@ class ConfigApplyService:
         triggers are not picked up until a restart. Best-effort throughout: a
         notification failure must not fail an apply that already committed.
         """
-        import json
-
-        from app.core.redis import get_redis
-
-        pending_jobs, self._pending_scheduler = self._pending_scheduler, []
-        cdc_reload, self._pending_cdc_reload = self._pending_cdc_reload, False
-        pending_compiles, self._pending_component_compiles = (
-            self._pending_component_compiles, []
-        )
-        if not pending_jobs and not cdc_reload and not pending_compiles:
-            return
-        try:
-            if pending_jobs or cdc_reload:
-                redis = await get_redis()
-                for action, job_id in pending_jobs:
-                    await redis.publish(
-                        "sinas:scheduler:jobs", json.dumps({"action": action, "job_id": job_id})
-                    )
-                if cdc_reload:
-                    await redis.publish(
-                        "sinas:cdc:triggers", json.dumps({"action": "reload", "trigger_id": ""})
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to publish config-apply notifications: {e}")
-
-        # Compile config-applied components in the background — the same
-        # builder path the REST endpoint uses. Without this, components from
-        # config apply / package install sat at compile_status="pending"
-        # forever. Fire-and-forget: _do_compile owns its own sessions and
-        # records compile errors on the row. (Helper lives in the endpoint
-        # module today; the config/CRUD unification relocates it.)
-        if pending_compiles:
-            import asyncio
-
-            from app.api.v1.endpoints.components import _do_compile
-
-            for component_id in pending_compiles:
-                try:
-                    asyncio.create_task(_do_compile(component_id, "", ""))
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to schedule compile for component {component_id}: {e}"
-                    )
+        await self.effects.flush()
 
     async def apply_config(self, config: SinasConfig, dry_run: bool = False) -> ConfigApplyResponse:
         """
@@ -189,6 +148,18 @@ class ConfigApplyService:
         Returns:
             ConfigApplyResponse with results
         """
+        self._pending_references = {
+            kind: {
+                f"{item.namespace}/{item.name}": getattr(item, "isActive", True) is not False
+                for item in getattr(config.spec, kind)
+            }
+            for kind in ("functions", "agents", "pipelines")
+        }
+        # Packages skip connections: one declared there is never created.
+        if "databaseConnections" not in self.skip_resource_types:
+            self._pending_references["databaseConnections"] = {
+                item.name: True for item in config.spec.databaseConnections
+            }
         try:
             # Common kwargs shared by all appliers
             common = dict(
@@ -242,45 +213,17 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            if "connectors" not in self.skip_resource_types:
-                await apply_connectors(
-                    **common_with_owner,
-                    connectors=config.spec.connectors,
-                )
-
             if "functions" not in self.skip_resource_types:
                 await apply_functions(
                     **common_with_owner,
                     functions=config.spec.functions,
                     function_ids=self.function_ids,
                 )
-            if "skills" not in self.skip_resource_types:
-                await apply_skills(
-                    **common_with_owner,
-                    skills=config.spec.skills,
-                )
-            if "components" not in self.skip_resource_types:
-                await apply_components(
-                    **common_with_owner,
-                    components=config.spec.components,
-                    notify_compile=self._pending_component_compiles.append,
-                )
-            if "queries" not in self.skip_resource_types:
-                await apply_queries(
-                    **common_with_owner,
-                    queries=config.spec.queries,
-                    database_connection_ids=self.database_connection_ids,
-                )
             if "collections" not in self.skip_resource_types:
                 await apply_collections(
                     **common_with_owner,
                     collections=config.spec.collections,
                     collection_ids=self.collection_ids,
-                )
-            if "templates" not in self.skip_resource_types:
-                await apply_templates(
-                    **common_with_owner,
-                    templates=config.spec.templates,
                 )
             if "stores" not in self.skip_resource_types:
                 await apply_stores(
@@ -307,30 +250,44 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            if "webhooks" not in self.skip_resource_types:
-                await apply_webhooks(
-                    **common_with_owner,
-                    webhooks=config.spec.webhooks,
-                )
-            if "schedules" not in self.skip_resource_types:
-                await apply_schedules(
-                    **common_with_owner,
-                    schedules=config.spec.schedules,
-                    notify_scheduler=lambda action, job_id: self._pending_scheduler.append(
-                        (action, job_id)
-                    ),
-                )
-            if "databaseTriggers" not in self.skip_resource_types:
-                await apply_database_triggers(
-                    **common_with_owner,
-                    triggers=config.spec.databaseTriggers,
+            # Kinds with a per-resource applier: connectors, skills, queries,
+            # templates, components, webhooks, schedules, databaseTriggers — after
+            # everything they can point at. (Nothing checks a reference to a
+            # connector, skill or query yet; when agents and pipelines
+            # migrate, those move ahead of them.)
+            from app.services.resources.registry import all_appliers
+
+            for applier in all_appliers():
+                if applier.kind not in self.skip_resource_types:
+                    await self._apply_kind(
+                        applier, getattr(config.spec, applier.config_section), dry_run
+                    )
+
+            if self.prune_missing:
+                await self._prune_missing(config, dry_run)
+
+            if self.errors:
+                # All or nothing. A config or package with any resource that
+                # fails changes nothing at all: it used to report success and
+                # commit everything else, leaving a package "installed" without
+                # the parts that failed. Callers that own the transaction
+                # (auto_commit=False: package install) get success=False and
+                # roll back themselves; a dry run reports the same verdict the
+                # real apply would reach.
+                self._discard_pending()
+                if not dry_run and self.auto_commit:
+                    await self.db.rollback()
+                return ConfigApplyResponse(
+                    success=False,
+                    summary=self.summary,
+                    changes=self.changes,
+                    errors=self.errors,
+                    warnings=self.warnings,
                 )
 
-            if not dry_run:
-                self._pending_cdc_reload = True
-                if self.auto_commit:
-                    await self.db.commit()
-                    await self.flush_notifications()
+            if not dry_run and self.auto_commit:
+                await self.db.commit()
+                await self.flush_notifications()
 
             return ConfigApplyResponse(
                 success=True,
@@ -343,6 +300,7 @@ class ConfigApplyService:
         except Exception as e:
             logger.error(f"Error applying config: {str(e)}", exc_info=True)
             await self.db.rollback()
+            self._discard_pending()  # nothing committed, so nothing to announce
             return ConfigApplyResponse(
                 success=False,
                 summary=self.summary,
@@ -350,3 +308,109 @@ class ConfigApplyService:
                 errors=[f"Fatal error: {str(e)}"],
                 warnings=self.warnings,
             )
+
+    # ------------------------------------------------------------------
+    # Kinds migrated to per-resource appliers
+    # ------------------------------------------------------------------
+
+    async def _prune_missing(self, config: SinasConfig, dry_run: bool) -> None:
+        """Delete what this source manages but no longer declares.
+
+        Scoped to resources stamped with this source's managed_by — and, for a
+        plain config (where every file shares managed_by="config"), to its
+        config_name too, or applying one file would delete another's
+        resources. A resource someone edited by hand was detached from the
+        package at that edit, so an upgrade never removes it. Part of the same
+        all-or-nothing transaction, reported in summary.deleted, and a dry run
+        lists what would go without removing anything.
+        """
+        from sqlalchemy import select
+
+        from app.services.resources.registry import all_appliers
+
+        ctx = self._resource_context(dry_run)
+        for applier in all_appliers():
+            if applier.kind in self.skip_resource_types:
+                continue
+            declared = {
+                applier.config_key(item)
+                for item in getattr(config.spec, applier.config_section, None) or []
+            }
+            model = applier.model
+            stmt = select(model).where(model.managed_by == self.managed_by)
+            if not self.managed_by.startswith("pkg:"):
+                stmt = stmt.where(model.config_name == self.config_name)
+            if not dry_run:
+                # As for uninstall: a row detached by a concurrent manual edit
+                # drops out of the filter once locked, and is kept.
+                stmt = stmt.with_for_update().execution_options(populate_existing=True)
+            for row in (await self.db.execute(stmt)).scalars().all():
+                key = applier.key_of_row(row)
+                if key in declared:
+                    continue
+                try:
+                    async with self.db.begin_nested():
+                        await applier.delete(row, ctx)
+                except Exception as e:
+                    self.errors.append(
+                        f"Error removing {applier.label.lower()} '{key}': {_describe_error(e)}"
+                    )
+                    continue
+                self._track_change("delete", applier.kind, key)
+
+    def _discard_pending(self) -> None:
+        """Forget every queued notification: the transaction won't commit."""
+        self.effects.discard()
+
+    def _resource_context(self, dry_run: bool) -> ApplyContext:
+        return ApplyContext(
+            db=self.db,
+            origin="package" if self.managed_by.startswith("pkg:") else "config",
+            actor_user_id=self.owner_user_id,
+            owner_user_id=self.owner_user_id,
+            managed_by=self.managed_by,
+            config_name=self.config_name,
+            dry_run=dry_run,
+            effects=self.effects,
+            pending_references=self._pending_references,
+        )
+
+    async def _apply_kind(self, applier, items: list, dry_run: bool) -> None:
+        ctx = self._resource_context(dry_run)
+        for item in items:
+            key = applier.config_key(item)
+            try:
+                declared = item.model_dump(exclude_none=True)
+                spec = applier.spec_model.model_validate(declared)
+                keep = {
+                    field for field in applier.keep_unless_declared
+                    if to_camel(field) not in declared
+                }
+                # One savepoint per resource: a failing one is reported and
+                # rolled back on its own instead of poisoning the session for
+                # every resource after it.
+                async with self.db.begin_nested():
+                    result = await applier.apply(spec, ctx, keep=keep)
+            except Exception as e:
+                self.errors.append(f"Error applying {applier.noun} '{key}': {_describe_error(e)}")
+                continue
+            if result.warning:
+                self.warnings.append(result.warning)
+            self._track_change(
+                "unchanged" if result.action == "skipped" else result.action,
+                applier.kind,
+                key,
+                changes=result.changes or None,
+            )
+
+
+def _describe_error(error: Exception) -> str:
+    """One line per problem, rather than pydantic's multi-line dump."""
+    from pydantic import ValidationError
+
+    if isinstance(error, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in err['loc']) or 'spec'}: {err['msg']}"
+            for err in error.errors(include_url=False)
+        )
+    return str(error)

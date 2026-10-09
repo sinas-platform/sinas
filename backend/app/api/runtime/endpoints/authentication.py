@@ -23,6 +23,7 @@ from app.core.auth import (
     hash_password,
     normalize_email,
     revoke_all_refresh_tokens,
+    revoke_outstanding_password_reset_tokens,
     revoke_refresh_token,
     set_permission_used,
     validate_refresh_token,
@@ -389,6 +390,8 @@ async def redeem_password_reset(
     user.password_hash = hash_password(request.new_password)
     await db.commit()
 
+    # Any other outstanding link for this account dies with this one.
+    await revoke_outstanding_password_reset_tokens(db, user.id)
     await revoke_all_refresh_tokens(db, str(user.id))
     return None
 
@@ -428,6 +431,8 @@ async def change_password(
     user.password_hash = hash_password(request.new_password)
     await db.commit()
 
+    # Any other outstanding link for this account dies with this one.
+    await revoke_outstanding_password_reset_tokens(db, user.id)
     await revoke_all_refresh_tokens(db, str(user.id))
     return None
 

@@ -51,7 +51,11 @@ The workbench is deliberately multi-purpose: it is the agent's scratchpad
 **and** the artifact surface — a deliverable (report, chart, generated
 document) is just a workbench file the chat UI renders or offers for
 download, and promotes to a collection when it should outlive the chat.
-No separate artifact concept is needed.
+No separate *file* artifact concept is needed. (`system_tools: ["artifacts"]`, which
+landed separately, is a different thing: live interactive components shown in the
+chat. The two coexist — a workbench file is a deliverable *document*, an artifact is a
+deliverable *app*; an agent may write a file in the workbench and surface it through
+an artifact page.)
 
 ### Naming
 

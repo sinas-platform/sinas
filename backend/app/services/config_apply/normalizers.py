@@ -3,6 +3,8 @@ Normalization helpers for config references
 """
 from typing import Any
 
+from app.schemas.config import OwnershipSkip
+
 
 def normalize_function_references(function_names: list[str]) -> list[str]:
     """
@@ -100,7 +102,7 @@ def should_skip_existing(
         # Fall through to checksum check — will be updated below
     elif existing.managed_by and existing.managed_by != managed_by:
         warnings.append(
-            f"{resource_type.title()} '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
+            OwnershipSkip(f"{resource_type.title()} '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping.")
         )
         track_change("unchanged", resource_type, resource_name)
         return True

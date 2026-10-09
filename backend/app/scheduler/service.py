@@ -191,7 +191,12 @@ async def run(stop_event: asyncio.Event) -> None:
 
                 if admin_role:
                     admin_member_result = await db.execute(
-                        select(UserRole).where(UserRole.role_id == admin_role.id).limit(1)
+                        select(UserRole)
+                        .where(UserRole.role_id == admin_role.id)
+                        # Deterministic: the owner of what the boot apply
+                        # creates must not change from one boot to the next.
+                        .order_by(UserRole.added_at, UserRole.id)
+                        .limit(1)
                     )
                     admin_member = admin_member_result.scalar_one_or_none()
                     if admin_member:
