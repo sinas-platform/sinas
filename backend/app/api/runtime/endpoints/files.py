@@ -254,14 +254,19 @@ async def upload_file(
     # Get or create collection
     coll = await Collection.get_by_name(db, namespace, collection)
     if not coll:
-        # Auto-create collection with defaults
-        coll = Collection(
-            namespace=namespace,
-            name=collection,
-            user_id=user_id,
+        # Auto-create collection with defaults — through the applier, like
+        # every other collection write, so it shows in change history.
+        from app.services.resources import rest
+        from app.services.resources.collections import CollectionApplier
+
+        applier = CollectionApplier()
+        result = await rest.write(
+            applier,
+            rest.api_context(db, user_id),
+            rest.parse_spec(applier, {"namespace": namespace, "name": collection}),
+            must_create=True,
         )
-        db.add(coll)
-        await db.flush()
+        coll = result.obj
         await db.refresh(coll)
 
     # Validate visibility setting

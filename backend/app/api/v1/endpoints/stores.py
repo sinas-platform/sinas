@@ -1,6 +1,9 @@
-"""Store management endpoints."""
+"""Store management endpoints.
+
+Writes go through StoreApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -8,9 +11,12 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.store import Store
 from app.schemas.store import StoreCreate, StoreResponse, StoreUpdate
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.stores import StoreApplier
 
 router = APIRouter(prefix="/stores", tags=["stores"])
+
+_applier = StoreApplier()
 
 
 @router.post("", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
@@ -32,37 +38,14 @@ async def create_store(
         )
     set_permission_used(request, permission)
 
-    # Check uniqueness
-    result = await db.execute(
-        select(Store).where(
-            and_(
-                Store.namespace == store_data.namespace,
-                Store.name == store_data.name
-            )
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Store 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, store_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Store '{store_data.namespace}/{store_data.name}' already exists",
-        )
-
-    store = Store(
-        user_id=user_id,
-        namespace=store_data.namespace,
-        name=store_data.name,
-        description=store_data.description,
-        schema=store_data.schema or {},
-        strict=store_data.strict,
-        default_visibility=store_data.default_visibility,
-        encrypted=store_data.encrypted,
-    )
-
-    db.add(store)
-    await db.flush()
-    await db.refresh(store)
-
-    return StoreResponse.model_validate(store)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return StoreResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[StoreResponse])
@@ -140,22 +123,18 @@ async def update_store(
 
     set_permission_used(request, f"sinas.stores/{namespace}/{name}.update")
 
-    detach_if_package_managed(store)
-
-    if store_data.description is not None:
-        store.description = store_data.description
-    if store_data.schema is not None:
-        store.schema = store_data.schema
-    if store_data.strict is not None:
-        store.strict = store_data.strict
-    if store_data.default_visibility is not None:
-        store.default_visibility = store_data.default_visibility
-    if store_data.encrypted is not None:
-        store.encrypted = store_data.encrypted
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    store = await rest.locked(_applier, ctx, store)
+    # As before: a field left out or sent as null stays as it is, and a store
+    # is not renamed here (namespace/name in the body were always ignored).
+    patch = {
+        field: value
+        for field, value in store_data.model_dump(exclude_unset=True).items()
+        if value is not None and field not in ("namespace", "name")
+    }
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, store, patch), existing=store)
+    await rest.commit(db, ctx)
     await db.refresh(store)
-
     return StoreResponse.model_validate(store)
 
 
@@ -181,7 +160,7 @@ async def delete_store(
 
     set_permission_used(request, f"sinas.stores/{namespace}/{name}.delete")
 
-    await db.delete(store)
-    await db.flush()
-
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, store), ctx)
+    await rest.commit(db, ctx)
     return None
