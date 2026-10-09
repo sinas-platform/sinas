@@ -38,6 +38,7 @@
             "pages": [
               "build-resources/agents",
               "build-resources/system-tools",
+              "build-resources/way-of-working",
               "build-resources/functions",
               "build-resources/queries",
               "build-resources/pipelines",
