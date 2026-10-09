@@ -10,8 +10,6 @@ Adversarial coverage the resume path must survive:
 - the assistant tool_calls message is persisted before suspension, and the
   answer's tool result lands before the resume job runs (transcript
   validity);
-- a cooperative interrupt beats the suspension — synthetic results are
-  written for every call, ask_user included, and no checkpoint is left;
 - a malformed ask_user call (no question) fails immediately rather than
   parking the round on a question nobody can see.
 """

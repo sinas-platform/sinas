@@ -504,3 +504,60 @@ async def test_the_resume_acts_through_the_rounds_api_key(env, monkeypatch):
     await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="")
     assert seen == ["key-123"]
     assert current_api_key_id() is None
+
+
+@pytest.mark.asyncio
+async def test_a_round_whose_api_key_was_stored_as_none_resumes_without_one(env, monkeypatch):
+    """A round suspended outside any key stays outside one, even if the
+    completion arrives on a request bound to some key."""
+    from app.core.auth import bind_api_key, current_api_key_id, reset_api_key
+
+    seen: list = []
+
+    async def fake(**kwargs):
+        seen.append(current_api_key_id())
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", fake)
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={"provider": "p", "model": "m", "api_key_id": None},
+    )
+    token = bind_api_key("other-key")
+    try:
+        await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="")
+    finally:
+        reset_api_key(token)
+    assert seen == [None]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_resume_enqueue_keeps_the_checkpoint_and_the_sweep_retries(env, monkeypatch):
+    calls: list[dict] = []
+    failing = {"on": True}
+
+    async def flaky(**kwargs):
+        calls.append(kwargs)
+        if failing["on"]:
+            raise ConnectionError("redis down")
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", flaky)
+    row_id = await _suspend(env, {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}})
+
+    outcome = await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="tok")
+    assert outcome["status"] == "completed"
+    row = await _get_row(row_id)
+    assert row is not None and row.remaining <= 0  # kept: nothing outstanding, not yet resumed
+    assert len(await _tool_messages(env["chat_id"])) == 1  # the answer itself is safe
+
+    failing["on"] = False
+    await dc.expire_due()
+    assert await _get_row(row_id) is None
+    # Both attempts used the same job id, so a retry can never resume twice.
+    assert [c["job_id"] for c in calls] == [f"resume-{row_id}"] * 2
+    assert calls[-1]["chat_id"] == env["chat_id"]
+
+    await dc.expire_due()  # nothing left to retry
+    assert len(calls) == 2

@@ -771,8 +771,31 @@ async def approve_tool_call(
     if not pending_approval:
         raise HTTPException(404, "Pending approval not found or already processed")
 
-    # Update approval status
-    pending_approval.approved = request.approved
+    # Resolve it only while it is still undecided and not past its deadline:
+    # the expiry sweep resolves it the same conditional way, so exactly one of
+    # the two wins (an expired approval can never be approved afterwards).
+    from datetime import datetime, timezone
+
+    from sqlalchemy import or_, update
+
+    resolved = (
+        await db.execute(
+            update(PendingToolApproval)
+            .where(
+                PendingToolApproval.id == pending_approval.id,
+                PendingToolApproval.approved.is_(None),
+                or_(
+                    PendingToolApproval.expires_at.is_(None),
+                    PendingToolApproval.expires_at > datetime.now(timezone.utc),
+                ),
+            )
+            .values(approved=request.approved)
+            .returning(PendingToolApproval.id)
+        )
+    ).scalar_one_or_none()
+    if resolved is None:
+        await db.rollback()
+        raise HTTPException(409, "This approval was already resolved or has expired")
     await db.commit()
 
     # Extract token and enqueue resume job
