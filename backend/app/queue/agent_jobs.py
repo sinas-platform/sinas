@@ -1,9 +1,11 @@
 """arq job handlers for agent message processing."""
 import asyncio
+import functools
 import json
 import logging
 import traceback
 import uuid as uuid_lib
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -11,7 +13,7 @@ from opentelemetry import trace
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.telemetry import otel_attr
+from app.core.telemetry import attached, extract_trace_context, otel_attr
 from app.models.execution import Execution, ExecutionStatus
 from app.services.queue_service import JOB_STATUS_PREFIX, JOB_TTL
 
@@ -36,6 +38,24 @@ def _acting_as_job_key(job):
             reset_api_key(token)
 
     return wrapper
+
+
+def _in_enqueued_context(
+    job: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    """Run a queued job inside the trace context it was enqueued with.
+
+    The enqueue side passes `trace_context` (`inject_trace_context`); making
+    it current for the whole job means the model calls a continuation makes
+    carry the caller's trace and baggage, as the turn it continues did.
+    """
+
+    @functools.wraps(job)
+    async def run(ctx: dict[str, Any], **kwargs: Any) -> None:
+        with attached(extract_trace_context(kwargs.get("trace_context") or {})):
+            await job(ctx, **kwargs)
+
+    return run
 
 
 async def _ping_loop(channel_id: str, ttl: int | None = None) -> None:
@@ -99,7 +119,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     from app.services.message_service import MessageService
     from app.services.stream_relay import stream_relay
 
-    from app.core.telemetry import extract_trace_context, get_tracer
+    from app.core.telemetry import get_tracer
 
     job_id = kwargs["job_id"]
     chat_id = kwargs["chat_id"]
@@ -173,7 +193,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
 
     completed = False
     span_ctx = {"context": parent_ctx} if parent_ctx else {}
-    with tracer.start_as_current_span(
+    with attached(parent_ctx), tracer.start_as_current_span(
         "agent.job",
         **span_ctx,
         attributes={
@@ -349,6 +369,7 @@ async def _persist_turn_error(chat_id: str, error: Exception) -> None:
         )
 
 @_acting_as_job_key
+@_in_enqueued_context
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     """
     Resume agent processing after tool approval in a worker.
@@ -514,6 +535,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
 
 
 @_acting_as_job_key
+@_in_enqueued_context
 async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     """Continue a parent conversation suspended on sub-agent delegations.
 
