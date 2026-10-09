@@ -52,7 +52,12 @@ real Streamable HTTP transport behind an ASGI app are what the tests use —
 no sockets, no mocks of the protocol.
 
 **Resource: `McpServer`** (`mcp_servers`, config section `mcpServers`),
-keyed `namespace/name` like a connector:
+keyed `namespace/name` like a connector. Both identifiers follow the REST
+rule (`^[a-zA-Z_][a-zA-Z0-9_-]*$`) in the shared spec, because they become
+part of a model-facing function name; config apply cannot create a server
+no chat could use. The public config and REST models reject unknown fields,
+so a misspelt `toolDney:` fails the apply instead of silently dropping a
+filter.
 
 - `url`, `transport`;
 - `auth`: `{type: none|bearer|header, secret: <Secret name>, header?}` —
@@ -87,9 +92,22 @@ enabledMcpServers:
 It enters the agent's config hash only when set, so agents that never
 enabled a server keep their existing hash and an upgrade re-applies nothing.
 
+**Access follows the server's own permission model.** A binding names a
+server; it grants nothing. At discovery and at execution the chat's user
+must be able to *read* the server (`sinas.mcp_servers/<ns>/<name>.read` —
+`:own` as its owner, `:all` otherwise), the same check the REST API applies;
+otherwise the server contributes no tools and a call is refused. The REST
+agent endpoints apply the same check when a binding is accepted (404 for
+an unknown server, 403 for one the caller may not read), so a user with
+`:own` permissions cannot point an agent at another owner's server and its
+credentials. This mirrors functions and pipelines, whose discovery is
+permission-filtered — not connectors, which today check nothing.
+
 **Tool naming: `mcp_<namespace>__<server>__<tool>`.** The `mcp_` prefix is
-new in `tool_name_to_status_key` (→ `mcp:ns/server/tool`), collides with no
-existing prefix, and is what approval rules match (`{"match": "mcp_*",
+new in `tool_name_to_status_key` (→ `mcp:ns/server/tool`; a status template
+is also accepted per server as `mcp:ns/server/*`, since the tools are only
+known at chat time), collides with no existing prefix, and is what approval
+rules match (`{"match": "mcp_*",
 "action": "ask"}` gates every MCP tool). MCP allows characters OpenAI
 function names don't; the model-facing name is sanitised and the real tool
 name rides in `_metadata.mcp_tool`, which dispatch uses — the name is never
@@ -100,12 +118,23 @@ reads as "a function tool".
 
 **Discovery degrades, never fails.** `McpToolConverter.get_available_tools`
 lists each enabled server (server filter, then the binding's patterns). A
-server that is missing, inactive, unreachable, or whose Secret is missing
-contributes no tools and one warning line — a chat turn is never failed by
-a tool source. Listings are cached in-process per server *version*
-(`id:updated_at`, so an edit invalidates) for `MCP_TOOL_LIST_TTL_SECONDS`
-(60); a failed listing is cached for `MCP_TOOL_LIST_FAILURE_TTL_SECONDS`
-(15) so a dead server is not re-handshaken on every message.
+server that is missing, inactive, unreachable, not readable by the user,
+or whose Secret is missing contributes no tools and one warning line — a
+chat turn is never failed by a tool source. Listings are cached in-process
+per server *version*, per *caller* and per *credential*
+(`id:updated_at:user_id:digest(resolved headers)`): an edit invalidates,
+one user's private credential — and the listing it yields — is never
+served to another, and a rotated secret misses. Headers are resolved
+before the cache is consulted, so a user whose Secret is missing is
+refused outright rather than served from, or poisoning, anyone's entry.
+Successful listings live `MCP_TOOL_LIST_TTL_SECONDS` (60); a failed one
+`MCP_TOOL_LIST_FAILURE_TTL_SECONDS` (15), so a dead server is not
+re-handshaken on every message.
+
+**Errors never carry credentials.** A server URL may hold a password or a
+query token (history already treats it as a secret); the error the model
+and the logs see shows scheme, host and path only, and the same parts are
+scrubbed from the underlying transport error's text.
 
 **Execution** is a branch in `execute_single_tool` beside the connector one,
 *after* workbench reference resolution and *after* the approval gate, so
@@ -119,7 +148,7 @@ SDK's session caching gains nothing when every call is a fresh session.
 |---|---|
 | text blocks | joined into `text` |
 | `structuredContent` | `structured_content`; a text block that only repeats it (or the SDK's `{"result": scalar}` wrap of a scalar return) is not duplicated |
-| image / audio / binary resource | **with a workbench**: written to `tool_results/mcp_<tool>_<n>.<ext>` and returned as `{type, mime_type, workbench_file, size}`; **without**: inlined in the universal content shape (`{"type":"image","image":"data:…;base64,…"}`, `{"type":"audio","data","format"}`) |
+| image / audio / binary resource | **with a workbench**: written to `tool_results/<tool name>_<tool_call_id>_<n>.<ext>` (unique per call and server — the workbench advances a file's version on rewrite, so a shared path would make an earlier pointer serve a later blob) and returned as `{type, mime_type, workbench_file, size}`; **without**: inlined in the universal content shape (`{"type":"image","image":"data:…;base64,…"}`, `{"type":"audio","data","format"}`) |
 | embedded text resource | `{type: resource, uri, mime_type, text}` |
 | resource link | `{type: resource_link, uri, name, …}` |
 | `isError` | `{"error": <text>}` — the model sees the failure and recovers |
@@ -185,6 +214,8 @@ await map_call_result(result, tool_name=..., store_blob=...) -> dict
   path (a file the model can `workbench_read` or pass to code execution)
   is the useful one; giving providers a real image block for tool results
   is a cross-cutting change for all tool kinds.
+- **Connector parity on access.** MCP checks server read access at
+  discovery and execution; connectors don't. The same check belongs there.
 - **Egress policy.** Connectors don't restrict `baseUrl` to public
   networks either (self-hosted servers on internal networks are the common
   case), so MCP follows suit. An instance-level allow/deny list for

@@ -18,6 +18,8 @@ class EnabledSkillConfig(BaseModel):
 class EnabledMcpServerConfig(BaseModel):
     """Configuration for an enabled MCP server."""
 
+    model_config = {"extra": "forbid"}
+
     server: str = Field(..., description="MCP server identifier in format 'namespace/name'")
     tools: list[str] = Field(
         default_factory=list,

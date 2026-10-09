@@ -112,6 +112,8 @@ class TestMcpServerSpec:
         {"auth": {"type": "bearer"}},  # a bearer with nothing to send
         {"auth": {"type": "header", "secret": "K"}},  # ...in which header?
         {"namespace": "team/tools"},
+        {"namespace": "my.team"},  # would become an invalid function name
+        {"name": "issue tracker"},
         {"timeoutSeconds": 0},
         {"connectTimeoutSeconds": 0},
         {"transprt": "sse"},  # a typo is an error, not silently ignored
@@ -119,6 +121,19 @@ class TestMcpServerSpec:
     def test_refuses_what_cannot_work(self, bad):
         with pytest.raises(ValidationError):
             McpServerSpec.model_validate({**_yaml_server("x"), **bad})
+
+    def test_config_and_rest_refuse_unknown_fields(self):
+        """A misspelt key must fail the apply, not silently drop a filter."""
+        for bad in (
+            {"toolDney": ["delete_*"]},
+            {"auth": {"type": "bearer", "secret": "S", "secrett": "S"}},
+        ):
+            with pytest.raises(ValidationError):
+                _config({"mcpServers": [{**_yaml_server("x"), **bad}]})
+        with pytest.raises(ValidationError):
+            _config({"agents": [{
+                "name": "a", "enabledMcpServers": [{"server": "tools/x", "tool": ["a"]}],
+            }]})
 
     def test_defaults_and_export_form(self):
         spec = McpServerSpec.model_validate({"name": "min", "url": "http://localhost:8000/mcp"})
@@ -153,6 +168,33 @@ class TestOneWritePath:
         assert {f: getattr(api_row, f) for f in FIELDS} == {f: getattr(cfg_row, f) for f in FIELDS}
         assert cfg_row.managed_by == "config" and cfg_row.config_name == "cfg"
         assert None not in cfg_row.auth.values()
+
+    async def test_rest_refuses_unknown_fields(self, client, admin_user):
+        headers = auth_headers(admin_user)
+        for bad in (
+            {"tool_dney": ["x"]},
+            {"auth": {"type": "bearer", "secret": "S", "secrett": "S"}},
+        ):
+            response = await client.post("/api/v1/mcp-servers", json={**_rest_server(f"x-{_uid()}"), **bad}, headers=headers)
+            assert response.status_code == 422, response.text
+        name = f"api-{_uid()}"
+        assert (await client.post("/api/v1/mcp-servers", json=_rest_server(name), headers=headers)).status_code == 201
+        response = await client.put(f"/api/v1/mcp-servers/tools/{name}", json={"timeout_secs": 5}, headers=headers)
+        assert response.status_code == 422
+        response = await client.post("/api/v1/agents", json={
+            "namespace": f"ns{_uid()}", "name": "a", "system_prompt": "x",
+            "enabled_mcp_servers": [{"server": f"tools/{name}", "tool": ["a"]}],
+        }, headers=headers)
+        assert response.status_code == 422
+
+    async def test_create_honours_is_active(self, client, db: AsyncSession, admin_user):
+        name = f"api-{_uid()}"
+        response = await client.post(
+            "/api/v1/mcp-servers", json=_rest_server(name, is_active=False), headers=auth_headers(admin_user)
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["is_active"] is False
+        assert (await _row(db, name)).is_active is False
 
     async def test_update_patches_and_renames_safely(self, client, db: AsyncSession, admin_user):
         first, second, headers = f"a-{_uid()}", f"b-{_uid()}", auth_headers(admin_user)
@@ -305,18 +347,29 @@ class TestAgentBinding:
 
     async def test_rest_create_and_update(self, client, admin_user):
         ns, headers = f"ns{_uid()}", auth_headers(admin_user)
+        server = f"tracker-{_uid()}"
+        assert (await client.post("/api/v1/mcp-servers", json=_rest_server(server), headers=headers)).status_code == 201
+        ref = f"tools/{server}"
+
         response = await client.post("/api/v1/agents", json={
             "namespace": ns, "name": "api", "system_prompt": "x",
-            "enabled_mcp_servers": [{"server": "tools/tracker"}],
+            "enabled_mcp_servers": [{"server": ref}],
         }, headers=headers)
         assert response.status_code == 201, response.text
-        assert response.json()["enabled_mcp_servers"] == [{"server": "tools/tracker", "tools": []}]
+        assert response.json()["enabled_mcp_servers"] == [{"server": ref, "tools": []}]
 
         response = await client.put(f"/api/v1/agents/{ns}/api", json={
-            "enabled_mcp_servers": [{"server": "tools/tracker", "tools": ["list_*"]}],
+            "enabled_mcp_servers": [{"server": ref, "tools": ["list_*"]}],
         }, headers=headers)
         assert response.status_code == 200, response.text
-        assert response.json()["enabled_mcp_servers"] == [{"server": "tools/tracker", "tools": ["list_*"]}]
+        assert response.json()["enabled_mcp_servers"] == [{"server": ref, "tools": ["list_*"]}]
 
         response = await client.put(f"/api/v1/agents/{ns}/api", json={"description": "d"}, headers=headers)
-        assert response.json()["enabled_mcp_servers"] == [{"server": "tools/tracker", "tools": ["list_*"]}]
+        assert response.json()["enabled_mcp_servers"] == [{"server": ref, "tools": ["list_*"]}]
+
+        # A binding to a server that doesn't exist is refused on the way in.
+        response = await client.post("/api/v1/agents", json={
+            "namespace": ns, "name": "b", "system_prompt": "x",
+            "enabled_mcp_servers": [{"server": "tools/nope"}],
+        }, headers=headers)
+        assert response.status_code == 404, response.text

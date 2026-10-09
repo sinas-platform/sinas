@@ -186,6 +186,8 @@ class EnabledSkillConfigYaml(BaseModel):
 class EnabledMcpServerConfigYaml(BaseModel):
     """Configuration for an enabled MCP server in agent config"""
 
+    model_config = {"extra": "forbid"}
+
     server: str = Field(..., description="MCP server identifier in format 'namespace/name'")
     tools: list[str] = Field(
         default_factory=list,
@@ -526,6 +528,8 @@ class ConnectorConfig(BaseModel):
 class McpServerAuthConfig(BaseModel):
     """MCP server auth configuration"""
 
+    model_config = {"extra": "forbid"}
+
     type: str = "none"
     secret: Optional[str] = None
     header: Optional[str] = None
@@ -533,6 +537,9 @@ class McpServerAuthConfig(BaseModel):
 
 class McpServerConfig(BaseModel):
     """MCP server configuration (see ADR 2026-10-09-mcp-client)"""
+
+    # A misspelt key (toolDney:) must fail the apply, not silently drop a filter.
+    model_config = {"extra": "forbid"}
 
     namespace: str = "default"
     name: str

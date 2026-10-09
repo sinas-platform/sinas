@@ -64,13 +64,15 @@ Tools are named `mcp_<namespace>__<server>__<tool>` (characters MCP allows but f
           action: auto
 ```
 
-Status templates use the key `mcp:<namespace>/<server>/<tool>`.
+Status templates use the key `mcp:<namespace>/<server>/<tool>`, or `mcp:<namespace>/<server>/*` for every tool of a server (what the console's status editor offers).
+
+**Access.** A binding grants nothing by itself: the user chatting with the agent must be able to read the server (`sinas.mcp_servers/<namespace>/<name>.read` — `:own` as its owner, `:all` otherwise), as for functions and pipelines. The API refuses a binding to a server the caller cannot read; at chat time such a server simply contributes no tools.
 
 ## How calls behave
 
-- **Discovery degrades, never fails.** A server that is missing, inactive or unreachable contributes no tools and a warning in the log; the chat turn proceeds with the other tools. Tool lists are cached in-process per server for `MCP_TOOL_LIST_TTL_SECONDS` (60); a failed listing for `MCP_TOOL_LIST_FAILURE_TTL_SECONDS` (15), so a dead server isn't retried on every message. Editing a server invalidates its cache.
+- **Discovery degrades, never fails.** A server that is missing, inactive, unreachable or not readable by the user contributes no tools and a warning in the log; the chat turn proceeds with the other tools. Tool lists are cached in-process per server, per user and per credential for `MCP_TOOL_LIST_TTL_SECONDS` (60); a failed listing for `MCP_TOOL_LIST_FAILURE_TTL_SECONDS` (15), so a dead server isn't retried on every message. Editing a server (or rotating its secret) invalidates its cache. Error messages show the server's host and path only, never credentials a URL may carry.
 - **Workbench references work.** `{"$workbench": "path"}` argument values are resolved before the call, like for every tool.
-- **Results.** Text blocks are joined into `text`; `structuredContent` is passed through as `structured_content`. Images, audio and binary resources are written to the chat's workbench (`tool_results/mcp_<tool>_<n>.<ext>`) when the agent has one, otherwise inlined as data URLs. Embedded text resources and resource links are returned as `content` entries. A tool that reports `isError` becomes an `{"error": …}` result the model can recover from. Large results spill to the workbench like any other tool result.
+- **Results.** Text blocks are joined into `text`; `structuredContent` is passed through as `structured_content`. Images, audio and binary resources are written to the chat's workbench (`tool_results/<tool name>_<call id>_<n>.<ext>`, one set of files per call) when the agent has one, otherwise inlined as data URLs. Embedded text resources and resource links are returned as `content` entries. A tool that reports `isError` becomes an `{"error": …}` result the model can recover from. Large results spill to the workbench like any other tool result.
 
 ## Not supported (yet)
 

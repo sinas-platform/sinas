@@ -350,6 +350,10 @@ def build_tool_status(tool_name: str, arguments: dict, status_templates: dict[st
     """
     key = tool_name_to_status_key(tool_name)
     template = status_templates.get(key)
+    if not template and key.startswith("mcp:"):
+        # MCP tools are discovered at chat time, so a template is also
+        # accepted per server: "mcp:<ns>/<server>/*".
+        template = status_templates.get(key.rsplit("/", 1)[0] + "/*")
     if template:
         try:
             return render_template(template, arguments)
@@ -990,6 +994,7 @@ async def execute_single_tool(
                     user_id=user_id,
                     metadata=tool_metadata,
                     chat=chat,
+                    tool_call_id=tool_call["id"],
                 )
                 logger.debug(f"MCP tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("type") == "connector":

@@ -33,6 +33,7 @@ from app.models.mcp_server import McpServer
 from app.models.pending_approval import PendingToolApproval
 from app.models.secret import Secret
 from app.models.user import Role, RolePermission, User, UserRole
+from app.services.mcp_client import blob_prefix_for, safe_url
 from app.services import mcp_client
 from app.services.mcp_tools import McpToolConverter, parse_mcp_tool_name
 from app.services.tool_execution import (
@@ -142,6 +143,16 @@ async def _dispose_engine_per_test():
     used it; each test runs in a fresh loop (as in test_ask_user)."""
     yield
     await async_engine.dispose()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _test_role_can_read_own_servers(db: AsyncSession, test_role: Role):
+    """Using a server requires read access to it (its own permission model);
+    the shared test role grants nothing on mcp_servers, so give it :own."""
+    db.add(RolePermission(
+        role_id=test_role.id, permission_key="sinas.mcp_servers/*/*.read:own", permission_value=True
+    ))
+    await db.flush()
 
 
 @pytest.fixture(autouse=True)
@@ -361,14 +372,48 @@ class TestExecution:
         )
         [chunk] = result["content"]
         assert chunk["type"] == "image" and chunk["mime_type"] == "image/png"
-        assert chunk["workbench_file"] == "tool_results/mcp_picture_1.png"
+        assert chunk["workbench_file"] == "tool_results/mcp_x_1.png"
         assert "image" not in chunk  # the model gets a path, not a base64 wall
 
         read = await WorkbenchTools().execute_tool(
             db, chat, str(test_user.id), "workbench_read",
-            {"filename": "tool_results/mcp_picture_1.png"},
+            {"filename": "tool_results/mcp_x_1.png"},
         )
         assert "error" not in read, read
+
+    @pytest.mark.asyncio
+    async def test_each_call_gets_its_own_blob_files(self, db, fake_mcp, server, test_user):
+        """A second call to the same tool must not overwrite the first call's
+        file: the workbench advances the version, so the earlier pointer
+        would silently serve the later blob."""
+        agent = Agent(
+            user_id=test_user.id, namespace=f"ns{_uid()}", name="wb", system_tools=["workbench"]
+        )
+        db.add(agent)
+        await db.flush()
+        chat = Chat(user_id=test_user.id, agent_id=agent.id, title="mcp wb")
+        db.add(chat)
+        await db.flush()
+        await db.refresh(chat)
+
+        meta = _tool_def(server, "picture")["function"]["_metadata"]
+        name = f"mcp_{server.namespace}__{server.name}__picture"
+        paths = []
+        for call_id in ("call_a", "call_b"):
+            result = await McpToolConverter().execute_tool(
+                db, name, {}, str(test_user.id), meta, chat=chat, tool_call_id=call_id
+            )
+            paths.append(result["content"][0]["workbench_file"])
+        assert paths == [f"tool_results/{name}_call_a_1.png", f"tool_results/{name}_call_b_1.png"]
+
+    def test_blob_prefix_is_unique_per_call_and_server(self):
+        assert blob_prefix_for("mcp_a__s__pic", "call_1") == "mcp_a__s__pic_call_1"
+        assert blob_prefix_for("mcp_a__s__pic", None) == "mcp_a__s__pic"
+        # Servers tell the names apart; odd or long call ids get a hash suffix.
+        assert blob_prefix_for("mcp_a__t__pic", "call_1") != blob_prefix_for("mcp_a__s__pic", "call_1")
+        odd = blob_prefix_for("mcp_a__s__pic", "call/with:odd")
+        assert odd.startswith("mcp_a__s__pic_call_with_odd_") and "/" not in odd
+        assert blob_prefix_for("t", "x" * 80) != blob_prefix_for("t", "x" * 79 + "y")
 
     @pytest.mark.asyncio
     async def test_a_failing_tool_is_an_error_result(self, db, fake_mcp, server, test_user):
@@ -399,6 +444,34 @@ class TestExecution:
             db, "mcp_x", {"text": "x"}, str(test_user.id), _tool_def(down, "echo")["function"]["_metadata"]
         )
         assert "down.test" in result["error"] and "connection refused" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_error_text_never_carries_url_credentials(self, db, fake_mcp, test_user):
+        """A URL can hold a password or a query token; the error the model
+        and the logs see shows the host and path only."""
+        down = _server(test_user, url="http://svc:hunter2@down.test/mcp?token=abc123&x=1")
+        db.add(down)
+        await db.flush()
+        await db.refresh(down)
+        result = await McpToolConverter().execute_tool(
+            db, "mcp_x", {"text": "x"}, str(test_user.id), _tool_def(down, "echo")["function"]["_metadata"]
+        )
+        assert "http://down.test/mcp" in result["error"]
+        for secret in ("hunter2", "abc123", "svc:", "token="):
+            assert secret not in result["error"], secret
+
+        tools = await McpToolConverter().get_available_tools(db, _binding(down), str(test_user.id))
+        assert tools == []
+
+    def test_scrubbing_covers_the_underlying_error_text(self):
+        from app.services.mcp_client import _scrub
+
+        url = "https://svc:hunter2@mcp.example.com/mcp?token=abc123"
+        assert safe_url(url) == "https://mcp.example.com/mcp"
+        scrubbed = _scrub(f"GET {url} failed; retried http://x/?token=abc123 as svc:hunter2", url)
+        assert "hunter2" not in scrubbed and "abc123" not in scrubbed
+        assert "https://mcp.example.com/mcp" in scrubbed
+        assert safe_url("not a url at all") == "not a url at all"
 
     @pytest.mark.asyncio
     async def test_name_parsing_fallback(self, db, fake_mcp, server, test_user):
@@ -495,6 +568,38 @@ class TestAuth:
         assert fake_mcp.seen_headers[-1] == {"X-Tenant": "acme", "Authorization": "Bearer tok-123"}
 
     @pytest.mark.asyncio
+    async def test_listings_are_cached_per_user_and_credential(self, db, fake_mcp, test_user, admin_user):
+        """Private secrets are per user: one user's listing (obtained with
+        their credential) is never served to another, and a user without
+        the secret is refused even while another user's listing is cached."""
+        secret_name = f"MCP_PRIVATE_{_uid()}"
+        for user, value in ((test_user, "tok-a"), (admin_user, "tok-b")):
+            db.add(Secret(
+                user_id=user.id, name=secret_name, visibility="private",
+                encrypted_value=encryption_service.encrypt(value),
+            ))
+        server = _server(test_user, auth={"type": "bearer", "secret": secret_name})
+        db.add(server)
+        await db.flush()
+        await db.refresh(server)
+
+        await mcp_client.list_tools(db, server, str(test_user.id))
+        await mcp_client.list_tools(db, server, str(test_user.id))  # a hit
+        await mcp_client.list_tools(db, server, str(admin_user.id))  # a miss: other credential
+        assert fake_mcp.transport_opens == 2
+        assert [h["Authorization"] for h in fake_mcp.seen_headers] == ["Bearer tok-a", "Bearer tok-b"]
+
+        # A third user has no such secret: refused, not served from either cache entry.
+        stranger = User(email=f"stranger-{_uid()}@example.com")
+        db.add(stranger)
+        await db.flush()
+        with pytest.raises(mcp_client.McpClientError, match="not found"):
+            await mcp_client.list_tools(db, server, str(stranger.id))
+        # ...and that refusal poisons nobody else's entry.
+        await mcp_client.list_tools(db, server, str(test_user.id))
+        assert fake_mcp.transport_opens == 2
+
+    @pytest.mark.asyncio
     async def test_header_auth(self, db, fake_mcp, test_user):
         secret_name = f"MCP_KEY_{_uid()}"
         db.add(Secret(
@@ -524,6 +629,72 @@ class TestAuth:
         )
         assert "not found" in result["error"] and "secret" in result["error"]
         assert fake_mcp.seen_headers == []  # nothing ever went out
+
+
+# ------------------------------------------------------------ access
+
+
+class TestAccess:
+    @pytest.mark.asyncio
+    async def test_another_owners_server_is_not_usable_with_own_permissions(
+        self, db, fake_mcp, test_user, admin_user, caplog
+    ):
+        """Binding a server by name grants nothing: the chat's user needs
+        read access to the server itself (:own as owner, or :all)."""
+        theirs = _server(admin_user)
+        db.add(theirs)
+        await db.flush()
+        await db.refresh(theirs)
+
+        with caplog.at_level("WARNING"):
+            tools = await McpToolConverter().get_available_tools(db, _binding(theirs), str(test_user.id))
+        assert tools == []
+        assert any("not authorized" in r.message for r in caplog.records)
+        result = await McpToolConverter().execute_tool(
+            db, "mcp_x", {"text": "x"}, str(test_user.id), _tool_def(theirs, "echo")["function"]["_metadata"]
+        )
+        assert "not authorized" in result["error"]
+        assert fake_mcp.transport_opens == 0
+
+        # The owner (and anyone with :all) can.
+        assert len(await McpToolConverter().get_available_tools(db, _binding(theirs), str(admin_user.id))) == 5
+        own = await McpToolConverter().get_available_tools(
+            db, _binding(theirs), str(test_user.id)
+        )
+        assert own == []
+
+    @pytest.mark.asyncio
+    async def test_agent_bindings_are_checked_against_server_access(
+        self, client, db, fake_mcp, test_user, admin_user
+    ):
+        theirs, mine = _server(admin_user), _server(test_user)
+        db.add_all([theirs, mine])
+        await db.flush()
+        headers = auth_headers(test_user)
+        ns = f"ns{_uid()}"
+
+        def body(ref):
+            return {"namespace": ns, "name": "a", "system_prompt": "x", "enabled_mcp_servers": [{"server": ref}]}
+
+        response = await client.post("/api/v1/agents", json=body(f"{theirs.namespace}/{theirs.name}"), headers=headers)
+        assert response.status_code == 403, response.text
+        response = await client.post("/api/v1/agents", json=body("tools/does-not-exist"), headers=headers)
+        assert response.status_code == 404, response.text
+        response = await client.post("/api/v1/agents", json=body(f"{mine.namespace}/{mine.name}"), headers=headers)
+        assert response.status_code == 201, response.text
+
+        response = await client.put(
+            f"/api/v1/agents/{ns}/a",
+            json={"enabled_mcp_servers": [{"server": f"{theirs.namespace}/{theirs.name}"}]},
+            headers=headers,
+        )
+        assert response.status_code == 403, response.text
+        response = await client.put(
+            f"/api/v1/agents/{ns}/a",
+            json={"enabled_mcp_servers": [{"server": f"{mine.namespace}/{mine.name}", "tools": ["e*"]}]},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
 
 
 # ------------------------------------------------------------ generic dispatch
@@ -628,25 +799,27 @@ class TestGenericDispatch:
         assert json.loads(content)["error"] == "Unauthorized tool call"
 
     @pytest.mark.asyncio
-    async def test_approval_rules_gate_mcp_tools_by_name(self, committed_env, db):
-        # `db` after committed_env: its rolled-back transaction (holding the
-        # message's FK lock on the chat) must end before the env's cleanup
-        # deletes the chat.
+    async def test_approval_rules_gate_mcp_tools_by_name(self, committed_env):
+        # Own committed session: the shared `db` fixture's open transaction
+        # would hold the message's FK lock on the chat while the env's
+        # cleanup tries to delete it.
         env = committed_env
-        msg = Message(chat_id=env["chat"].id, role="assistant", content=None)
-        db.add(msg)
-        await db.flush()
-        tool = _tool_def(env["server"], "echo")
-        other = _tool_def(env["server"], "add", name="plain_tool")
-        calls = [
-            {"id": "call_gate", "type": "function", "function": {"name": tool["function"]["name"], "arguments": "{}"}},
-            {"id": "call_free", "type": "function", "function": {"name": "plain_tool", "arguments": "{}"}},
-        ]
-        asked = await check_approval_requirements(
-            db=db, tool_calls=calls, chat_id=str(env["chat"].id), user_id=str(env["user"].id),
-            message_id=str(msg.id), messages=[], provider=None, model=None,
-            temperature=0.7, max_tokens=None, tools=[tool, other],
-        )
+        async with AsyncSessionLocal() as s:
+            msg = Message(chat_id=env["chat"].id, role="assistant", content=None)
+            s.add(msg)
+            await s.commit()
+            tool = _tool_def(env["server"], "echo")
+            other = _tool_def(env["server"], "add", name="plain_tool")
+            calls = [
+                {"id": "call_gate", "type": "function", "function": {"name": tool["function"]["name"], "arguments": "{}"}},
+                {"id": "call_free", "type": "function", "function": {"name": "plain_tool", "arguments": "{}"}},
+            ]
+            asked = await check_approval_requirements(
+                db=s, tool_calls=calls, chat_id=str(env["chat"].id), user_id=str(env["user"].id),
+                message_id=str(msg.id), messages=[], provider=None, model=None,
+                temperature=0.7, max_tokens=None, tools=[tool, other],
+            )
+            await s.commit()
         assert [a["tool_call_id"] for a in asked] == ["call_gate"]
         assert (asked[0]["function_namespace"], asked[0]["function_name"]) == ("tool", tool["function"]["name"])
 
@@ -661,6 +834,16 @@ def test_status_key_and_fallback_status():
         "mcp_tools__github__create_issue", {"title": "x"},
         {"mcp:tools/github/create_issue": "Filing {{title}}"},
     ) == "Filing x"
+    # A server-wide template (what the console's status editor saves) applies
+    # to every tool of that server; an exact key still wins.
+    assert build_tool_status(
+        "mcp_tools__github__create_issue", {}, {"mcp:tools/github/*": "Working in GitHub"}
+    ) == "Working in GitHub"
+    assert build_tool_status(
+        "mcp_tools__github__create_issue", {},
+        {"mcp:tools/github/*": "Working in GitHub", "mcp:tools/github/create_issue": "Filing"},
+    ) == "Filing"
+    assert build_tool_status("mcp_tools__other__x", {}, {"mcp:tools/github/*": "Working in GitHub"}) == "Calling x"
     # No collision with the existing prefixes.
     assert tool_name_to_status_key("connector__a__b__c").startswith("function:")
 

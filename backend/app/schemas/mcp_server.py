@@ -3,16 +3,20 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class McpServerAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: str = "none"  # none | bearer | header
     secret: Optional[str] = None  # name of a Secret, never its value
     header: Optional[str] = None  # for type "header"
 
 
 class McpServerCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     namespace: str = Field(default="default", min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     name: str = Field(..., min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     description: Optional[str] = None
@@ -24,9 +28,12 @@ class McpServerCreate(BaseModel):
     tool_deny: list[str] = Field(default_factory=list)
     timeout_seconds: int = Field(default=60, ge=1, le=600)
     connect_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    is_active: bool = True
 
 
 class McpServerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     namespace: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     name: Optional[str] = Field(None, min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     description: Optional[str] = None

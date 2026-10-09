@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_user_permissions
 from app.models.mcp_server import McpServer
 from app.services import mcp_client
 from app.services.mcp_client import MCP_TOOL_PREFIX, ListedTool, McpClientError
@@ -52,6 +53,30 @@ def parse_mcp_tool_name(tool_name: str) -> Optional[tuple[str, str, str]]:
     return parts[0], parts[1], parts[2]
 
 
+async def accessible_server(
+    db: AsyncSession,
+    namespace: str,
+    name: str,
+    user_id: Optional[str],
+    permissions: Optional[dict[str, bool]] = None,
+) -> tuple[Optional[McpServer], Optional[str]]:
+    """The server, or why the caller may not use it. Access follows the
+    resource's own permission model (sinas.mcp_servers/<ns>/<name>.read, :own
+    for the owner, :all for everyone else) — the same check the REST API
+    applies — so binding a server to an agent never grants the chat's user a
+    server, or its credentials, they could not read themselves."""
+    server = await McpServer.get_by_name(db, namespace, name)
+    if not server or not server.is_active:
+        return None, f"MCP server '{namespace}/{name}' not found or inactive"
+    if not user_id:
+        return None, f"MCP server '{namespace}/{name}': no user to authorize"
+    if permissions is None:
+        permissions = await get_user_permissions(db, user_id)
+    if not server.can_user_access(str(user_id), permissions, "read"):
+        return None, f"MCP server '{namespace}/{name}': not authorized"
+    return server, None
+
+
 def _normalize_entry(entry: Any) -> tuple[str, list[str]]:
     if isinstance(entry, str):
         return entry, []
@@ -73,6 +98,7 @@ class McpToolConverter:
         that is missing, inactive or unreachable contributes no tools and a
         log line — never a failed chat turn."""
         tools: list[dict[str, Any]] = []
+        permissions: Optional[dict[str, bool]] = None
         for entry in enabled_mcp_servers or []:
             ref, patterns = _normalize_entry(entry)
             parts = ref.split("/", 1)
@@ -80,9 +106,11 @@ class McpToolConverter:
                 logger.warning(f"Invalid MCP server reference: {ref!r}")
                 continue
             namespace, name = parts
-            server = await McpServer.get_by_name(db, namespace, name)
-            if not server or not server.is_active:
-                logger.warning(f"MCP server '{ref}' not found or inactive")
+            if permissions is None and user_id:
+                permissions = await get_user_permissions(db, user_id)
+            server, problem = await accessible_server(db, namespace, name, user_id, permissions)
+            if server is None:
+                logger.warning(f"MCP tools unavailable: {problem}")
                 continue
             try:
                 listed = await mcp_client.list_tools(db, server, user_id)
@@ -137,6 +165,7 @@ class McpToolConverter:
         user_id: Optional[str],
         metadata: Optional[dict[str, Any]] = None,
         chat: Any = None,
+        tool_call_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Call the tool and map its result. Errors are results, not raises."""
         metadata = metadata or {}
@@ -149,9 +178,9 @@ class McpToolConverter:
                 return {"error": f"Invalid MCP tool name: {tool_name}"}
             namespace, name, mcp_tool = parsed
 
-        server = await McpServer.get_by_name(db, namespace, name)
-        if not server or not server.is_active:
-            return {"error": f"MCP server '{namespace}/{name}' not found or inactive"}
+        server, problem = await accessible_server(db, namespace, name, user_id)
+        if server is None:
+            return {"error": problem}
         if not server_allows(server, mcp_tool):
             return {"error": f"Tool '{mcp_tool}' is not allowed on MCP server '{namespace}/{name}'"}
 
@@ -165,7 +194,12 @@ class McpToolConverter:
         except Exception as e:  # pragma: no cover
             logger.error(f"MCP call failed: {namespace}/{name}/{mcp_tool}: {e}", exc_info=True)
             return {"error": str(e)}
-        return await mcp_client.map_call_result(result, tool_name=mcp_tool, store_blob=store_blob)
+        return await mcp_client.map_call_result(
+            result,
+            tool_name=mcp_tool,
+            store_blob=store_blob,
+            blob_prefix=mcp_client.blob_prefix_for(tool_name, tool_call_id),
+        )
 
     async def _blob_store(self, db: AsyncSession, chat: Any, user_id: Optional[str], tool_name: str):
         """Binary blocks go to the chat's workbench when the agent has one

@@ -97,6 +97,9 @@ export function AgentDetail() {
   const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'mcp' | 'pipelines' | 'hooks' | 'status' | 'platform'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [expandedConnectorParams, setExpandedConnectorParams] = useState<Set<string>>(new Set());
+  // Raw text of an MCP tool-pattern input while it is being edited; split
+  // into patterns on blur (splitting on every keystroke ate the separators).
+  const [mcpPatternDrafts, setMcpPatternDrafts] = useState<Record<string, string>>({});
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
   const [iconCollectionName, setIconCollectionName] = useState('');
@@ -1450,11 +1453,14 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                               <label className="text-xs text-gray-500">Tool patterns (comma-separated globs; empty = all)</label>
                               <input
                                 type="text"
-                                value={(entry.tools || []).join(', ')}
-                                onChange={(e) => {
+                                value={mcpPatternDrafts[ref] ?? (entry.tools || []).join(', ')}
+                                onChange={(e) => setMcpPatternDrafts({ ...mcpPatternDrafts, [ref]: e.target.value })}
+                                onBlur={(e) => {
                                   const tools = e.target.value.split(',').map((t: string) => t.trim()).filter(Boolean);
                                   const updated = enabled.map((x: any) => (x.server === ref ? { ...x, tools } : x));
                                   setFormData({ ...formData, enabled_mcp_servers: updated });
+                                  const { [ref]: _draft, ...rest } = mcpPatternDrafts;
+                                  setMcpPatternDrafts(rest);
                                 }}
                                 placeholder="search_*, get_*"
                                 className="input w-full font-mono text-sm mt-1"

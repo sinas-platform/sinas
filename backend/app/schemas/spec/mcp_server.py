@@ -25,9 +25,13 @@ class McpServerAuthSpec(SpecModel):
 class McpServerSpec(SpecModel):
     WHOLE_SPEC_FIELDS: ClassVar[frozenset[str]] = frozenset({"auth"})
 
-    # No "/": every reference ("ns/name" in agents) splits on the first one.
-    namespace: str = Field(default="default", min_length=1, max_length=100, pattern=r"^[^/]+$")
-    name: str = Field(min_length=1, max_length=100)
+    # Both become part of a model-facing function name (mcp_<ns>__<name>__…),
+    # which OpenAI restricts to [A-Za-z0-9_-]; the REST identifier rule is
+    # applied here so config apply can't create a server no chat can use.
+    namespace: str = Field(
+        default="default", min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$"
+    )
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
     description: Optional[str] = None
     url: str = Field(min_length=1, pattern=r"^https?://")
     transport: TRANSPORTS = "streamable_http"
