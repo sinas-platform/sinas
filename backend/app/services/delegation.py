@@ -13,13 +13,10 @@ bounded by `settings.agent_max_delegation_depth`.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from contextvars import ContextVar
 from typing import Any
-
-from sqlalchemy import select
 
 from app.core.config import settings
 
@@ -58,6 +55,53 @@ def child_depth_or_error() -> tuple[int, str | None]:
     return depth, None
 
 
+def delegation_entry(delegation: dict[str, Any]) -> dict[str, Any]:
+    """Pending-completion entry for one delegated call — the sub_agent
+    completer's payload shape (see deferred_completions)."""
+    from app.services import deferred_completions
+
+    entry: dict[str, Any] = {
+        "completer": deferred_completions.SUB_AGENT,
+        "sub_chat_id": delegation["sub_chat_id"],
+        "agent": delegation["agent"],
+    }
+    deadline = deferred_completions.deadline_from_now(
+        settings.agent_delegate_suspend_timeout_seconds
+    )
+    if deadline:
+        entry["expires_at"] = deadline
+    return entry
+
+
+async def enqueue_delegation_children(
+    *,
+    pending_completion_id: str,
+    delegations: list[dict[str, Any]],
+    user_id: str,
+    user_token: str,
+    delegation_depth: int,
+) -> None:
+    """Enqueue the child agent jobs for a suspended round's delegations.
+
+    Must run AFTER the checkpoint row exists — a fast child could otherwise
+    report completion against a checkpoint that isn't there yet.
+    """
+    from app.services.queue_service import queue_service
+
+    for d in delegations:
+        await queue_service.enqueue_agent_message(
+            chat_id=d["sub_chat_id"],
+            user_id=user_id,
+            user_token=user_token,
+            content=d["content"],
+            channel_id=str(uuid.uuid4()),  # child's own stream channel
+            agent=d["agent"],
+            depth=delegation_depth + 1,
+            pending_delegation_id=pending_completion_id,
+            parent_tool_call_id=d["tool_call_id"],
+        )
+
+
 async def suspend_delegations(
     db,
     *,
@@ -68,48 +112,28 @@ async def suspend_delegations(
     delegations: list[dict[str, Any]],
     conversation_context: dict[str, Any],
 ) -> str:
-    """Persist a PendingDelegation checkpoint, then enqueue the children.
+    """Checkpoint a round suspending ONLY on delegations, then enqueue the
+    children. Thin wrapper over the generic deferred-completion service —
+    kept for callers that predate the unification. Returns the row id.
 
     `delegations`: [{"tool_call_id", "sub_chat_id", "agent", "content"}].
-    Order matters: the row must exist before any child is enqueued, or a fast
-    child could report completion against a checkpoint that isn't there yet.
-    Returns the pending_delegation row id.
     """
-    from app.models.pending_delegation import PendingDelegation
-    from app.services.queue_service import queue_service
+    from app.services import deferred_completions
 
-    row = PendingDelegation(
+    row = await deferred_completions.suspend_round(
+        db,
         chat_id=chat_id,
         user_id=user_id,
         channel_id=channel_id,
-        pending={
-            d["tool_call_id"]: {"sub_chat_id": d["sub_chat_id"], "agent": d["agent"]}
-            for d in delegations
-        },
-        results={},
-        remaining=len(delegations),
+        entries={d["tool_call_id"]: delegation_entry(d) for d in delegations},
         conversation_context=conversation_context,
     )
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-
-    for d in delegations:
-        await queue_service.enqueue_agent_message(
-            chat_id=d["sub_chat_id"],
-            user_id=user_id,
-            user_token=user_token,
-            content=d["content"],
-            channel_id=str(uuid.uuid4()),  # child's own stream channel
-            agent=d["agent"],
-            depth=conversation_context.get("delegation_depth", 0) + 1,
-            pending_delegation_id=str(row.id),
-            parent_tool_call_id=d["tool_call_id"],
-        )
-
-    logger.info(
-        "Suspended chat %s on %d delegated sub-agent(s) (pending_delegation=%s)",
-        chat_id, len(delegations), row.id,
+    await enqueue_delegation_children(
+        pending_completion_id=str(row.id),
+        delegations=delegations,
+        user_id=user_id,
+        user_token=user_token,
+        delegation_depth=conversation_context.get("delegation_depth", 0),
     )
     return str(row.id)
 
@@ -121,88 +145,16 @@ async def on_child_complete(
     *,
     user_token: str,
 ) -> None:
-    """Record a finished child; when it is the last one, wake the parent.
+    """Record a finished child; when it is the last completion, wake the
+    parent. Thin wrapper over the generic deferred-completion service (the
+    checkpoint may also carry other completer kinds — e.g. an ask_user
+    question suspended in the same round)."""
+    from app.services import deferred_completions
 
-    Writes the child's final content as the parent's tool-result Message row
-    (the source the follow-up LLM turn is rebuilt from), then — on the last
-    child — deletes the checkpoint and enqueues the delegate-resume job.
-    Concurrency-safe via SELECT ... FOR UPDATE on the checkpoint row.
-    """
-    from app.core.database import AsyncSessionLocal
-    from app.models.chat import Message
-    from app.models.pending_delegation import PendingDelegation
-    from app.services.queue_service import queue_service
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(PendingDelegation)
-            .where(PendingDelegation.id == pending_delegation_id)
-            .with_for_update()
-        )
-        row = result.scalar_one_or_none()
-        if not row:
-            logger.warning(
-                "PendingDelegation %s not found for tool_call %s — parent already resumed or cleaned up",
-                pending_delegation_id, tool_call_id,
-            )
-            return
-
-        info = (row.pending or {}).get(tool_call_id, {})
-
-        # Persist the tool result on the parent conversation NOW, in this
-        # transaction — the resume job rebuilds messages from the DB.
-        db.add(
-            Message(
-                chat_id=row.chat_id,
-                role="tool",
-                content=content,
-                tool_call_id=tool_call_id,
-                name=f"call_agent_{info.get('agent', '').replace('/', '__')}" if info.get("agent") else None,
-            )
-        )
-
-        # JSON columns need reassignment (in-place mutation isn't tracked).
-        results = dict(row.results or {})
-        results[tool_call_id] = content
-        row.results = results
-        pending = dict(row.pending or {})
-        pending.pop(tool_call_id, None)
-        row.pending = pending
-        row.remaining = row.remaining - 1
-
-        is_last = row.remaining <= 0
-        ctx = row.conversation_context
-        chat_id, user_id, channel_id = str(row.chat_id), str(row.user_id), row.channel_id
-        if is_last:
-            await db.delete(row)
-        await db.commit()
-
-    # Progressive UX: close this tool call on the parent's stream now, even
-    # though the conversation only continues when the last child lands.
-    try:
-        from app.services.stream_relay import stream_relay
-
-        await stream_relay.publish(
-            channel_id,
-            {
-                "type": "tool_end",
-                "tool_call_id": tool_call_id,
-                "name": f"call_agent_{info.get('agent', '').replace('/', '__')}",
-                "result": content,
-            },
-        )
-    except Exception:
-        logger.debug("Could not publish delegate tool_end to %s", channel_id)
-
-    if is_last:
-        await queue_service.enqueue_agent_delegate_resume(
-            chat_id=chat_id,
-            user_id=user_id,
-            user_token=user_token,
-            channel_id=channel_id,
-            conversation_context=ctx,
-        )
-        logger.info(
-            "All delegations done for chat %s — resume job enqueued", chat_id
-        )
+    await deferred_completions.complete(
+        pending_delegation_id,
+        tool_call_id,
+        content,
+        user_token=user_token,
+    )
 

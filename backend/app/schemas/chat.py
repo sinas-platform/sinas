@@ -151,9 +151,27 @@ class PendingApprovalResponse(BaseModel):
     arguments: dict[str, Any] = {}
 
 
+class PendingInputResponse(BaseModel):
+    """An ask_user question the conversation is suspended on."""
+
+    tool_call_id: str
+    question: str
+    options: Optional[list[str]] = None
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class PendingInputAnswer(BaseModel):
+    """Answer to a pending ask_user question; becomes the tool result the
+    suspended round resumes with."""
+
+    answer: str
+
+
 class ChatWithMessages(ChatResponse):
     messages: list[MessageResponse]
     pending_approvals: list[PendingApprovalResponse] = []
+    pending_inputs: list[PendingInputResponse] = []
 
 
 class InvokeRequest(BaseModel):

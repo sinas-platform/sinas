@@ -40,6 +40,16 @@ def _acting_as_job_key(job):
     return wrapper
 
 
+def _is_suspension_chunk(chunk: dict) -> bool:
+    """A chunk announcing the tool round suspended on pending completions
+    (delegations, ask_user questions). The job must then end WITHOUT a
+    "done" event or terminal bookkeeping — a resume job owns the rest of
+    the conversation."""
+    from app.services.deferred_completions import SUSPENSION_EVENT_TYPES
+
+    return chunk.get("type") in SUSPENSION_EVENT_TYPES
+
+
 def _in_enqueued_context(
     job: Callable[..., Awaitable[None]],
 ) -> Callable[..., Awaitable[None]]:
@@ -226,7 +236,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
 
                     if chunk.get("content"):
                         _agent_output_parts.append(chunk["content"])
-                    if chunk.get("type") == "delegation_pending":
+                    if _is_suspension_chunk(chunk):
                         _suspended = True
                     await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
 
@@ -436,6 +446,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
 
     completed = False
+    _suspended = False
     try:
         async with AsyncSessionLocal() as db:
             # Load pending approval
@@ -482,6 +493,8 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     status_templates=status_templates,
                 ):
                     if isinstance(chunk, dict):
+                        if _is_suspension_chunk(chunk):
+                            _suspended = True
                         await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
             else:
                 # Handle rejection - publish rejection info
@@ -491,6 +504,18 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                     "function_namespace": pending_approval.function_namespace,
                     "function_name": pending_approval.function_name,
                 }, ttl=stream_ttl)
+
+        if _suspended:
+            # The approved round suspended again (delegations or an ask_user
+            # question) — a resume job owns the rest; no "done" event here.
+            await redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({**base_fields, "status": "suspended"}),
+                ex=JOB_TTL,
+            )
+            completed = True
+            logger.info(f"Agent resume job {job_id} suspended on pending completions")
+            return
 
         await stream_relay.publish_done(channel_id)
 
@@ -618,13 +643,13 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
                 if isinstance(chunk, dict):
                     if chunk.get("content"):
                         _output_parts.append(chunk["content"])
-                    if chunk.get("type") == "delegation_pending":
+                    if _is_suspension_chunk(chunk):
                         _suspended = True
                     await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
 
         if _suspended:
-            # Suspended again on a further round of delegations — the next
-            # delegate-resume job carries the same inherited meta forward.
+            # Suspended again on a further round of pending completions —
+            # the next resume job carries the same inherited meta forward.
             await redis.set(
                 f"{JOB_STATUS_PREFIX}{job_id}",
                 json.dumps({**base_fields, "status": "suspended"}),
