@@ -292,13 +292,15 @@ def fix_and_rerun(messages, tools):
 
 
 def promote_where_the_user_said(messages, tools):
-    """Round 10 (after resume): the ask_user answer is the tool result."""
+    """Round 10 (after resume): the ask_user answer is the tool result, in
+    the exact shape the answer endpoint stores it — {"answer": ...}."""
     answer = messages[-1]
     assert answer["role"] == "tool" and answer["name"] == "ask_user", answer
+    collection = json.loads(answer["content"])["answer"]
     return call(
         "call_10",
         "workbench_promote",
-        {"filename": "sales_clean.csv", "collection": answer["content"], "visibility": "shared"},
+        {"filename": "sales_clean.csv", "collection": collection, "visibility": "shared"},
     )
 
 
@@ -416,6 +418,20 @@ async def world():
     agent, and the demo/sales collection holding conventions.md."""
     from app.services.file_storage import get_storage
     from app.services.workbench import _write_bytes
+    from tests.conftest import _test_db_url
+
+    # This test needs COMMITTED state because tool execution opens its own
+    # sessions, so it goes through the application's session factory. Only
+    # safe when that factory targets the test database (as CI does); never
+    # install/uninstall packages in some other application database.
+    from sqlalchemy.engine import make_url
+
+    app_url, test_url = async_engine.url, make_url(_test_db_url)
+    if (app_url.host, app_url.port, app_url.database) != (test_url.host, test_url.port, test_url.database):
+        pytest.skip(
+            "application DB differs from TEST_DATABASE_URL; the way-of-working loop test "
+            "commits through the application session factory and would touch the wrong database"
+        )
 
     async with AsyncSessionLocal() as s:
         user = User(email=f"wow-{uuid.uuid4().hex[:8]}@example.com")
@@ -636,8 +652,10 @@ async def test_exemplar_agent_runs_the_full_loop(
     assert f"Total: {EXPECTED_TOTAL}" in artifact.source_code
 
     # ── The user answers; the round resumes (what the resume job does) ────
+    # Same payload the HTTP answer endpoint stores (json.dumps({"answer": …})).
     answered = await deferred_completions.complete(
-        pending_completion_id, "call_9", COLLECTION, user_token=token, resume_channel_id="chan-e2e-2"
+        pending_completion_id, "call_9", json.dumps({"answer": COLLECTION}),
+        user_token=token, resume_channel_id="chan-e2e-2",
     )
     assert answered["resumed"] is True
     ctx = captured_resume["conversation_context"]
@@ -720,7 +738,8 @@ async def test_exemplar_agent_runs_the_full_loop(
     assert transcript[0].role == "user" and transcript[0].content == USER_REQUEST
     tool_rows = {m.tool_call_id: m for m in transcript if m.role == "tool"}
     assert set(tool_rows) == {f"call_{i}" for i in range(1, 11)}
-    assert tool_rows["call_9"].name == "ask_user" and tool_rows["call_9"].content == COLLECTION
+    assert tool_rows["call_9"].name == "ask_user"
+    assert json.loads(tool_rows["call_9"].content) == {"answer": COLLECTION}
     # Each tool_calls message is followed by its result before the next step.
     for i, m in enumerate(transcript):
         if m.role == "assistant" and m.tool_calls:
