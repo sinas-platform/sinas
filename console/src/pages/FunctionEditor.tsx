@@ -262,6 +262,10 @@ export function FunctionEditor() {
   });
 
   const handleSave = (e: React.FormEvent) => {
+    if (!codeExecutionEnabled) {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
 
     // Validate that function definition exists (handler or legacy name-based)
@@ -294,6 +298,22 @@ export function FunctionEditor() {
     );
   }
 
+  // Code execution off: functions are view-only (the API refuses changes too).
+  if (isNew && !codeExecutionEnabled) {
+    return (
+      <div className="space-y-4">
+        <Link to="/functions" className="inline-flex items-center text-gray-400 hover:text-gray-100">
+          <ArrowLeft className="w-5 h-5 mr-2" />
+          Functions
+        </Link>
+        <div className="px-4 py-3 rounded-md bg-yellow-900/20 border border-yellow-800/30 text-sm text-yellow-400">
+          Code execution is disabled on this deployment
+          (<span className="font-mono">CODE_EXECUTION_ENABLED=false</span>), so functions can't be created.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -311,7 +331,11 @@ export function FunctionEditor() {
               )}
             </h1>
             <p className="text-gray-400 mt-1">
-              {isNew ? 'Create a new Python function' : 'Edit function configuration and code'}
+              {isNew
+                ? 'Create a new Python function'
+                : codeExecutionEnabled
+                  ? 'Edit function configuration and code'
+                  : 'Read only: code execution is disabled on this deployment'}
             </p>
           </div>
         </div>
@@ -332,7 +356,8 @@ export function FunctionEditor() {
           )}
           <button
             onClick={handleSave}
-            disabled={saveMutation.isPending}
+            disabled={saveMutation.isPending || !codeExecutionEnabled}
+            title={codeExecutionEnabled ? undefined : 'Code execution is disabled on this deployment (CODE_EXECUTION_ENABLED=false)'}
             className="btn btn-primary flex items-center"
           >
             <Save className="w-4 h-4 mr-2" />
@@ -395,7 +420,8 @@ print(details["status"], details["output_data"])`,
         </div>
       )}
 
-      <form onSubmit={handleSave} className="space-y-6">
+      <form onSubmit={handleSave}>
+        <fieldset disabled={!codeExecutionEnabled} className="space-y-6 border-0 p-0 m-0 min-w-0">
         {/* Basic Info */}
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-100 mb-4">Basic Information</h2>
@@ -964,6 +990,7 @@ return {"block": True, "reply": "Sorry, that message was blocked"}
           </div>
         </div>
 
+        </fieldset>
       </form>
     </div>
   );
