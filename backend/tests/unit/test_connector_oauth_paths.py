@@ -10,10 +10,7 @@ import types
 
 import pytest
 
-from app.schemas.config import (
-    TOKEN_RESPONSE_PATH_FIELD_MAP,
-    TokenResponsePathsConfig,
-)
+from app.schemas.config import ConnectorConfig
 from app.services.connector_service import connector_service
 
 # The Slack oauth.v2.access shape from the issue: top-level access_token is
@@ -213,6 +210,15 @@ class TestExchangePassesPaths:
             async def flush(self):
                 pass
 
+            async def execute(self, _statement):
+                # The post-exchange identity check re-reads the connector's
+                # auth under a lock; unchanged here.
+                class _Result:
+                    def scalar_one_or_none(self_inner):
+                        return connector.auth
+
+                return _Result()
+
         ok = await connector_service.exchange_authorization_code(
             _Db(), connector, "u1", "code", "verifier"
         )
@@ -222,25 +228,31 @@ class TestExchangePassesPaths:
 
 class TestConfigRoundTrip:
     def test_camel_snake_round_trip_is_lossless(self):
-        from app.services.resource_serializers import _camelize_token_response_paths
+        """Config (camelCase) → stored (snake_case) → export (camelCase),
+        through the connector spec as config apply and export do."""
+        from app.services.resources.connectors import ConnectorApplier
 
-        cfg = TokenResponsePathsConfig(
-            accessToken="authed_user.access_token",
-            scope="authed_user.scope",
-            successFlag="ok",
-            error="error",
+        cfg = ConnectorConfig.model_validate({
+            "name": "slack", "baseUrl": "https://slack.com/api",
+            "auth": {
+                "type": "oauth2_authorization_code", "authorizeUrl": "https://a",
+                "tokenUrl": "https://t", "clientId": "c",
+                "tokenResponsePaths": {
+                    "accessToken": "authed_user.access_token", "scope": "authed_user.scope",
+                    "successFlag": "ok", "error": "error",
+                },
+            },
+        })
+        spec = ConnectorApplier.spec_model.model_validate(cfg.model_dump(exclude_none=True))
+        stored = spec.auth.model_dump(exclude_none=True)
+        assert stored["token_response_paths"] == SLACK_PATHS
+
+        row = types.SimpleNamespace(
+            namespace="default", name="slack", description=None, base_url=spec.base_url,
+            auth=stored, headers={}, retry={}, timeout_seconds=30, operations=[], is_active=True,
         )
-        # config (camel) → stored (snake), as config-apply does
-        stored = {
-            snake: getattr(cfg, camel)
-            for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
-            if getattr(cfg, camel) is not None
-        }
-        assert stored == SLACK_PATHS
-
-        # stored (snake) → export (camel), as the serializer does
-        exported = _camelize_token_response_paths(stored)
-        assert exported == {
+        exported = ConnectorApplier().spec_from_row(row).to_config()
+        assert exported["auth"]["tokenResponsePaths"] == {
             "accessToken": "authed_user.access_token",
             "scope": "authed_user.scope",
             "successFlag": "ok",

@@ -80,22 +80,8 @@ export function Chat({
     return undefined;
   }, [apiBaseUrl]);
 
-  // postMessage auth bridge for component iframes
-  React.useEffect(() => {
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === 'sinas:ready') {
-        const token = typeof window !== 'undefined' ? window.__SINAS_AUTH_TOKEN__ : null;
-        if (token && event.source) {
-          (event.source as Window).postMessage(
-            { type: 'sinas:auth', token },
-            '*',
-          );
-        }
-      }
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
+  // Component iframes get their own token, scoped to the component, from
+  // the render endpoint: the viewer's token is never handed to them.
 
   // Notify parent of new chat creation
   React.useEffect(() => {

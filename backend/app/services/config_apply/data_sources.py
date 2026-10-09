@@ -4,18 +4,35 @@ Data source appliers: LLM providers, database connections, annotations
 import logging
 import uuid as uuid_lib
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.encryption import EncryptionService
+from app.core.encryption import encryption_service
 from app.models.database_connection import DatabaseConnection
 from app.models.llm_provider import LLMProvider
 from app.models.table_annotation import TableAnnotation
+from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
+
+
+def _secret_changed(stored: Optional[str], declared: Optional[str]) -> bool:
+    """Whether the config declares a secret that differs from the stored one.
+
+    Secrets are deliberately left out of the change checksum (it is stored in
+    plain sight), so a rotated key alone used to look "unchanged" and was
+    silently ignored. Not declaring one keeps the stored value, as before."""
+    if not declared:
+        return False
+    if not stored:
+        return True
+    try:
+        return encryption_service.decrypt(stored) != declared
+    except Exception:
+        return True  # unreadable (e.g. a rotated encryption key): write it fresh
 
 async def apply_llm_providers(
     db: AsyncSession,
@@ -53,13 +70,15 @@ async def apply_llm_providers(
             if existing:
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"LLM provider '{provider_config.name}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"LLM provider '{provider_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "llmProviders", provider_config.name)
                     llm_provider_ids[provider_config.name] = str(existing.id)
                     continue
 
-                if existing.config_checksum == config_hash:
+                if existing.config_checksum == config_hash and not _secret_changed(
+                    existing.api_key, provider_config.apiKey
+                ):
                     track_change("unchanged", "llmProviders", provider_config.name)
                     llm_provider_ids[provider_config.name] = str(existing.id)
                     continue
@@ -84,7 +103,7 @@ async def apply_llm_providers(
                         )
                     existing.is_default = provider_config.isDefault
                     if provider_config.apiKey:
-                        existing.api_key = EncryptionService.encrypt(provider_config.apiKey)
+                        existing.api_key = encryption_service.encrypt(provider_config.apiKey)
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -95,7 +114,7 @@ async def apply_llm_providers(
                 if not dry_run:
                     encrypted_key = None
                     if provider_config.apiKey:
-                        encrypted_key = EncryptionService.encrypt(provider_config.apiKey)
+                        encrypted_key = encryption_service.encrypt(provider_config.apiKey)
 
                     if provider_config.isDefault:
                         await db.execute(
@@ -169,7 +188,7 @@ async def apply_database_connections(
             if existing:
                 if existing.managed_by != managed_by:
                     warnings.append(
-                        f"Database connection '{conn_config.name}' exists but is not managed by '{managed_by}'. Skipping."
+                        OwnershipSkip(f"Database connection '{conn_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
                     )
                     track_change(
                         "unchanged", "databaseConnections", conn_config.name
@@ -177,7 +196,9 @@ async def apply_database_connections(
                     database_connection_ids[conn_config.name] = str(existing.id)
                     continue
 
-                if existing.config_checksum == config_hash:
+                if existing.config_checksum == config_hash and not _secret_changed(
+                    existing.password, conn_config.password
+                ):
                     track_change(
                         "unchanged", "databaseConnections", conn_config.name
                     )
@@ -193,7 +214,7 @@ async def apply_database_connections(
                     existing.ssl_mode = conn_config.sslMode
                     existing.config = conn_config.config
                     if conn_config.password:
-                        existing.password = EncryptionService.encrypt(conn_config.password)
+                        existing.password = encryption_service.encrypt(conn_config.password)
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
 
@@ -204,7 +225,7 @@ async def apply_database_connections(
                 if not dry_run:
                     encrypted_password = None
                     if conn_config.password:
-                        encrypted_password = EncryptionService.encrypt(
+                        encrypted_password = encryption_service.encrypt(
                             conn_config.password
                         )
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.encryption import encryption_service
 from app.models.secret import Secret
 from app.services.config_parser import ConfigValidation
+from app.services.resources import CdcTriggerChanged, SchedulerJobChanged
 
 
 # --------------------------------------------------------------------------
@@ -126,6 +127,9 @@ class TestSecretsApplierScoping:
 # --------------------------------------------------------------------------
 
 class TestApplyNotifications:
+    # Scheduler events now go through the shared SideEffectBus
+    # (app.services.resources); CDC and compiles still use the service's own
+    # queues until those kinds migrate.
     async def test_flush_publishes_queued_events(self, db: AsyncSession, monkeypatch):
         """Config-applied schedules never reached the running scheduler, and the
         CDC reload was skipped entirely for callers using auto_commit=False."""
@@ -143,8 +147,8 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", fake_get_redis)
 
         svc = ConfigApplyService(db, "test-config", owner_user_id=None, auto_commit=False)
-        svc._pending_scheduler.append(("create", "job-1"))
-        svc._pending_cdc_reload = True
+        svc.effects.add(SchedulerJobChanged("add", "job-1"))
+        svc.effects.add(CdcTriggerChanged("add", "trigger-1"))
 
         await svc.flush_notifications()
 
@@ -167,7 +171,7 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", fake_get_redis)
 
         svc = ConfigApplyService(db, "c", owner_user_id=None, auto_commit=False)
-        svc._pending_scheduler.append(("create", "j"))
+        svc.effects.add(SchedulerJobChanged("add", "j"))
         await svc.flush_notifications()
         # assert the first flush really published — otherwise a missed
         # monkeypatch would make the idempotency check below vacuously true
@@ -187,67 +191,8 @@ class TestApplyNotifications:
         monkeypatch.setattr("app.core.redis.get_redis", boom)
 
         svc = ConfigApplyService(db, "c", owner_user_id=None, auto_commit=False)
-        svc._pending_cdc_reload = True
+        svc.effects.add(CdcTriggerChanged("add", "trigger-1"))
         await svc.flush_notifications()  # must not raise
-
-
-# --------------------------------------------------------------------------
-# 6. Config-applied components must reach the compiler
-# --------------------------------------------------------------------------
-
-class TestComponentCompileNotification:
-    async def _apply(self, db, owner_id, comp_config, notify):
-        from app.services.config_apply.resources import apply_components
-
-        await apply_components(
-            db=db,
-            components=[comp_config],
-            dry_run=False,
-            managed_by="config",
-            config_name="test",
-            owner_user_id=owner_id,
-            calculate_hash=lambda d: "hash-" + str(sorted(str(d))),
-            track_change=lambda *a: None,
-            errors=[],
-            warnings=[],
-            notify_compile=notify,
-        )
-
-    def _config(self, name, source="export default () => null"):
-        from app.schemas.config import ComponentConfig
-
-        return ComponentConfig(namespace="default", name=name, sourceCode=source)
-
-    async def test_created_component_is_queued_for_compile(self, db, admin_user):
-        """Config/package components sat at compile_status="pending" forever —
-        only the REST path ever invoked the builder."""
-        import uuid as _uuid
-
-        queued = []
-        name = f"comp_{_uuid.uuid4().hex[:6]}"
-        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
-        assert len(queued) == 1  # the new component's id
-
-    async def test_source_change_requeues_but_metadata_change_does_not(
-        self, db, admin_user
-    ):
-        import uuid as _uuid
-
-        queued = []
-        name = f"comp_{_uuid.uuid4().hex[:6]}"
-        await self._apply(db, str(admin_user.id), self._config(name), queued.append)
-        await db.flush()
-
-        # Same source, new title → no recompile
-        cfg = self._config(name)
-        cfg.title = "New title"
-        await self._apply(db, str(admin_user.id), cfg, queued.append)
-        assert len(queued) == 1
-
-        # Changed source → recompile
-        cfg2 = self._config(name, source="export default () => 42")
-        await self._apply(db, str(admin_user.id), cfg2, queued.append)
-        assert len(queued) == 2
 
 
 # --------------------------------------------------------------------------

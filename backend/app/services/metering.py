@@ -389,13 +389,35 @@ async def _adopt_migrate(db: AsyncSession, redis, old_pid: str, period: dict[str
 async def _adopt_reset(db: AsyncSession, redis, old_pid: str, period: dict[str, Any]) -> None:
     """Rollover adopt: new period starts from zero; the old period's tail is
     discarded (accepted MVP gap — no previous-period finalization)."""
+    from app.models import UsagePeriod
+
     await _persist_period(db, period)
     await redis.set(_platform_pid_key(), period["id"])
     for k in OperationKind:
         await redis.expire(_key(old_pid, f"kind:{k.value}"), _ROLLED_OVER_KEY_TTL)
     await redis.expire(_key(old_pid, "total"), _ROLLED_OVER_KEY_TTL)
-    # No usage_periods row yet: the next snapshot creates it at zero with
-    # snapshot_seq 0 once the first op of the new period lands.
+    # Create the new period's row at zero IMMEDIATELY. Without it, an idle
+    # instance adopted the period but then had nothing to send until its
+    # next operation — showing "Not yet reported" on the Platform for as
+    # long as it stayed idle. A zero row means the very next cycle reports
+    # cumulative "0" under the new period (seq 1), closing the gap.
+    existing = (
+        await db.execute(
+            select(UsagePeriod).where(
+                UsagePeriod.instance_id == instance_id(),
+                UsagePeriod.period_id == period["id"],
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(
+            UsagePeriod(
+                instance_id=instance_id(),
+                period_id=period["id"],
+                period_start=period["start"],
+                period_end=period["end"],
+            )
+        )
 
 
 async def push(db: AsyncSession) -> int:
@@ -485,9 +507,16 @@ async def push(db: AsyncSession) -> int:
                         )
                     else:
                         # sequence_reused / counter_regression: retrying the
-                        # same payload cannot help — surface loudly.
+                        # same payload cannot help — surface loudly. Include
+                        # what we could(n't) parse: a contract-shape mismatch
+                        # on the Platform's 409 body lands here too, and this
+                        # line is the difference between a one-look diagnosis
+                        # and an instance silently 409ing every cycle.
                         logger.error(
-                            f"Metering push {key} rejected: 409 {disposition}"
+                            f"Metering push {key} rejected: 409 "
+                            f"disposition={disposition!r} "
+                            f"period_parseable={_parse_period(body) is not None} "
+                            f"body~{str(body)[:200]}"
                         )
                     break
 

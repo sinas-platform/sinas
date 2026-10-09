@@ -17,7 +17,9 @@ async def initialize_default_templates(db: AsyncSession):
     """
     # OTP Email Template
     otp_template_name = "otp_email"
-    result = await db.execute(select(Template).where(Template.name == otp_template_name))
+    result = await db.execute(
+        select(Template).where(Template.namespace == "default", Template.name == otp_template_name)
+    )
     existing = result.scalar_one_or_none()
 
     if not existing:

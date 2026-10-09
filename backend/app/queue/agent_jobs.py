@@ -300,6 +300,35 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
                     logger.error(f"Failed to update status for cancelled agent job {job_id}")
 
 
+
+async def _persist_turn_error(chat_id: str, error: Exception) -> None:
+    """Leave a visible trace in the chat when a resumed turn dies.
+
+    The interactive path persists an assistant error row before giving up, so
+    a user can see why a turn ended. These queue re-entry points stream
+    straight from the job, so a failure (a 429 on the post-tool follow-up, in
+    the reported case) reached only the Redis relay and the job-status key:
+    the transcript just stopped at the assistant tool-call row, which from the
+    console or API is indistinguishable from a message-storage bug (#132).
+
+    Best-effort — it must never mask the failure it is recording.
+    """
+    from app.core.database import AsyncSessionLocal
+    from app.models.chat import Message
+
+    content = (
+        "An error occurred while processing your message. Please try again."
+        f"\n\nError: {str(error)[:300]}"
+    )
+    try:
+        async with AsyncSessionLocal() as db:
+            db.add(Message(chat_id=chat_id, role="assistant", content=content))
+            await db.commit()
+    except Exception as persist_error:
+        logger.error(
+            f"Could not persist turn error for chat {chat_id}: {persist_error}"
+        )
+
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     """
     Resume agent processing after tool approval in a worker.
@@ -437,6 +466,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         logger.error(f"Agent resume job {job_id} failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
 
+        await _persist_turn_error(chat_id, e)
         await stream_relay.publish_error(channel_id, str(e))
 
         await redis.set(
@@ -596,6 +626,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     except Exception as e:
         logger.error(f"Delegate-resume job {job_id} failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
+        await _persist_turn_error(chat_id, e)
         await stream_relay.publish_error(channel_id, str(e))
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",

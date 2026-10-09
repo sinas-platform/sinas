@@ -8,7 +8,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.encryption import EncryptionService
+from app.core.encryption import encryption_service
 from app.models.agent import Agent
 from app.models.component import Component
 from app.models.connector import Connector
@@ -195,7 +195,7 @@ class ConfigExportService:
                 provider_dict["endpoint"] = provider.api_endpoint
 
             if self.include_secrets and provider.api_key:
-                provider_dict["apiKey"] = EncryptionService.decrypt(provider.api_key)
+                provider_dict["apiKey"] = encryption_service.decrypt(provider.api_key)
 
             exported.append(provider_dict)
 
@@ -237,8 +237,8 @@ class ConfigExportService:
         return exported
 
     async def _export_connectors(self) -> list[dict]:
-        """Export connectors."""
-        stmt = select(Connector).where(Connector.is_active == True)
+        """Export connectors, disabled ones included (as isActive: false)."""
+        stmt = select(Connector).order_by(Connector.namespace, Connector.name)
         if self.managed_only:
             stmt = stmt.where(Connector.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -293,37 +293,29 @@ class ConfigExportService:
         return [serialize_collection(c) for c in result.scalars().all()]
 
     async def _export_queries(self) -> list[dict]:
-        """Export queries"""
-        stmt = select(Query)
+        """Export queries, disabled ones included (as isActive: false)."""
+        from app.services.resources.queries import connection_name
+
+        stmt = select(Query).order_by(Query.namespace, Query.name)
         if self.managed_only:
             stmt = stmt.where(Query.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        queries = result.scalars().all()
-
-        exported = []
-        for query in queries:
-            conn_name = None
-            if query.database_connection_id:
-                conn_result = await self.db.execute(
-                    select(DatabaseConnection).where(DatabaseConnection.id == query.database_connection_id)
-                )
-                conn = conn_result.scalar_one_or_none()
-                if conn:
-                    conn_name = conn.name
-            exported.append(serialize_query(query, conn_name))
-        return exported
+        return [
+            serialize_query(query, await connection_name(self.db, query.database_connection_id))
+            for query in result.scalars().all()
+        ]
 
     async def _export_skills(self) -> list[dict]:
-        """Export skills"""
-        stmt = select(Skill)
+        """Export skills, disabled ones included (as isActive: false)."""
+        stmt = select(Skill).order_by(Skill.namespace, Skill.name)
         if self.managed_only:
             stmt = stmt.where(Skill.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_skill(s) for s in result.scalars().all()]
 
     async def _export_components(self) -> list[dict]:
-        """Export components"""
-        stmt = select(Component)
+        """Export components, disabled ones included (as isActive: false)."""
+        stmt = select(Component).order_by(Component.namespace, Component.name)
         if self.managed_only:
             stmt = stmt.where(Component.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -346,16 +338,19 @@ class ConfigExportService:
         return [serialize_store(s) for s in result.scalars().all()]
 
     async def _export_webhooks(self) -> list[dict]:
-        """Export webhooks"""
-        stmt = select(Webhook).where(Webhook.is_active == True)
+        """Export webhooks — disabled ones too, with isActive: false, as for
+        schedules: leaving them out dropped them from any instance restored
+        from the export."""
+        stmt = select(Webhook).order_by(Webhook.path)
         if self.managed_only:
             stmt = stmt.where(Webhook.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_webhook(w) for w in result.scalars().all()]
 
     async def _export_templates(self) -> list[dict]:
-        """Export templates"""
-        stmt = select(Template).where(Template.is_active == True)
+        """Export templates, disabled ones included (as isActive: false):
+        leaving them out dropped them from any instance restored from it."""
+        stmt = select(Template).order_by(Template.namespace, Template.name)
         if self.managed_only:
             stmt = stmt.where(Template.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
@@ -363,31 +358,27 @@ class ConfigExportService:
 
     async def _export_schedules(self) -> list[dict]:
         """Export scheduled jobs"""
-        stmt = select(ScheduledJob).where(ScheduledJob.is_active == True)
+        # Every schedule, paused ones included: is_active means "paused" for a
+        # schedule, not "deleted", and a paused schedule left out of an export
+        # vanished from any instance restored from it. Ordered, so the same
+        # state always exports the same document.
+        stmt = select(ScheduledJob).order_by(ScheduledJob.name)
         if self.managed_only:
             stmt = stmt.where(ScheduledJob.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_schedule(s) for s in result.scalars().all()]
 
     async def _export_database_triggers(self) -> list[dict]:
-        """Export database triggers"""
-        stmt = select(DatabaseTrigger).where(DatabaseTrigger.is_active == True)
+        """Export database triggers, paused ones included (see webhooks)."""
+        stmt = (
+            select(DatabaseTrigger, DatabaseConnection.name)
+            .outerjoin(
+                DatabaseConnection,
+                DatabaseConnection.id == DatabaseTrigger.database_connection_id,
+            )
+            .order_by(DatabaseTrigger.name)
+        )
         if self.managed_only:
             stmt = stmt.where(DatabaseTrigger.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        triggers = result.scalars().all()
-
-        exported = []
-        for trigger in triggers:
-            conn_name = None
-            if trigger.database_connection_id:
-                conn_result = await self.db.execute(
-                    select(DatabaseConnection).where(
-                        DatabaseConnection.id == trigger.database_connection_id
-                    )
-                )
-                conn = conn_result.scalar_one_or_none()
-                if conn:
-                    conn_name = conn.name
-            exported.append(serialize_database_trigger(trigger, conn_name))
-        return exported
+        return [serialize_database_trigger(trigger, name) for trigger, name in result.all()]

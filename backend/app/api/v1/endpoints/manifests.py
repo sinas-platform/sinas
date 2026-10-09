@@ -50,6 +50,7 @@ async def create_manifest(
         optional_permissions=manifest_data.optional_permissions,
         exposed_namespaces=manifest_data.exposed_namespaces,
         store_dependencies=[s.model_dump() for s in manifest_data.store_dependencies],
+        public_info=manifest_data.public_info,
     )
 
     db.add(manifest)
@@ -167,6 +168,8 @@ async def update_manifest(
         manifest.exposed_namespaces = manifest_data.exposed_namespaces
     if manifest_data.store_dependencies is not None:
         manifest.store_dependencies = [s.model_dump() for s in manifest_data.store_dependencies]
+    if manifest_data.public_info is not None:
+        manifest.public_info = manifest_data.public_info
     if manifest_data.is_active is not None:
         manifest.is_active = manifest_data.is_active
 

@@ -45,6 +45,7 @@ from app.services.tool_execution import (
     execute_single_tool,
     is_sequential_tool,
     safe_parse_arguments,
+    accumulate_tool_call_delta,
     validate_tool_calls,
 )
 from opentelemetry import trace
@@ -643,49 +644,7 @@ class MessageService:
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    tc_index = tc.get("index")
-
-                    if tc_index is None and tc.get("id"):
-                        for idx, existing_tc in enumerate(tool_calls_list):
-                            if existing_tc.get("id") == tc["id"]:
-                                tc_index = idx
-                                break
-                        if tc_index is None:
-                            tc_index = len(tool_calls_list)
-
-                    if tc_index is None:
-                        tc_index = 0
-
-                    while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append(
-                            {
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        )
-
-                    if tc.get("id"):
-                        tool_calls_list[tc_index]["id"] = tc["id"]
-                    if tc.get("type"):
-                        tool_calls_list[tc_index]["type"] = tc["type"]
-                    if tc.get("function", {}).get("name"):
-                        tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-                    if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
-                            "arguments"
-                        ]
-                    # Preserve any extra per-call fields (e.g. Gemini's
-                    # thought_signature) — providers can require them
-                    # round-tripped in the follow-up history.
-                    for key, value in tc.items():
-                        if key in ("id", "type", "function", "index") or value is None:
-                            continue
-                        tool_calls_list[tc_index][key] = value
-                    for key, value in (tc.get("function") or {}).items():
-                        if key in ("name", "arguments") or value is None:
-                            continue
-                        tool_calls_list[tc_index]["function"][key] = value
+                    accumulate_tool_call_delta(tool_calls_list, tc)
 
             yield chunk
 
@@ -1242,49 +1201,7 @@ class MessageService:
 
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
-                    tc_index = tc.get("index")
-
-                    if tc_index is None and tc.get("id"):
-                        for idx, existing_tc in enumerate(tool_calls_list):
-                            if existing_tc.get("id") == tc["id"]:
-                                tc_index = idx
-                                break
-                        if tc_index is None:
-                            tc_index = len(tool_calls_list)
-
-                    if tc_index is None:
-                        tc_index = 0
-
-                    while len(tool_calls_list) <= tc_index:
-                        tool_calls_list.append(
-                            {
-                                "id": None,
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        )
-
-                    if tc.get("id"):
-                        tool_calls_list[tc_index]["id"] = tc["id"]
-                    if tc.get("type"):
-                        tool_calls_list[tc_index]["type"] = tc["type"]
-                    if tc.get("function", {}).get("name"):
-                        tool_calls_list[tc_index]["function"]["name"] = tc["function"]["name"]
-                    if tc.get("function", {}).get("arguments"):
-                        tool_calls_list[tc_index]["function"]["arguments"] += tc["function"][
-                            "arguments"
-                        ]
-                    # Preserve any extra per-call fields (e.g. Gemini's
-                    # thought_signature) — providers can require them
-                    # round-tripped in the follow-up history.
-                    for key, value in tc.items():
-                        if key in ("id", "type", "function", "index") or value is None:
-                            continue
-                        tool_calls_list[tc_index][key] = value
-                    for key, value in (tc.get("function") or {}).items():
-                        if key in ("name", "arguments") or value is None:
-                            continue
-                        tool_calls_list[tc_index]["function"][key] = value
+                    accumulate_tool_call_delta(tool_calls_list, tc)
 
             yield chunk
 

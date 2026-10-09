@@ -47,6 +47,22 @@ def _serialize_row(row) -> dict[str, Any]:
     return {key: _serialize_value(row[key]) for key in row.keys()}
 
 
+
+def _same_source(trigger, trigger_id: str) -> tuple:
+    """WHERE clause for a bookmark write: the trigger, but only while it still
+    reads the source this poll read. An edit that moved it (another column,
+    table or connection) resets the bookmark; writing this poll's value over
+    that reset would compare the new column against the old one's value."""
+    from app.models.database_trigger import DatabaseTrigger
+
+    return (
+        DatabaseTrigger.id == uuid.UUID(trigger_id),
+        DatabaseTrigger.database_connection_id == trigger.database_connection_id,
+        DatabaseTrigger.schema_name == trigger.schema_name,
+        DatabaseTrigger.table_name == trigger.table_name,
+        DatabaseTrigger.poll_column == trigger.poll_column,
+    )
+
 class CDCManager:
     """Manages poll loops for all active CDC triggers."""
 
@@ -118,8 +134,13 @@ class CDCManager:
         re-query, so reload only needs to handle add/remove.
 
         Used to pick up triggers created via config apply / Package install,
-        which don't emit a per-trigger notification.
+        which don't emit a per-trigger notification. (They do now; reload is
+        kept for manual use. Its imports were missing, so a reload used to
+        raise and take the pub/sub listener down with it.)
         """
+        from sqlalchemy import select
+
+        from app.core.database import AsyncSessionLocal
         from app.models.database_trigger import DatabaseTrigger
 
         async with AsyncSessionLocal() as db:
@@ -217,7 +238,7 @@ class CDCManager:
                         async with AsyncSessionLocal() as db:
                             await db.execute(
                                 update(DatabaseTrigger)
-                                .where(DatabaseTrigger.id == uuid.UUID(trigger_id))
+                                .where(*_same_source(trigger, trigger_id))
                                 .values(
                                     last_poll_value=new_bookmark,
                                     error_message=None,
@@ -288,7 +309,7 @@ class CDCManager:
                             async with AsyncSessionLocal() as db:
                                 await db.execute(
                                     update(DatabaseTrigger)
-                                    .where(DatabaseTrigger.id == uuid.UUID(trigger_id))
+                                    .where(*_same_source(trigger, trigger_id))
                                     .values(
                                         last_poll_value=new_bookmark,
                                         error_message=None,

@@ -5,22 +5,6 @@ Used by both config_export.py (full config export) and package_service.py
 """
 from typing import Any, Optional
 
-from app.schemas.config import (
-    CONNECTOR_AUTH_FIELD_MAP,
-    TOKEN_RESPONSE_PATH_FIELD_MAP,
-)
-
-
-def _camelize_token_response_paths(paths: Any) -> Optional[dict]:
-    """snake_case stored token-response paths → camelCase config keys."""
-    if not isinstance(paths, dict):
-        return None
-    return {
-        camel: paths.get(snake)
-        for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
-        if paths.get(snake) is not None
-    } or None
-
 
 def _remove_none_values(d: dict) -> dict:
     """Remove None values from dictionary recursively."""
@@ -53,12 +37,10 @@ def serialize_function(func) -> dict:
 
 
 def serialize_skill(skill) -> dict:
-    return _remove_none_values({
-        "namespace": skill.namespace,
-        "name": skill.name,
-        "description": skill.description,
-        "content": skill.content,
-    })
+    """Config form of a skill — delegated to its spec."""
+    from app.services.resources.skills import SkillApplier
+
+    return SkillApplier().spec_from_row(skill).to_config()
 
 
 def serialize_collection(coll) -> dict:
@@ -89,21 +71,10 @@ def serialize_store(store) -> dict:
 
 
 def serialize_component(comp) -> dict:
-    return _remove_none_values({
-        "namespace": comp.namespace,
-        "name": comp.name,
-        "title": comp.title,
-        "description": comp.description,
-        "sourceCode": comp.source_code,
-        "inputSchema": comp.input_schema,
-        "enabledAgents": comp.enabled_agents or None,
-        "enabledFunctions": comp.enabled_functions or None,
-        "enabledQueries": comp.enabled_queries or None,
-        "enabledComponents": comp.enabled_components or None,
-        "enabledStores": comp.enabled_stores or None,
-        "cssOverrides": comp.css_overrides,
-        "visibility": comp.visibility,
-    })
+    """Config form of a component — delegated to its spec."""
+    from app.services.resources.components import ComponentApplier
+
+    return ComponentApplier().spec_from_row(comp).to_config()
 
 
 def serialize_manifest(manifest) -> dict:
@@ -116,45 +87,22 @@ def serialize_manifest(manifest) -> dict:
         "optionalPermissions": manifest.optional_permissions or None,
         "exposedNamespaces": manifest.exposed_namespaces or None,
         "storeDependencies": getattr(manifest, "store_dependencies", None) or None,
+        "publicInfo": getattr(manifest, "public_info", None) or None,
     })
 
 
 def serialize_template(template) -> dict:
-    return _remove_none_values({
-        "namespace": template.namespace,
-        "name": template.name,
-        "description": template.description,
-        "title": template.title,
-        "htmlContent": template.html_content,
-        "textContent": template.text_content,
-        "variableSchema": template.variable_schema if template.variable_schema else None,
-    })
+    """Config form of a template — delegated to its spec."""
+    from app.services.resources.templates import TemplateApplier
+
+    return TemplateApplier().spec_from_row(template).to_config()
 
 
 def serialize_webhook(webhook) -> dict:
-    target_type = getattr(webhook, "target_type", "function") or "function"
-    return _remove_none_values({
-        "path": webhook.path,
-        # Omitted for function targets so legacy exports stay unchanged
-        "targetType": target_type if target_type != "function" else None,
-        "functionName": f"{webhook.function_namespace}/{webhook.function_name}"
-        if target_type == "function"
-        else None,
-        "agentName": f"{webhook.agent_namespace}/{webhook.agent_name}"
-        if target_type == "agent"
-        else None,
-        "pipelineName": f"{webhook.pipeline_namespace or 'default'}/{webhook.pipeline_name}"
-        if target_type == "pipeline"
-        else None,
-        "messageTemplate": webhook.message_template if target_type == "agent" else None,
-        "sessionKeyTemplate": webhook.session_key_template if target_type == "agent" else None,
-        "httpMethod": webhook.http_method,
-        "requiresAuth": webhook.requires_auth,
-        "description": webhook.description,
-        "defaultValues": webhook.default_values or None,
-        "responseMode": getattr(webhook, "response_mode", None),
-        "dedup": _serialize_dedup(getattr(webhook, "dedup", None)),
-    })
+    """Config form of a webhook — delegated to its spec."""
+    from app.services.resources.webhooks import WebhookApplier
+
+    return WebhookApplier().spec_from_row(webhook).to_config()
 
 
 def _serialize_dedup(dedup: Optional[dict]) -> Optional[dict]:
@@ -178,64 +126,19 @@ def _serialize_dedup(dedup: Optional[dict]) -> Optional[dict]:
 
 
 def serialize_schedule(schedule) -> dict:
-    return _remove_none_values({
-        "name": schedule.name,
-        "scheduleType": schedule.schedule_type,
-        "functionName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "function"
-        else None,
-        "agentName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "agent"
-        else None,
-        "pipelineName": f"{schedule.target_namespace}/{schedule.target_name}"
-        if schedule.schedule_type == "pipeline"
-        else None,
-        "content": schedule.content,
-        "cronExpression": schedule.cron_expression,
-        "isActive": schedule.is_active,
-        "timezone": schedule.timezone,
-        "inputData": schedule.input_data or None,
-    })
+    """Config form of a schedule — delegated to its spec, the one definition
+    shared by the REST API, config apply, export and change history."""
+    from app.services.resources.schedules import ScheduleApplier
+
+    return ScheduleApplier().spec_from_row(schedule).to_config()
 
 
 def serialize_connector(conn) -> dict:
-    auth = conn.auth or {}
-    retry = conn.retry or {}
-    operations = []
-    for op in (conn.operations or []):
-        op_dict = {
-            "name": op.get("name"),
-            "method": op.get("method"),
-            "path": op.get("path"),
-            "description": op.get("description"),
-            "parameters": op.get("parameters"),
-            "requestBodyMapping": op.get("request_body_mapping", "json"),
-            "responseMapping": op.get("response_mapping", "json"),
-        }
-        operations.append(_remove_none_values(op_dict))
+    """Config form of a connector — delegated to its spec, whose aliases
+    replace the field maps every auth field had to be added to by hand."""
+    from app.services.resources.connectors import ConnectorApplier
 
-    return _remove_none_values({
-        "namespace": conn.namespace,
-        "name": conn.name,
-        "description": conn.description,
-        "baseUrl": conn.base_url,
-        # Map snake_case stored keys → camelCase config keys via the single field map.
-        "auth": _remove_none_values({
-            **{camel: auth.get(snake) for camel, snake in CONNECTOR_AUTH_FIELD_MAP},
-            "type": auth.get("type", "none"),  # type always present in export
-            # Nested object: its inner keys need their own camelization.
-            "tokenResponsePaths": _camelize_token_response_paths(
-                auth.get("token_response_paths")
-            ),
-        }),
-        "headers": conn.headers if conn.headers else None,
-        "retry": _remove_none_values({
-            "maxAttempts": retry.get("max_attempts", 1),
-            "backoff": retry.get("backoff", "none"),
-        }),
-        "timeoutSeconds": conn.timeout_seconds,
-        "operations": operations,
-    })
+    return ConnectorApplier().spec_from_row(conn).to_config()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -274,43 +177,24 @@ def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
         "defaultJobTimeout": agent.default_job_timeout,
         "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
         "systemTools": agent.system_tools if agent.system_tools else None,
+        # Round-trips through export/import; without it an exported agent
+        # re-imported at model-default effort and caching.
+        "providerOverrides": agent.provider_overrides or None,
     })
 
 
 def serialize_query(query, connection_name: Optional[str] = None) -> dict:
-    return _remove_none_values({
-        "namespace": query.namespace,
-        "name": query.name,
-        "description": query.description,
-        "connectionName": connection_name,
-        "operation": query.operation,
-        "sql": query.sql,
-        "inputSchema": query.input_schema,
-        "outputSchema": query.output_schema,
-        "timeoutMs": query.timeout_ms,
-        "maxRows": query.max_rows,
-    })
+    """Config form of a query — delegated to its spec."""
+    from app.services.resources.queries import QueryApplier
+
+    return QueryApplier().spec_from_row(query, connection_name).to_config()
 
 
 def serialize_database_trigger(trigger, connection_name: Optional[str] = None) -> dict:
-    return _remove_none_values({
-        "name": trigger.name,
-        "connectionName": connection_name,
-        "schemaName": trigger.schema_name,
-        "tableName": trigger.table_name,
-        "operations": trigger.operations,
-        "targetType": trigger.target_type if trigger.target_type != "function" else None,
-        "functionName": f"{trigger.function_namespace}/{trigger.function_name}"
-        if trigger.function_name
-        else None,
-        "pipelineName": f"{trigger.pipeline_namespace or 'default'}/{trigger.pipeline_name}"
-        if trigger.pipeline_name
-        else None,
-        "pollColumn": trigger.poll_column,
-        "pollIntervalSeconds": trigger.poll_interval_seconds,
-        "batchSize": trigger.batch_size,
-        "isActive": trigger.is_active,
-    })
+    """Config form of a database trigger — delegated to its spec."""
+    from app.services.resources.database_triggers import DatabaseTriggerApplier
+
+    return DatabaseTriggerApplier().spec_from_row(trigger, connection_name).to_config()
 
 
 def serialize_pipeline(pipeline) -> dict:

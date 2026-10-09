@@ -170,7 +170,7 @@ class TestPackageRoles:
     async def test_preview_surfaces_role_governance(self, db, admin_user):
         pkg = f"pkg-{uuid.uuid4().hex[:8]}"
         yaml = _yaml(pkg, "pkgns", f"{pkg}-service", [("sinas.agents/otherns/*.execute:all", True)])
-        result, _, _ = await PackageService(db).preview(yaml, str(admin_user.id))
+        result, _, _, _ = await PackageService(db).preview(yaml, str(admin_user.id))
         assert any("allowBroadRolePermissions" in w for w in result.warnings)
         assert await _role(db, f"{pkg}-service") is None
 

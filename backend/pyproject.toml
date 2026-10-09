@@ -14,7 +14,12 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi>=0.138.0",
     "uvicorn[standard]>=0.24.0",
-    "sqlalchemy>=2.0.0",
+    # [asyncio] pulls in greenlet, which the async engine needs: SQLAlchemy 2.1
+    # stopped installing it by default, so the unbounded pin resolved to
+    # 2.1.1 with no greenlet and every fresh image crashed at import.
+    # Capped at the tested 2.0 line: a new minor is a deliberate upgrade,
+    # not something a rebuild should pick up (same lesson as anthropic 1.0).
+    "sqlalchemy[asyncio]>=2.0.0,<2.1",
     "alembic>=1.12.0",
     "psycopg2-binary>=2.9.0",
     "pydantic>=2.5.0",

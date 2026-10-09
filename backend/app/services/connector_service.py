@@ -41,6 +41,16 @@ OAUTH_TOKEN_TTL_SKEW = 60      # Refresh this many seconds before the token actu
 OAUTH_DEFAULT_TTL = 3600       # Assumed lifetime when the token response omits expires_in
 
 
+
+# Where a user's OAuth tokens are sent or were issued. Tokens issued under one
+# identity must never be kept once it changes (ConnectorApplier drops them).
+OAUTH_IDENTITY_FIELDS = ("type", "token_url", "client_id", "authorize_url")
+
+
+def oauth_identity(auth: Optional[dict[str, Any]]) -> tuple:
+    auth = auth or {}
+    return tuple(auth.get(field) or None for field in OAUTH_IDENTITY_FIELDS)
+
 class ConnectorService:
     """Executes connector operations in-process via httpx with connection pooling."""
 
@@ -580,6 +590,24 @@ class ConnectorService:
             response_paths=auth_config.get("token_response_paths"),
         )
         if not payload or not payload.get("access_token"):
+            return False
+
+        # The exchange took a network round trip. If the connector was repointed
+        # meanwhile (its applier drops every stored token when the OAuth identity
+        # changes), these tokens belong to the old provider: don't store them.
+        # Locking the connector row serialises with that edit either way.
+        from app.models.connector import Connector
+
+        current = (
+            await db.execute(
+                select(Connector.auth).where(Connector.id == connector.id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if current is None or oauth_identity(current) != oauth_identity(auth_config):
+            logger.warning(
+                f"Connector {connector.namespace}/{connector.name} changed during the OAuth "
+                f"exchange; discarding the tokens"
+            )
             return False
 
         row = await self._get_token_row(db, connector.id, user_id)
