@@ -14,8 +14,10 @@ class CollectionSpec(SpecModel):
     # Functions run on upload, as "namespace/name".
     content_filter_function: Optional[str] = Field(default=None, max_length=255)
     post_upload_function: Optional[str] = Field(default=None, max_length=255)
-    max_file_size_mb: int = Field(default=100, ge=1)
-    max_total_size_gb: int = Field(default=10, ge=1)
+    # Config never bounded these (0 blocks uploads, but applied); the REST
+    # schema keeps its 1..1000 range.
+    max_file_size_mb: int = Field(default=100, ge=0)
+    max_total_size_gb: int = Field(default=10, ge=0)
     is_public: bool = False
     allow_shared_files: bool = True
     allow_private_files: bool = True

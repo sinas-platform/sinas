@@ -360,3 +360,100 @@ class TestExportAndPackages:
         row = await _row(db, Store, name)
         assert (row.description, row.managed_by) == ("mine", None)
         assert installed.warnings or not installed.success
+
+
+def _package(pkg: str, version: str, names: list[str]) -> str:
+    lines = [
+        "apiVersion: sinas.co/v1", "kind: SinasPackage", "metadata:", f"  name: {pkg}",
+        "package:", f"  name: {pkg}", f'  version: "{version}"', "spec:",
+    ]
+    for kind in ("stores", "collections", "manifests"):
+        lines.append(f"  {kind}:" + ("" if names else " []"))
+        lines += [f"    - {{namespace: {NS}, name: {name}}}" for name in names]
+    return "\n".join(lines) + "\n"
+
+
+class TestUpgradeAndRestore:
+    async def test_an_upgrade_removes_what_the_new_version_dropped(
+        self, db: AsyncSession, admin_user
+    ):
+        from app.services.package_service import PackageService
+
+        pkg, keep, drop = f"pkg-{_uid()}", f"k{_uid()}", f"d{_uid()}"
+        service = PackageService(db)
+        _, first = await service.install(_package(pkg, "1.0.0", [keep, drop]), str(admin_user.id))
+        assert first.success, first.errors
+        store = await _row(db, Store, drop)
+        db.add(State(user_id=admin_user.id, store_id=store.id, key="k", value={"v": 1}))
+        await db.flush()
+
+        _, second = await service.install(_package(pkg, "2.0.0", [keep]), str(admin_user.id))
+        assert second.success, second.errors
+        assert second.summary.deleted == {"stores": 1, "collections": 1, "manifests": 1}
+        for model in (Store, Collection, Manifest):
+            assert await _row(db, model, keep) is not None
+            assert await _row(db, model, drop) is None
+        db.expunge_all()
+        assert (await db.execute(select(State).where(State.store_id == store.id))).first() is None
+        for kind in ("stores", "collections", "manifests"):
+            assert await _actions(db, kind, drop) == ["create", "delete"]
+            assert await _actions(db, kind, keep) == ["create"]
+
+    async def test_hand_edited_ones_survive_an_upgrade(self, client, db: AsyncSession, admin_user):
+        """Editing a package's store, collection or manifest by hand detaches
+        it, so an upgrade that no longer ships it leaves the edited copy."""
+        from app.services.package_service import PackageService
+
+        pkg, name, h = f"pkg-{_uid()}", f"e{_uid()}", auth_headers(admin_user)
+        service = PackageService(db)
+        await service.install(_package(pkg, "1.0.0", [name]), str(admin_user.id))
+        for path, body in (
+            ("stores", {"strict": True}),
+            ("collections", {"max_file_size_mb": 7}),
+            ("manifests", {"description": "ours"}),
+        ):
+            r = await client.put(f"/api/v1/{path}/{NS}/{name}", json=body, headers=h)
+            assert r.status_code == 200, r.text
+
+        _, result = await service.install(_package(pkg, "2.0.0", []), str(admin_user.id))
+        assert result.success, result.errors
+        assert not result.summary.deleted
+        for model in (Store, Collection, Manifest):
+            row = await _row(db, model, name)
+            assert row is not None and row.managed_by is None
+
+    async def test_a_deleted_definition_can_be_restored(self, client, db: AsyncSession, admin_user):
+        """Restore brings the definition back under its original id. The
+        states or files it held went with the delete, and stay gone."""
+        name, h = f"r{_uid()}", auth_headers(admin_user)
+        for path, body in (
+            ("stores", {"namespace": NS, "name": name, "strict": True, "schema": {"type": "object"}}),
+            ("collections", {"namespace": NS, "name": name, "max_file_size_mb": 7}),
+            ("manifests", {"namespace": NS, "name": name, "required_permissions": ["sinas.x.read:own"]}),
+        ):
+            assert (await client.post(f"/api/v1/{path}", json=body, headers=h)).status_code == 201
+        ids = {m: (await _row(db, m, name)).id for m in (Store, Collection, Manifest)}
+        for path in ("stores", "collections", "manifests"):
+            assert (await client.delete(f"/api/v1/{path}/{NS}/{name}", headers=h)).status_code == 204
+
+        for kind in ("stores", "collections", "manifests"):
+            deleted = (await db.execute(
+                select(ConfigRevision.id).where(
+                    ConfigRevision.resource_kind == kind, ConfigRevision.resource_key == f"{NS}/{name}",
+                    ConfigRevision.action == "delete",
+                )
+            )).scalar_one()
+            r = await client.post(f"/api/v1/config/history/{deleted}/restore", headers=h)
+            assert r.status_code == 200, r.text
+
+        store, coll, manifest = [await _row(db, m, name) for m in (Store, Collection, Manifest)]
+        assert (store.id, store.strict, store.schema) == (ids[Store], True, {"type": "object"})
+        assert (coll.id, coll.max_file_size_mb) == (ids[Collection], 7)
+        assert (manifest.id, manifest.required_permissions) == (ids[Manifest], ["sinas.x.read:own"])
+
+
+class TestConfigLeniency:
+    async def test_zero_collection_limits_still_apply(self, db: AsyncSession, admin_user):
+        c = f"c{_uid()}"
+        result = await _apply(db, admin_user, collections=[_yaml_collection(c, maxFileSizeMb=0, maxTotalSizeGb=0)])
+        assert result.success, result.errors
