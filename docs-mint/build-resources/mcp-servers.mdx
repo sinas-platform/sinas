@@ -1,0 +1,77 @@
+---
+title: "MCP Servers"
+description: "Remote Model Context Protocol servers as agent tool sources"
+---
+
+An **MCP server** is a remote [Model Context Protocol](https://modelcontextprotocol.io) endpoint whose tools agents can call. Register the endpoint once, enable it on an agent, and the server's tools appear in the agent's tool list — discovered live, so the server's tool list is the contract.
+
+Supported transports: **Streamable HTTP** (recommended) and the legacy **HTTP + SSE**. Servers that only speak stdio are not supported — the backend never spawns processes for a configured resource; put such a server behind an HTTP bridge.
+
+**Endpoints:**
+
+```
+POST   /api/v1/mcp-servers                              # Create MCP server
+GET    /api/v1/mcp-servers                              # List MCP servers
+GET    /api/v1/mcp-servers/{namespace}/{name}           # Get MCP server
+PUT    /api/v1/mcp-servers/{namespace}/{name}           # Update MCP server
+DELETE /api/v1/mcp-servers/{namespace}/{name}           # Delete MCP server
+POST   /api/v1/mcp-servers/{namespace}/{name}/tools     # Connect now and list the server's tools (bypasses the cache)
+```
+
+## Configuration
+
+```yaml
+mcpServers:
+  - namespace: tools
+    name: tracker
+    description: Issue tracker
+    url: https://mcp.tracker.example.com/mcp
+    transport: streamable_http            # or "sse"
+    auth:
+      type: bearer                        # none | bearer | header
+      secret: TRACKER_TOKEN               # the *name* of a Secret, never the value
+    headers:                              # optional static headers
+      X-Tenant: acme
+    toolAllow: ["list_*", "get_*", "create_issue"]   # glob patterns; empty = every tool
+    toolDeny: ["delete_*"]                           # deny wins over allow
+    timeoutSeconds: 60                    # per tool call
+    connectTimeoutSeconds: 10             # connect + handshake + tools/list
+```
+
+**Auth.** The credential is a [Secret](/build-resources/secrets), resolved and decrypted in the backend at call time. Private secrets override shared for the calling user, as for connectors. `bearer` sends `Authorization: Bearer <value>`; `header` sends the value in the header you name (`header: X-Api-Key`). A configured auth whose Secret is missing refuses the call rather than sending it unauthenticated. The sandbox never sees MCP credentials.
+
+**Tool filter.** `toolAllow` / `toolDeny` decide what the resource exposes at all; agents can narrow further per binding (below). The console's **Test & List Tools** shows the server's tools and which ones the filter hides.
+
+## Enabling on an agent
+
+```yaml
+agents:
+  - name: support
+    enabledMcpServers:
+      - tools/tracker                     # every tool the server allows
+      - server: tools/docs
+        tools: ["search_*"]               # narrowed for this agent
+```
+
+Tools are named `mcp_<namespace>__<server>__<tool>` (characters MCP allows but function names don't are replaced by `_`). The name is what the agent's `toolApprovals` rules match:
+
+```yaml
+    toolApprovals:
+      rules:
+        - match: "mcp_tools__tracker__create_*"
+          action: ask
+        - match: "mcp_*"
+          action: auto
+```
+
+Status templates use the key `mcp:<namespace>/<server>/<tool>`.
+
+## How calls behave
+
+- **Discovery degrades, never fails.** A server that is missing, inactive or unreachable contributes no tools and a warning in the log; the chat turn proceeds with the other tools. Tool lists are cached in-process per server for `MCP_TOOL_LIST_TTL_SECONDS` (60); a failed listing for `MCP_TOOL_LIST_FAILURE_TTL_SECONDS` (15), so a dead server isn't retried on every message. Editing a server invalidates its cache.
+- **Workbench references work.** `{"$workbench": "path"}` argument values are resolved before the call, like for every tool.
+- **Results.** Text blocks are joined into `text`; `structuredContent` is passed through as `structured_content`. Images, audio and binary resources are written to the chat's workbench (`tool_results/mcp_<tool>_<n>.<ext>`) when the agent has one, otherwise inlined as data URLs. Embedded text resources and resource links are returned as `content` entries. A tool that reports `isError` becomes an `{"error": …}` result the model can recover from. Large results spill to the workbench like any other tool result.
+
+## Not supported (yet)
+
+stdio servers; MCP resources, prompts, sampling and elicitation; OAuth sign-in flows for MCP servers (use a bearer token or API-key Secret). See `backend/docs/adrs/2026-10-09-mcp-client.md`.

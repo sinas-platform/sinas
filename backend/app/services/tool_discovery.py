@@ -284,6 +284,17 @@ async def get_available_tools(
         )
         tools.extend(connector_tools)
 
+    # Get MCP server tools (only if list has items - opt-in). A server that
+    # doesn't answer contributes nothing — never a failed turn.
+    enabled_mcp_servers = getattr(agent, "enabled_mcp_servers", None) or []
+    if enabled_mcp_servers:
+        from app.services.mcp_tools import McpToolConverter
+
+        mcp_tools = await McpToolConverter().get_available_tools(
+            db=db, enabled_mcp_servers=enabled_mcp_servers, user_id=user_id
+        )
+        tools.extend(mcp_tools)
+
     # Get pipeline tools (only if list has items - opt-in)
     enabled_pipelines = getattr(agent, "enabled_pipelines", None) or []
     if enabled_pipelines:

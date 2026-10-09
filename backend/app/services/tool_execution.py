@@ -311,8 +311,11 @@ def tool_name_to_status_key(tool_name: str) -> str:
       "get_file_docs__manuals"             -> "collection:docs/manuals"
       "get_skill_default__tone"            -> "skill:default/tone"
       "show_component_ui__chart"           -> "component:ui/chart"
+      "mcp_tools__github__create_issue"    -> "mcp:tools/github/create_issue"
       "save_state"                         -> "state:save_state"
     """
+    if tool_name.startswith("mcp_"):
+        return "mcp:" + tool_name[len("mcp_"):].replace("__", "/", 2)
     if tool_name.startswith("call_agent_"):
         return "agent:" + tool_name[len("call_agent_"):].replace("__", "/", 1)
     if tool_name.startswith("get_skill_"):
@@ -376,6 +379,8 @@ def build_tool_status(tool_name: str, arguments: dict, status_templates: dict[st
         return "Searching files"
     if key.startswith("component:"):
         return f"Rendering {key[10:]}"
+    if key.startswith("mcp:"):
+        return f"Calling {key[4:].split('/')[-1].replace('_', ' ')}"
     if key.startswith("state:"):
         verb = tool_name.split("_")[0].capitalize()
         return f"{verb} state"
@@ -974,6 +979,19 @@ async def execute_single_tool(
                     enabled_pipelines=enabled_pipeline_list,
                 )
                 logger.debug(f"Pipeline tool completed in {time.time() - start_time:.3f}s: {tool_name}")
+            elif tool_metadata.get("tool_type") == "mcp":
+                start_time = time.time()
+                from app.services.mcp_tools import McpToolConverter
+
+                result = await McpToolConverter().execute_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    metadata=tool_metadata,
+                    chat=chat,
+                )
+                logger.debug(f"MCP tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("type") == "connector":
                 start_time = time.time()
                 connector_tool_converter = ConnectorToolConverter()

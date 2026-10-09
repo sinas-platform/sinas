@@ -15,6 +15,16 @@ class EnabledSkillConfig(BaseModel):
     )
 
 
+class EnabledMcpServerConfig(BaseModel):
+    """Configuration for an enabled MCP server."""
+
+    server: str = Field(..., description="MCP server identifier in format 'namespace/name'")
+    tools: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns on the server's tool names; empty = every tool the server allows",
+    )
+
+
 class EnabledStoreConfig(BaseModel):
     """Configuration for an enabled store."""
 
@@ -114,6 +124,7 @@ class AgentCreate(BaseModel):
     enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    enabled_mcp_servers: Optional[list[EnabledMcpServerConfig]] = None  # MCP servers exposed as tool sources
     enabled_pipelines: Optional[list[str]] = None  # List of "namespace/name" pipeline references (asTool)
     hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
@@ -194,6 +205,7 @@ class AgentUpdate(BaseModel):
     enabled_collections: Optional[list[EnabledCollectionConfig]] = None  # Collection access configs
     enabled_components: Optional[list[str]] = None  # List of "namespace/name" component references
     enabled_connectors: Optional[list[dict[str, Any]]] = None  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
+    enabled_mcp_servers: Optional[list[EnabledMcpServerConfig]] = None  # MCP servers exposed as tool sources
     enabled_pipelines: Optional[list[str]] = None  # List of "namespace/name" pipeline references (asTool)
     hooks: Optional[AgentHooks] = None
     icon: Optional[str] = None  # "collection:ns/coll/file" or "url:https://..."
@@ -233,6 +245,7 @@ class AgentResponse(BaseModel):
     enabled_collections: list[EnabledCollectionConfig] = []
     enabled_components: list[str] = []
     enabled_connectors: list[dict[str, Any]] = []
+    enabled_mcp_servers: list[EnabledMcpServerConfig] = []
     enabled_pipelines: list[str] = []
     hooks: Optional[dict[str, Any]] = None
     icon: Optional[str] = None

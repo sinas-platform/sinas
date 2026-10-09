@@ -68,6 +68,8 @@ def _provider_batch_blockers(agent: Any) -> list[str]:
         blockers.append("components")
     if agent.enabled_connectors:
         blockers.append("connectors")
+    if getattr(agent, "enabled_mcp_servers", None):
+        blockers.append("MCP servers")
     if agent.enabled_pipelines:
         # asTool pipelines are tools like any other (pipeline_<ns>__<name>).
         # Omitting them here meant such an agent passed validation and was

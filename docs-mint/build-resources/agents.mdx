@@ -50,6 +50,10 @@ enabledQueries:
   - "*/*"            # all queries (quote wildcards in YAML)
 enabledPipelines:
   - search/semantic  # an asTool pipeline, exposed as one tool
+enabledMcpServers:
+  - tools/tracker    # every tool an MCP server allows (see MCP Servers)
+  - server: tools/docs
+    tools: ["search_*"]
 enabledCollections:
   - collection: "docs/*"
     access: readonly

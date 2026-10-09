@@ -42,6 +42,7 @@
               "build-resources/queries",
               "build-resources/pipelines",
               "build-resources/connectors",
+              "build-resources/mcp-servers",
               "build-resources/skills",
               "build-resources/components",
               "build-resources/secrets"

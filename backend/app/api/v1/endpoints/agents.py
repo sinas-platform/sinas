@@ -95,6 +95,9 @@ async def create_agent(
         enabled_collections=[c.model_dump() for c in agent_data.enabled_collections] if agent_data.enabled_collections else [],
         enabled_components=agent_data.enabled_components or [],
         enabled_connectors=agent_data.enabled_connectors or [],
+        enabled_mcp_servers=[m.model_dump() for m in agent_data.enabled_mcp_servers]
+        if agent_data.enabled_mcp_servers
+        else [],
         enabled_pipelines=agent_data.enabled_pipelines or [],
         hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
         icon=agent_data.icon,
@@ -254,6 +257,8 @@ async def update_agent(
         agent.enabled_components = agent_data.enabled_components
     if agent_data.enabled_connectors is not None:
         agent.enabled_connectors = agent_data.enabled_connectors
+    if agent_data.enabled_mcp_servers is not None:
+        agent.enabled_mcp_servers = [m.model_dump() for m in agent_data.enabled_mcp_servers]
     if agent_data.enabled_pipelines is not None:
         agent.enabled_pipelines = agent_data.enabled_pipelines
     if agent_data.hooks is not None:

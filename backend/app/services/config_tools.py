@@ -33,6 +33,7 @@ _RESOURCE_TYPES = {
     "schedules": "app.models.schedule:ScheduledJob",
     "databaseTriggers": "app.models.database_trigger:DatabaseTrigger",
     "connectors": "app.models.connector:Connector",
+    "mcpServers": "app.models.mcp_server:McpServer",
     "packages": "app.models.package:Package",
 }
 
@@ -81,7 +82,7 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "the full detail of a specific one. Supported types: agents, "
                 "functions, queries, skills, collections, stores, components, "
                 "manifests, templates, webhooks, schedules, databaseTriggers, "
-                "connectors, packages."
+                "connectors, mcpServers, packages."
             ),
             "parameters": {
                 "type": "object",
