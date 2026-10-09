@@ -120,6 +120,19 @@ const SCHEMA_PRESETS: Record<string, { label: string; input: any; output: any }>
   },
 };
 
+/** A schema shown whole and read-only (the guided editor's expand and raw
+ * toggles are controls, which a read-only form disables). */
+function SchemaView({ label, schema }: { label: string; schema: unknown }) {
+  return (
+    <div>
+      <div className="text-sm font-medium text-gray-300 mb-2">{label}</div>
+      <pre className="text-xs font-mono text-gray-300 bg-surface-page border border-gray-800 rounded p-3 overflow-auto max-h-96">
+        {JSON.stringify(schema ?? {}, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
 export function FunctionEditor() {
   const { namespace, name } = useParams<{ namespace: string; name: string }>();
   const navigate = useNavigate();
@@ -940,12 +953,16 @@ return {"block": True, "reply": "Sorry, that message was blocked"}
         {/* Schemas side by side */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="card">
-            <JSONSchemaEditor
-              label="Input Schema *"
-              description="Expected input parameters"
-              value={formData.input_schema}
-              onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
-            />
+            {codeExecutionEnabled ? (
+              <JSONSchemaEditor
+                label="Input Schema *"
+                description="Expected input parameters"
+                value={formData.input_schema}
+                onChange={(schema) => setFormData({ ...formData, input_schema: schema })}
+              />
+            ) : (
+              <SchemaView label="Input Schema" schema={formData.input_schema} />
+            )}
             <div className="mt-2 flex items-center gap-2">
               <span className="text-xs text-gray-500">Preset:</span>
               <select
@@ -965,12 +982,16 @@ return {"block": True, "reply": "Sorry, that message was blocked"}
           </div>
 
           <div className="card">
-            <JSONSchemaEditor
-              label="Output Schema *"
-              description="Expected output structure"
-              value={formData.output_schema}
-              onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
-            />
+            {codeExecutionEnabled ? (
+              <JSONSchemaEditor
+                label="Output Schema *"
+                description="Expected output structure"
+                value={formData.output_schema}
+                onChange={(schema) => setFormData({ ...formData, output_schema: schema })}
+              />
+            ) : (
+              <SchemaView label="Output Schema" schema={formData.output_schema} />
+            )}
             <div className="mt-2 flex items-center gap-2">
               <span className="text-xs text-gray-500">Preset:</span>
               <select
