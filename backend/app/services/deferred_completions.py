@@ -303,13 +303,21 @@ async def complete(
         "parent_pending_delegation_id"
     )
     resume_channel = channel_id if blocking_parent else (resume_channel_id or channel_id)
-    await queue_service.enqueue_agent_delegate_resume(
-        chat_id=chat_id,
-        user_id=user_id,
-        user_token=user_token,
-        channel_id=resume_channel,
-        conversation_context=ctx,
-    )
+    # The resumed run acts through the key the round ran under, not through
+    # whoever completed it (an expiry sweep has none).
+    from app.core.auth import bind_api_key, current_api_key_id, reset_api_key
+
+    key_token = bind_api_key((ctx or {}).get("api_key_id") or current_api_key_id())
+    try:
+        await queue_service.enqueue_agent_delegate_resume(
+            chat_id=chat_id,
+            user_id=user_id,
+            user_token=user_token,
+            channel_id=resume_channel,
+            conversation_context=ctx,
+        )
+    finally:
+        reset_api_key(key_token)
     logger.info(
         "All pending completions landed for chat %s — resume job enqueued", chat_id
     )

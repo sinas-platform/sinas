@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.core.auth import get_effective_permissions
+from app.core.auth import current_api_key_id, get_effective_permissions
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
@@ -1113,6 +1113,10 @@ class MessageService:
                         "agent_label": agent_label,
                         "tool_iteration_depth": depth,
                         "delegation_depth": current_delegation_depth.get(),
+                        # The API key the run acts through (if any): the
+                        # resume keeps acting through it, whoever or
+                        # whatever (an expiry sweep) completes the round.
+                        "api_key_id": current_api_key_id(),
                         # Job-level fields the resume job must inherit:
                         # batch Execution row, stream TTL, and (when this
                         # conversation is itself a delegated child) the

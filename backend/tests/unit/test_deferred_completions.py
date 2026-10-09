@@ -481,3 +481,26 @@ async def test_a_suspend_mode_child_may_resume_on_a_fresh_channel(env, capture_r
         resume_channel_id="chan-fresh",
     )
     assert outcome["channel_id"] == "chan-fresh"
+
+
+@pytest.mark.asyncio
+async def test_the_resume_acts_through_the_rounds_api_key(env, monkeypatch):
+    """A round suspended in a chat run through an API key resumes through
+    that key — even when completed with no request bound (expiry sweep)."""
+    from app.core.auth import current_api_key_id
+
+    seen: list = []
+
+    async def fake(**kwargs):
+        seen.append(current_api_key_id())
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", fake)
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={"provider": "p", "model": "m", "api_key_id": "key-123"},
+    )
+    await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="")
+    assert seen == ["key-123"]
+    assert current_api_key_id() is None
