@@ -124,9 +124,10 @@ class TestOutputPersisted:
 class TestPipelineSchedules:
     @pytest.fixture(autouse=True)
     def _fake_redis(self, monkeypatch):
-        """The endpoint notifies the running scheduler via Redis pub/sub;
-        the unit env has no reachable Redis (same as the known test_auth
-        situation), so fake it."""
+        """Schedule writes notify the running scheduler via Redis pub/sub
+        (through the resource applier's side-effect bus, which resolves
+        app.core.redis.get_redis at publish time); the unit env has no
+        reachable Redis (same as the known test_auth situation), so fake it."""
         class _R:
             async def publish(self, *a):
                 return 0
@@ -134,7 +135,7 @@ class TestPipelineSchedules:
         async def _get():
             return _R()
 
-        monkeypatch.setattr("app.api.v1.endpoints.schedules.get_redis", _get)
+        monkeypatch.setattr("app.core.redis.get_redis", _get)
 
     async def test_pipeline_schedule_creates(self, client, db, admin_user):
         pipeline = Pipeline(

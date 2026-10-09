@@ -406,6 +406,14 @@ class Settings(BaseSettings):
             return f"http://localhost:{self.backend_port}"
         return f"https://{domain}"
 
+    # Where the console is reached, if not at {public_base_url}/ui (e.g. the
+    # compose setup serves it on its own port). Used to send people to it.
+    console_url: Optional[str] = None
+
+    @property
+    def public_console_url(self) -> str:
+        return (self.console_url or f"{self.public_base_url}/ui").rstrip("/")
+
     @property
     def token_issuer(self) -> str:
         """`iss` claim on RS256 access tokens; what verifiers configure as issuer."""
@@ -428,8 +436,6 @@ class Settings(BaseSettings):
     metering_snapshot_minutes: int = 5  # Redis -> usage_periods cadence
     metering_push_minutes: int = 15  # heartbeat cadence (jittered per instance)
 
-    # Component builder
-    builder_url: str = "http://sinas-builder:3000"  # URL for esbuild compilation service
 
     # OpenTelemetry (opt-in observability — e.g. Langwatch)
     otel_enabled: bool = False

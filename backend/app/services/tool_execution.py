@@ -27,6 +27,7 @@ from app.services.execution_engine import executor as fn_executor
 from app.services.function_tools import FunctionToolConverter
 from app.services.config_tools import execute_config_tool, is_config_tool
 from app.services.db_introspection_tools import execute_db_introspection_tool, is_db_introspection_tool
+from app.services.artifact_tools import execute_artifact_tool, is_artifact_tool
 from app.services.package_tools import execute_package_tool, is_package_tool
 from app.services.query_tools import QueryToolConverter
 from app.services.skill_tools import SkillToolConverter
@@ -171,21 +172,88 @@ def truncate_tool_result(result_content: str, max_size: int) -> str:
     return _clean_text_cut(result_content, max_size)
 
 
+def accumulate_tool_call_delta(tool_calls_list: list[dict[str, Any]], tc: dict[str, Any]) -> None:
+    """Merge one streamed tool-call delta into the per-step list, in place.
+
+    Deltas are keyed by `index` (OpenAI-style streaming); providers that omit
+    it are matched by id, else appended. The id is set ONCE per slot: only the
+    first delta of a call carries it, and a later delta must never replace it
+    (issue #195 — a provider-side fallback id on argument fragments used to
+    overwrite every call's real id with the same literal).
+    """
+    tc_index = tc.get("index")
+
+    if tc_index is None and tc.get("id"):
+        for idx, existing_tc in enumerate(tool_calls_list):
+            if existing_tc.get("id") == tc["id"]:
+                tc_index = idx
+                break
+        if tc_index is None:
+            tc_index = len(tool_calls_list)
+
+    if tc_index is None:
+        tc_index = 0
+
+    while len(tool_calls_list) <= tc_index:
+        tool_calls_list.append(
+            {
+                "id": None,
+                "type": "function",
+                "function": {"name": "", "arguments": ""},
+            }
+        )
+
+    slot = tool_calls_list[tc_index]
+    if tc.get("id") and not slot.get("id"):
+        slot["id"] = tc["id"]
+    if tc.get("type"):
+        slot["type"] = tc["type"]
+    if tc.get("function", {}).get("name"):
+        slot["function"]["name"] = tc["function"]["name"]
+    if tc.get("function", {}).get("arguments"):
+        slot["function"]["arguments"] += tc["function"]["arguments"]
+    # Preserve any extra per-call fields (e.g. Gemini's thought_signature) —
+    # providers can require them round-tripped in the follow-up history.
+    for key, value in tc.items():
+        if key in ("id", "type", "function", "index") or value is None:
+            continue
+        slot[key] = value
+    for key, value in (tc.get("function") or {}).items():
+        if key in ("name", "arguments") or value is None:
+            continue
+        slot["function"][key] = value
+
+
 def validate_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate tool calls and filter out corrupted ones.
 
-    Returns only valid tool calls.
+    Returns only valid tool calls. Ids are made present and unique within the
+    step: a call that streamed without one (some OpenAI-compatible gateways
+    never send ids) gets `call_<position>`, and a duplicate gets a positional
+    suffix. Every tool result is matched to its call by this id, so two calls
+    sharing one would make the second result unanswerable at the provider
+    (issue #195) and overwrite the first in the results cache.
     """
     if not tool_calls:
         return []
 
+    seen_ids: set[str] = set()
     valid_tool_calls = []
-    for tc in tool_calls:
+    for position, tc in enumerate(tool_calls):
         try:
-            # Check required fields
-            if not tc.get("id") or not tc.get("function", {}).get("name"):
-                print(f"\u26a0\ufe0f Skipping tool call without id or name: {tc}")
+            if not tc.get("function", {}).get("name"):
+                print(f"\u26a0\ufe0f Skipping tool call without name: {tc}")
                 continue
+            if not tc.get("id"):
+                tc["id"] = f"call_{position}"
+            if tc["id"] in seen_ids:
+                original = tc["id"]
+                renamed = f"{original}_{position}"
+                while renamed in seen_ids:  # the suffixed form can itself be taken
+                    renamed += "_"
+                print(f"\u26a0\ufe0f Duplicate tool call id {original!r} in one step; renamed to {renamed!r}")
+                tc["id"] = renamed
+            seen_ids.add(tc["id"])
 
             # Validate arguments is valid JSON
             args_str = tc.get("function", {}).get("arguments", "")
@@ -212,6 +280,9 @@ def is_sequential_tool(tool_name: str) -> bool:
         return True
     # Package management tools mutate global state — always sequential
     if is_package_tool(tool_name):
+        return True
+    # Two calls changing one artifact must not interleave
+    if is_artifact_tool(tool_name):
         return True
     return False
 
@@ -749,6 +820,22 @@ async def execute_single_tool(
                 )
                 logger.debug(f"Code execution completed in {time.time() - start_time:.3f}s")
 
+            elif is_artifact_tool(tool_name):
+                start_time = time.time()
+                chat_agent = None
+                if chat and chat.agent_id:
+                    chat_agent = (
+                        await db.execute(select(Agent).where(Agent.id == chat.agent_id))
+                    ).scalar_one_or_none()
+                result = await execute_artifact_tool(
+                    db=db,
+                    tool_name=tool_name,
+                    arguments=arguments,
+                    user_id=user_id,
+                    permissions=await get_user_permissions(db, user_id),
+                    agent=chat_agent,
+                )
+                logger.debug(f"Artifact tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif is_package_tool(tool_name):
                 start_time = time.time()
                 # Load the calling agent's system_tools and the user's permissions

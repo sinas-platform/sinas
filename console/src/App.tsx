@@ -1,7 +1,8 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/auth-context';
 import { ToastProvider } from './lib/toast-context';
+import { returnPath } from './lib/returnPath';
 import { APIErrorHandler } from './components/APIErrorHandler';
 import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
@@ -28,6 +29,7 @@ import { Templates } from './pages/Templates';
 import { Skills } from './pages/Skills';
 import { Components } from './pages/Components';
 import { ComponentEditor } from './pages/ComponentEditor';
+import { SharedComponent } from './pages/SharedComponent';
 import { Messages } from './pages/Messages';
 import { FunctionExecute } from './pages/FunctionExecute';
 import { Collections } from './pages/Collections';
@@ -58,6 +60,7 @@ const queryClient = new QueryClient({
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -68,7 +71,8 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    // Come back here after signing in (a shared link, for one).
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
 
   return <>{children}</>;
@@ -76,6 +80,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -86,7 +91,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   }
 
   if (user) {
-    return <Navigate to="/" replace />;
+    return <Navigate to={returnPath(location.state)} replace />;
   }
 
   return <>{children}</>;
@@ -114,6 +119,14 @@ function App() {
                 <PublicRoute>
                   <ResetPassword />
                 </PublicRoute>
+              }
+            />
+            <Route
+              path="/shared/:token"
+              element={
+                <PrivateRoute>
+                  <SharedComponent />
+                </PrivateRoute>
               }
             />
             <Route

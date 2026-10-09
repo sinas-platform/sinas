@@ -101,7 +101,7 @@ export function Stores() {
                       </button>
                       <HardDrive className="w-5 h-5 text-blue-500" />
                       <h3
-                        className="text-lg font-semibold text-gray-100 cursor-pointer hover:text-white"
+                        className="text-lg font-semibold text-gray-100 cursor-pointer hover:text-primary-400"
                         onClick={() => toggleExpanded(storeKey)}
                       >
                         {storeKey}
@@ -253,6 +253,10 @@ function StoreStatesPanel({
     mutationFn: (key: string) => apiClient.deleteStoreState(namespace, name, key),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['store-states', namespace, name] });
+    },
+    onError: (err: any) => {
+      // A silent failure here reads as "the button does nothing"
+      alert(`Failed to delete state: ${err?.response?.data?.detail || err?.message || err}`);
     },
   });
 

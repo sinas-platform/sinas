@@ -41,6 +41,7 @@ async def install_package(
             user_id,
             variables=body.variables,
             allow_broad_role_permissions=body.allowBroadRolePermissions,
+            instance=body.instance,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -68,8 +69,8 @@ async def preview_package(
 
     service = PackageService(db)
     try:
-        result, variable_declarations, requires_input = await service.preview(
-            body.source, user_id, variables=body.variables
+        result, variable_declarations, requires_input, install_info = await service.preview(
+            body.source, user_id, variables=body.variables, instance=body.instance
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -77,6 +78,7 @@ async def preview_package(
     response = result.model_dump(mode="json")
     response["variables"] = variable_declarations
     response["requires_input"] = requires_input
+    response.update(install_info)   # instance, package_name, multi_instance
     return response
 
 
@@ -167,7 +169,7 @@ async def uninstall_package(
 
     service = PackageService(db)
     try:
-        deleted_counts = await service.uninstall(name)
+        deleted_counts = await service.uninstall(name, actor_user_id=str(user_id))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 

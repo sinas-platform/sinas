@@ -1,7 +1,9 @@
 ## Image — the sinas backend image (also used by workers, scheduler, cdc).
 image:
   registry: ghcr.io/sinas-platform/sinas
-  tag: latest
+  ## Empty = the chart's appVersion (stamped from the release tag), so a
+  ## versioned install pulls matching images. Set explicitly to override.
+  tag: ""
   pullPolicy: IfNotPresent
 
 ## Routing
@@ -24,7 +26,7 @@ ingress:
 ## backend is pinned to 1 replica / 1 uvicorn worker (the embedded
 ## scheduler/CDC loops are singletons) and uses the `lite` image (backend +
 ## console build). Pair with values-lite.yaml for the full small-footprint
-## preset (no ClickHouse, no builder, small resource requests).
+## preset (no ClickHouse, small resource requests).
 allInOne: false
 
 ## Secrets (required — provide via --set or a secrets values file)
@@ -32,12 +34,17 @@ secrets:
   secretKey: ""
   encryptionKey: ""
 
-## Superadmin. With the default OTP auth mode, login codes arrive by EMAIL —
-## so without smtp.* configured a fresh install would be impossible to log
-## into. Set superadminPassword for SMTP-less installs (the install fails
-## fast if superadminEmail is set with neither). When superadminPassword is
-## set, auth mode auto-selects "password" (or "password+otp" with SMTP);
-## override with auth.mode.
+## Superadmin. How the first login works depends on what else is set:
+##   smtp.* configured          -> "otp": login codes arrive by email.
+##   superadminPassword set     -> "password" (+otp with SMTP). The value is
+##                                 authoritative: a password changed in the
+##                                 UI reverts to it on every restart.
+##   neither                    -> "password"; the backend prints a one-time
+##                                 setup link in its logs on boot. The
+##                                 superadmin then owns their password.
+##                                 (kubectl logs deploy/backend
+##                                  | grep -A6 'SUPERADMIN SETUP')
+## Override the auto-selection with auth.mode.
 superadminEmail: ""
 superadminPassword: ""
 
@@ -68,7 +75,9 @@ executor:
   ## (Dependency table) are pip-installed into each pod at create time; bake
   ## them into a custom image and set installDependencies: false to skip that
   ## cold-start cost.
-  image: "ghcr.io/sinas-platform/sinas/executor:latest"
+  ## Empty = <image.registry>/executor:<image tag or appVersion> — keeps the
+  ## sandbox image in lockstep with the release. Set to pin a custom image.
+  image: ""
   installDependencies: true
   podReadyTimeout: 120
 
@@ -179,7 +188,7 @@ networkPolicy:
   ##       ports: [5432]
   egressCidrs: []
 
-## Scheduling — where the STATELESS workloads run (backend, builder,
+## Scheduling — where the STATELESS workloads run (backend,
 ## console, pgbouncer, queue-worker, queue-agent, scheduler, cdc-worker).
 ## The single biggest cost lever on managed Kubernetes: moving these onto
 ## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
@@ -211,21 +220,6 @@ scheduling:
   nodeSelector: {}
   tolerations: []
   affinity: {}
-
-## Builder (Node.js esbuild server). enabled=false skips the Deployment;
-## set url to a shared builder to keep Component builds working, or leave it
-## empty to have builds fail with a clear connect error (nothing else is
-## affected — the builder is only used when someone builds a Component).
-builder:
-  enabled: true
-  url: ""
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "96Mi"
-    limits:
-      cpu: "500m"
-      memory: "384Mi"
 
 ## Backend (FastAPI)
 backend:

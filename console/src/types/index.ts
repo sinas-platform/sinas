@@ -1,3 +1,16 @@
+/**
+ * Per-agent provider behaviour overrides. Absent key = inherit the provider's
+ * setting. The backend validates keys and values (providers/factory.py
+ * AGENT_OVERRIDABLE); anything else is rejected.
+ */
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export interface ProviderOverrides {
+  prompt_caching?: boolean;
+  /** Anthropic `output_config.effort` — how much the model thinks and spends. */
+  effort?: EffortLevel;
+}
+
 // Authentication
 export interface User {
   id: string;
@@ -178,7 +191,6 @@ export type ComponentContent = {
   name: string;
   title?: string;
   input?: Record<string, unknown>;
-  compile_status?: string;
   render_token?: string;
 };
 
@@ -260,7 +272,7 @@ export interface Agent {
   name: string;
   description: string | null;
   llm_provider_id: string | null;
-  provider_overrides?: Record<string, boolean> | null;
+  provider_overrides?: ProviderOverrides | null;
   model: string | null;
   temperature: number;
   max_tokens: number | null;
@@ -298,7 +310,7 @@ export interface AgentCreate {
   name: string;
   description?: string;
   llm_provider_id?: string;
-  provider_overrides?: Record<string, boolean>;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -329,7 +341,7 @@ export interface AgentUpdate {
   name?: string;
   description?: string;
   llm_provider_id?: string;
-  provider_overrides?: Record<string, boolean>;
+  provider_overrides?: ProviderOverrides;
   model?: string;
   temperature?: number;
   max_tokens?: number;
@@ -767,24 +779,52 @@ export interface Component {
   title?: string;
   description?: string;
   source_code: string;
-  compiled_bundle?: string;
-  source_map?: string;
-  compile_status: string;
-  compile_errors?: Array<{ text: string; location?: { line: number; column: number } | null }>;
   input_schema?: Record<string, unknown>;
   enabled_agents: string[];
   enabled_functions: string[];
   enabled_queries: string[];
   enabled_components: string[];
   enabled_stores: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility: string;
-  version: number;
-  is_published: boolean;
   is_active: boolean;
   render_token?: string;
   created_at: string;
   updated_at: string;
+}
+
+export type ComponentShareMode = 'snapshot' | 'viewer' | 'creator';
+
+export interface ComponentShare {
+  id: string;
+  token: string;
+  component_id: string;
+  input_data?: Record<string, unknown> | null;
+  expires_at?: string | null;
+  max_views?: number | null;
+  view_count: number;
+  label?: string | null;
+  mode: ComponentShareMode;
+  allow_writes: boolean;
+  created_at: string;
+  share_url: string;
+}
+
+export interface ComponentShareCreate {
+  mode: ComponentShareMode;
+  allow_writes?: boolean;
+  input_data?: Record<string, unknown>;
+  expires_at?: string;
+  max_views?: number;
+  label?: string;
+}
+
+/** What the console gets to render a "viewer" share link for the signed-in user. */
+export interface SharedComponent {
+  namespace: string;
+  name: string;
+  title: string;
+  input: Record<string, unknown>;
+  render_token: string;
 }
 
 export interface ComponentCreate {
@@ -799,7 +839,6 @@ export interface ComponentCreate {
   enabled_queries?: string[];
   enabled_components?: string[];
   enabled_stores?: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility?: string;
 }
 
@@ -815,10 +854,8 @@ export interface ComponentUpdate {
   enabled_queries?: string[];
   enabled_components?: string[];
   enabled_stores?: EnabledStoreConfig[];
-  css_overrides?: string;
   visibility?: string;
   is_active?: boolean;
-  is_published?: boolean;
 }
 
 // Collections

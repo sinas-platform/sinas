@@ -96,16 +96,6 @@ services:
     deploy:
       replicas: 0
 
-  builder:
-    image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/builder:${IMAGE_TAG:-latest}
-    container_name: sinas-builder
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   backend:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
@@ -153,16 +143,16 @@ services:
       SUPERADMIN_EMAIL: ${SUPERADMIN_EMAIL:-}
       DOCKER_NETWORK: ${DOCKER_NETWORK:-auto}
       FUNCTION_CONTAINER_IMAGE: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/executor:${IMAGE_TAG:-latest}
+      # Caddy serves the console on its own port (Caddyfile); links into it
+      # (shared components, password setup) need to know.
+      CONSOLE_URL: ${CONSOLE_URL:-https://${DOMAIN:-localhost}:51245/ui}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      BUILDER_URL: http://sinas-builder:3000
     depends_on:
       clickhouse:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      builder:
         condition: service_healthy
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 

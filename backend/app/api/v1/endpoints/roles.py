@@ -69,14 +69,13 @@ async def create_role(
             )
         )
 
-    # Add creator as first member
-    member = UserRole(
-        role_id=role.id,
-        user_id=uuid.UUID(user_id),
-        active=True,
-        added_by=uuid.UUID(user_id),
-    )
-    db.add(member)
+    # The creator is deliberately NOT added as a member. Creating a role
+    # defines a container of authority; it must not grant it (#167). Silent
+    # self-membership is a delayed-escalation path: an admin later attaches
+    # permissions to what looks like an unassigned role and the creator holds
+    # them from that moment, including through any API key they own, without
+    # anyone having decided to grant them. Config-applied roles already work
+    # this way, as do package-shipped roles ("define, never bind").
     await db.flush()
     await db.refresh(role)
 

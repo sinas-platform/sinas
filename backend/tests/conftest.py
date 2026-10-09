@@ -114,6 +114,9 @@ async def test_role(db: AsyncSession) -> Role:
         "sinas.functions/*/*.update:own",
         "sinas.functions/*/*.delete:own",
         "sinas.queries.create:own",
+        # Binding a query to a connection takes connection read access (the
+        # editor lists connections with it; see queries._authorize_connection).
+        "sinas.database_connections.read:all",
         "sinas.queries/*/*.read:all",
         "sinas.queries/*/*.update:own",
         "sinas.queries/*/*.delete:own",

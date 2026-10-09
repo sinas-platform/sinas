@@ -79,6 +79,10 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "object",
                         "description": "Install-time variable values (keyed by variable name). Pass these if the package declares spec.variables.",
                     },
+                    "instance": {
+                        "type": "string",
+                        "description": "Install name for a package declaring package.multiInstance: true (lowercase, dashes), so it can be installed more than once. Defaults to the package name.",
+                    },
                 },
             },
             "_metadata": {"system_tool": "packageManagement"},
@@ -108,6 +112,10 @@ _TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "variables": {
                         "type": "object",
                         "description": "Install-time variable values (keyed by variable name).",
+                    },
+                    "instance": {
+                        "type": "string",
+                        "description": "Install name for a package declaring package.multiInstance: true (lowercase, dashes), so it can be installed more than once. Defaults to the package name.",
                     },
                 },
             },
@@ -231,7 +239,7 @@ async def execute_package_tool(
         if tool_name == "sinas_package_install":
             return await _install(db, arguments, user_id, permissions)
         if tool_name == "sinas_package_uninstall":
-            return await _uninstall(db, arguments, permissions)
+            return await _uninstall(db, arguments, user_id, permissions)
         if tool_name == "sinas_package_list":
             return await _list(db, permissions)
         if tool_name == "sinas_package_export":
@@ -339,13 +347,14 @@ async def _preview(db, arguments, user_id, permissions):
     variables = arguments.get("variables")
 
     service = PackageService(db)
-    result, variable_declarations, requires_input = await service.preview(
-        yaml_content, user_id, variables=variables
+    result, variable_declarations, requires_input, install_info = await service.preview(
+        yaml_content, user_id, variables=variables, instance=arguments.get("instance")
     )
     response = _apply_response_to_dict(result)
     if variable_declarations:
         response["variables"] = variable_declarations
         response["requires_input"] = requires_input
+    response.update(install_info)
     return response
 
 
@@ -357,10 +366,13 @@ async def _install(db, arguments, user_id, permissions):
     variables = arguments.get("variables")
 
     service = PackageService(db)
-    package, result = await service.install(yaml_content, user_id, variables=variables)
+    package, result = await service.install(
+        yaml_content, user_id, variables=variables, instance=arguments.get("instance")
+    )
     return {
         "package": {
             "name": package.name,
+            "package_name": package.package_name,
             "version": package.version,
             "description": package.description,
             "author": package.author,
@@ -370,7 +382,7 @@ async def _install(db, arguments, user_id, permissions):
     }
 
 
-async def _uninstall(db, arguments, permissions):
+async def _uninstall(db, arguments, user_id, permissions):
     if not check_permission(permissions, "sinas.packages.uninstall:all"):
         raise PermissionError("sinas.packages.uninstall:all required")
 
@@ -379,7 +391,7 @@ async def _uninstall(db, arguments, permissions):
         return {"error": "missing_package_name", "detail": "'package_name' argument is required"}
 
     service = PackageService(db)
-    deleted = await service.uninstall(package_name)
+    deleted = await service.uninstall(package_name, actor_user_id=str(user_id) if user_id else None)
     return {"package_name": package_name, "deleted": deleted}
 
 

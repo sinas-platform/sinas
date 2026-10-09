@@ -12,135 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import timezone as tz
 
 from app.core.encryption import encryption_service
-from app.models.component import Component
-from app.models.database_connection import DatabaseConnection
 from app.models.dependency import Dependency
 from app.models.file import Collection
 from app.models.function import Function, FunctionVersion
 from app.models.manifest import Manifest
-from app.models.query import Query
-from app.models.connector import Connector
 from app.models.secret import Secret
-from app.models.skill import Skill
 from app.models.store import Store
 
-from app.schemas.config import CONNECTOR_AUTH_FIELD_MAP, TOKEN_RESPONSE_PATH_FIELD_MAP
-from app.services.config_apply.normalizers import normalize_store_references, should_skip_existing
+from app.services.config_apply.normalizers import should_skip_existing
+from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
-
-
-async def apply_connectors(
-    db: AsyncSession,
-    connectors: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    """Apply connector configurations."""
-    for conn_config in connectors:
-        resource_name = f"{conn_config.namespace}/{conn_config.name}"
-        try:
-            stmt = select(Connector).where(
-                Connector.namespace == conn_config.namespace,
-                Connector.name == conn_config.name,
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            # Convert operations to dicts
-            operations = []
-            for op in conn_config.operations:
-                operations.append({
-                    "name": op.name,
-                    "method": op.method,
-                    "path": op.path,
-                    "description": op.description,
-                    "parameters": op.parameters,
-                    "request_body_mapping": op.requestBodyMapping,
-                    "response_mapping": op.responseMapping,
-                })
-
-            # Map camelCase config keys → snake_case stored keys via the single field map.
-            auth = {
-                snake: getattr(conn_config.auth, camel)
-                for camel, snake in CONNECTOR_AUTH_FIELD_MAP
-            }
-            # Nested paths object: camelize-in-reverse its inner keys too, so
-            # the stored shape matches what the REST path stores.
-            if auth.get("token_response_paths") is not None:
-                trp = auth["token_response_paths"]
-                auth["token_response_paths"] = {
-                    snake: getattr(trp, camel)
-                    for camel, snake in TOKEN_RESPONSE_PATH_FIELD_MAP
-                    if getattr(trp, camel) is not None
-                } or None
-            # Remove None values from auth
-            auth = {k: v for k, v in auth.items() if v is not None}
-
-            retry = {
-                "max_attempts": conn_config.retry.maxAttempts,
-                "backoff": conn_config.retry.backoff,
-            }
-
-            config_hash = calculate_hash({
-                "namespace": conn_config.namespace,
-                "name": conn_config.name,
-                "base_url": conn_config.baseUrl,
-                "auth": auth,
-                "headers": conn_config.headers,
-                "retry": retry,
-                "timeout_seconds": conn_config.timeoutSeconds,
-                "operations": operations,
-            })
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "connectors", resource_name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    existing.base_url = conn_config.baseUrl
-                    existing.description = conn_config.description
-                    existing.auth = auth
-                    existing.headers = conn_config.headers
-                    existing.retry = retry
-                    existing.timeout_seconds = conn_config.timeoutSeconds
-                    existing.operations = operations
-                    existing.is_active = True
-                    existing.managed_by = managed_by
-                    existing.config_name = config_name
-                    existing.config_checksum = config_hash
-
-                track_change("update", "connectors", resource_name)
-            else:
-                if not dry_run:
-                    connector = Connector(
-                        user_id=owner_user_id,
-                        namespace=conn_config.namespace,
-                        name=conn_config.name,
-                        description=conn_config.description,
-                        base_url=conn_config.baseUrl,
-                        auth=auth,
-                        headers=conn_config.headers,
-                        retry=retry,
-                        timeout_seconds=conn_config.timeoutSeconds,
-                        operations=operations,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(connector)
-
-                track_change("create", "connectors", resource_name)
-
-        except Exception as e:
-            errors.append(f"Failed to apply connector '{resource_name}': {e}")
-            logger.exception(f"Error applying connector '{resource_name}'")
 
 
 async def apply_secrets(
@@ -183,7 +65,7 @@ async def apply_secrets(
             if existing:
                 if existing.managed_by and existing.managed_by != managed_by:
                     warnings.append(
-                        f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping."
+                        OwnershipSkip(f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping.")
                     )
                     track_change("unchanged", "secrets", resource_name)
                     continue
@@ -233,108 +115,6 @@ async def apply_secrets(
         except Exception as e:
             errors.append(f"Failed to apply secret '{resource_name}': {e}")
             logger.exception(f"Error applying secret '{resource_name}'")
-
-
-async def apply_queries(
-    db: AsyncSession,
-    queries: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    database_connection_ids: dict[str, str],
-) -> None:
-    """Apply query configurations"""
-    for query_config in queries:
-        resource_name = f"{query_config.namespace}/{query_config.name}"
-        try:
-            stmt = select(Query).where(
-                Query.namespace == query_config.namespace,
-                Query.name == query_config.name,
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": query_config.namespace,
-                    "name": query_config.name,
-                    "description": query_config.description,
-                    "connection_name": query_config.connectionName,
-                    "operation": query_config.operation,
-                    "sql": query_config.sql,
-                    "input_schema": query_config.inputSchema,
-                    "output_schema": query_config.outputSchema,
-                    "timeout_ms": query_config.timeoutMs,
-                    "max_rows": query_config.maxRows,
-                }
-            )
-
-            # Resolve database connection name to ID
-            db_conn_id = database_connection_ids.get(query_config.connectionName)
-            if not db_conn_id:
-                # Try loading from database
-                db_conn = await DatabaseConnection.get_by_name(
-                    db, query_config.connectionName
-                )
-                if db_conn:
-                    db_conn_id = str(db_conn.id)
-                else:
-                    errors.append(
-                        f"Database connection '{query_config.connectionName}' not found for query '{resource_name}'"
-                    )
-                    continue
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "queries", resource_name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    existing.description = query_config.description
-                    existing.database_connection_id = db_conn_id
-                    existing.operation = query_config.operation
-                    existing.sql = query_config.sql
-                    existing.input_schema = query_config.inputSchema or {}
-                    existing.output_schema = query_config.outputSchema or {}
-                    existing.timeout_ms = query_config.timeoutMs
-                    existing.max_rows = query_config.maxRows
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change("update", "queries", resource_name)
-
-            else:
-                if not dry_run:
-                    new_query = Query(
-                        namespace=query_config.namespace,
-                        name=query_config.name,
-                        description=query_config.description,
-                        database_connection_id=db_conn_id,
-                        operation=query_config.operation,
-                        sql=query_config.sql,
-                        input_schema=query_config.inputSchema or {},
-                        output_schema=query_config.outputSchema or {},
-                        timeout_ms=query_config.timeoutMs,
-                        max_rows=query_config.maxRows,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_query)
-
-                track_change("create", "queries", resource_name)
-
-        except Exception as e:
-            errors.append(
-                f"Error applying query '{resource_name}': {str(e)}"
-            )
 
 
 async def apply_functions(
@@ -466,190 +246,6 @@ async def apply_functions(
 
         except Exception as e:
             errors.append(f"Error applying function '{func_config.name}': {str(e)}")
-
-
-async def apply_skills(
-    db: AsyncSession,
-    skills: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    """Apply skill configurations"""
-    for skill_config in skills:
-        try:
-            stmt = select(Skill).where(
-                Skill.namespace == skill_config.namespace, Skill.name == skill_config.name
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": skill_config.namespace,
-                    "name": skill_config.name,
-                    "description": skill_config.description,
-                    "content": skill_config.content,
-                }
-            )
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "skills", f"{skill_config.namespace}/{skill_config.name}", track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    # Update skill
-                    existing.description = skill_config.description
-                    existing.content = skill_config.content
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change(
-                    "update", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                )
-
-            else:
-                if not dry_run:
-                    new_skill = Skill(
-                        namespace=skill_config.namespace,
-                        name=skill_config.name,
-                        description=skill_config.description,
-                        content=skill_config.content,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_skill)
-
-                track_change(
-                    "create", "skills", f"{skill_config.namespace}/{skill_config.name}"
-                )
-
-        except Exception as e:
-            errors.append(
-                f"Error applying skill '{skill_config.namespace}/{skill_config.name}': {str(e)}"
-            )
-
-
-async def apply_components(
-    db: AsyncSession,
-    components: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    notify_compile: Any = None,
-) -> None:
-    """Apply component configurations.
-
-    `notify_compile(component_id)` is called for every component whose source
-    was created/changed, so the caller can trigger compilation post-commit —
-    without it, config-applied components sat at compile_status="pending"
-    forever (only the REST path ever compiled).
-    """
-    for comp_config in components:
-        resource_name = f"{comp_config.namespace}/{comp_config.name}"
-        try:
-            stmt = select(Component).where(
-                Component.namespace == comp_config.namespace,
-                Component.name == comp_config.name,
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            config_hash = calculate_hash(
-                {
-                    "namespace": comp_config.namespace,
-                    "name": comp_config.name,
-                    "title": comp_config.title,
-                    "description": comp_config.description,
-                    "source_code": comp_config.sourceCode,
-                    "input_schema": comp_config.inputSchema or {},
-                    "enabled_agents": comp_config.enabledAgents,
-                    "enabled_functions": comp_config.enabledFunctions,
-                    "enabled_queries": comp_config.enabledQueries,
-                    "enabled_components": comp_config.enabledComponents,
-                    "enabled_stores": normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
-                    "css_overrides": comp_config.cssOverrides,
-                    "visibility": comp_config.visibility,
-                }
-            )
-
-            if existing:
-                if should_skip_existing(existing, managed_by, config_name, config_hash, "components", resource_name, track_change, warnings):
-                    continue
-
-                if not dry_run:
-                    source_changed = existing.source_code != comp_config.sourceCode
-                    existing.title = comp_config.title
-                    existing.description = comp_config.description
-                    existing.source_code = comp_config.sourceCode
-                    existing.input_schema = comp_config.inputSchema
-                    existing.enabled_agents = comp_config.enabledAgents
-                    existing.enabled_functions = comp_config.enabledFunctions
-                    existing.enabled_queries = comp_config.enabledQueries
-                    existing.enabled_components = comp_config.enabledComponents
-                    existing.enabled_stores = normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else []
-                    existing.css_overrides = comp_config.cssOverrides
-                    existing.visibility = comp_config.visibility
-                    existing.is_active = True
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-                    if source_changed:
-                        existing.compile_status = "pending"
-                        existing.compiled_bundle = None
-                        existing.source_map = None
-                        existing.compile_errors = None
-                        existing.version += 1
-                        if notify_compile:
-                            notify_compile(existing.id)
-
-                track_change("update", "components", resource_name)
-
-            else:
-                if not dry_run:
-                    new_component = Component(
-                        namespace=comp_config.namespace,
-                        name=comp_config.name,
-                        title=comp_config.title,
-                        description=comp_config.description,
-                        source_code=comp_config.sourceCode,
-                        input_schema=comp_config.inputSchema,
-                        enabled_agents=comp_config.enabledAgents,
-                        enabled_functions=comp_config.enabledFunctions,
-                        enabled_queries=comp_config.enabledQueries,
-                        enabled_components=comp_config.enabledComponents,
-                        enabled_stores=normalize_store_references(comp_config.enabledStores) if hasattr(comp_config, 'enabledStores') else [],
-                        css_overrides=comp_config.cssOverrides,
-                        visibility=comp_config.visibility,
-                        user_id=owner_user_id,
-                        is_active=True,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                        compile_status="pending",
-                    )
-                    db.add(new_component)
-                    if notify_compile:
-                        await db.flush()  # assign the id for the compile queue
-                        notify_compile(new_component.id)
-
-                track_change("create", "components", resource_name)
-
-        except Exception as e:
-            errors.append(f"Error applying component '{resource_name}': {str(e)}")
 
 
 async def apply_collections(
@@ -859,6 +455,7 @@ async def apply_manifests(
                     "exposed_namespaces": {
                         k: sorted(v) for k, v in sorted(manifest_config.exposedNamespaces.items())
                     },
+                    "public_info": manifest_config.publicInfo,
                 }
             )
 
@@ -875,6 +472,7 @@ async def apply_manifests(
                     existing.required_permissions = manifest_config.requiredPermissions
                     existing.optional_permissions = manifest_config.optionalPermissions
                     existing.exposed_namespaces = manifest_config.exposedNamespaces
+                    existing.public_info = manifest_config.publicInfo
                     existing.is_active = True
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
@@ -894,6 +492,7 @@ async def apply_manifests(
                         required_permissions=manifest_config.requiredPermissions,
                         optional_permissions=manifest_config.optionalPermissions,
                         exposed_namespaces=manifest_config.exposedNamespaces,
+                        public_info=manifest_config.publicInfo,
                         user_id=owner_user_id,
                         is_active=True,
                         managed_by=managed_by,
