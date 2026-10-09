@@ -4,6 +4,8 @@ Opt-in via OTEL_ENABLED=true + OTEL_EXPORTER_ENDPOINT. When disabled,
 all spans are no-ops with zero overhead (OTEL API default behavior).
 """
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Optional
 
 from opentelemetry import context as otel_context, trace
@@ -117,3 +119,23 @@ def extract_trace_context(carrier: dict[str, str]) -> Optional[otel_context.Cont
     if not carrier:
         return None
     return extract(carrier=carrier)
+
+
+@contextmanager
+def attached(ctx: Optional[otel_context.Context]) -> Iterator[None]:
+    """Make `ctx` the current context for the block, then restore the previous one.
+
+    Starting a span with `context=ctx` only takes its parent from `ctx`; the
+    baggage `ctx` carries is not current inside that span. Attaching makes the
+    whole of it current — the trace and the baggage — so a provider call made
+    in the block can propagate both (`inject_trace_context`). `None` attaches
+    nothing.
+    """
+    if ctx is None:
+        yield
+        return
+    token = otel_context.attach(ctx)
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
