@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.permissions import check_permission
 from app.models.function import Function
 from app.services.template_renderer import render_function_parameters
@@ -234,7 +234,7 @@ class FunctionToolConverter:
             raise ValueError(f"Function not found: {tool_name}")
 
         # Check permissions: sinas.functions/{namespace}/{name}.execute:own or :all
-        user_permissions = await get_user_permissions(db, user_id)
+        user_permissions = await get_effective_permissions(db, user_id)
         execute_perm_all = f"sinas.functions/{namespace}/{name}.execute:all"
         execute_perm_own = f"sinas.functions/{namespace}/{name}.execute:own"
 
