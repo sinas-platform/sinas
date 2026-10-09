@@ -32,6 +32,8 @@ Invariants the resume path must keep (verified by tests):
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import logging
 from dataclasses import dataclass
@@ -41,6 +43,11 @@ from typing import Any, Callable, Optional
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
+
+# Enqueueing a finished round's resume: tries while the completing caller's
+# token is at hand, before leaving it to the expiry sweep.
+_ENQUEUE_ATTEMPTS = 3
+_ENQUEUE_BACKOFF_SECONDS = 0.5
 
 # Stream event type announcing any suspension (superset of the older
 # delegation_pending event, which is still emitted for delegation rounds).
@@ -312,12 +319,24 @@ async def complete(
     if not is_last:
         return {"status": "completed", "resumed": False}
 
-    queued = await _enqueue_resume(row_id, chat_id, user_id, user_token, resume_channel, ctx)
-    if queued:
-        logger.info(
-            "All pending completions landed for chat %s — resume job enqueued", chat_id
-        )
-    return {"status": "completed", "resumed": True, "channel_id": resume_channel}
+    # A few quick tries while this caller's token is still at hand: the
+    # sweep's retry has none (like an expiry), so tools needing the user's
+    # token fail in a round it resumes.
+    for attempt in range(_ENQUEUE_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_ENQUEUE_BACKOFF_SECONDS * attempt)
+        if await _enqueue_resume(row_id, chat_id, user_id, user_token, resume_channel, ctx):
+            logger.info(
+                "All pending completions landed for chat %s — resume job enqueued", chat_id
+            )
+            return {"status": "completed", "resumed": True, "channel_id": resume_channel}
+    # Not queued yet: the expiry sweep retries it, on the same channel.
+    return {
+        "status": "completed",
+        "resumed": False,
+        "resume_pending": True,
+        "channel_id": resume_channel,
+    }
 
 
 async def _enqueue_resume(

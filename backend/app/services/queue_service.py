@@ -414,7 +414,8 @@ class QueueService:
         """Enqueue continuation of a parent suspended on delegations (issue #90).
 
         `job_id`: a fixed id makes the enqueue idempotent (arq won't queue a
-        second job under an id it already has).
+        second job under an id it already has, and a status already recorded
+        for it — possibly "completed" by now — is left as it is).
 
         Fired by the last finishing child. Routed by the parent's own
         delegation depth, so a suspended sub-agent resumes on the sub-agent
@@ -423,6 +424,7 @@ class QueueService:
         pool = await get_arq_pool()
         redis = await get_redis()
 
+        fixed_id = job_id is not None
         job_id = job_id or str(uuid.uuid4())
         depth = conversation_context.get("delegation_depth", 0)
         use_sub_queue = depth > 0 and settings.agent_subagent_queue
@@ -440,6 +442,7 @@ class QueueService:
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps(status_data),
             ex=JOB_TTL,
+            nx=fixed_id,
         )
 
         enqueue_kwargs: dict[str, Any] = {

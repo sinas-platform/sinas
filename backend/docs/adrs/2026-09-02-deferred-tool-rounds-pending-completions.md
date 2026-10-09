@@ -61,8 +61,11 @@ the round resumes when the last completion lands. Concretely:
   understood as the generic *round resume*: it re-enters
   `_stream_followup_after_tools` like any inline round. The checkpoint is
   deleted only once that job is queued (job id `resume-<checkpoint id>`, so
-  a retry can't queue it twice); if queueing fails, the expiry sweep
-  retries rows with nothing left outstanding. This branch has no per-chat
+  a retry can't queue it twice); if queueing fails, `complete()` retries a
+  few times while the completing caller's token is still at hand, reports
+  `resume_pending`, and leaves the row for the expiry sweep, which retries
+  rows with nothing left outstanding. A sweep retry, like an expiry, has no
+  user token (see below). This branch has no per-chat
   lock or cooperative interrupt; when those land, the resume path should
   take the lock and check the interrupt like an inline round does.
 - **Completers shipped:**
