@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.permissions import check_permission
 from app.models.execution import TriggerType
 from app.models.pipeline import Pipeline
@@ -97,7 +97,7 @@ class PipelineToolConverter:
         if not pipeline or not pipeline.is_active or not pipeline.as_tool:
             return {"error": f"Pipeline '{ref}' not found, inactive, or not exposed as a tool"}
 
-        user_permissions = await get_user_permissions(db, user_id)
+        user_permissions = await get_effective_permissions(db, user_id)
         if not check_permission(user_permissions, f"sinas.pipelines/{ref}.run:own"):
             return {
                 "error": "Permission denied",

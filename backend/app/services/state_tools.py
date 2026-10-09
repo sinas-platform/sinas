@@ -342,7 +342,7 @@ class StateTools:
         1. Agent's enabled_stores gates which stores are available as tools
         2. User's RBAC permissions gate actual access at execution time
         """
-        from app.core.auth import get_user_permissions
+        from app.core.auth import get_effective_permissions
         from app.core.permissions import check_permission
 
         # Get agent's enabled_stores for validation
@@ -370,7 +370,7 @@ class StateTools:
         requested_store = arguments.get("store")
         if requested_store and "/" in requested_store:
             ns, name = requested_store.split("/", 1)
-            user_permissions = await get_user_permissions(db, user_id)
+            user_permissions = await get_effective_permissions(db, user_id)
             is_write = tool_name in ("save_state", "update_state", "delete_state")
             perm = f"sinas.stores/{ns}/{name}.write_state:own" if is_write else f"sinas.stores/{ns}/{name}.read_state:own"
             if not check_permission(user_permissions, perm):

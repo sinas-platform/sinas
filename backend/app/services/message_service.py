@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
@@ -810,7 +810,7 @@ class MessageService:
         import sys
         print(f"🔧 _handle_tool_calls: {len(tool_calls)} calls: {[tc['function']['name'] for tc in tool_calls]}", flush=True, file=sys.stderr)
         if permissions is None:
-            permissions = await get_user_permissions(self.db, user_id)
+            permissions = await get_effective_permissions(self.db, user_id)
 
         # Check if assistant message with these tool calls already exists
         first_tool_call_id = tool_calls[0]["id"] if tool_calls else None

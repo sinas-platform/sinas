@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from app.core.auth import current_api_key_id
 from app.core.config import settings
 from app.core.redis import get_arq_pool, get_redis
 from app.core.telemetry import inject_trace_context
@@ -328,6 +329,9 @@ class QueueService:
             pending_delegation_id=pending_delegation_id,
             parent_tool_call_id=parent_tool_call_id,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 
@@ -388,6 +392,9 @@ class QueueService:
             approved=approved,
             channel_id=channel_id,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 
@@ -447,6 +454,9 @@ class QueueService:
             channel_id=channel_id,
             conversation_context=conversation_context,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 

@@ -20,6 +20,24 @@ logger = logging.getLogger(__name__)
 PING_INTERVAL = 15  # seconds between keep-alive pings
 
 
+def _acting_as_job_key(job):
+    """Run an agent job through the API key its request came in on (if any):
+    its tools then check the key's permissions, as in the request itself."""
+    import functools
+
+    from app.core.auth import bind_api_key, reset_api_key
+
+    @functools.wraps(job)
+    async def wrapper(ctx: dict, **kwargs: Any) -> None:
+        token = bind_api_key(kwargs.get("api_key_id"))
+        try:
+            return await job(ctx, **kwargs)
+        finally:
+            reset_api_key(token)
+
+    return wrapper
+
+
 async def _ping_loop(channel_id: str, ttl: int | None = None) -> None:
     """Background task that publishes ping events to keep SSE connections alive."""
     from app.services.stream_relay import stream_relay
@@ -67,6 +85,7 @@ async def _terminate_execution_row(
             await batch_service.on_execution_terminated(db=db, batch_id=execution.batch_id)
 
 
+@_acting_as_job_key
 async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     """
     Process an agent message in a worker.
@@ -329,6 +348,7 @@ async def _persist_turn_error(chat_id: str, error: Exception) -> None:
             f"Could not persist turn error for chat {chat_id}: {persist_error}"
         )
 
+@_acting_as_job_key
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     """
     Resume agent processing after tool approval in a worker.
@@ -493,6 +513,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                 logger.error(f"Failed to update status for cancelled agent resume job {job_id}")
 
 
+@_acting_as_job_key
 async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     """Continue a parent conversation suspended on sub-agent delegations.
 
