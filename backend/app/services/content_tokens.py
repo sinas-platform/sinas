@@ -149,15 +149,20 @@ def refresh_component_render_tokens(
             if not namespace or not name:
                 raise ValueError("Missing namespace or name in token")
 
-            # Keep existing token if still > 10 min remaining
+            # Read through an API key, the token must act through that key,
+            # however fresh: one made in the owner's own session would carry
+            # the owner's rights. Otherwise it keeps the key it was made under.
+            from app.core.auth import current_api_key_id
+
+            reader_key = current_api_key_id()
+            api_key_id = reader_key or payload.get("api_key_id")
             exp = payload.get("exp", 0)
-            if exp - time.time() > 600:
+            if exp - time.time() > 600 and payload.get("api_key_id") == api_key_id:
                 refreshed.append(part)
                 continue
 
-            # Keeps the key the token was made under (if any).
             new_token = generate_component_render_token(
-                namespace, name, user_id, api_key_id=payload.get("api_key_id")
+                namespace, name, user_id, api_key_id=api_key_id
             )
             refreshed.append({**part, "render_token": new_token})
         except Exception:

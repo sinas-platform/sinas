@@ -199,3 +199,70 @@ class TestARequestOnAKeyActsThroughIt:
                 route for route in fastapi_app.router.routes
                 if getattr(route, "path", None) != "/__test/acting-key"
             ]
+
+
+class TestStoresWithoutANamedStore:
+    async def _setup(self, db, owner):
+        from app.models.agent import Agent
+        from app.models.state import State
+        from app.models.store import Store
+
+        ns = f"crm{_uid()}"
+        enabled = Store(namespace=ns, name="notes", user_id=owner.id)
+        other = Store(namespace=ns, name="secrets", user_id=owner.id)
+        db.add_all([enabled, other])
+        await db.flush()
+        db.add_all([
+            State(user_id=owner.id, store_id=enabled.id, key="visible", value={"v": 1}),
+            State(user_id=owner.id, store_id=other.id, key="hidden", value={"v": 2}),
+        ])
+        agent = Agent(
+            user_id=owner.id, namespace=ns, name="bot", system_prompt="x",
+            enabled_stores=[{"store": f"{ns}/notes", "access": "readonly"}],
+        )
+        db.add(agent)
+        await db.flush()
+        return agent
+
+    async def test_a_search_stays_in_the_agents_readable_stores(self, db, admin_user):
+        from app.services.state_tools import StateTools
+
+        agent = await self._setup(db, admin_user)
+        result = await StateTools.execute_tool(
+            db, "retrieve_state", {}, str(admin_user.id), agent_id=str(agent.id)
+        )
+        keys = {s["key"] for s in result.get("states", [])} if isinstance(result, dict) else set()
+        assert "hidden" not in str(result)  # another store's state never reached
+        assert "visible" in str(result) or keys == {"visible"}
+
+    async def test_a_chat_only_key_reads_nothing(self, db, admin_user):
+        from app.services.state_tools import StateTools
+
+        agent = await self._setup(db, admin_user)
+        api_key, _ = await _key(db, admin_user)
+        with _Bound(str(api_key.id)):
+            result = await StateTools.execute_tool(
+                db, "retrieve_state", {}, str(admin_user.id), agent_id=str(agent.id)
+            )
+        assert "visible" not in str(result) and "hidden" not in str(result)
+
+
+class TestRefreshedTokensForAKeysReader:
+    async def test_a_fresh_owner_token_is_capped_when_a_key_reads_it(self, db, admin_user):
+        from jose import jwt
+
+        from app.core.config import settings
+        from app.services.content_tokens import (
+            generate_component_render_token,
+            refresh_component_render_tokens,
+        )
+
+        owner_token = generate_component_render_token("ui", "board", str(admin_user.id), api_key_id=None)
+        part = {"type": "component", "namespace": "ui", "name": "board", "render_token": owner_token}
+        assert refresh_component_render_tokens([part], str(admin_user.id))[0]["render_token"] == owner_token
+
+        api_key, _ = await _key(db, admin_user)
+        with _Bound(str(api_key.id)):
+            [refreshed] = refresh_component_render_tokens([part], str(admin_user.id))
+        claims = jwt.decode(refreshed["render_token"], settings.secret_key, algorithms=["HS256"])
+        assert claims["api_key_id"] == str(api_key.id)
