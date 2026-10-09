@@ -4,6 +4,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.function import Function, FunctionVersion
@@ -22,6 +23,18 @@ async def _function_response(func: "Function", db: AsyncSession) -> FunctionResp
     return resp
 
 
+def _require_code_execution() -> None:
+    """With code execution off, functions can be viewed (and deleted) but not
+    created or changed: they could never run, and the console only hiding its
+    buttons left the API — and the editor's URL — open."""
+    if not settings.code_execution_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Code execution is disabled on this deployment (CODE_EXECUTION_ENABLED=false): "
+            "functions can't be created or changed.",
+        )
+
+
 @router.post("", response_model=FunctionResponse, status_code=status.HTTP_201_CREATED)
 async def create_function(
     request: Request,
@@ -30,6 +43,7 @@ async def create_function(
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new function."""
+    _require_code_execution()
     user_id, permissions = current_user_data
 
     # Check permission to create functions
@@ -158,6 +172,7 @@ async def update_function(
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Update a function."""
+    _require_code_execution()
     user_id, permissions = current_user_data
 
     # Use mixin for permission-aware get
