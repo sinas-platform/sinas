@@ -1155,6 +1155,10 @@ class MessageService:
             ask_events: list[dict[str, Any]] = []
             for tc in ask_user_calls:
                 args = safe_parse_arguments(tc["function"].get("arguments", ""))
+                if not isinstance(args, dict):
+                    # Valid JSON that isn't an object (null, [], "x"): treat
+                    # as a missing question rather than crashing the turn.
+                    args = {}
                 question = args.get("question")
                 yield {
                     "type": "tool_start",

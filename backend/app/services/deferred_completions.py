@@ -295,12 +295,19 @@ async def complete(
         return {"status": "completed", "resumed": False}
 
     resume_channel = resume_channel_id or channel_id
+    # A fresh resume channel serves the API caller's reconnect; the suspended
+    # round's ORIGINAL channel may still have a listener — a parent agent
+    # blocking on a delegated child (block mode waits for `done` on the
+    # channel it opened). Mirror the resumed stream there so it never
+    # misses the child's answer and times out.
+    mirror_channel = channel_id if resume_channel != channel_id else None
     await queue_service.enqueue_agent_delegate_resume(
         chat_id=chat_id,
         user_id=user_id,
         user_token=user_token,
         channel_id=resume_channel,
         conversation_context=ctx,
+        mirror_channel_id=mirror_channel,
     )
     logger.info(
         "All pending completions landed for chat %s — resume job enqueued", chat_id

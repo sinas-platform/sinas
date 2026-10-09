@@ -174,6 +174,29 @@ async def test_ask_user_round_suspends_instead_of_executing(db, chat, test_user)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("raw_args", ["null", "[]", '"just a string"', "42"])
+async def test_non_object_arguments_fail_fast_like_a_missing_question(
+    db, chat, test_user, raw_args
+):
+    """Valid JSON that isn't an object must get the immediate error result,
+    not crash the turn and leave the call without result or checkpoint."""
+    call = {"id": "call_weird", "type": "function",
+            "function": {"name": "ask_user", "arguments": raw_args}}
+    # Paired with a well-formed question so the round suspends (a round with
+    # nothing left to ask would continue to the LLM follow-up, which the
+    # test environment has no provider for).
+    chunks = await _run_round(db, chat, test_user, [call, _ask_call("call_good")])
+    ends = {c["tool_call_id"]: c for c in chunks if c.get("type") == "tool_end"}
+    assert "error" in json.loads(ends["call_weird"]["result"])
+    row = (
+        await db.execute(
+            select(PendingCompletion).where(PendingCompletion.chat_id == chat.id)
+        )
+    ).scalar_one()
+    assert set(row.pending) == {"call_good"}
+
+
+@pytest.mark.asyncio
 async def test_malformed_question_fails_fast_and_does_not_park_the_round(
     db, chat, test_user
 ):

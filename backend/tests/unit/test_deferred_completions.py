@@ -272,6 +272,31 @@ async def test_resume_without_fresh_channel_uses_the_suspended_rounds_channel(
 
 
 @pytest.mark.asyncio
+async def test_fresh_resume_channel_mirrors_the_original(env, capture_resume):
+    """A blocking parent agent waits for `done` on the channel it opened for
+    its child; an answer arriving over the API resumes on a fresh channel,
+    so the original must be mirrored or the parent times out."""
+    row_id = await _suspend(
+        env, {"call_q": {"completer": dc.HUMAN_INPUT, "question": "Which?"}}
+    )
+    await dc.complete(row_id, "call_q", '{"answer": "A"}', user_token="tok",
+                      resume_channel_id="chan-fresh")
+    (resume,) = capture_resume
+    assert resume["channel_id"] == "chan-fresh"
+    assert resume["mirror_channel_id"] == "chan-orig"
+
+
+@pytest.mark.asyncio
+async def test_resume_on_original_channel_has_no_mirror(env, capture_resume):
+    row_id = await _suspend(
+        env, {"call_del": {"completer": dc.SUB_AGENT, "sub_chat_id": "sc", "agent": "ns/a"}}
+    )
+    await dc.complete(row_id, "call_del", "{}", user_token="tok")
+    (resume,) = capture_resume
+    assert resume.get("mirror_channel_id") is None
+
+
+@pytest.mark.asyncio
 async def test_duplicate_completion_is_a_noop(env, capture_resume):
     row_id = await _suspend(
         env,

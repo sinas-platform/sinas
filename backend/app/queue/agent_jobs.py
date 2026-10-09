@@ -556,6 +556,9 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     user_id = kwargs["user_id"]
     user_token = kwargs["user_token"]
     channel_id = kwargs["channel_id"]
+    # The suspended round's original channel, when resuming on a fresh one:
+    # a blocking parent agent may still be listening there.
+    mirror_channel_id = kwargs.get("mirror_channel_id")
     context = kwargs["conversation_context"]
     # Inherited from the suspended job (see message_service suspend block).
     execution_id = context.get("execution_id")
@@ -590,6 +593,20 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     stream_ttl = context.get("stream_ttl")
     ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
 
+    _targets = [channel_id] + ([mirror_channel_id] if mirror_channel_id else [])
+
+    async def _publish(chunk: dict) -> None:
+        for target in _targets:
+            await stream_relay.publish(target, chunk, ttl=stream_ttl)
+
+    async def _publish_done() -> None:
+        for target in _targets:
+            await stream_relay.publish_done(target)
+
+    async def _publish_error(message: str) -> None:
+        for target in _targets:
+            await stream_relay.publish_error(target, message)
+
     completed = False
     _suspended = False
     _output_parts: list[str] = []
@@ -599,9 +616,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     try:
         lock_token = await chat_steering.acquire_chat_lock_wait(chat_id)
         if lock_token is None:
-            await stream_relay.publish_error(
-                channel_id, "Chat is busy with another running turn — try again"
-            )
+            await _publish_error("Chat is busy with another running turn — try again")
             return
         async with AsyncSessionLocal() as db:
             message_service = MessageService(db)
@@ -624,7 +639,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
                         _output_parts.append(chunk["content"])
                     if _is_suspension_chunk(chunk):
                         _suspended = True
-                    await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
+                    await _publish(chunk)
 
         if _suspended:
             # Suspended again on a further round of pending completions —
@@ -638,7 +653,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
             logger.info(f"Delegate-resume job {job_id} suspended again on delegation")
             return
 
-        await stream_relay.publish_done(channel_id)
+        await _publish_done()
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps({**base_fields, "status": "completed"}),
@@ -674,7 +689,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         logger.error(f"Delegate-resume job {job_id} failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         await _persist_turn_error(chat_id, e)
-        await stream_relay.publish_error(channel_id, str(e))
+        await _publish_error(str(e))
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps({**base_fields, "status": "failed", "error": str(e)}),

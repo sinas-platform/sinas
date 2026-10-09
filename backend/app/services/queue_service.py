@@ -402,8 +402,12 @@ class QueueService:
         channel_id: str,
         conversation_context: dict[str, Any],
         job_timeout: Optional[int] = None,
+        mirror_channel_id: Optional[str] = None,
     ) -> str:
         """Enqueue continuation of a parent suspended on delegations (issue #90).
+
+        `mirror_channel_id`: also publish the resumed stream to this (the
+        suspended round's original) channel, for listeners still on it.
 
         Fired by the last finishing child. Routed by the parent's own
         delegation depth, so a suspended sub-agent resumes on the sub-agent
@@ -446,6 +450,7 @@ class QueueService:
             user_token=user_token,
             channel_id=channel_id,
             conversation_context=conversation_context,
+            mirror_channel_id=mirror_channel_id,
             trace_context=inject_trace_context(),
             **enqueue_kwargs,
         )
