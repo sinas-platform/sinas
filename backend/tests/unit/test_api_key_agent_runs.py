@@ -266,3 +266,34 @@ class TestRefreshedTokensForAKeysReader:
             [refreshed] = refresh_component_render_tokens([part], str(admin_user.id))
         claims = jwt.decode(refreshed["render_token"], settings.secret_key, algorithms=["HS256"])
         assert claims["api_key_id"] == str(api_key.id)
+
+
+class TestNoStoresNoReads:
+    async def test_an_agent_without_stores_reads_nothing(self, db, admin_user):
+        from app.models.agent import Agent
+        from app.models.state import State
+        from app.models.store import Store
+        from app.services.state_tools import StateTools
+
+        store = Store(namespace=f"crm{_uid()}", name="notes", user_id=admin_user.id)
+        db.add(store)
+        await db.flush()
+        db.add(State(user_id=admin_user.id, store_id=store.id, key="private", value={"v": 1}))
+        agent = Agent(user_id=admin_user.id, namespace=f"a{_uid()}", name="bot", system_prompt="x")
+        db.add(agent)
+        await db.flush()
+        result = await StateTools.execute_tool(
+            db, "retrieve_state", {}, str(admin_user.id), agent_id=str(agent.id)
+        )
+        assert "private" not in str(result)
+
+
+class TestMessageLogForAKey:
+    def test_render_tokens_are_stripped(self):
+        import json
+
+        from app.services.content_tokens import strip_render_tokens
+
+        content = json.dumps({"type": "component", "namespace": "ui", "name": "b", "render_token": "T"})
+        assert json.loads(strip_render_tokens(content))["render_token"] is None
+        assert strip_render_tokens("plain text") == "plain text"

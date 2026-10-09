@@ -345,9 +345,11 @@ class StateTools:
         from app.core.auth import get_effective_permissions
         from app.core.permissions import check_permission
 
-        # Get agent's enabled_stores for validation
+        # Get agent's enabled_stores for validation. Reads without a named
+        # store reach only these (none: nothing), never every store the user
+        # has states in.
         write_stores = None
-        all_allowed_stores = None
+        all_allowed_stores: Optional[list[str]] = []
         if agent_id:
             from app.models.agent import Agent
 

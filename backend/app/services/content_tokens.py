@@ -174,6 +174,29 @@ def refresh_component_render_tokens(
     return refreshed
 
 
+def strip_render_tokens(content: str | None) -> str | None:
+    """Message content without component render tokens — for readers that
+    must not get a credential acting as the chat's owner (an API key reading
+    the message log: such a token would render with the owner's rights)."""
+    if not content:
+        return content
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return content
+
+    def strip(part):
+        if isinstance(part, dict) and part.get("type") == "component" and "render_token" in part:
+            return {**part, "render_token": None}
+        return part
+
+    if isinstance(parsed, list):
+        return json.dumps([strip(p) for p in parsed])
+    if isinstance(parsed, dict):
+        return json.dumps(strip(parsed))
+    return content
+
+
 def strip_base64_data(content: str | None) -> str | None:
     """Strip inline base64 data from message content to reduce payload size.
 
