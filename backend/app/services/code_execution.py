@@ -647,6 +647,7 @@ def _build_wrapper(user_code: str, workbench: bool = False) -> str:
 
     _builtins.open = _wb_open
     _io.open = _wb_open
+    _user_ns["workbench_fetch"] = workbench_fetch
 '''
         workbench_teardown = '''
     _builtins.open = _wb_real_open
@@ -704,6 +705,13 @@ def handler(input_data, context):
 
     result = None
     error = None
+    # User code runs in its own module-like namespace. Running it in the
+    # handler's frame instead (bare exec/eval) relies on locals() being one
+    # shared dict across calls, which stopped being true in Python 3.13
+    # (PEP 667): the exec'd statements' names vanish before the trailing
+    # expression is evaluated, and every program ending in an expression
+    # fails with a NameError.
+    _user_ns = {{"__name__": "__main__", "__builtins__": __builtins__}}
 {workbench_setup}
     try:
         user_code = {user_code_repr}
@@ -715,12 +723,12 @@ def handler(input_data, context):
                 # Last statement is an expression — eval it separately
                 last_expr = ast.Expression(tree.body[-1].value)
                 module = ast.Module(body=tree.body[:-1], type_ignores=[])
-                exec(compile(module, "<code>", "exec"))
-                result = eval(compile(last_expr, "<code>", "eval"))
+                exec(compile(module, "<code>", "exec"), _user_ns)
+                result = eval(compile(last_expr, "<code>", "eval"), _user_ns)
             else:
-                exec(compile(tree, "<code>", "exec"))
+                exec(compile(tree, "<code>", "exec"), _user_ns)
         except SyntaxError:
-            exec(user_code)
+            exec(user_code, _user_ns)
     except Exception as e:
         error = traceback.format_exc()
 

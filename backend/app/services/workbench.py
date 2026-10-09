@@ -713,6 +713,15 @@ async def apply_sync_changes(
         except Exception:
             rejected.append({"path": path, "reason": "invalid base64 content"})
             continue
+        # Provenance, like uploads ("upload") and spilled results ("tool"):
+        # a file born in an execution is stamped so; a file that already
+        # existed keeps its metadata — in particular a checked-out file that
+        # code modified must not lose the provenance promote relies on.
+        exists = (
+            await db.execute(
+                select(File.id).where(File.collection_id == workbench.id, File.name == path).limit(1)
+            )
+        ).scalar_one_or_none()
         result = await _write_bytes(
             db,
             storage,
@@ -722,6 +731,7 @@ async def apply_sync_changes(
             content_type=_infer_content_type(path),
             user_id=user_id,
             visibility="private",
+            file_metadata=None if exists else {"origin": "execution"},
         )
         if "error" in result:
             rejected.append({"path": path, "reason": result["error"]})
