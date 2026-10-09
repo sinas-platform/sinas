@@ -22,6 +22,7 @@ from .pending_approval import PendingToolApproval
 from .pipeline import Pipeline, PipelineCursor, PipelineRun
 from .pending_completion import PendingCompletion
 from .pending_delegation import PendingDelegation
+from .config_revision import ConfigRevision
 from .schedule import ScheduledJob
 from .secret import Secret
 from .signing_key import JWTSigningKey
@@ -51,6 +52,7 @@ __all__ = [
     "Function",
     "FunctionVersion",
     "Webhook",
+    "ConfigRevision",
     "ScheduledJob",
     "Execution",
     "Batch",

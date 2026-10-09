@@ -14,7 +14,7 @@ Sinas supports three authentication modes for end-user login, plus API keys for 
 | `password` | Email + password | Airgapped or no-SMTP deployments. No email round-trip. |
 | `password+otp` | Email + password + OTP | Most secure. Treats the OTP as a liveness check on the email account — useful when you need to lock out ex-employees by revoking their work mailbox. Requires SMTP. |
 
-Clients (custom frontends, the JS/Python SDKs, the official console) discover the active mode via the unauthenticated `GET /info` endpoint and branch their login UI accordingly.
+Clients (custom frontends, the JS/Python SDKs, the official console) discover the active mode via the unauthenticated `GET /info` endpoint and branch their login UI accordingly. The same response carries `features` (what this instance has enabled) and `services` (what installed apps publish about themselves through their [manifest's `publicInfo`](/admin/manifests#publishing-on-info), such as the browser-reachable URL of a sibling service).
 
 ## Login Flows
 

@@ -6,16 +6,17 @@ import re
 from typing import Any, Optional
 
 import yaml
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.models.chat import Chat
 from app.models.connector import Connector
 from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
-from app.models.function import Function
+from app.models.function import Function, FunctionVersion
 from app.models.package import Package
 from app.models.query import Query
 from app.models.schedule import ScheduledJob
@@ -24,7 +25,7 @@ from app.models.store import Store
 from app.models.template import Template
 from app.models.user import APIKeyRole, Role, RolePermission, UserRole
 from app.models.webhook import Webhook
-from app.schemas.config import ConfigApplyResponse, SinasConfig
+from app.schemas.config import ConfigApplyResponse, OwnershipSkip, SinasConfig
 from app.services.config_apply import ConfigApplyService
 from app.services.config_export import ConfigExportService
 from app.services.config_parser import ConfigParser
@@ -138,6 +139,66 @@ def detach_if_package_managed(resource) -> bool:
     return False
 
 
+_INSTALL_NAME_PATTERN = re.compile(r"\$\{\{\s*install\.name\s*\}\}")
+_INSTANCE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
+def _declared_package(yaml_content: str) -> tuple[Optional[str], bool]:
+    """(package.name, package.multiInstance) from the raw YAML, before any
+    substitution. Malformed YAML yields (None, False); full validation
+    happens later in parse_and_validate with a proper error."""
+    try:
+        doc = yaml.safe_load(yaml_content)
+    except Exception:
+        return None, False
+    if not isinstance(doc, dict) or not isinstance(doc.get("package"), dict):
+        return None, False
+    meta = doc["package"]
+    name = meta.get("name")
+    return (name if isinstance(name, str) else None), bool(meta.get("multiInstance", False))
+
+
+def resolve_install_name(yaml_content: str, instance: Optional[str]) -> tuple[str, str, Optional[str], bool]:
+    """Decide the install name and substitute ${{ install.name }}.
+
+    Returns (install_name, substituted_yaml, declared_name, multi_instance).
+
+    The install name is the declared package name unless `instance` is given.
+    A different name is only allowed when the package declares
+    package.multiInstance: true AND references ${{ install.name }} at least
+    once — without that, two installs would create the same namespaced
+    resources and each would take over the other's.
+    """
+    declared, multi = _declared_package(yaml_content)
+    install_name = instance or declared or ""
+    if instance and not _INSTANCE_NAME_RE.match(instance):
+        raise ValueError(
+            f"Instance name '{instance}' is invalid: lowercase letters, digits and dashes only"
+        )
+    if instance and declared and instance != declared:
+        if not multi:
+            raise ValueError(
+                f"Package '{declared}' does not support multiple instances; "
+                "it must declare package.multiInstance: true to be installed as "
+                f"'{instance}'"
+            )
+        if not _INSTALL_NAME_PATTERN.search(yaml_content):
+            raise ValueError(
+                f"Package '{declared}' declares multiInstance but never uses "
+                "${{ install.name }}, so a second install would share resources "
+                "with the first. Use ${{ install.name }} in namespaces, role "
+                "names and permission keys."
+            )
+    substituted = _INSTALL_NAME_PATTERN.sub(install_name, yaml_content) if install_name else yaml_content
+    return install_name, substituted, declared, multi
+
+
+def _instance_conflicts(warnings: list[str]) -> list[str]:
+    """Resources a multi-instance install left alone because another owner
+    has them. Each instance must own everything it declares."""
+    return [str(w) for w in warnings if isinstance(w, OwnershipSkip)]
+
+
 class PackageService:
     """Service for managing installable integration packages."""
 
@@ -150,6 +211,7 @@ class PackageService:
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
         allow_broad_role_permissions: bool = False,
+        instance: Optional[str] = None,
     ) -> tuple[Package, ConfigApplyResponse]:
         """
         Install a package from YAML content.
@@ -160,10 +222,15 @@ class PackageService:
             variables: Install-time variable values (keyed by variable name)
             allow_broad_role_permissions: accept package roles whose granted
                 permissions reach outside the package's own namespaces
+            instance: install name for a multi-instance package (defaults to
+                the package name); substituted for ${{ install.name }}
 
         Returns:
             Tuple of (Package record, ConfigApplyResponse)
         """
+        # The install name first: it may appear inside variable defaults too.
+        install_name, yaml_content, declared_name, multi = resolve_install_name(yaml_content, instance)
+
         # Substitute variables before parsing if provided
         yaml_content, resolved_values = await self._resolve_variables(
             yaml_content, variables or {}, user_id
@@ -181,7 +248,8 @@ class PackageService:
         if not config.package:
             raise ValueError("Package metadata is required for SinasPackage")
 
-        pkg_name = config.package.name
+        declared_name = config.package.name
+        pkg_name = install_name or declared_name   # resources and the record carry the install name
         managed_by = f"pkg:{pkg_name}"
 
         hard, broad, role_advisories = package_role_violations(config)
@@ -199,6 +267,12 @@ class PackageService:
             select(Package).where(Package.name == pkg_name)
         )
         existing_package = existing_result.scalar_one_or_none()
+        if existing_package and (existing_package.package_name or existing_package.name) != declared_name:
+            raise ValueError(
+                f"'{pkg_name}' is already installed from package "
+                f"'{existing_package.package_name or existing_package.name}', not '{declared_name}'; "
+                "pick another instance name or uninstall it first"
+            )
 
         # Apply config with package managed_by, skip environment-specific types, no auto-commit
         apply_service = ConfigApplyService(
@@ -208,12 +282,29 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=False)
 
+        conflicts = _instance_conflicts(apply_service.warnings) if multi else []
+        if conflicts:
+            # A skipped resource would leave this instance pointing at another
+            # owner's copy, so instances share it after all. Refuse instead.
+            raise ValueError(
+                f"Package not installed as '{pkg_name}': it would share resources "
+                f"owned by someone else. {'; '.join(conflicts)}"
+            )
+
         if not result.success:
-            raise ValueError(f"Package apply failed: {'; '.join(result.errors)}")
+            # All or nothing: nothing from this package is committed. The
+            # caller's transaction rolls back (the API returns 400; the agent
+            # tool's session closes without committing).
+            raise ValueError(
+                f"Package not installed: {len(result.errors)} resource(s) failed, so "
+                f"nothing was applied. {'; '.join(result.errors)}"
+            )
 
         # Add validation warnings to result
         result.warnings.extend(validation.warnings)
@@ -225,6 +316,7 @@ class PackageService:
 
         # Create or update package record
         if existing_package:
+            existing_package.package_name = declared_name
             existing_package.version = config.package.version
             existing_package.description = config.package.description
             existing_package.author = config.package.author
@@ -235,6 +327,7 @@ class PackageService:
         else:
             package = Package(
                 name=pkg_name,
+                package_name=declared_name,
                 version=config.package.version,
                 description=config.package.description,
                 author=config.package.author,
@@ -260,13 +353,18 @@ class PackageService:
         yaml_content: str,
         user_id: str,
         variables: Optional[dict[str, Any]] = None,
-    ) -> tuple[ConfigApplyResponse, list[dict], bool]:
+        instance: Optional[str] = None,
+    ) -> tuple[ConfigApplyResponse, list[dict], bool, dict[str, Any]]:
         """
         Preview a package install (dry run).
 
         Returns:
-            Tuple of (ConfigApplyResponse, variable_declarations, requires_input)
+            Tuple of (ConfigApplyResponse, variable_declarations, requires_input, install_info)
+            where install_info is {"instance", "package_name", "multi_instance"}.
         """
+        install_name, yaml_content, declared_name, multi = resolve_install_name(yaml_content, instance)
+        install_info = {"instance": install_name, "package_name": declared_name, "multi_instance": multi}
+
         # Parse first to extract variable declarations (before substitution)
         variable_declarations = self._extract_variable_declarations(yaml_content)
         requires_input = any(v.get("required", True) and v.get("default") is None for v in variable_declarations)
@@ -290,7 +388,7 @@ class PackageService:
         if not config.package:
             raise ValueError("Package metadata is required for SinasPackage")
 
-        pkg_name = config.package.name
+        pkg_name = install_name or config.package.name
         managed_by = f"pkg:{pkg_name}"
 
         apply_service = ConfigApplyService(
@@ -300,10 +398,23 @@ class PackageService:
             managed_by=managed_by,
             auto_commit=False,
             skip_resource_types=PACKAGE_SKIP_TYPES,
+            # An upgrade removes what the new version no longer ships.
+            prune_missing=True,
         )
 
         result = await apply_service.apply_config(config, dry_run=True)
+        if multi:
+            conflicts = _instance_conflicts(apply_service.warnings)
+            if conflicts:
+                result.errors.extend(conflicts)
+                result.warnings = [w for w in result.warnings if w not in conflicts]
+                result.success = False
         result.warnings.extend(validation.warnings)
+        if multi and install_name == config.package.name:
+            result.warnings.append(
+                "This package supports multiple instances: pass `instance` to install "
+                "it under another name next to this one."
+            )
 
         hard, broad, role_advisories = package_role_violations(config)
         for violation in hard:
@@ -315,9 +426,9 @@ class PackageService:
             )
         result.warnings.extend(role_advisories)
 
-        return result, variable_declarations, requires_input
+        return result, variable_declarations, requires_input, install_info
 
-    async def uninstall(self, package_name: str) -> dict:
+    async def uninstall(self, package_name: str, actor_user_id: Optional[str] = None) -> dict:
         """
         Uninstall a package: delete all resources with matching managed_by and the package record.
 
@@ -338,19 +449,59 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
-            Connector: "connectors",
             Manifest: "manifests",
-            Component: "components",
             Collection: "collections",
-            DatabaseTrigger: "databaseTriggers",
             Function: "functions",
-            Query: "queries",
-            ScheduledJob: "schedules",
-            Skill: "skills",
             Store: "stores",
-            Template: "templates",
-            Webhook: "webhooks",
         }
+
+        # Children whose FK has no ON DELETE rule must be cleared first. The
+        # loop below issues Core bulk deletes, which bypass the ORM's
+        # delete-orphan cascades entirely, so a package whose functions had
+        # ever been versioned (or whose agents had ever been chatted with)
+        # failed the whole uninstall on a ForeignKeyViolationError (#63).
+        # Every other child of these tables already cascades at the DB level.
+        function_ids = select(Function.id).where(Function.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            delete(FunctionVersion).where(FunctionVersion.function_id.in_(function_ids))
+        )
+        # Chats outlive the package: a conversation is the user's, not the
+        # package's, so only the link to the vanishing agent is cleared.
+        agent_ids = select(Agent.id).where(Agent.managed_by == managed_by).scalar_subquery()
+        await self.db.execute(
+            update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
+        )
+
+        # Kinds with an applier go through it rather than a bulk delete: each
+        # deletion is recorded in the change history (so it can be restored),
+        # and running workers are told — a bulk delete left the scheduler
+        # firing jobs, and CDC polling tables, for rows already gone.
+        from app.services.resources import ApplyContext
+        from app.services.resources.registry import all_appliers
+
+        applier_ctx = ApplyContext(
+            db=self.db,
+            origin="package",
+            actor_user_id=actor_user_id,
+            managed_by=managed_by,
+            config_name=package_name,
+        )
+        for applier in all_appliers():
+            # Locked, and the ownership filter re-checked on the locked row: a
+            # concurrent manual edit detaches a row (managed_by = NULL), and
+            # must not be deleted after its save succeeded.
+            rows = (
+                await self.db.execute(
+                    select(applier.model)
+                    .where(applier.model.managed_by == managed_by)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
+            ).scalars().all()
+            for row in rows:
+                await applier.delete(row, applier_ctx)
+            if rows:
+                deleted_counts[applier.kind] = len(rows)
 
         for model, type_name in model_names.items():
             stmt = delete(model).where(model.managed_by == managed_by)
@@ -371,6 +522,7 @@ class PackageService:
         # Delete package record
         await self.db.delete(package)
         await self.db.commit()
+        await applier_ctx.effects.flush()
 
         return deleted_counts
 
@@ -532,16 +684,9 @@ class PackageService:
         return serialize_component(component)
 
     async def _export_query(self, query: Query) -> dict:
-        from app.models.database_connection import DatabaseConnection
-        conn_name = None
-        if query.database_connection_id:
-            result = await self.db.execute(
-                select(DatabaseConnection).where(DatabaseConnection.id == query.database_connection_id)
-            )
-            conn = result.scalar_one_or_none()
-            if conn:
-                conn_name = conn.name
-        return serialize_query(query, conn_name)
+        from app.services.resources.queries import connection_name
+
+        return serialize_query(query, await connection_name(self.db, query.database_connection_id))
 
     async def _export_collection(self, collection: Collection) -> dict:
         return serialize_collection(collection)

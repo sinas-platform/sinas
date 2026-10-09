@@ -1,6 +1,6 @@
 name: Build & Push Docker Images
 
-# Builds the five Sinas images (backend, builder, executor, console, and lite —
+# Builds the four Sinas images (backend, executor, console, and lite —
 # backend + console SPA for the all-in-one profile) and pushes them to GHCR.
 # See RELEASING.md for the full versioning/release flow.
 #
@@ -52,9 +52,6 @@ jobs:
           - name: backend
             context: ./backend
             dockerfile: ./backend/Dockerfile
-          - name: builder
-            context: ./backend
-            dockerfile: ./backend/Dockerfile.builder
           - name: executor
             context: ./backend
             dockerfile: ./backend/Dockerfile.executor

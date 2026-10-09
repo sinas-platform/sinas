@@ -1,18 +1,20 @@
 """Runtime component endpoints - rendering, proxy, and scoped resource access."""
+import html
 import json
+from pathlib import Path
+from urllib.parse import quote
 import time
 import uuid
-from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 import jsonschema
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.auth import get_current_user_with_permissions, set_permission_used, via_api_key
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
@@ -22,7 +24,12 @@ from app.models.function import Function
 from app.models.query import Query
 from app.models.execution import TriggerType
 from app.schemas.component import ProxyExecuteRequest, StateProxyRequest
-from app.models.state import State
+from app.services.component_access import (
+    SESSION_MAX_SECONDS,
+    TOKEN_TTL_SECONDS,
+    generate_component_access_token,
+    share_is_live,
+)
 from app.services.content_tokens import generate_component_render_token
 from app.services.database_pool import DatabasePoolManager
 from app.services.queue_service import queue_service
@@ -31,183 +38,85 @@ from app.services.user_context import load_user_context, query_param_context
 router = APIRouter()
 
 
-def _build_html_shell(component: Component, input_vars: dict) -> str:
-    """Build the HTML shell for rendering a component in an iframe."""
+def _script_json(value: Any) -> str:
+    """JSON safe to place inside a <script> element: "</script>" (or "<!--")
+    in a string must not end the element. Input comes from the URL, a share
+    link or an agent's tool call."""
+    return (
+        json.dumps(value)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+# The component's code is its author's, not Sinas's: it runs sandboxed in an
+# opaque origin, so it can't reach the console's storage (or the parent page)
+# even where the console is served from the API's origin. Its API calls are
+# then cross-origin, which CORS (allow_origins=*, no credentials) permits.
+_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+
+
+def _html_response(html: str) -> HTMLResponse:
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Content-Security-Policy": _SANDBOX_CSP,
+            # The page embeds an access token, and its URL a render token.
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+_RUNTIME_JS = (Path(__file__).resolve().parents[3] / "services" / "component_runtime.js").read_text()
+
+
+def _build_html_shell(
+    component: Component,
+    input_vars: dict,
+    access_token: Optional[str] = None,
+    theme: Optional[str] = None,
+) -> str:
+    """The page a component renders in: its own HTML as the body, after a
+    plain base (system font, the browser's light/dark colours) and the
+    `sinas` client. Nothing is built or bundled.
+
+    `access_token` is a component access token for the viewer (None for
+    share links, whose anonymous viewers can only see static components).
+    `theme` ("light"/"dark") is the embedding page's; without it the page
+    follows the viewer's system setting."""
     config = {
-        "apiBase": "",  # Same origin - proxy endpoints
-        "component": {
-            "namespace": component.namespace,
-            "name": component.name,
-            "version": component.version,
-        },
-        "resources": {
-            "enabledAgents": component.enabled_agents,
-            "enabledFunctions": component.enabled_functions,
-            "enabledQueries": component.enabled_queries,
-            "enabledComponents": component.enabled_components,
-            "enabledStores": component.enabled_stores,
-        },
+        "component": {"namespace": component.namespace, "name": component.name},
         "input": input_vars,
+        "tokenTtlSeconds": TOKEN_TTL_SECONDS,
     }
-
-    config_json = json.dumps(config)
-    css_overrides = component.css_overrides or ""
-    bundle = component.compiled_bundle or ""
-
+    color_scheme = theme if theme in ("light", "dark") else "light dark"
+    title = html.escape(component.title or component.name)
+    # The runtime is ours (no user data): only "</script" needs breaking up.
+    runtime = _RUNTIME_JS.replace("</script", "<\\/script")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{component.title or component.name}</title>
+<title>{title}</title>
 <style>
-  body {{
-    min-height: 100vh;
-    background:
-      radial-gradient(ellipse at bottom right, rgba(249,115,22,0.35) 0%, transparent 55%),
-      radial-gradient(ellipse at top left, rgba(168,34,50,0.30) 0%, transparent 55%),
-      #0a0a0a;
-    background-attachment: fixed;
-    overflow-x: hidden;
-  }}
-
-  /* Subtle animated shimmer */
-  body::before, body::after {{
-    content: '';
-    position: fixed;
-    border-radius: 50%;
-    filter: blur(80px);
-    pointer-events: none;
-    z-index: 0;
-    animation: sinas-drift 8s ease-in-out infinite alternate;
-  }}
-  body::before {{
-    width: 500px; height: 500px;
-    bottom: -120px; right: -120px;
-    background: radial-gradient(circle, rgba(249,115,22,0.25), rgba(234,88,12,0.10), transparent);
-  }}
-  body::after {{
-    width: 400px; height: 400px;
-    top: -100px; left: -100px;
-    background: radial-gradient(circle, rgba(168,34,50,0.22), rgba(127,29,29,0.08), transparent);
-    animation-delay: -4s;
-    animation-direction: alternate-reverse;
-  }}
-
-  @keyframes sinas-drift {{
-    0%   {{ transform: translate(0, 0) scale(1); opacity: 0.7; }}
-    100% {{ transform: translate(20px, -15px) scale(1.08); opacity: 1; }}
-  }}
-
-  #root {{
-    position: relative;
-    z-index: 1;
-    min-height: 100vh;
-    padding: 24px;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-  }}
-  #sinas-card {{
-    width: 100%;
-    max-width: 960px;
-  }}
-  {css_overrides}
+  :root {{ color-scheme: {color_scheme}; }}
+  body {{ margin: 0; padding: 16px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; line-height: 1.5; }}
 </style>
+<script>
+  window.__SINAS_CONFIG__ = {_script_json(config)};
+  window.__SINAS_AUTH_TOKEN__ = {_script_json(access_token)};
+</script>
+<script>
+{runtime}
+</script>
 </head>
 <body>
-<div id="root"></div>
-
-<!-- React UMD (globals: React, ReactDOM) -->
-<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-
-<!-- SINAS SDK and UI (globals: SinasSDK, SinasUI) -->
-<script crossorigin src="https://unpkg.com/@sinas/sdk@0.1.1/dist/sinas-sdk.umd.js"></script>
-<script crossorigin src="https://unpkg.com/@sinas/ui@0.2.0/dist/sinas-ui.umd.js"></script>
-
-<script>
-  // Inject SINAS UI base styles (CSS variables, fonts, dark theme)
-  if (window.SinasUI && window.SinasUI.injectBaseStyles) {{
-    window.SinasUI.injectBaseStyles();
-  }}
-
-  // SINAS runtime config
-  window.__SINAS_CONFIG__ = {config_json};
-  window.__SINAS_AUTH_TOKEN__ = null;
-
-  // Listen for auth token from parent (postMessage auth)
-  window.addEventListener('message', function(event) {{
-    if (event.data && event.data.type === 'sinas:auth') {{
-      window.__SINAS_AUTH_TOKEN__ = event.data.token;
-      window.dispatchEvent(new CustomEvent('sinas:authenticated'));
-    }}
-  }});
-
-  // Notify parent we're ready for auth
-  if (window.parent !== window) {{
-    window.parent.postMessage({{ type: 'sinas:ready', component: '{component.namespace}/{component.name}' }}, '*');
-  }}
-
-  // Module shim for esbuild IIFE externals (require() calls)
-  window.__SINAS_MODULES__ = {{
-    "react": window.React,
-    "react-dom": window.ReactDOM,
-    "react-dom/client": window.ReactDOM,
-    "@sinas/sdk": window.SinasSDK,
-    "@sinas/ui": window.SinasUI,
-  }};
-  var require = function(name) {{
-    if (window.__SINAS_MODULES__[name]) return window.__SINAS_MODULES__[name];
-    console.warn('[SINAS] Module not found:', name);
-    return {{}};
-  }};
-</script>
-
-<!-- Compiled component bundle (IIFE) -->
-<script>{bundle}</script>
-
-<script>
-(function() {{
-  var Component = window.__SinasComponent__ && (window.__SinasComponent__.default || window.__SinasComponent__);
-  if (!Component) {{
-    document.getElementById('root').innerHTML = '<p style="color:red;padding:1rem;">Component failed to load.</p>';
-    return;
-  }}
-
-  var booted = false;
-  function bootstrap() {{
-    if (booted) return;
-    booted = true;
-    var root = ReactDOM.createRoot(document.getElementById('root'));
-    var input = window.__SINAS_CONFIG__.input || {{}};
-    var Card = window.SinasUI && window.SinasUI.Card;
-    var content = React.createElement(Component, input);
-    if (Card) {{
-      content = React.createElement('div', {{ id: 'sinas-card' }},
-        React.createElement(Card, null, content)
-      );
-    }}
-    root.render(content);
-  }}
-
-  // If embedded in iframe, wait for auth; otherwise check URL hash for auth token
-  if (window.parent !== window) {{
-    window.addEventListener('sinas:authenticated', bootstrap, {{ once: true }});
-    // Fallback: bootstrap after 3s even without auth (for public components)
-    setTimeout(bootstrap, 3000);
-  }} else {{
-    // Opened directly (e.g. "Open" link) — read auth token from URL hash
-    var hash = window.location.hash;
-    if (hash && hash.indexOf('#auth=') === 0) {{
-      window.__SINAS_AUTH_TOKEN__ = decodeURIComponent(hash.substring(6));
-      // Clean the token from the URL bar
-      history.replaceState(null, '', window.location.pathname + window.location.search);
-    }}
-    bootstrap();
-  }}
-}})();
-</script>
+{component.source_code}
 </body>
 </html>"""
 
@@ -222,10 +131,12 @@ async def render_component(
     name: str,
     token: Optional[str] = None,
     input: Optional[str] = None,
+    theme: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Render a component as an HTML page (for iframe embedding).
+    Render a component as an HTML page (for iframe embedding). `theme`
+    (light/dark) matches the embedding page; otherwise the system's.
 
     Authenticates via a signed render token (?token=), not Authorization headers,
     since iframes cannot send headers. Follows the same pattern as file serve tokens.
@@ -249,12 +160,6 @@ async def render_component(
     if not component or not component.is_active:
         raise HTTPException(status_code=404, detail="Component not found")
 
-    if component.compile_status != "success":
-        raise HTTPException(
-            status_code=422,
-            detail=f"Component is not compiled (status: {component.compile_status}). "
-            f"Trigger compilation first.",
-        )
 
     # Parse input vars from query param
     input_vars = {}
@@ -264,8 +169,73 @@ async def render_component(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in 'input' query parameter")
 
-    html = _build_html_shell(component, input_vars)
-    return HTMLResponse(content=html)
+    access_token = generate_component_access_token(payload["sub"], namespace, name)
+    return _html_response(_build_html_shell(component, input_vars, access_token, theme))
+
+
+@router.post(
+    "/components/{ns}/{name}/access-token",
+    tags=["runtime-components"],
+)
+async def renew_component_access_token(
+    ns: str,
+    name: str,
+    request: Request,
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """A fresh component access token, for the rendered page to keep working
+    past an hour. Only a component token for this component renews (the
+    route allowlist sees to the component), and only for a working day after
+    the render that started the session."""
+    scope = getattr(request.state, "component_scope", None)
+    if scope is None:
+        raise HTTPException(status_code=403, detail="Only a component token can be renewed")
+    if time.time() - scope.session_start > SESSION_MAX_SECONDS:
+        raise HTTPException(status_code=401, detail="Component session expired; reload the page")
+    user_id, _ = current_user_data
+    return {
+        "token": generate_component_access_token(
+            user_id, scope.namespace, scope.name,
+            session_start=scope.session_start, share_id=scope.share_id,
+        ),
+        "expires_in": TOKEN_TTL_SECONDS,
+    }
+
+
+async def _open_share(db: AsyncSession, token: str, mode: Optional[str] = None):
+    """The share link and its component, counting one view — atomically, so
+    concurrent loads can't exceed max_views. 404/410 as the link warrants."""
+    share = await ComponentShare.get_by_token(db, token)
+    if not share or (mode is not None and share.mode != mode):
+        raise HTTPException(status_code=404, detail="Share link not found")
+    if not share_is_live(share):
+        raise HTTPException(status_code=410, detail="Share link has expired")
+    counted = (
+        await db.execute(
+            update(ComponentShare)
+            .where(
+                ComponentShare.id == share.id,
+                or_(
+                    ComponentShare.max_views.is_(None),
+                    ComponentShare.view_count < ComponentShare.max_views,
+                ),
+            )
+            .values(view_count=ComponentShare.view_count + 1)
+            .returning(ComponentShare.id)
+        )
+    ).scalar_one_or_none()
+    if counted is None:
+        raise HTTPException(status_code=410, detail="Share link has reached maximum views")
+    component = (
+        await db.execute(
+            select(Component).where(
+                Component.id == share.component_id, Component.is_active == True  # noqa: E712
+            )
+        )
+    ).scalar_one_or_none()
+    if not component:
+        raise HTTPException(status_code=404, detail="Component not found")
+    return share, component
 
 
 @router.get(
@@ -275,44 +245,61 @@ async def render_component(
 )
 async def render_shared_component(
     token: str,
+    theme: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Render a component via share token (no JWT needed)."""
-    from datetime import datetime, timezone
+    """Render a component through a share link (no sign-in needed).
 
+    - snapshot: the link's inputs, no live access
+    - creator: live access as the link's creator, capped to what the
+      component declares, read only unless the link allows writes; ends
+      the moment the link is revoked or expires
+    - viewer: needs a signed-in Sinas user, so the link opens in the console
+      (which renders it for that user)
+    """
     share = await ComponentShare.get_by_token(db, token)
-    if not share:
-        raise HTTPException(status_code=404, detail="Share link not found")
-
-    # Check expiry
-    if share.expires_at and share.expires_at < datetime.now(timezone.utc):
-        raise HTTPException(status_code=410, detail="Share link has expired")
-
-    # Check max views
-    if share.max_views is not None and share.view_count >= share.max_views:
-        raise HTTPException(status_code=410, detail="Share link has reached maximum views")
-
-    # Load component
-    result = await db.execute(
-        select(Component).where(
-            Component.id == share.component_id,
-            Component.is_active == True,
+    if share is not None and share.mode == "viewer":
+        return RedirectResponse(
+            f"{settings.public_console_url}/shared/{quote(token, safe='')}", status_code=302
         )
+    share, component = await _open_share(db, token)
+    access_token = None
+    if share.mode == "creator":
+        access_token = generate_component_access_token(
+            str(share.created_by), component.namespace, component.name, share_id=str(share.id)
+        )
+    return _html_response(
+        _build_html_shell(component, share.input_data or {}, access_token, theme)
     )
-    component = result.scalar_one_or_none()
-    if not component:
-        raise HTTPException(status_code=404, detail="Component not found")
 
-    if component.compile_status != "success":
-        raise HTTPException(status_code=422, detail="Component is not compiled")
 
-    # Increment view count
-    share.view_count += 1
-    await db.flush()
-
-    input_vars = share.input_data or {}
-    html = _build_html_shell(component, input_vars)
-    return HTMLResponse(content=html)
+@router.post(
+    "/components/shared/{token}/open",
+    tags=["runtime-components"],
+)
+async def open_viewer_share(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data=Depends(get_current_user_with_permissions),
+):
+    """A "viewer" share link, for the signed-in user opening it: what the
+    console needs to render it with that user's own permissions (capped to
+    what the component declares, like any component page)."""
+    user_id, _ = current_user_data
+    if via_api_key(request):
+        # The page would act with the key owner's permissions, beyond the key's.
+        raise HTTPException(status_code=403, detail="Open shared components signed in, not with an API key")
+    share, component = await _open_share(db, token, mode="viewer")
+    return {
+        "namespace": component.namespace,
+        "name": component.name,
+        "title": component.title or component.name,
+        "input": share.input_data or {},
+        "render_token": generate_component_render_token(
+            component.namespace, component.name, user_id
+        ),
+    }
 
 
 # --- Proxy Endpoints ---
@@ -365,6 +352,9 @@ async def proxy_query_execute(
         db=db, user_id=user_id, permissions=permissions, action="execute",
         namespace=q_ns, name=q_name,
     )
+    scope = getattr(request.state, "component_scope", None)
+    if scope is not None and scope.read_only and query.operation != "read":
+        raise HTTPException(status_code=403, detail="This share link is read only")
 
     set_permission_used(request, f"sinas.queries/{q_ns}/{q_name}.execute")
 
@@ -429,6 +419,10 @@ async def proxy_function_execute(
     user_id, permissions = current_user_data
     component = await _get_component_or_404(db, ns, name)
 
+    scope = getattr(request.state, "component_scope", None)
+    if scope is not None and scope.read_only:
+        raise HTTPException(status_code=403, detail="This share link is read only")
+
     func_ref = f"{fn_ns}/{fn_name}"
     if func_ref not in component.enabled_functions:
         raise HTTPException(
@@ -471,8 +465,39 @@ async def proxy_function_execute(
         return {"status": "error", "execution_id": execution_id, "error": str(e)}
 
 
+# Page size the state proxy's "list" reads the store API in.
+STATE_LIST_PAGE = 1000
+
+
+def _enabled_store(component: Component, store_ns: str, store_name: Optional[str]) -> dict:
+    """The enabled_stores entry a proxy call addresses. The SDK names a store
+    by namespace alone ("states/{ns}"), from before states lived in stores;
+    that still works while the component enables a single store there."""
+    entries = [e for e in component.enabled_stores or [] if isinstance(e, dict) and e.get("store")]
+    if store_name is not None:
+        matches = [e for e in entries if e["store"] == f"{store_ns}/{store_name}"]
+    else:
+        matches = [e for e in entries if e["store"].split("/", 1)[0] == store_ns]
+    if not matches:
+        ref = f"{store_ns}/{store_name}" if store_name else store_ns
+        raise HTTPException(
+            status_code=403, detail=f"Store '{ref}' is not enabled for this component"
+        )
+    if len({e["store"] for e in matches}) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Several stores in '{store_ns}' are enabled for this component; "
+            f"address one as states/{store_ns}/{{name}}",
+        )
+    return matches[0]
+
+
 @router.post(
     "/components/{ns}/{name}/proxy/states/{state_ns}",
+    tags=["runtime-components"],
+)
+@router.post(
+    "/components/{ns}/{name}/proxy/states/{state_ns}/{store_name}",
     tags=["runtime-components"],
 )
 async def proxy_state(
@@ -481,96 +506,77 @@ async def proxy_state(
     state_ns: str,
     body: StateProxyRequest,
     request: Request,
+    store_name: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
-    """Access state through the component proxy (scoped to enabled state namespaces)."""
-    user_id, permissions = current_user_data
+    """Access a store's states through the component proxy: the store must be
+    enabled for the component (writes need readwrite), and the call then goes
+    through the store API itself — its permissions, encryption and schema."""
+    from app.api.runtime.endpoints import stores
+    from app.schemas.state import StateCreate, StateUpdate
+
     component = await _get_component_or_404(db, ns, name)
-
-    enabled_stores = component.enabled_stores or []
-    # Build lookup: find matching store entries by namespace prefix
-    matching_stores = [s for s in enabled_stores if s.get("store", "").startswith(state_ns + "/") or s.get("store") == state_ns]
-
-    if not matching_stores:
+    entry = _enabled_store(component, state_ns, store_name)
+    scope = getattr(request.state, "component_scope", None)
+    if body.action in ("set", "delete") and scope is not None and scope.read_only:
+        raise HTTPException(status_code=403, detail="This share link is read only")
+    if body.action in ("set", "delete") and entry.get("access") != "readwrite":
         raise HTTPException(
             status_code=403,
-            detail=f"State namespace '{state_ns}' is not enabled for this component",
+            detail=f"Store '{entry['store']}' is read-only for this component",
         )
+    store_ns, store_nm = entry["store"].split("/", 1)
+    user = current_user_data
 
-    # Write operations require readwrite access
-    readwrite_stores = [s for s in matching_stores if s.get("access") == "readwrite"]
-    if body.action in ("set", "delete") and not readwrite_stores:
-        raise HTTPException(
-            status_code=403,
-            detail=f"State namespace '{state_ns}' is read-only for this component",
-        )
+    if body.action in ("get", "set", "delete") and not body.key:
+        raise HTTPException(status_code=400, detail=f"'key' is required for {body.action} action")
 
     if body.action == "get":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for get action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
-            )
-        )
-        state = result.scalar_one_or_none()
-        if not state:
-            return {"found": False, "key": body.key, "value": None}
+        try:
+            state = await stores.get_state(store_ns, store_nm, body.key, request, db, user)
+        except HTTPException as e:
+            if e.status_code == 404 and "not found in store" in str(e.detail):
+                return {"found": False, "key": body.key, "value": None}
+            raise
         return {"found": True, "key": state.key, "value": state.value}
 
-    elif body.action == "list":
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.user_id == user_id,
+    if body.action == "list":
+        # Every state, as the proxy always returned (it has no paging).
+        items, page = [], STATE_LIST_PAGE
+        while True:
+            states = await stores.list_states(
+                store_ns, store_nm, request, search=None, tags=None, owner=None,
+                skip=len(items), limit=page, db=db, current_user_data=user,
             )
-        )
-        states = result.scalars().all()
-        return {"items": [{"key": s.key, "value": s.value} for s in states]}
+            items += [{"key": st.key, "value": st.value} for st in states]
+            if len(states) < page:
+                return {"items": items}
 
-    elif body.action == "set":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for set action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
+    if body.action == "set":
+        if body.value is None:
+            # The store API reads a null value as "leave it unchanged".
+            raise HTTPException(status_code=400, detail="'value' is required for set action")
+        try:
+            await stores.update_state(
+                store_ns, store_nm, body.key, request,
+                StateUpdate(value=body.value, visibility=body.visibility), db, user,
             )
-        )
-        state = result.scalar_one_or_none()
-        if state:
-            state.value = body.value
-        else:
-            state = State(
-                namespace=state_ns,
-                key=body.key,
-                value=body.value,
-                user_id=user_id,
-                visibility=body.visibility,
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+            await stores.create_state(
+                store_ns, store_nm, request,
+                StateCreate(key=body.key, value=body.value, visibility=body.visibility), db, user,
             )
-            db.add(state)
-        await db.flush()
         return {"success": True, "key": body.key}
 
-    elif body.action == "delete":
-        if not body.key:
-            raise HTTPException(status_code=400, detail="'key' is required for delete action")
-        result = await db.execute(
-            select(State).where(
-                State.namespace == state_ns,
-                State.key == body.key,
-                State.user_id == user_id,
-            )
-        )
-        state = result.scalar_one_or_none()
-        if state:
-            await db.delete(state)
-            await db.flush()
+    if body.action == "delete":
+        try:
+            await stores.delete_state(store_ns, store_nm, body.key, request, db, user)
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
         return {"success": True, "key": body.key}
 
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")
+    raise HTTPException(status_code=400, detail=f"Unknown action: {body.action}")

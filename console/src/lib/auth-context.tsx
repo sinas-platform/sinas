@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL } from './api';
 import { SinasClient } from '@sinas/sdk';
 import type { AuthUser, InfoResponse, SinasConfig } from '@sinas/sdk';
@@ -34,6 +35,7 @@ function toInstanceInfo(info: InfoResponse): InstanceInfo {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -220,6 +222,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUser(null);
     window.__SINAS_AUTH_TOKEN__ = null;
+    // Nothing cached for this user may outlive the session (share links
+    // carry credentials; any page's data is theirs).
+    queryClient.clear();
     localStorage.removeItem('auth_token');
     localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');

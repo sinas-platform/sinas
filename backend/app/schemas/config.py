@@ -3,7 +3,7 @@ Pydantic schemas for declarative configuration
 """
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, validator
 
 
 class ConfigMetadata(BaseModel):
@@ -111,6 +111,8 @@ class QueryConfig(BaseModel):
     outputSchema: Optional[dict[str, Any]] = None
     timeoutMs: int = 5000
     maxRows: int = 1000
+    # Unset: a new query is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class FunctionConfig(BaseModel):
@@ -135,6 +137,8 @@ class SkillConfig(BaseModel):
     name: str
     description: str  # What this skill helps with (shown to LLM)
     content: str  # Markdown instructions (retrieved on demand)
+    # Unset: a new skill is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class EnabledStoreConfigYaml(BaseModel):
@@ -165,8 +169,9 @@ class ComponentConfig(BaseModel):
     enabledQueries: list[str] = Field(default_factory=list)
     enabledComponents: list[str] = Field(default_factory=list)
     enabledStores: list[Union[str, EnabledStoreConfigYaml]] = Field(default_factory=list)
-    cssOverrides: Optional[str] = None
     visibility: str = "private"
+    # Unset: a new component is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class EnabledSkillConfigYaml(BaseModel):
@@ -223,7 +228,7 @@ class AgentConfig(BaseModel):
         default_factory=list,
         description=(
             "Opt-in Sinas platform tools. Simple string or {name, ...config}. "
-            "Supported: 'codeExecution', 'packageManagement', 'configIntrospection', "
+            "Supported: 'codeExecution', 'packageManagement', 'artifacts', 'configIntrospection', "
             "'databaseIntrospection' (requires connections list), 'workbench' "
             "(per-chat persistent working tree)."
         ),
@@ -261,6 +266,9 @@ class WebhookConfig(BaseModel):
     defaultValues: dict[str, Any] = Field(default_factory=dict)
     responseMode: str = "sync"  # "sync", "async", or "raw" (raw: function targets only)
     dedup: Optional[WebhookDedupConfig] = None
+    # Unset: a new webhook is active, an existing one keeps its state — an
+    # operator who disabled one must not see a re-apply silently re-arm it.
+    isActive: Optional[bool] = None
 
     @validator("dedup", always=True)
     def validate_target(cls, v, values):
@@ -335,6 +343,17 @@ class ManifestConfig(BaseModel):
     optionalPermissions: list[str] = Field(default_factory=list)
     exposedNamespaces: dict[str, list[str]] = Field(default_factory=dict)
     storeDependencies: list[dict] = Field(default_factory=list)
+    # Published on the unauthenticated GET /info under services[namespace].
+    # Package variables substitute into it, so an installer can supply e.g.
+    # the browser-reachable URL of the service this manifest describes.
+    publicInfo: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("publicInfo")
+    @classmethod
+    def _validate_public_info(cls, v: dict[str, Any]) -> dict[str, Any]:
+        from app.schemas.manifest import validate_public_info
+
+        return validate_public_info(v)
 
 
 class CollectionConfig(BaseModel):
@@ -374,6 +393,8 @@ class TemplateConfig(BaseModel):
     htmlContent: str
     textContent: Optional[str] = None
     variableSchema: Optional[dict[str, Any]] = None
+    # Unset: a new template is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class DatabaseTriggerConfig(BaseModel):
@@ -448,20 +469,6 @@ class TokenResponsePathsConfig(BaseModel):
     errorDescription: Optional[str] = None
 
 
-# camelCase config key ↔ snake_case stored key for the nested paths object.
-# The outer CONNECTOR_AUTH_FIELD_MAP only renames top-level fields; this one
-# handles the object's inner keys in both directions.
-TOKEN_RESPONSE_PATH_FIELD_MAP: list[tuple[str, str]] = [
-    ("accessToken", "access_token"),
-    ("refreshToken", "refresh_token"),
-    ("expiresIn", "expires_in"),
-    ("scope", "scope"),
-    ("successFlag", "success_flag"),
-    ("error", "error"),
-    ("errorDescription", "error_description"),
-]
-
-
 class ConnectorAuthConfig(BaseModel):
     """Connector auth configuration"""
 
@@ -478,26 +485,6 @@ class ConnectorAuthConfig(BaseModel):
     authorizeUrl: Optional[str] = None
     tokenParams: Optional[dict[str, str]] = None
     tokenResponsePaths: Optional[TokenResponsePathsConfig] = None
-
-
-# Single source of truth for connector auth field names across the config round-trip:
-# (camelCase config key, snake_case stored-auth key). Used by config-apply (camel→snake)
-# and the serializer (snake→camel) so a new auth field is added in exactly one place here
-# plus the two schema models above/`ConnectorAuth`, not in four hand-kept lists.
-CONNECTOR_AUTH_FIELD_MAP: list[tuple[str, str]] = [
-    ("type", "type"),
-    ("secret", "secret"),
-    ("header", "header"),
-    ("position", "position"),
-    ("paramName", "param_name"),
-    ("tokenUrl", "token_url"),
-    ("clientId", "client_id"),
-    ("scopes", "scopes"),
-    ("clientAuthMethod", "client_auth_method"),
-    ("authorizeUrl", "authorize_url"),
-    ("tokenParams", "token_params"),
-    ("tokenResponsePaths", "token_response_paths"),
-]
 
 
 class ConnectorRetryConfig(BaseModel):
@@ -519,6 +506,8 @@ class ConnectorConfig(BaseModel):
     retry: ConnectorRetryConfig = Field(default_factory=ConnectorRetryConfig)
     timeoutSeconds: int = 30
     operations: list[ConnectorOperationConfig] = Field(default_factory=list)
+    # Unset: a new connector is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
 
 class PipelineConfig(BaseModel):
@@ -625,6 +614,11 @@ class PackageMetadataConfig(BaseModel):
     description: Optional[str] = None
     author: Optional[str] = None
     url: Optional[str] = None
+    # The package may be installed more than once on one instance, each
+    # install under its own name (`instance` on install). The package must
+    # then use ${{ install.name }} wherever uniqueness matters (namespaces,
+    # role names, permission keys); it resolves to the install name.
+    multiInstance: bool = False
 
 
 class SinasConfig(BaseModel):
@@ -655,6 +649,13 @@ class SinasConfig(BaseModel):
         if kind == "SinasPackage" and v is None:
             raise ValueError("'package' is required for SinasPackage kind")
         return v
+
+
+class OwnershipSkip(str):
+    """A warning that a declared resource was left alone because someone else
+    (another config, another package, a hand edit) owns it. Still a plain
+    string in the response; the type lets callers that can't accept such a
+    skip (a multi-instance package install) find them."""
 
 
 # Response schemas

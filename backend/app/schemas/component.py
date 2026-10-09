@@ -1,9 +1,9 @@
 """Component schemas."""
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ComponentCreate(BaseModel):
@@ -20,7 +20,6 @@ class ComponentCreate(BaseModel):
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
     enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
-    css_overrides: Optional[str] = None
     visibility: str = Field(default="private", pattern=r"^(private|shared|public)$")
 
 
@@ -40,10 +39,8 @@ class ComponentUpdate(BaseModel):
     enabled_queries: Optional[list[str]] = None
     enabled_components: Optional[list[str]] = None
     enabled_stores: Optional[list[dict]] = None  # [{"store": "ns/name", "access": "readonly|readwrite"}]
-    css_overrides: Optional[str] = None
     visibility: Optional[str] = Field(None, pattern=r"^(private|shared|public)$")
     is_active: Optional[bool] = None
-    is_published: Optional[bool] = None
 
 
 class ComponentResponse(BaseModel):
@@ -54,20 +51,13 @@ class ComponentResponse(BaseModel):
     title: Optional[str]
     description: Optional[str]
     source_code: str
-    compiled_bundle: Optional[str]
-    source_map: Optional[str]
-    compile_status: str
-    compile_errors: Optional[list[dict[str, Any]]]
     input_schema: Optional[dict[str, Any]]
     enabled_agents: list[str]
     enabled_functions: list[str]
     enabled_queries: list[str]
     enabled_components: list[str]
     enabled_stores: list[dict]
-    css_overrides: Optional[str]
     visibility: str
-    version: int
-    is_published: bool
     is_active: bool
     render_token: Optional[str] = None
     created_at: datetime
@@ -86,8 +76,6 @@ class ComponentListResponse(BaseModel):
     name: str
     title: Optional[str]
     description: Optional[str]
-    compile_status: str
-    compile_errors: Optional[list[dict[str, Any]]]
     input_schema: Optional[dict[str, Any]]
     enabled_agents: list[str]
     enabled_functions: list[str]
@@ -95,8 +83,6 @@ class ComponentListResponse(BaseModel):
     enabled_components: list[str]
     enabled_stores: list[dict]
     visibility: str
-    version: int
-    is_published: bool
     is_active: bool
     render_token: Optional[str] = None
     created_at: datetime
@@ -107,12 +93,24 @@ class ComponentListResponse(BaseModel):
 
 
 class ShareCreateRequest(BaseModel):
-    """Request to create a share link for a component."""
+    """Request to create a share link for a component.
+
+    mode: "snapshot" (fixed inputs, no live access), "viewer" (signed-in
+    users, their own permissions) or "creator" (anyone with the link, the
+    creator's permissions; read only unless allow_writes)."""
 
     input_data: Optional[dict[str, Any]] = None
     expires_at: Optional[datetime] = None
-    max_views: Optional[int] = None
-    label: Optional[str] = None
+    max_views: Optional[int] = Field(None, ge=1)
+    label: Optional[str] = Field(None, max_length=255)
+    mode: Literal["snapshot", "viewer", "creator"] = "snapshot"
+    allow_writes: bool = False
+
+    @model_validator(mode="after")
+    def _writes_only_as_creator(self) -> "ShareCreateRequest":
+        if self.allow_writes and self.mode != "creator":
+            raise ValueError("allow_writes applies to creator links only")
+        return self
 
 
 class ShareResponse(BaseModel):
@@ -126,6 +124,8 @@ class ShareResponse(BaseModel):
     max_views: Optional[int]
     view_count: int
     label: Optional[str]
+    mode: str
+    allow_writes: bool
     created_at: datetime
     share_url: str
 

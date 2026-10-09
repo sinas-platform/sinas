@@ -37,6 +37,12 @@ class Manifest(Base, PermissionMixin):
     # Store dependencies: [{"store": "default/preferences"}, {"store": "default/memory", "key": "name"}, ...]
     store_dependencies = Column(JSON, nullable=False, default=list)
 
+    # Values this manifest publishes on the unauthenticated GET /info, under
+    # services[<namespace>], so clients can discover the app and, for example,
+    # the browser-reachable URL of a sibling service. Small JSON object; set at
+    # install time (package variables substitute into it), never secret.
+    public_info = Column(JSON, nullable=False, default=dict)
+
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     is_active = Column(Boolean, default=True)
 

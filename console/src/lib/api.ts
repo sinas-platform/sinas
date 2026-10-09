@@ -45,6 +45,9 @@ import type {
   SkillUpdate,
   Component,
   ComponentCreate,
+  ComponentShare,
+  ComponentShareCreate,
+  SharedComponent,
   ComponentUpdate,
   Collection,
   CollectionCreate,
@@ -86,14 +89,23 @@ import type {
   WorkbenchFileContent,
 } from '../types';
 
-// Auto-detect API base URL based on environment
-// VITE_API_URL overrides (useful for pointing a dev console at any backend)
-// Local: http://localhost:8000
-// Production: https://yourdomain.com (same domain as console, port 443)
+// Auto-detect API base URL based on environment.
+// - VITE_API_URL overrides (point a dev console at any backend)
+// - localhost on the console's own ports (Vite dev, nginx :51245) → the
+//   conventional backend at :8000
+// - localhost on ANY OTHER port → same origin: the backend itself served
+//   the console (lite profile, kubectl port-forward). Blanket-routing all
+//   of localhost to :8000 sent a lite console's API calls to whatever
+//   other instance held that port — silently the wrong deployment.
+// - real domains → same hostname, default port (console may sit on its
+//   own port behind Caddy while the API is on 443)
+const CONSOLE_OWN_PORTS = ['51245', ''];
 export const API_BASE_URL = import.meta.env.VITE_API_URL
   ? import.meta.env.VITE_API_URL
   : window.location.hostname === 'localhost'
-    ? 'http://localhost:8000'
+    ? (import.meta.env.DEV || CONSOLE_OWN_PORTS.includes(window.location.port)
+        ? 'http://localhost:8000'
+        : window.location.origin)
     : `${window.location.protocol}//${window.location.hostname}`;
 
 /**
@@ -101,10 +113,17 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL
  * Follows the same pattern as file serve tokens - purpose-scoped, short-lived JWTs
  * that allow iframe access without Authorization headers.
  */
+/** iframe sandbox for rendered components: scripts run, but in an opaque
+ * origin, so the component's code can't reach the console or its storage. */
+export const COMPONENT_SANDBOX = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads';
+
 export function getComponentRenderUrl(renderToken: string, namespace: string, name: string, input?: Record<string, unknown>): string {
   const params = new URLSearchParams();
   params.set('token', renderToken);
   if (input) params.set('input', JSON.stringify(input));
+  // Render plain, in the console's own light/dark mode.
+  const theme = document.documentElement.dataset.colorMode;
+  if (theme === 'light' || theme === 'dark') params.set('theme', theme);
   return `${API_BASE_URL}/components/${namespace}/${name}/render?${params.toString()}`;
 }
 
@@ -536,35 +555,10 @@ class APIClient {
     return response.data;
   }
 
-  // State Store (Runtime API - formerly Context Store)
-  async listStates(params?: {
-    namespace?: string;
-    visibility?: string;
-    skip?: number;
-    limit?: number;
-  }): Promise<any[]> {
-    const response = await this.runtimeClient.get('/states', { params });
-    return response.data;
-  }
 
-  async getState(stateId: string): Promise<any> {
-    const response = await this.runtimeClient.get(`/states/${stateId}`);
-    return response.data;
-  }
 
-  async createState(data: any): Promise<any> {
-    const response = await this.runtimeClient.post('/states', data);
-    return response.data;
-  }
 
-  async updateState(stateId: string, data: any): Promise<any> {
-    const response = await this.runtimeClient.put(`/states/${stateId}`, data);
-    return response.data;
-  }
 
-  async deleteState(stateId: string): Promise<void> {
-    await this.runtimeClient.delete(`/states/${stateId}`);
-  }
 
   // Secrets
   async listSecrets(): Promise<any[]> {
@@ -839,13 +833,13 @@ class APIClient {
     return response.data;
   }
 
-  async installPackage(source: string, variables?: Record<string, any>): Promise<any> {
-    const response = await this.configClient.post('/packages/install', { source, variables });
+  async installPackage(source: string, variables?: Record<string, any>, instance?: string): Promise<any> {
+    const response = await this.configClient.post('/packages/install', { source, variables, instance });
     return response.data;
   }
 
-  async previewPackage(source: string, variables?: Record<string, any>): Promise<any> {
-    const response = await this.configClient.post('/packages/preview', { source, variables });
+  async previewPackage(source: string, variables?: Record<string, any>, instance?: string): Promise<any> {
+    const response = await this.configClient.post('/packages/preview', { source, variables, instance });
     return response.data;
   }
 
@@ -1240,8 +1234,23 @@ class APIClient {
     await this.configClient.delete(`/components/${namespace}/${name}`);
   }
 
-  async compileComponent(namespace: string, name: string): Promise<Component> {
-    const response = await this.configClient.post(`/components/${namespace}/${name}/compile`);
+  async listComponentShares(namespace: string, name: string): Promise<ComponentShare[]> {
+    const response = await this.configClient.get(`/components/${namespace}/${name}/shares`);
+    return response.data;
+  }
+
+  async createComponentShare(namespace: string, name: string, data: ComponentShareCreate): Promise<ComponentShare> {
+    const response = await this.configClient.post(`/components/${namespace}/${name}/shares`, data);
+    return response.data;
+  }
+
+  async revokeComponentShare(namespace: string, name: string, token: string): Promise<void> {
+    await this.configClient.delete(`/components/${namespace}/${name}/shares/${token}`);
+  }
+
+  /** A "viewer" share link, for the signed-in user. */
+  async openSharedComponent(token: string): Promise<SharedComponent> {
+    const response = await this.runtimeClient.post(`/components/shared/${encodeURIComponent(token)}/open`);
     return response.data;
   }
 

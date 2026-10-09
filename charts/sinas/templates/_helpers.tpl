@@ -33,6 +33,16 @@ ServiceAccount names
 {{- end }}
 
 {{/*
+Image tag: explicit .Values.image.tag wins; empty falls back to the chart's
+appVersion, which CI stamps from the release tag — so a versioned install
+pulls that version's images instead of whatever `latest` points at (or, for
+images only built on tags, an ImagePullBackOff).
+*/}}
+{{- define "sinas.imageTag" -}}
+{{- .Values.image.tag | default .Chart.AppVersion -}}
+{{- end }}
+
+{{/*
 Image pull secret reference — shared by all sinas deployments.
 */}}
 {{- define "sinas.imagePullSecrets" -}}
@@ -131,26 +141,17 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 {{- end }}
 - name: REDIS_URL
   value: "redis://redis:6379/0"
-{{/* `| default true` can't express default-on booleans (false is "empty"), hence hasKey. */}}
-{{- if or (not (hasKey (.Values.builder | default dict) "enabled")) .Values.builder.enabled }}
-- name: BUILDER_URL
-  value: "http://builder:3000"
-{{- else }}
-## Builder disabled: point at a shared builder (builder.url) or leave empty —
-## Component builds then fail with a clear connect error, everything else works.
-- name: BUILDER_URL
-  value: {{ (.Values.builder).url | default "" | quote }}
-{{- end }}
 ## Executor selection — k8s-native: sandbox code runs in ephemeral pods
 ## created via the Kubernetes API (no Docker socket anywhere).
 - name: SANDBOX_EXECUTOR
   value: {{ .Values.executor.sandbox | quote }}
 - name: TRUSTED_EXECUTOR
   value: {{ .Values.executor.trusted | quote }}
+{{- $executorImage := .Values.executor.image | default (printf "%s/executor:%s" .Values.image.registry (include "sinas.imageTag" .)) }}
 - name: FUNCTION_CONTAINER_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_IMAGE
-  value: {{ .Values.executor.image | quote }}
+  value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_SERVICE_ACCOUNT
   value: {{ include "sinas.sandboxSA" . | quote }}
 - name: K8S_SANDBOX_INSTALL_DEPENDENCIES
@@ -182,9 +183,17 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
       name: {{ .Release.Name }}-secrets
       key: clickhouse-password
 {{- end }}
+{{/*
+Auto auth mode. OTP needs SMTP (codes arrive by email); without SMTP the
+only way in is a password. With no superadminPassword either, the backend
+issues a one-time setup link in its logs on boot (see NOTES.txt).
+*/}}
+{{- $hasSmtp := ne (.Values.smtp.host | default "") "" }}
 {{- $auto := "otp" }}
 {{- if .Values.superadminPassword }}
-{{- $auto = ternary "password+otp" "password" (ne .Values.smtp.host "") }}
+{{- $auto = ternary "password+otp" "password" $hasSmtp }}
+{{- else if not $hasSmtp }}
+{{- $auto = "password" }}
 {{- end }}
 ## Paren-safe: `helm upgrade --reuse-values` from a pre-auth release has no
 ## `auth` key at all, and a bare .Values.auth.mode nil-pointers there.
@@ -222,6 +231,15 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 {{- end }}
 - name: BACKEND_PORT
   value: "8000"
+{{/* public_base_url (setup link, OAuth callback, public file URLs) derives
+     from DOMAIN; without it the backend assumes http://localhost:8000. Skip
+     when extraEnv sets it explicitly so the container spec has no duplicate. */}}
+{{- $domainInExtra := false }}
+{{- range .Values.extraEnv }}{{- if eq .name "DOMAIN" }}{{- $domainInExtra = true }}{{- end }}{{- end }}
+{{- if and .Values.domain (not $domainInExtra) }}
+- name: DOMAIN
+  value: {{ .Values.domain | quote }}
+{{- end }}
 {{- with .Values.extraEnv }}
 {{ toYaml . }}
 {{- end }}

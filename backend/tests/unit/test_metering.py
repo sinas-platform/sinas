@@ -397,6 +397,16 @@ class TestPushV2:
         assert state.period_id == P2["id"]
         assert row.reported_at == reported_before  # rejected report not marked
 
+        # Recovery must not depend on new operations arriving: the adopt
+        # created a zero row, so the NEXT cycle reports under the new period
+        # even on an idle instance (the "Not yet reported" gap).
+        client = _patch_client(monkeypatch, [_Resp(200, _ack(P2))])
+        assert await metering.push(db) == 1
+        payload = client.posts[0]["json"]
+        assert payload["canonical_period_id"] == P2["id"]
+        assert payload["cumulative"]["total"] == "0"
+        assert payload["snapshot_seq"] == "1"
+
     async def test_409_counter_regression_is_terminal_no_adopt(
         self, db, metering_on, platform, monkeypatch
     ):

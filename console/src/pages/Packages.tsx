@@ -14,6 +14,8 @@ export function Packages() {
   const [previewResult, setPreviewResult] = useState<any>(null);
   const [installResult, setInstallResult] = useState<any>(null);
   const [variableValues, setVariableValues] = useState<Record<string, any>>({});
+  // Install name for packages declaring multiInstance; empty = the package's own name.
+  const [instanceName, setInstanceName] = useState('');
   const [createForm, setCreateForm] = useState({ name: '', version: '1.0.0', description: '', author: '', url: '' });
   const [selectedResources, setSelectedResources] = useState<Array<{ type: string; namespace: string; name: string }>>([]);
   const [createdYaml, setCreatedYaml] = useState('');
@@ -39,8 +41,8 @@ export function Packages() {
   const { data: connectors } = useQuery({ queryKey: ['connectors'], queryFn: () => apiClient.listConnectors(), enabled: showCreateModal });
 
   const previewMutation = useMutation({
-    mutationFn: ({ source, variables }: { source: string; variables?: Record<string, any> }) =>
-      apiClient.previewPackage(source, variables),
+    mutationFn: ({ source, variables, instance }: { source: string; variables?: Record<string, any>; instance?: string }) =>
+      apiClient.previewPackage(source, variables, instance),
     onSuccess: (data) => {
       setPreviewResult(data);
       // Pre-fill variable defaults
@@ -58,8 +60,8 @@ export function Packages() {
   });
 
   const installMutation = useMutation({
-    mutationFn: ({ source, variables }: { source: string; variables?: Record<string, any> }) =>
-      apiClient.installPackage(source, variables),
+    mutationFn: ({ source, variables, instance }: { source: string; variables?: Record<string, any>; instance?: string }) =>
+      apiClient.installPackage(source, variables, instance),
     onSuccess: (data) => {
       setInstallResult(data);
       setInstallStep('done');
@@ -94,14 +96,21 @@ export function Packages() {
   const handlePreview = () => {
     if (yamlInput.trim()) {
       const vars = Object.keys(variableValues).length > 0 ? variableValues : undefined;
-      previewMutation.mutate({ source: yamlInput, variables: vars });
+      previewMutation.mutate({ source: yamlInput, variables: vars, instance: instanceName.trim() || undefined });
     }
   };
 
+  // The preview (and its warnings) is for one install name; after editing the
+  // name it no longer describes what Confirm would install.
+  const previewStale =
+    !!previewResult?.multi_instance &&
+    (instanceName.trim() || previewResult.package_name) !== previewResult.instance;
+
   const handleInstall = () => {
+    if (previewStale) return;
     setInstallStep('installing');
     const vars = Object.keys(variableValues).length > 0 ? variableValues : undefined;
-    installMutation.mutate({ source: yamlInput, variables: vars });
+    installMutation.mutate({ source: yamlInput, variables: vars, instance: instanceName.trim() || undefined });
   };
 
   const handleExport = async (name: string) => {
@@ -126,6 +135,7 @@ export function Packages() {
     setPreviewResult(null);
     setInstallResult(null);
     setVariableValues({});
+    setInstanceName('');
     previewMutation.reset();
     installMutation.reset();
   };
@@ -223,6 +233,9 @@ export function Packages() {
                   <div className="flex items-center gap-2">
                     <h3 className="font-semibold text-gray-100">{pkg.name}</h3>
                     <span className="text-xs px-2 py-0.5 bg-primary-900/30 text-primary-300 rounded font-mono">{pkg.version}</span>
+                    {pkg.package_name && pkg.package_name !== pkg.name && (
+                      <span className="text-xs text-gray-500">instance of <span className="font-mono">{pkg.package_name}</span></span>
+                    )}
                   </div>
                   {pkg.description && <p className="text-sm text-gray-400 mt-0.5">{pkg.description}</p>}
                   <div className="flex gap-3 mt-1 text-xs text-gray-500">
@@ -351,6 +364,34 @@ export function Packages() {
                   </div>
                 )}
 
+                {/* Install name (packages that may be installed more than once) */}
+                {previewResult.multi_instance && (
+                  <div className="p-3 bg-surface-2 border border-line-soft rounded">
+                    <h3 className="text-sm font-medium text-gray-200 mb-1">Install as</h3>
+                    <p className="text-xs text-gray-400 mb-2">
+                      This package can be installed more than once. Each install needs its own name
+                      (lowercase, dashes); the preview above is for <span className="font-mono">{previewResult.instance}</span>.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={instanceName}
+                        placeholder={previewResult.package_name || previewResult.instance}
+                        onChange={(e) => setInstanceName(e.target.value)}
+                        className="flex-1 px-2.5 py-1.5 text-sm font-mono bg-surface-0 border border-line rounded text-gray-200 placeholder-gray-600"
+                      />
+                      <button onClick={handlePreview} className="btn btn-secondary text-sm" disabled={previewMutation.isPending}>
+                        Re-preview
+                      </button>
+                    </div>
+                    {previewStale && (
+                      <p className="text-xs text-amber-400 mt-2">
+                        The name changed since this preview. Re-preview before installing.
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {/* Variable form (if package requires input) */}
                 {previewResult.variables && previewResult.variables.length > 0 && (
                   <div className="p-3 bg-surface-2 border border-line-soft rounded">
@@ -413,7 +454,12 @@ export function Packages() {
                   <button onClick={() => setInstallStep('input')} className="btn btn-secondary">
                     Back
                   </button>
-                  <button onClick={handleInstall} className="btn btn-primary flex items-center">
+                  <button
+                    onClick={handleInstall}
+                    className="btn btn-primary flex items-center"
+                    disabled={previewStale}
+                    title={previewStale ? 'Re-preview with the new install name first' : undefined}
+                  >
                     <Check className="w-4 h-4 mr-2" />
                     Confirm Install
                   </button>

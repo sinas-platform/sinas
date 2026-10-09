@@ -222,7 +222,8 @@ async def list_states(
         else:
             query = query.where(State.user_id == user_uuid)
 
-    result = await db.execute(query.offset(skip).limit(limit))
+    # A stable order, so skip/limit pages neither repeat nor miss rows.
+    result = await db.execute(query.order_by(State.key, State.id).offset(skip).limit(limit))
     all_states = result.scalars().all()
 
     return [_state_to_response(s, store) for s in all_states]
