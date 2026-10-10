@@ -78,6 +78,13 @@ class CollectionApplier(ResourceApplier[CollectionSpec]):
 
         paths = []
         if not ctx.dry_run:
+            # Lock the files first: an upload of a new version locks its file,
+            # so it either committed before (its path is read below) or waits
+            # for this delete. New files can't be added meanwhile either: the
+            # collection row itself is locked.
+            await ctx.db.execute(
+                select(File.id).where(File.collection_id == row.id).with_for_update()
+            )
             paths = (
                 await ctx.db.execute(
                     select(FileVersion.storage_path)

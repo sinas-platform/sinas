@@ -110,3 +110,31 @@ async def test_nothing_is_removed_when_the_apply_fails(db: AsyncSession, admin_u
             package("2.0.0", "  pipelines:\n    - {namespace: x, name: y, steps: []}"), str(admin_user.id)
         )
     assert storage == []
+
+
+async def test_files_are_locked_before_their_paths_are_read(db: AsyncSession, admin_user, storage):
+    """A concurrent new-version upload locks its file: taking those locks
+    before reading the paths means its version is either read here or waits
+    for the delete (a two-session race test doesn't fit this test DB)."""
+    from sqlalchemy import event
+
+    from app.services.resources import ApplyContext
+    from app.services.resources.collections import CollectionApplier
+
+    name = f"c{uuid.uuid4().hex[:8]}"
+    await _collection_with_files(db, admin_user, name)
+    coll = await Collection.get_by_name(db, NS, name)
+    statements: list[str] = []
+
+    def capture(conn, cursor, statement, *args):
+        statements.append(" ".join(statement.split()).lower())
+
+    engine = db.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        await CollectionApplier().delete(coll, ApplyContext(db=db, origin="api", actor_user_id=str(admin_user.id)))
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+    lock = next(i for i, s in enumerate(statements) if s.startswith("select files.id") and "for update" in s)
+    read = next(i for i, s in enumerate(statements) if "file_versions.storage_path" in s)
+    assert lock < read

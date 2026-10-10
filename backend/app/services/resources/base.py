@@ -64,12 +64,17 @@ class StoredFilesRemoved:
     async def run(self) -> None:
         from app.services.file_storage import get_storage
 
+        import asyncio
+
         storage = get_storage()
         for path in self.paths:
             try:
                 await storage.delete(path)
             except Exception as e:  # pragma: no cover - logged, never raised
                 logger.warning(f"Could not remove stored file {path}: {e}")
+            # Local storage deletes synchronously: let other requests run
+            # between files, or a large collection stalls the worker.
+            await asyncio.sleep(0)
 
 
 class SideEffectBus:
@@ -101,21 +106,22 @@ class SideEffectBus:
         effects, self._effects = self._effects, []
         tasks = [e for e in effects if hasattr(e, "run")]
         messages = [e for e in effects if not hasattr(e, "run")]
+        # Notifications first: workers (scheduler, CDC) shouldn't wait for
+        # slower cleanup work.
+        if messages:
+            try:
+                from app.core.redis import get_redis
+
+                redis = await get_redis()
+                for effect in messages:
+                    await redis.publish(effect.channel, effect.message())
+            except Exception as e:  # pragma: no cover - logged, never raised
+                logger.warning(f"Failed to publish side effects {messages}: {e}")
         for task in tasks:  # work to do after the commit (e.g. storage cleanup)
             try:
                 await task.run()
             except Exception as e:  # pragma: no cover - logged, never raised
                 logger.warning(f"Post-commit effect {task!r} failed: {e}")
-        if not messages:
-            return
-        try:
-            from app.core.redis import get_redis
-
-            redis = await get_redis()
-            for effect in messages:
-                await redis.publish(effect.channel, effect.message())
-        except Exception as e:  # pragma: no cover - logged, never raised
-            logger.warning(f"Failed to publish side effects {messages}: {e}")
 
 
 # --------------------------------------------------------------- context + results
