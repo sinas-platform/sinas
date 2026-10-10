@@ -103,6 +103,25 @@ class SideEffectBus:
     def discard(self) -> None:
         self._effects.clear()
 
+    async def _publish(self, messages: list[Any]) -> None:
+        """Each publish is bounded on its own: a healthy batch of any size
+        goes out, while a Redis that stops answering is given up on (and the
+        cleanup after it still runs)."""
+        import asyncio
+
+        sent = 0
+        try:
+            from app.core.redis import get_redis
+
+            redis = await asyncio.wait_for(get_redis(), timeout=PUBLISH_TIMEOUT_SECONDS)
+            for effect in messages:
+                await asyncio.wait_for(
+                    redis.publish(effect.channel, effect.message()), timeout=PUBLISH_TIMEOUT_SECONDS
+                )
+                sent += 1
+        except Exception as e:  # pragma: no cover - logged, never raised
+            logger.warning(f"Failed to publish side effects {messages[sent:]}: {e!r}")
+
     async def flush(self) -> None:
         """Publish and clear. Best-effort: the write already committed, so a
         failed notification must not turn into a failed request."""
@@ -112,21 +131,7 @@ class SideEffectBus:
         # Notifications first: workers (scheduler, CDC) shouldn't wait for
         # slower cleanup work.
         if messages:
-            import asyncio
-
-            async def publish() -> None:
-                from app.core.redis import get_redis
-
-                redis = await get_redis()
-                for effect in messages:
-                    await redis.publish(effect.channel, effect.message())
-
-            try:
-                # Bounded: a Redis that stops answering must not hold up the
-                # cleanup below (the write has committed either way).
-                await asyncio.wait_for(publish(), timeout=PUBLISH_TIMEOUT_SECONDS)
-            except Exception as e:  # pragma: no cover - logged, never raised
-                logger.warning(f"Failed to publish side effects {messages}: {e!r}")
+            await self._publish(messages)
         for task in tasks:  # work to do after the commit (e.g. storage cleanup)
             try:
                 await task.run()

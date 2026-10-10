@@ -159,3 +159,27 @@ async def test_a_stalled_redis_doesnt_hold_up_cleanup(monkeypatch, storage):
     bus.add(base.StoredFilesRemoved(("a/b",)))
     await asyncio.wait_for(bus.flush(), timeout=2)
     assert storage == ["a/b"]
+
+
+async def test_a_healthy_batch_isnt_cut_off(monkeypatch):
+    import asyncio
+
+    from app.services.resources import base
+
+    sent = []
+
+    class _SlowRedis:
+        async def publish(self, channel, message):
+            await asyncio.sleep(0.02)
+            sent.append(message)
+
+    async def slow():
+        return _SlowRedis()
+
+    monkeypatch.setattr("app.core.redis.get_redis", slow)
+    monkeypatch.setattr(base, "PUBLISH_TIMEOUT_SECONDS", 0.05)  # less than the whole batch takes
+    bus = base.SideEffectBus()
+    for i in range(10):
+        bus.add(base.SchedulerJobChanged("update", f"job-{i}"))
+    await bus.flush()
+    assert len(sent) == 10
