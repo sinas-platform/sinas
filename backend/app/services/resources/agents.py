@@ -82,19 +82,21 @@ class AgentApplier(ResourceApplier[AgentSpec]):
             function_parameters=dict(row.function_parameters or {}),
             status_templates=dict(row.status_templates or {}),
             enabled_agents=list(row.enabled_agents or []),
+            # Older rows may hold plain strings: kept, with the meaning the
+            # runtime and API give them (no preload, read-only), never dropped.
             enabled_skills=[
-                SkillRef.model_construct(**{"preload": False, **s}) for s in row.enabled_skills or []
-                if isinstance(s, dict)
+                SkillRef.model_construct(**({"preload": False, **s} if isinstance(s, dict) else {"skill": str(s), "preload": False}))
+                for s in row.enabled_skills or []
             ],
             enabled_stores=[
-                StoreRef.model_construct(**{"access": "readonly", **s}) for s in row.enabled_stores or []
-                if isinstance(s, dict)
+                StoreRef.model_construct(**({"access": "readonly", **s} if isinstance(s, dict) else {"store": str(s), "access": "readonly"}))
+                for s in row.enabled_stores or []
             ],
             enabled_queries=list(row.enabled_queries or []),
             query_parameters=dict(row.query_parameters or {}),
             enabled_collections=[
-                CollectionRef.model_construct(**{"access": "readonly", **c})
-                for c in row.enabled_collections or [] if isinstance(c, dict)
+                CollectionRef.model_construct(**({"access": "readonly", **c} if isinstance(c, dict) else {"collection": str(c), "access": "readonly"}))
+                for c in row.enabled_collections or []
             ],
             enabled_components=list(row.enabled_components or []),
             enabled_connectors=list(row.enabled_connectors or []),
@@ -132,12 +134,10 @@ class AgentApplier(ResourceApplier[AgentSpec]):
             row.llm_provider_id = (
                 await self._provider_id(ctx, spec.llm_provider_name) if spec.llm_provider_name else None
             )
-        # One default agent: making this one the default unsets the others.
+        # One default agent: making this one the default unsets the others,
+        # each recorded (whoever manages them: the default is global).
         if spec.is_default and not (current is not None and current.is_default):
-            stmt = update(Agent).where(Agent.is_default.is_(True)).values(is_default=False)
-            if row.id is not None:
-                stmt = stmt.where(Agent.id != row.id)
-            await ctx.db.execute(stmt)
+            await self._unset_other_defaults(row, ctx)
         row.namespace = spec.namespace
         row.name = spec.name
         for field in _FIELDS:
@@ -153,6 +153,22 @@ class AgentApplier(ResourceApplier[AgentSpec]):
         row.enabled_collections = [c.model_dump() for c in spec.enabled_collections]
         row.hooks = dict(spec.hooks) if spec.hooks is not None else None
         row.is_default = spec.is_default
+
+    async def _unset_other_defaults(self, row: Agent, ctx: ApplyContext) -> None:
+        from app.schemas.spec.base import diff_specs
+        from app.services.resources.history import record_revision
+
+        stmt = select(Agent).where(Agent.is_default.is_(True)).with_for_update()
+        if row.id is not None:
+            stmt = stmt.where(Agent.id != row.id)
+        for other in (await ctx.db.execute(stmt)).scalars().all():
+            before = await self.current_spec(ctx, other)
+            after = before.model_copy(update={"is_default": False})
+            other.is_default = False
+            state = self.history_spec(after)
+            await record_revision(
+                ctx, self, other, "update", state, diff_specs(self.history_spec(before), state)
+            )
 
     async def check_references(self, spec: AgentSpec, ctx: ApplyContext) -> None:
         # A preview accepts a provider the same config declares.

@@ -254,3 +254,58 @@ class TestPackages:
         await PackageService(db).install(_package(f"pkg-{_uid()}", "1.0.0", [name]), str(admin_user.id))
         row = await _row(db, name)
         assert (row.description, row.managed_by) == ("mine", None)
+
+
+class TestReviewFixes:
+    async def test_older_string_references_survive_an_edit(self, client, db: AsyncSession, admin_user):
+        name = f"o{_uid()}"
+        db.add(Agent(
+            namespace=NS, name=name, user_id=admin_user.id,
+            enabled_skills=["kb/faq"], enabled_stores=["crm/notes"], enabled_collections=["docs/manuals"],
+        ))
+        await db.flush()
+        r = await client.put(f"/api/v1/agents/{NS}/{name}", json={"description": "d"}, headers=auth_headers(admin_user))
+        assert r.status_code == 200, r.text
+        row = await _row(db, name)
+        assert row.enabled_skills == [{"skill": "kb/faq", "preload": False}]
+        assert row.enabled_stores == [{"store": "crm/notes", "access": "readonly"}]
+        assert row.enabled_collections == [{"collection": "docs/manuals", "access": "readonly"}]
+
+    async def test_the_previous_default_is_recorded_too(self, client, db: AsyncSession, admin_user):
+        a, b, h = f"a{_uid()}", f"b{_uid()}", auth_headers(admin_user)
+        await client.post("/api/v1/agents", json={"namespace": NS, "name": a, "is_default": True}, headers=h)
+        await client.post("/api/v1/agents", json={"namespace": NS, "name": b}, headers=h)
+        await client.put(f"/api/v1/agents/{NS}/{b}", json={"is_default": True}, headers=h)
+        last = (await db.execute(
+            select(ConfigRevision).where(
+                ConfigRevision.resource_kind == "agents", ConfigRevision.resource_key == f"{NS}/{a}"
+            ).order_by(ConfigRevision.id.desc()).limit(1)
+        )).scalar_one()
+        assert (last.action, last.changes) == ("update", {"is_default": {"from": True, "to": False}})
+
+    async def test_a_hard_deleted_agent_restores_as_it_was(self, client, db: AsyncSession, admin_user, provider):
+        from app.services.package_service import PackageService
+
+        pkg, name = f"pkg-{_uid()}", f"r{_uid()}"
+        yaml_text = _package(pkg, "1.0.0", [name]).replace(
+            f"{{namespace: {NS}, name: {name}}}",
+            f"{{namespace: {NS}, name: {name}, llmProviderName: {provider.name}}}",
+        )
+        service = PackageService(db)
+        _, installed = await service.install(yaml_text, str(admin_user.id))
+        assert installed.success, installed.errors
+        original = await _row(db, name)
+        original_id, owner = original.id, original.user_id
+        await service.uninstall(pkg, actor_user_id=str(admin_user.id))
+        assert await _row(db, name) is None
+
+        deleted = (await db.execute(
+            select(ConfigRevision.id).where(
+                ConfigRevision.resource_kind == "agents", ConfigRevision.resource_key == f"{NS}/{name}",
+                ConfigRevision.action == "delete",
+            )
+        )).scalar_one()
+        r = await client.post(f"/api/v1/config/history/{deleted}/restore", headers=auth_headers(admin_user))
+        assert r.status_code == 200, r.text
+        row = await _row(db, name)
+        assert (row.id, row.user_id, row.llm_provider_id, row.is_active) == (original_id, owner, provider.id, True)
