@@ -789,6 +789,33 @@ async def execute_single_tool(
                 )
                 if stored:
                     result = stored
+                    # The messages row holds the clipped inline copy. If the
+                    # excess was spilled to the workbench (#180), serve the
+                    # full copy — that is what the agent came back for.
+                    retrieve_limit = TOOL_RESULT_SIZE_OVERRIDES.get(
+                        "retrieve_tool_result", settings.tool_result_context_max_size
+                    )
+                    full = await workbench_refs.load_spilled_result(
+                        db, chat, user_id, stored.get("result"), retrieve_limit
+                    )
+                    if full and "result" in full:
+                        result = {
+                            **stored,
+                            "result": full["result"],
+                            "source": "workbench",
+                            "workbench_file": full["path"],
+                        }
+                    elif full:
+                        result = {
+                            **stored,
+                            "workbench_file": full["path"],
+                            "note": (
+                                f"The full result is larger than this tool can "
+                                f"return inline; read '{full['path']}' with "
+                                "workbench_read (offset/limit) or process it "
+                                "with code execution."
+                            ),
+                        }
                 else:
                     # Help the agent self-correct instead of giving up. Most
                     # "not found" hits are hallucinated ids — surface the

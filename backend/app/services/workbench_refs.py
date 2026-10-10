@@ -250,3 +250,53 @@ def attach_spill_pointer(truncated_content: str, path: str) -> str:
         parsed["_full_result"] = {"workbench_file": path, "hint": note}
         return json.dumps(parsed)
     return truncated_content + f"\n[{note}]"
+
+
+def spill_pointer(stored_result: Any) -> Optional[str]:
+    """The workbench path a stored (truncated) tool result points at, if any."""
+    if not isinstance(stored_result, dict):
+        return None
+    pointer = stored_result.get("_full_result")
+    if isinstance(pointer, dict) and isinstance(pointer.get("workbench_file"), str):
+        return pointer["workbench_file"]
+    return None
+
+
+async def load_spilled_result(
+    db, chat, user_id: str, stored_result: Any, max_bytes: int
+) -> Optional[dict[str, Any]]:
+    """Follow a truncated result's spill pointer back to the full copy.
+
+    `retrieve_tool_result` reads the messages row, which holds the clipped
+    inline copy. When that copy points at a workbench spill, serve the full
+    content instead. Returns {"path", "result"} with the parsed full result,
+    {"path", "too_large"} when the full copy exceeds the retrieve tool's own
+    size limit (the pointer stays the way to read it, in pages), or None
+    when there is nothing to follow or the file is gone.
+    """
+    from app.services.workbench import chat_has_workbench_enabled, fetch_file_bytes
+
+    path = spill_pointer(stored_result)
+    if path is None:
+        return None
+    try:
+        if chat is None or str(chat.user_id) != str(user_id):
+            return None
+        if not await chat_has_workbench_enabled(db, chat):
+            return None
+        fetched = await fetch_file_bytes(db, chat, path, max_bytes)
+    except Exception as e:
+        logger.warning(f"Could not load spilled result '{path}': {e}")
+        return None
+    if "error" in fetched:
+        if "above the lazy-fetch limit" in fetched["error"]:
+            return {"path": path, "too_large": True}
+        return None
+    import base64
+
+    content = base64.b64decode(fetched["content_b64"]).decode("utf-8", errors="replace")
+    try:
+        parsed: Any = json.loads(content)
+    except (ValueError, TypeError):
+        parsed = {"raw": content}
+    return {"path": path, "result": parsed}

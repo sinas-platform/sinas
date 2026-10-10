@@ -218,3 +218,112 @@ class TestResultSpill:
         out = workbench_refs.attach_spill_pointer("plain text tail", "tool_results/q.txt")
         assert out.startswith("plain text tail")
         assert "tool_results/q.txt" in out
+
+
+class TestRetrieveServesSpilledCopy:
+    """retrieve_tool_result follows the inline pointer back to the full spill
+    (issue #226): the messages row only holds the clipped copy."""
+
+    @pytest_asyncio.fixture
+    async def wb_chat(self, db, test_user):
+        from app.models import Agent
+
+        agent = Agent(
+            namespace="test", name="retriever", user_id=test_user.id,
+            system_tools=["workbench"],
+        )
+        db.add(agent)
+        await db.flush()
+        c = Chat(user_id=test_user.id, agent_id=agent.id, title="retrieve chat")
+        db.add(c)
+        await db.flush()
+        await db.refresh(c)
+        return c
+
+    async def _spill_and_store(self, db, chat, test_user, call_id, full):
+        from app.models.chat import Message
+        from app.services.tool_execution import truncate_tool_result
+
+        full_json = json.dumps(full)
+        path = await workbench_refs.spill_result(
+            db, chat, str(test_user.id), "big_query", call_id, full_json
+        )
+        assert path
+        clipped = workbench_refs.attach_spill_pointer(
+            truncate_tool_result(full_json, 500), path
+        )
+        db.add(Message(chat_id=chat.id, role="tool", name="big_query",
+                       tool_call_id=call_id, content=clipped))
+        await db.flush()
+        return path, clipped
+
+    async def _retrieve(self, db, chat, test_user, call_id, monkeypatch):
+        import contextlib
+
+        from app.services import tool_execution
+        from app.services.message_service import MessageService
+        from app.services.tool_execution import execute_single_tool
+
+        # The executor opens its own session; the fixture's rows live in a
+        # rolled-back transaction it can't see, so hand it the same session.
+        @contextlib.asynccontextmanager
+        async def _same_session():
+            yield db
+
+        monkeypatch.setattr(tool_execution, "AsyncSessionLocal", _same_session)
+        svc = MessageService(db)
+        _, name, content = await execute_single_tool(
+            {"id": "call_r", "type": "function",
+             "function": {"name": "retrieve_tool_result",
+                          "arguments": json.dumps({"tool_call_id": call_id})}},
+            str(chat.id), str(test_user.id), "tok",
+            [{"type": "function", "function": {"name": "retrieve_tool_result"}}],
+            svc.function_converter, svc.query_converter, svc.skill_converter,
+            svc.component_converter, svc.collection_converter,
+            svc.create_chat_with_agent,
+        )
+        assert name == "retrieve_tool_result"
+        out = json.loads(content)
+        assert "error" not in out, out
+        return out
+
+    @pytest.mark.asyncio
+    async def test_full_copy_is_served(self, db, wb_chat, test_user, monkeypatch):
+        full = {"rows": list(range(2000))}
+        path, clipped = await self._spill_and_store(db, wb_chat, test_user, "call_full", full)
+        assert json.loads(clipped)["rows"] != full["rows"]  # inline copy really is clipped
+
+        out = await self._retrieve(db, wb_chat, test_user, "call_full", monkeypatch)
+        assert out["result"] == full
+        assert out["source"] == "workbench"
+        assert out["workbench_file"] == path
+
+    @pytest.mark.asyncio
+    async def test_oversized_copy_stays_a_pointer(self, db, wb_chat, test_user, monkeypatch):
+        from app.services import tool_execution
+
+        monkeypatch.setitem(
+            tool_execution.TOOL_RESULT_SIZE_OVERRIDES, "retrieve_tool_result", 2000
+        )
+        full = {"rows": list(range(2000))}
+        path, _ = await self._spill_and_store(db, wb_chat, test_user, "call_huge", full)
+
+        out = await self._retrieve(db, wb_chat, test_user, "call_huge", monkeypatch)
+        assert out["result"]["_full_result"]["workbench_file"] == path  # still clipped
+        assert out["workbench_file"] == path
+        assert "workbench_read" in out["note"]
+
+    @pytest.mark.asyncio
+    async def test_missing_spill_falls_back_to_stored_copy(self, db, wb_chat, test_user, monkeypatch):
+        from app.models.chat import Message
+
+        clipped = workbench_refs.attach_spill_pointer(
+            json.dumps({"rows": [1], "_truncated": True}), "tool_results/gone.json"
+        )
+        db.add(Message(chat_id=wb_chat.id, role="tool", name="big_query",
+                       tool_call_id="call_gone", content=clipped))
+        await db.flush()
+
+        out = await self._retrieve(db, wb_chat, test_user, "call_gone", monkeypatch)
+        assert out["result"]["rows"] == [1]
+        assert out["source"] == "messages"
