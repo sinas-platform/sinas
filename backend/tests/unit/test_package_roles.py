@@ -144,7 +144,7 @@ class TestPackageRoles:
         pkg = f"pkg-{uuid.uuid4().hex[:8]}"
         yaml = _yaml(pkg, "pkgns", role_name, [("sinas.agents/pkgns/*.execute:all", True)])
         package, result = await PackageService(db).install(yaml, str(admin_user.id))
-        assert any("not managed by" in w for w in result.warnings)
+        assert any("by hand" in w for w in result.warnings)
         role = await _role(db, role_name)
         assert role.managed_by is None  # untouched
 

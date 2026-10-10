@@ -6,7 +6,7 @@ import re
 from typing import Any, Optional
 
 import yaml
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
@@ -22,7 +22,6 @@ from app.models.schedule import ScheduledJob
 from app.models.skill import Skill
 from app.models.store import Store
 from app.models.template import Template
-from app.models.user import APIKeyRole, Role, RolePermission, UserRole
 from app.models.webhook import Webhook
 from app.schemas.config import ConfigApplyResponse, OwnershipSkip, SinasConfig
 from app.services.config_apply import ConfigApplyService
@@ -483,15 +482,9 @@ class PackageService:
             if rows:
                 deleted_counts[applier.kind] = len(rows)
 
-        # Package-managed roles: children first (their FKs have no ON DELETE),
-        # then the roles. User assignments vanish with the role — deliberate:
-        # an uninstalled package's authority should not linger anywhere.
-        role_ids = select(Role.id).where(Role.managed_by == managed_by).scalar_subquery()
-        for child in (RolePermission, UserRole, APIKeyRole):
-            await self.db.execute(delete(child).where(child.role_id.in_(role_ids)))
-        result = await self.db.execute(delete(Role).where(Role.managed_by == managed_by))
-        if result.rowcount > 0:
-            deleted_counts["roles"] = result.rowcount
+        # Package-managed roles went with the appliers above, user and API-key
+        # assignments with them — deliberate: an uninstalled package's
+        # authority should not linger anywhere.
 
         # Delete package record
         await self.db.delete(package)

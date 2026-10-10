@@ -8,122 +8,10 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import Role, RolePermission, User, UserIdentity, UserRole
+from app.models.user import Role, User, UserIdentity, UserRole
 from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
-
-
-async def apply_roles(
-    db: AsyncSession,
-    roles: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    role_ids: dict[str, str],
-) -> None:
-    """Apply role configurations"""
-    for role_config in roles:
-        try:
-            # Check if exists
-            stmt = select(Role).where(Role.name == role_config.name)
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            # Calculate hash. Permissions are part of it: without them, a
-            # permission-only change hits the checksum-unchanged `continue`
-            # below and is silently never applied (package upgrades are
-            # mostly permission changes).
-            config_hash = calculate_hash(
-                {
-                    "name": role_config.name,
-                    "description": role_config.description,
-                    "email_domain": role_config.emailDomain,
-                    "permissions": sorted(
-                        (p.key, p.value) for p in (role_config.permissions or [])
-                    ),
-                }
-            )
-
-            if existing:
-                # Check if config-managed
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        OwnershipSkip(f"Role '{role_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
-                    )
-                    track_change("unchanged", "roles", role_config.name)
-                    role_ids[role_config.name] = str(existing.id)
-                    continue
-
-                # Check if changed
-                if existing.config_checksum == config_hash:
-                    track_change("unchanged", "roles", role_config.name)
-                    role_ids[role_config.name] = str(existing.id)
-                    continue
-
-                # Update
-                if not dry_run:
-                    existing.description = role_config.description
-                    existing.email_domain = role_config.emailDomain
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change(
-                    "update", "roles", role_config.name, details="Updated role configuration"
-                )
-                role_ids[role_config.name] = str(existing.id)
-
-            else:
-                # Create new
-                if not dry_run:
-                    new_role = Role(
-                        name=role_config.name,
-                        description=role_config.description,
-                        email_domain=role_config.emailDomain,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_role)
-                    await db.flush()
-                    role_ids[role_config.name] = str(new_role.id)
-                else:
-                    role_ids[role_config.name] = "dry-run-id"
-
-                track_change(
-                    "create", "roles", role_config.name, details="Created new role"
-                )
-
-            # Apply permissions
-            if not dry_run and role_config.permissions:
-                await apply_role_permissions(
-                    db, role_ids[role_config.name], role_config.permissions
-                )
-
-        except Exception as e:
-            errors.append(f"Error applying role '{role_config.name}': {str(e)}")
-
-
-async def apply_role_permissions(
-    db: AsyncSession, role_id: str, permissions: list
-) -> None:
-    """Apply permissions to a role"""
-    # Delete existing permissions for this role
-    stmt = delete(RolePermission).where(RolePermission.role_id == role_id)
-    await db.execute(stmt)
-
-    # Add new permissions
-    for perm in permissions:
-        perm_obj = RolePermission(
-            role_id=role_id,
-            permission_key=perm.key,
-            permission_value=perm.value,
-        )
-        db.add(perm_obj)
 
 
 async def apply_users(
@@ -136,10 +24,9 @@ async def apply_users(
     track_change: Any,
     errors: list[str],
     warnings: list[str],
-    role_ids: dict[str, str],
     user_ids: dict[str, str],
 ) -> None:
-    """Apply user configurations"""
+    """Apply user configurations (roles are applied before, by their applier)."""
     for user_config in users:
         try:
             stmt = select(User).where(User.email == user_config.email)
@@ -200,8 +87,7 @@ async def apply_users(
             # Apply role memberships
             if not dry_run and user_config.roles:
                 await apply_user_roles(
-                    db, user_ids[user_config.email], user_config.roles,
-                    role_ids, warnings,
+                    db, user_ids[user_config.email], user_config.roles, warnings,
                 )
 
             # Apply external identities (declarative: config is the full set)
@@ -271,23 +157,25 @@ async def apply_user_roles(
     db: AsyncSession,
     user_id: str,
     role_names: list[str],
-    role_ids: dict[str, str],
     warnings: list[str],
 ) -> None:
-    """Apply role memberships to a user"""
+    """Apply role memberships to a user. Roles are found by name in the
+    database (they're applied before users), so a user can hold a role this
+    config doesn't declare, such as Admins."""
     # Remove existing memberships for this user
     stmt = delete(UserRole).where(UserRole.user_id == user_id)
     await db.execute(stmt)
 
     # Add new memberships
     for role_name in role_names:
-        if role_name not in role_ids:
+        role_id = (await db.execute(select(Role.id).where(Role.name == role_name))).scalar_one_or_none()
+        if role_id is None:
             warnings.append(f"Role '{role_name}' not found for user membership")
             continue
 
         membership = UserRole(
             user_id=user_id,
-            role_id=role_ids[role_name],
+            role_id=role_id,
             active=True,
         )
         db.add(membership)
