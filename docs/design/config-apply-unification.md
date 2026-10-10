@@ -539,6 +539,27 @@ invalidation effect).
   state unless declared. A bare store reference in config still means
   read-write.
 
+### Slice 6: stores, collections, manifests (decisions)
+
+- **Same shape as slice 4.** REST, config apply, package install/upgrade
+  and uninstall share one applier per kind, so writes are recorded (and
+  restorable), packages never adopt hand-made rows, two config files no
+  longer overwrite each other, and an upgrade prunes what a new version
+  dropped. Uninstall goes through the applier instead of a bulk delete.
+- **Specs are as lenient as config was** (e.g. `defaultVisibility`,
+  `exposedNamespaces` keys); the REST schemas keep their stricter checks.
+- **REST keeps its old update semantics:** null means "leave as is", and a
+  store PUT still ignores namespace/name. A manifest PUT may rename.
+- **Manifests:** `storeDependencies` is now applied (config dropped it), and
+  `is_active` is operator state unless declared (config switched every
+  manifest it touched back on). Export includes `isActive`.
+- **Collections:** the upload hooks must name existing functions on every
+  channel (only config's parser checked before). The runtime upload that
+  creates a missing collection goes through the applier too.
+- Store states and collection files are removed by the database cascade
+  (`passive_deletes`), not loaded one by one. Collection blobs in storage
+  are still not removed on delete — separate issue.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

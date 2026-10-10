@@ -35,6 +35,8 @@ from app.schemas.chat import (
     MessageResponse,
     MessageSendRequest,
     PendingApprovalResponse,
+    PendingInputAnswer,
+    PendingInputResponse,
     ToolApprovalRequest,
     ToolApprovalResponse,
 )
@@ -545,7 +547,13 @@ async def stream_message(
                     elif event_type == "error":
                         yield {"event": "error", "data": json.dumps({"error": event.get("error", "An error occurred")})}
                         return
-                    elif event_type in ("approval_required", "tool_start", "tool_end"):
+                    elif event_type in (
+                        "approval_required",
+                        "tool_start",
+                        "tool_end",
+                        "input_required",
+                        "round_suspended",
+                    ):
                         yield {"event": event_type, "data": json.dumps(event)}
                     else:
                         yield {"event": "message", "data": json.dumps(event)}
@@ -690,7 +698,13 @@ async def reconnect_stream(
                         "data": json.dumps({"error": event.get("error", "An error occurred")}),
                     }
                     return
-                elif event_type in ("approval_required", "tool_start", "tool_end"):
+                elif event_type in (
+                    "approval_required",
+                    "tool_start",
+                    "tool_end",
+                    "input_required",
+                    "round_suspended",
+                ):
                     yield {"event": event_type, "data": json.dumps(event)}
                 else:
                     yield {"event": "message", "data": json.dumps(event)}
@@ -757,8 +771,31 @@ async def approve_tool_call(
     if not pending_approval:
         raise HTTPException(404, "Pending approval not found or already processed")
 
-    # Update approval status
-    pending_approval.approved = request.approved
+    # Resolve it only while it is still undecided and not past its deadline:
+    # the expiry sweep resolves it the same conditional way, so exactly one of
+    # the two wins (an expired approval can never be approved afterwards).
+    from datetime import datetime, timezone
+
+    from sqlalchemy import or_, update
+
+    resolved = (
+        await db.execute(
+            update(PendingToolApproval)
+            .where(
+                PendingToolApproval.id == pending_approval.id,
+                PendingToolApproval.approved.is_(None),
+                or_(
+                    PendingToolApproval.expires_at.is_(None),
+                    PendingToolApproval.expires_at > datetime.now(timezone.utc),
+                ),
+            )
+            .values(approved=request.approved)
+            .returning(PendingToolApproval.id)
+        )
+    ).scalar_one_or_none()
+    if resolved is None:
+        await db.rollback()
+        raise HTTPException(409, "This approval was already resolved or has expired")
     await db.commit()
 
     # Extract token and enqueue resume job
@@ -782,6 +819,115 @@ async def approve_tool_call(
             "tool_call_id": tool_call_id,
             "channel_id": channel_id,
             "message": f"Resume job enqueued. Connect to /chats/{chat_id}/stream/{channel_id} for results.",
+        },
+    )
+
+
+async def _authorize_chat_access(
+    db: AsyncSession, http_request: Request, chat_id: str, current_user_data: tuple
+) -> Chat:
+    """Shared ownership + agent-chat permission gate for chat sub-resources."""
+    user_id, permissions = current_user_data
+
+    chat = await db.get(Chat, chat_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found")
+
+    agent_chat_perm = f"sinas.agents/{chat.agent_namespace}/{chat.agent_name}.chat:all"
+    if not check_permission(permissions, agent_chat_perm):
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(
+            403, f"Not authorized to chat with agent '{chat.agent_namespace}/{chat.agent_name}'"
+        )
+    if str(chat.user_id) != user_id:
+        set_permission_used(http_request, agent_chat_perm, has_perm=False)
+        raise HTTPException(403, "Not authorized to access this chat")
+
+    set_permission_used(http_request, agent_chat_perm)
+    return chat
+
+
+@router.get("/chats/{chat_id}/pending-input", response_model=list[PendingInputResponse])
+async def list_pending_input(
+    chat_id: str,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """List the ask_user questions this chat is currently suspended on."""
+    from app.services import deferred_completions
+
+    await _authorize_chat_access(db, http_request, chat_id, current_user_data)
+    return [
+        PendingInputResponse(**{k: v for k, v in item.items() if k != "pending_completion_id"})
+        for item in await deferred_completions.list_pending_inputs(db, chat_id)
+    ]
+
+
+@router.post("/chats/{chat_id}/pending-input/{tool_call_id}")
+async def answer_pending_input(
+    chat_id: str,
+    tool_call_id: str,
+    request: PendingInputAnswer,
+    http_request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_data: tuple = Depends(get_current_user_with_permissions),
+):
+    """Answer an ask_user question the conversation is suspended on.
+
+    The answer becomes the tool result of the suspended ask_user call. When
+    it is the round's last outstanding completion, a resume job continues
+    the conversation on a fresh stream channel (returned as `channel_id` —
+    same reconnect contract as tool approval); otherwise the round keeps
+    waiting for its other completions and `resumed` is false.
+    """
+    from app.services import deferred_completions
+
+    user_id, _ = current_user_data
+    await _authorize_chat_access(db, http_request, chat_id, current_user_data)
+
+    pending = await deferred_completions.list_pending_inputs(db, chat_id)
+    match = next((p for p in pending if p["tool_call_id"] == tool_call_id), None)
+    if not match:
+        raise HTTPException(404, "Pending input not found or already answered")
+
+    user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
+    channel_id = str(uuid.uuid4())
+
+    outcome = await deferred_completions.complete(
+        match["pending_completion_id"],
+        tool_call_id,
+        json.dumps({"answer": request.answer}),
+        user_token=user_token,
+        resume_channel_id=channel_id,
+    )
+    if outcome["status"] != "completed":
+        # Raced another completion of the same entry (double submit, expiry).
+        raise HTTPException(409, "Pending input was already resolved")
+
+    resumed = outcome.get("resumed", False)
+    pending = outcome.get("resume_pending", False)
+    # The channel the conversation actually resumes on (a delegated child
+    # keeps its original one, which its parent is waiting on).
+    channel_id = outcome.get("channel_id") or channel_id
+    if resumed:
+        message = f"Resume job enqueued. Connect to /chats/{chat_id}/stream/{channel_id} for results."
+    elif pending:
+        message = (
+            "Answer recorded, but the resume could not be queued yet; it is retried "
+            f"within a minute or two on /chats/{chat_id}/stream/{channel_id}."
+        )
+    else:
+        message = "Answer recorded; the conversation resumes when its remaining completions land."
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "answered",
+            "tool_call_id": tool_call_id,
+            "resumed": resumed,
+            "resume_pending": pending,
+            "channel_id": channel_id if (resumed or pending) else None,
+            "message": message,
         },
     )
 
@@ -911,6 +1057,16 @@ async def get_chat(
         for pa in approval_result.scalars().all()
     ]
 
+    # Load any open ask_user questions (deferred tool round suspensions)
+    from app.services import deferred_completions
+
+    pending_inputs = [
+        PendingInputResponse(
+            **{k: v for k, v in item.items() if k != "pending_completion_id"}
+        )
+        for item in await deferred_completions.list_pending_inputs(db, chat_id)
+    ]
+
     return ChatWithMessages(
         id=chat.id,
         user_id=chat.user_id,
@@ -928,6 +1084,7 @@ async def get_chat(
         last_message_at=last_message_at,
         messages=message_responses,
         pending_approvals=pending,
+        pending_inputs=pending_inputs,
     )
 
 

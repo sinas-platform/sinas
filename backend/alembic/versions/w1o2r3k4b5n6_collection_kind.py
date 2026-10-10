@@ -1,14 +1,14 @@
 """collections.kind: discriminate workbenches from user-facing collections
 
 Revision ID: w1o2r3k4b5n6
-Revises: s1h2a3r4e5m6
+Revises: d1f2c3m4p5l6
 Create Date: 2026-09-01
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "w1o2r3k4b5n6"
-down_revision = "s1h2a3r4e5m6"
+down_revision = "d1f2c3m4p5l6"
 branch_labels = None
 depends_on = None
 

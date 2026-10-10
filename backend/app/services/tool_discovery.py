@@ -6,7 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.config import settings
 from app.core.permissions import check_permission
 from app.models import Agent, Chat
@@ -211,7 +211,7 @@ async def get_available_tools(
     # Add agent tools (other agents this agent can call)
     agent_enabled = agent.enabled_agents or []
     if agent_enabled:
-        user_permissions = await get_user_permissions(db, user_id)
+        user_permissions = await get_effective_permissions(db, user_id)
         resolved_agents = await resolve_agent_patterns(
             db, agent_enabled, user_id, user_permissions
         )
@@ -362,6 +362,9 @@ async def get_available_tools(
     if has_system_tool(system_tools, "workbench"):
         from app.services.workbench import get_workbench_tool_definitions
         tools.extend(get_workbench_tool_definitions())
+    if has_system_tool(system_tools, "askUser"):
+        from app.services.ask_user_tools import get_ask_user_tool_definition
+        tools.append(get_ask_user_tool_definition())
 
     # Check for paused executions belonging to this chat
     result = await db.execute(

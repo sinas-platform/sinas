@@ -449,10 +449,7 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
-            Manifest: "manifests",
-            Collection: "collections",
             Function: "functions",
-            Store: "stores",
         }
 
         # Children whose FK has no ON DELETE rule must be cleared first. The

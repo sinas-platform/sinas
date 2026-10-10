@@ -1,8 +1,9 @@
 """Pending tool call approval tracking."""
 import uuid
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
-from sqlalchemy import JSON, Boolean, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, created_at, uuid_pk
@@ -38,4 +39,10 @@ class PendingToolApproval(Base):
     approved: Mapped[bool] = mapped_column(
         Boolean, nullable=True
     )  # None=pending, True=approved, False=rejected
+
+    # Optional deadline: the expiry sweep auto-rejects approvals still
+    # pending past this. NULL = ask forever (the pre-expiry behavior).
+    expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     created_at: Mapped[created_at]

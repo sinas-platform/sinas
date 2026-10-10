@@ -78,6 +78,8 @@ DELETE /api/v1/api-keys/{id}      # Revoke key
 
 API keys can be used via `Authorization: Bearer <key>` or `X-API-Key: <key>` headers. Keys can have optional expiration dates.
 
+A key acts with **its own** permissions everywhere, including through agents: when a chat is started or continued with a key, the agent's tools (functions, queries, stores, collections, sub-agents, pipelines) are checked against the key's live permissions, not its owner's — and so are components and artifacts shown in that chat. A key that may only chat with an agent can't use that agent's tools; grant the key those tools' permissions too. Revoking or narrowing a key takes effect immediately, also for runs already queued.
+
 ## Token Exchange (bring your own auth)
 
 If your application already authenticates users itself, you don't need to run a second Sinas login flow. Your backend exchanges its knowledge of "who is logged in" for Sinas tokens:
