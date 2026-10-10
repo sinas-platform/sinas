@@ -77,7 +77,7 @@ async def test_export_lists_only_current_memberships(db: AsyncSession, admin_use
 
 async def test_a_user_stored_un_normalized_is_found_and_fixed(db: AsyncSession, admin_user):
     local = f"bob-{uuid.uuid4().hex[:6]}"
-    db.add(User(email=f"{local.upper()}@Example.com ", managed_by="config", config_name="people"))
+    db.add(User(email=f"\t{local.upper()}@Example.com \n", managed_by="config", config_name="people"))
     await db.flush()
     assert (await _apply(db, admin_user, users=[{"email": f"{local}@example.com", "customFields": {"a": 1}}])).success
     rows = (await db.execute(select(User).where(User.email.ilike(f"%{local}%")))).scalars().all()

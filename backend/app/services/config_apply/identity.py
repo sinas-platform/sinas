@@ -13,6 +13,9 @@ from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
+# What str.strip() (normalize_email) removes, for the database-side match.
+_WHITESPACE = " \t\n\r\x0b\x0c"
+
 
 async def apply_users(
     db: AsyncSession,
@@ -33,7 +36,7 @@ async def apply_users(
             # an earlier apply stored un-normalized is found, not duplicated.
             existing = (await db.execute(
                 select(User)
-                .where(func.lower(func.trim(User.email)) == user_config.email)
+                .where(func.lower(func.btrim(User.email, _WHITESPACE)) == user_config.email)
                 .order_by((User.email == user_config.email).desc(), User.created_at)
                 .limit(1)
             )).scalar_one_or_none()
