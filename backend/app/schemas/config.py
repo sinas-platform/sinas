@@ -50,10 +50,21 @@ class UserConfig(BaseModel):
 
     email: str
     isActive: bool = True
-    roles: list[str] = Field(default_factory=list)
+    # Left out: the user's memberships are not managed by this config. A
+    # list (even empty) is the full set of roles the user holds.
+    roles: Optional[list[str]] = None
     permissions: list[UserPermissionConfig] = Field(default_factory=list)
     customFields: Optional[dict[str, Any]] = None
     identities: list[UserIdentityConfig] = Field(default_factory=list)
+
+    @field_validator("email")
+    @classmethod
+    def _normalized(cls, value: str) -> str:
+        # As the API and login store and look them up: "Ann@X.com " used to
+        # miss the existing ann@x.com and create a second user.
+        from app.core.auth import normalize_email
+
+        return normalize_email(value)
 
 
 class LLMProviderConfig(BaseModel):
