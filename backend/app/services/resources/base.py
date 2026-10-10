@@ -53,6 +53,25 @@ class CdcTriggerChanged:
         return json.dumps({"action": self.action, "trigger_id": self.trigger_id})
 
 
+@dataclass(frozen=True)
+class StoredFilesRemoved:
+    """Remove files from storage once the rows that pointed at them are gone
+    for good: after the commit, so a rolled-back delete never loses a file.
+    Best-effort per file (one that's already missing is fine)."""
+
+    paths: tuple[str, ...]
+
+    async def run(self) -> None:
+        from app.services.file_storage import get_storage
+
+        storage = get_storage()
+        for path in self.paths:
+            try:
+                await storage.delete(path)
+            except Exception as e:  # pragma: no cover - logged, never raised
+                logger.warning(f"Could not remove stored file {path}: {e}")
+
+
 class SideEffectBus:
     """Effects recorded during a write, published only after it commits.
 
@@ -80,16 +99,23 @@ class SideEffectBus:
         """Publish and clear. Best-effort: the write already committed, so a
         failed notification must not turn into a failed request."""
         effects, self._effects = self._effects, []
-        if not effects:
+        tasks = [e for e in effects if hasattr(e, "run")]
+        messages = [e for e in effects if not hasattr(e, "run")]
+        for task in tasks:  # work to do after the commit (e.g. storage cleanup)
+            try:
+                await task.run()
+            except Exception as e:  # pragma: no cover - logged, never raised
+                logger.warning(f"Post-commit effect {task!r} failed: {e}")
+        if not messages:
             return
         try:
             from app.core.redis import get_redis
 
             redis = await get_redis()
-            for effect in effects:
+            for effect in messages:
                 await redis.publish(effect.channel, effect.message())
         except Exception as e:  # pragma: no cover - logged, never raised
-            logger.warning(f"Failed to publish side effects {effects}: {e}")
+            logger.warning(f"Failed to publish side effects {messages}: {e}")
 
 
 # --------------------------------------------------------------- context + results

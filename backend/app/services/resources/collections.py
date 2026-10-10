@@ -70,6 +70,25 @@ class CollectionApplier(ResourceApplier[CollectionSpec]):
         row.allow_shared_files = spec.allow_shared_files
         row.allow_private_files = spec.allow_private_files
 
+    async def delete(self, row: Collection, ctx: ApplyContext) -> None:
+        """Its files and versions go with it (database cascade); their stored
+        bytes are removed after the commit — they used to stay behind."""
+        from app.models.file import File, FileVersion
+        from app.services.resources.base import StoredFilesRemoved
+
+        paths = []
+        if not ctx.dry_run:
+            paths = (
+                await ctx.db.execute(
+                    select(FileVersion.storage_path)
+                    .join(File, FileVersion.file_id == File.id)
+                    .where(File.collection_id == row.id)
+                )
+            ).scalars().all()
+        await super().delete(row, ctx)
+        if paths:
+            ctx.effects.add(StoredFilesRemoved(tuple(sorted(set(paths)))))
+
     async def check_references(self, spec: CollectionSpec, ctx: ApplyContext) -> None:
         """The upload hooks must name functions that exist. Config apply
         checked this in its parser pre-pass only; REST never did, and an
