@@ -3,7 +3,7 @@ Pydantic schemas for declarative configuration
 """
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, validator
+from pydantic import BaseModel, Field, field_validator, model_validator, validator
 
 
 class ConfigMetadata(BaseModel):
@@ -568,6 +568,18 @@ class DependencyConfig(BaseModel):
 
     packageName: str
     version: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "DependencyConfig":
+        # "package==1.2.3" in one field declares the version too, and a blank
+        # version is no version (the pinned one is kept) — decided here, so
+        # config apply sees what is actually declared.
+        if "==" in self.packageName:
+            name, pinned = self.packageName.split("==", 1)
+            self.packageName = name
+            self.version = self.version or pinned
+        self.version = self.version or None
+        return self
 
 
 class VariableConfig(BaseModel):

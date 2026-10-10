@@ -127,3 +127,12 @@ class TestPackages:
             _package(f"p-{uuid.uuid4().hex[:8]}", "1.0.0", [name]), str(admin_user.id)
         )
         assert not result.success and "whitelist" in result.errors[0]
+
+
+async def test_a_pin_in_the_name_updates_and_a_blank_version_keeps(db: AsyncSession, admin_user):
+    name = _pkg()
+    assert (await _apply(db, admin_user, dependencies=[{"packageName": f"{name}==1.0"}])).success
+    assert (await _apply(db, admin_user, dependencies=[{"packageName": f"{name}==2.0"}])).success
+    assert (await _row(db, name)).version == "2.0"
+    assert (await _apply(db, admin_user, dependencies=[{"packageName": name, "version": ""}])).success
+    assert (await _row(db, name)).version == "2.0"
