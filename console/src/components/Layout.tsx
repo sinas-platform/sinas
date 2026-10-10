@@ -16,6 +16,7 @@ import {
   Code,
   Clock,
   Brain,
+  History,
   Settings,
   Activity,
   Zap,
@@ -88,6 +89,7 @@ const navigationSections = [
       { name: 'Logs', href: '/logs', icon: Activity },
       { name: 'System', href: '/system', icon: Server },
       { name: 'Config Manager', href: '/config', icon: Settings },
+      { name: 'Change History', href: '/history', icon: History },
     ],
   },
 ];

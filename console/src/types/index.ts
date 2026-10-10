@@ -1362,3 +1362,31 @@ export interface PipelineRunOutcome {
   steps?: PipelineRunStepSummary[];
   duration_ms?: number | null;
 }
+
+// Change history of configurable resources (GET /config/history)
+export interface ConfigRevision {
+  id: number;
+  resource_kind: string;
+  resource_key: string;
+  resource_id: string | null;
+  action: 'create' | 'update' | 'delete' | string;
+  origin: 'api' | 'config' | 'package' | 'startup' | string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  managed_by: string | null;
+  config_name: string | null;
+  restored_from_id: number | null;
+  changed_fields: string[];
+  // Only on the detail endpoint: {field: {from, to}} and the state after.
+  changes?: Record<string, { from: unknown; to: unknown }> | null;
+  spec?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ConfigRestoreResult {
+  action: 'create' | 'update' | 'unchanged' | string;
+  resource_kind: string;
+  resource_key: string;
+  resource_id: string | null;
+  revision: ConfigRevision | null;
+}
