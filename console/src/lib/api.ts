@@ -85,6 +85,8 @@ import type {
   PipelineUpdate,
   PipelineRun,
   PipelineRunOutcome,
+  WorkbenchFile,
+  WorkbenchFileContent,
 } from '../types';
 
 // Auto-detect API base URL based on environment.
@@ -127,6 +129,12 @@ export function getComponentRenderUrl(renderToken: string, namespace: string, na
 
 const CONFIG_API_BASE_URL = `${API_BASE_URL}/api/v1`;
 const RUNTIME_API_BASE_URL = API_BASE_URL;
+
+/** Encode a workbench path for a URL: each segment percent-encoded so
+ * reserved characters (#, ?, %) in filenames survive, slashes preserved. */
+function encodeWorkbenchPath(path: string): string {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
 
 class APIClient {
   private configClient: AxiosInstance;  // For management/config APIs
@@ -363,6 +371,33 @@ class APIClient {
   async listMessages(chatId: string): Promise<Message[]> {
     const response = await this.runtimeClient.get(`/chats/${chatId}/messages`);
     return response.data;
+  }
+
+  // Workbench (Runtime API) — a chat's private working tree
+  async listWorkbenchFiles(chatId: string): Promise<WorkbenchFile[]> {
+    const response = await this.runtimeClient.get(`/chats/${chatId}/workbench/files`);
+    return response.data;
+  }
+
+  async readWorkbenchFile(chatId: string, path: string): Promise<WorkbenchFileContent> {
+    const response = await this.runtimeClient.get(
+      `/chats/${chatId}/workbench/files/${encodeWorkbenchPath(path)}`
+    );
+    return response.data;
+  }
+
+  async uploadWorkbenchFile(
+    chatId: string,
+    data: { name: string; content_base64: string; content_type?: string }
+  ): Promise<WorkbenchFile> {
+    const response = await this.runtimeClient.post(`/chats/${chatId}/workbench/files`, data);
+    return response.data;
+  }
+
+  async deleteWorkbenchFile(chatId: string, path: string): Promise<void> {
+    await this.runtimeClient.delete(
+      `/chats/${chatId}/workbench/files/${encodeWorkbenchPath(path)}`
+    );
   }
 
   // Agents

@@ -172,7 +172,7 @@ async def generate_runtime_openapi(db: AsyncSession) -> dict[str, Any]:
         }
 
     # Add dynamic collection upload endpoints (database-driven)
-    collection_result = await db.execute(select(Collection))
+    collection_result = await db.execute(select(Collection).where(Collection.kind == "collection"))
     collections = collection_result.scalars().all()
 
     for coll in collections:

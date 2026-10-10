@@ -29,6 +29,7 @@ agents:
 | `packageManagement` | string | Validate, preview, install, and uninstall Sinas packages. Install and uninstall require user approval. |
 | `artifacts` | string | Create and update artifacts: small interactive pages ([components](/build-resources/components)) shown in the chat, which the user can keep, edit and share |
 | `databaseIntrospection` | object | Read-only schema inspection of database connections. Requires `connections` list specifying which connections the agent can access. |
+| `workbench` | string | A per-chat persistent working tree. Adds `workbench_list/read/write/edit/delete` file tools, `workbench_checkout` (copy collection files in, single or bulk) and `workbench_promote` (publish back to a collection, updating a checked-out source with conflict detection). Every workbench file is private to the chat's user. Combined with `codeExecution`, workbench files are materialized into the sandbox working directory and files the code creates or modifies persist back to the workbench after the run. |
 
 **Artifact tools:**
 

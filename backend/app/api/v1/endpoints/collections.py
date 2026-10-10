@@ -60,10 +60,11 @@ async def list_collections(
     """List all collections accessible to the user."""
     user_id, permissions = current_user_data
 
-    # Use mixin for permission-aware filtering
-    additional_filters = None
+    # Use mixin for permission-aware filtering. Workbenches (kind='workbench')
+    # are chat-scoped working trees, never listed here.
+    additional_filters = Collection.kind == "collection"
     if namespace:
-        additional_filters = Collection.namespace == namespace
+        additional_filters = and_(additional_filters, Collection.namespace == namespace)
 
     collections = await Collection.list_with_permissions(
         db=db,
@@ -99,6 +100,9 @@ async def get_collection(
         name=name,
     )
 
+    if collection.kind != "collection":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
+
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.read")
 
     return CollectionResponse.model_validate(collection)
@@ -125,6 +129,9 @@ async def update_collection(
         namespace=namespace,
         name=name,
     )
+
+    if collection.kind != "collection":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
 
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.update")
 
@@ -162,6 +169,9 @@ async def delete_collection(
         namespace=namespace,
         name=name,
     )
+
+    if collection.kind != "collection":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Collection not found")
 
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.delete")
 

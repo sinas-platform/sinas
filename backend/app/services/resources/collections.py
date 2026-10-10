@@ -35,7 +35,11 @@ class CollectionApplier(ResourceApplier[CollectionSpec]):
         return (
             await ctx.db.execute(
                 select(Collection)
-                .where(Collection.namespace == namespace, Collection.name == name)
+                .where(
+                    Collection.namespace == namespace,
+                    Collection.name == name,
+                    Collection.kind == "collection",  # workbenches are never config resources
+                )
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )

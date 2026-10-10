@@ -285,8 +285,12 @@ class ConfigExportService:
         return exported
 
     async def _export_collections(self) -> list[dict]:
-        """Export collections."""
-        stmt = select(Collection).order_by(Collection.namespace, Collection.name)
+        """Export collections (workbenches are chat-scoped, never exported)."""
+        stmt = (
+            select(Collection)
+            .where(Collection.kind == "collection")
+            .order_by(Collection.namespace, Collection.name)
+        )
         if self.managed_only:
             stmt = stmt.where(Collection.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
