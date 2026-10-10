@@ -1,6 +1,8 @@
 import axios, { type AxiosInstance } from 'axios';
 import type {
   AdminCreateResetLinkResponse,
+  ConfigRestoreResult,
+  ConfigRevision,
   ChangePasswordRequest,
   InstanceInfo,
   LoginRequest,
@@ -1064,6 +1066,27 @@ class APIClient {
     const response = await this.configClient.get('/config/export', {
       params: { include_secrets: includeSecrets, managed_only: managedOnly }
     });
+    return response.data;
+  }
+
+  // Change history (every write to a configurable resource, any channel)
+  async listConfigHistory(params: {
+    kind?: string;
+    key?: string;
+    before?: number;
+    limit?: number;
+  }): Promise<ConfigRevision[]> {
+    const response = await this.configClient.get('/config/history', { params });
+    return response.data;
+  }
+
+  async getConfigRevision(id: number): Promise<ConfigRevision> {
+    const response = await this.configClient.get(`/config/history/${id}`);
+    return response.data;
+  }
+
+  async restoreConfigRevision(id: number): Promise<ConfigRestoreResult> {
+    const response = await this.configClient.post(`/config/history/${id}/restore`);
     return response.data;
   }
 

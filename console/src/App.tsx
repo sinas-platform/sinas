@@ -22,6 +22,7 @@ import { Schedules } from './pages/Schedules';
 import { ScheduleEditor } from './pages/ScheduleEditor';
 import { RequestLogs } from './pages/RequestLogs';
 import { LLMProviders } from './pages/LLMProviders';
+import { ChangeHistory } from './pages/ChangeHistory';
 import { ConfigManager } from './pages/ConfigManager';
 import { Permissions } from './pages/Permissions';
 import { System } from './pages/System';
@@ -166,6 +167,7 @@ function App() {
               <Route path="packages" element={<Packages />} />
               <Route path="manifests" element={<Manifests />} />
               <Route path="config" element={<ConfigManager />} />
+              <Route path="history" element={<ChangeHistory />} />
               <Route path="connectors" element={<Connectors />} />
               <Route path="connectors/:namespace/:name" element={<ConnectorEditor />} />
               <Route path="pipelines" element={<Pipelines />} />
