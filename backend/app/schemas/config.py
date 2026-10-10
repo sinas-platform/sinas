@@ -65,12 +65,14 @@ class LLMProviderConfig(BaseModel):
     endpoint: Optional[str] = None
     models: list[str] = Field(default_factory=list)
     defaultModel: Optional[str] = None
-    isDefault: bool = False
+    # Unset: a new provider is not the default and is active; an existing one
+    # keeps what it has (made default, or deleted, in the console).
+    isDefault: Optional[bool] = None
     # Passthrough for provider-specific config (merged into the DB `config`
     # column, not overwritten). For Azure: api_version, azure_deployment,
     # max_tokens_param, drop_params, extra_params.
     config: dict[str, Any] = Field(default_factory=dict)
-    isActive: bool = True
+    isActive: Optional[bool] = None
 
 
 class DatabaseAnnotationConfig(BaseModel):

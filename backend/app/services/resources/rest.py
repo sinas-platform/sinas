@@ -45,11 +45,13 @@ async def locked(applier: ResourceApplier, ctx: ApplyContext, authorized: Any) -
     meanwhile is another resource. And still under the key and owner the
     check authorized: permissions are scoped by namespace/name and owner, so
     a row renamed or handed over meanwhile may be outside them."""
-    key, owner = applier.key_of_row(authorized), authorized.user_id
+    # Kinds without an owner (admin-managed: providers, connections) compare
+    # the key alone.
+    key, owner = applier.key_of_row(authorized), getattr(authorized, "user_id", None)
     row = await applier.find_by_id(ctx, authorized.id)
     if row is None:  # deleted between the permission check and now
         raise HTTPException(status_code=404, detail=f"{applier.label} not found")
-    if (applier.key_of_row(row), row.user_id) != (key, owner):
+    if (applier.key_of_row(row), getattr(row, "user_id", None)) != (key, owner):
         raise HTTPException(
             status_code=409,
             detail=f"{applier.label} changed while this request ran; try again",
