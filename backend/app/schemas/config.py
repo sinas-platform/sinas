@@ -55,6 +55,15 @@ class UserConfig(BaseModel):
     customFields: Optional[dict[str, Any]] = None
     identities: list[UserIdentityConfig] = Field(default_factory=list)
 
+    @field_validator("email")
+    @classmethod
+    def _normalized(cls, value: str) -> str:
+        # As the API and login store and look them up: "Ann@X.com " used to
+        # miss the existing ann@x.com and create a second user.
+        from app.core.auth import normalize_email
+
+        return normalize_email(value)
+
 
 class LLMProviderConfig(BaseModel):
     """LLM provider configuration"""

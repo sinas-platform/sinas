@@ -709,6 +709,15 @@ invalidation effect).
   new version dropped. Governance (`package_role_violations`) unchanged.
 - Users stay on their own path (identity, not config); small fixes follow.
 
+### Users (decided: stay on their own path)
+
+Users are identity, not config: most come from login flows, carry password
+hashes, tokens and API keys, and history would hold personal data. They
+keep the legacy config path, with fixes: emails are normalized as the API
+and login do; dropped memberships are ended (inactive, removed_at) instead
+of deleting every membership row of the user; export lists current
+memberships only and no lastLoginAt.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

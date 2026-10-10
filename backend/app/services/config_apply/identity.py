@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Role, User, UserIdentity, UserRole
@@ -159,23 +159,32 @@ async def apply_user_roles(
     role_names: list[str],
     warnings: list[str],
 ) -> None:
-    """Apply role memberships to a user. Roles are found by name in the
-    database (they're applied before users), so a user can hold a role this
-    config doesn't declare, such as Admins."""
-    # Remove existing memberships for this user
-    stmt = delete(UserRole).where(UserRole.user_id == user_id)
-    await db.execute(stmt)
+    """Set a user's role memberships to the declared roles. Roles are found
+    by name in the database (they're applied before users). Memberships the
+    config no longer declares are ended the way the API ends them (inactive,
+    removed_at), not deleted: deleting every row of the user wiped membership
+    history, including memberships the API had ended."""
+    from datetime import UTC
 
-    # Add new memberships
+    declared: dict = {}
     for role_name in role_names:
         role_id = (await db.execute(select(Role.id).where(Role.name == role_name))).scalar_one_or_none()
         if role_id is None:
             warnings.append(f"Role '{role_name}' not found for user membership")
             continue
+        declared[role_id] = role_name
 
-        membership = UserRole(
-            user_id=user_id,
-            role_id=role_id,
-            active=True,
-        )
-        db.add(membership)
+    memberships = (await db.execute(select(UserRole).where(UserRole.user_id == user_id))).scalars().all()
+    now = datetime.now(UTC)
+    for role_id in declared:
+        held = [m for m in memberships if m.role_id == role_id]
+        if any(m.active for m in held):
+            continue
+        if held:  # ended before: reactivate the most recent row
+            latest = max(held, key=lambda m: m.added_at or now)
+            latest.active, latest.removed_at, latest.removed_by = True, None, None
+        else:
+            db.add(UserRole(user_id=user_id, role_id=role_id, active=True))
+    for membership in memberships:
+        if membership.active and membership.role_id not in declared:
+            membership.active, membership.removed_at = False, now

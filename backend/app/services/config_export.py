@@ -129,8 +129,8 @@ class ConfigExportService:
         return exported
 
     async def _export_users(self) -> list[dict]:
-        """Export users"""
-        stmt = select(User)
+        """Export users (current role memberships only)."""
+        stmt = select(User).order_by(User.email)
         if self.managed_only:
             stmt = stmt.where(User.managed_by == self.managed_by)
 
@@ -142,17 +142,18 @@ class ConfigExportService:
             # Get user roles
             from app.models.user import UserRole
 
-            member_stmt = select(UserRole).where(UserRole.user_id == user.id)
+            member_stmt = select(UserRole).where(UserRole.user_id == user.id, UserRole.active.is_(True))
             member_result = await self.db.execute(member_stmt)
             memberships = member_result.scalars().all()
 
-            role_stmt = select(Role).where(Role.id.in_([m.role_id for m in memberships]))
+            role_stmt = select(Role).where(Role.id.in_([m.role_id for m in memberships])).order_by(Role.name)
             role_result = await self.db.execute(role_stmt)
             roles = role_result.scalars().all()
 
+            # lastLoginAt is runtime state, not config (the config schema
+            # doesn't even read it); ended memberships aren't roles held.
             user_dict = {
                 "email": user.email,
-                "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
                 "roles": [r.name for r in roles],
             }
 
