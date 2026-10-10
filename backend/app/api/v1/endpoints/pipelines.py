@@ -1,6 +1,9 @@
-"""Pipelines API endpoints (management plane: CRUD)."""
+"""Pipelines API endpoints (management plane: CRUD).
+
+Writes go through PipelineApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -8,10 +11,12 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.pipeline import Pipeline
 from app.schemas.pipeline import PipelineCreate, PipelineResponse, PipelineUpdate
-from app.services.package_service import detach_if_package_managed
-from app.services.pipeline_validation import validate_pipeline_definition
+from app.services.resources import rest
+from app.services.resources.pipelines import PipelineApplier
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+_applier = PipelineApplier()
 
 
 @router.post("", response_model=PipelineResponse, status_code=status.HTTP_201_CREATED)
@@ -30,35 +35,14 @@ async def create_pipeline(
         raise HTTPException(status_code=403, detail="Not authorized to create pipelines")
     set_permission_used(request, permission)
 
-    result = await db.execute(
-        select(Pipeline).where(
-            and_(Pipeline.namespace == data.namespace, Pipeline.name == data.name)
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Pipeline 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400, detail=f"Pipeline '{data.namespace}/{data.name}' already exists"
-        )
-
-    pipeline = Pipeline(
-        user_id=user_id,
-        namespace=data.namespace,
-        name=data.name,
-        description=data.description,
-        input_schema=data.input_schema or {},
-        steps=data.steps,
-        per_user=data.per_user,
-        as_tool=data.as_tool,
-        tool_description=data.tool_description,
-        sync_timeout_seconds=data.sync_timeout_seconds,
-        concurrency=data.concurrency,
-        disable_after_failures=data.disable_after_failures,
-        output_mapping=data.output_mapping,
-    )
-    db.add(pipeline)
-    await db.flush()
-    await db.refresh(pipeline)
-    return PipelineResponse.model_validate(pipeline)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return PipelineResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[PipelineResponse])
@@ -114,81 +98,26 @@ async def update_pipeline(
     )
     set_permission_used(request, f"sinas.pipelines/{namespace}/{name}.update")
 
-    detach_if_package_managed(pipeline)
-
-    new_namespace = data.namespace or pipeline.namespace
-    new_name = data.name or pipeline.name
-    if new_namespace != pipeline.namespace or new_name != pipeline.name:
-        result = await db.execute(
-            select(Pipeline).where(
-                and_(
-                    Pipeline.namespace == new_namespace,
-                    Pipeline.name == new_name,
-                    Pipeline.id != pipeline.id,
-                )
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Pipeline '{new_namespace}/{new_name}' already exists"
-            )
-
-    # Validate the merged definition (partial updates can't validate in isolation)
-    merged = {
-        "steps": data.steps if data.steps is not None else pipeline.steps,
-        "per_user": data.per_user if data.per_user is not None else pipeline.per_user,
-        "as_tool": data.as_tool if data.as_tool is not None else pipeline.as_tool,
-        "input_schema": data.input_schema if data.input_schema is not None else pipeline.input_schema,
-        "description": data.description if data.description is not None else pipeline.description,
-        "tool_description": data.tool_description if data.tool_description is not None else pipeline.tool_description,
-        "concurrency": data.concurrency if data.concurrency is not None else pipeline.concurrency,
-        "output_mapping": data.output_mapping if data.output_mapping is not None else pipeline.output_mapping,
+    ctx = rest.api_context(db, user_id)
+    pipeline = await rest.locked(_applier, ctx, pipeline)
+    # As before: a field left out or sent as null stays as it is, a new
+    # namespace/name renames it, and the merged definition is re-validated
+    # (an invalid one is a 400, as it was).
+    patch = {
+        field: value
+        for field, value in data.model_dump(exclude_unset=True).items()
+        if value is not None
     }
-    errors = validate_pipeline_definition(
-        merged["steps"],
-        per_user=merged["per_user"],
-        as_tool=merged["as_tool"],
-        input_schema=merged["input_schema"],
-        description=merged["description"],
-        tool_description=merged["tool_description"],
-        concurrency=merged["concurrency"],
-        output_mapping=merged["output_mapping"],
-    )
-    if errors:
-        raise HTTPException(status_code=400, detail="; ".join(errors))
-
-    if data.namespace is not None:
-        pipeline.namespace = data.namespace
-    if data.name is not None:
-        pipeline.name = data.name
-    if data.description is not None:
-        pipeline.description = data.description
-    if data.input_schema is not None:
-        pipeline.input_schema = data.input_schema
-    if data.steps is not None:
-        pipeline.steps = data.steps
-    if data.per_user is not None:
-        pipeline.per_user = data.per_user
-    if data.as_tool is not None:
-        pipeline.as_tool = data.as_tool
-    if data.tool_description is not None:
-        pipeline.tool_description = data.tool_description
-    if data.sync_timeout_seconds is not None:
-        pipeline.sync_timeout_seconds = data.sync_timeout_seconds
-    if data.concurrency is not None:
-        pipeline.concurrency = data.concurrency
-    if data.disable_after_failures is not None:
-        pipeline.disable_after_failures = data.disable_after_failures
-    if data.output_mapping is not None:
-        pipeline.output_mapping = data.output_mapping
-    if data.is_active is not None:
-        pipeline.is_active = data.is_active
-        if data.is_active:
-            # Reactivation clears the auto-disable state.
-            pipeline.consecutive_failures = 0
-            pipeline.error_message = None
-
-    await db.flush()
+    try:
+        spec = rest.patch_spec(_applier, pipeline, patch)
+    except HTTPException as e:
+        if e.status_code != 422:
+            raise
+        raise HTTPException(
+            status_code=400, detail="; ".join(err["msg"].removeprefix("Value error, ") for err in e.detail)
+        )
+    await rest.write(_applier, ctx, spec, existing=pipeline)
+    await rest.commit(db, ctx)
     await db.refresh(pipeline)
     return PipelineResponse.model_validate(pipeline)
 
@@ -210,6 +139,7 @@ async def delete_pipeline(
     )
     set_permission_used(request, f"sinas.pipelines/{namespace}/{name}.delete")
 
-    await db.delete(pipeline)
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, pipeline), ctx)
+    await rest.commit(db, ctx)
     return None

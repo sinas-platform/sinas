@@ -140,26 +140,8 @@ def serialize_database_trigger(trigger, connection_name: Optional[str] = None) -
 
 
 def serialize_pipeline(pipeline) -> dict:
-    """Export a pipeline. cursor_value / error_message / failure counters are
-    runtime state, not config — deliberately not exported. Steps/perUser are
-    stored verbatim (camelCase, `.$` keys intact) and pass straight through."""
-    out = {
-        "namespace": pipeline.namespace,
-        "name": pipeline.name,
-        "description": pipeline.description,
-        "inputSchema": pipeline.input_schema or None,
-        "steps": pipeline.steps,
-        "perUser": pipeline.per_user,
-        "asTool": pipeline.as_tool or None,
-        "toolDescription": pipeline.tool_description,
-        "syncTimeoutSeconds": pipeline.sync_timeout_seconds if pipeline.sync_timeout_seconds != 120 else None,
-        "concurrency": pipeline.concurrency,
-        "disableAfterFailures": pipeline.disable_after_failures,
-        "isActive": pipeline.is_active,
-    }
-    mapping = pipeline.output_mapping or {}
-    if "output.$" in mapping:
-        out["output.$"] = mapping["output.$"]
-    elif "output" in mapping:
-        out["output"] = mapping["output"]
-    return _remove_none_values(out)
+    """Config form of a pipeline — delegated to its spec. Cursor, failure
+    counters and error are runtime state, not config."""
+    from app.services.resources.pipelines import PipelineApplier
+
+    return PipelineApplier().spec_from_row(pipeline).to_config()
