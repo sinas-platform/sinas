@@ -560,6 +560,23 @@ invalidation effect).
   (`passive_deletes`), not loaded one by one. Collection blobs in storage
   are still not removed on delete — separate issue.
 
+### Slice 7: functions (decisions)
+
+- **One write path:** REST, config, packages and restore share
+  FunctionApplier: history, restore, prune on upgrade, recorded uninstall.
+- **Versions** snapshot code and schemas: v1 on create, the next one only
+  when code or a schema actually changes — on every channel (REST used to add
+  one whenever code was sent). Versions are deleted with the function and
+  are not part of history; a restore starts again at v1.
+- **`is_active` is operator state** ("disabled"), kept unless declared, as
+  are `sharedPool` and `requiresApproval` (config already left those as they
+  were when unset). Config used to treat a disabled function as reclaimable
+  and switch it back on. Export includes disabled ones.
+- **REST-only gates stay REST-only:** code execution being off, the
+  shared-pool permission, and the syntax/schema checks. Config and packages
+  may still declare functions (decided: they just can't run).
+- The dead `function_ids` cache (keyed by bare name) is gone.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

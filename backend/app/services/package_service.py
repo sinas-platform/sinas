@@ -16,7 +16,7 @@ from app.models.manifest import Manifest
 from app.models.component import Component
 from app.models.database_trigger import DatabaseTrigger
 from app.models.file import Collection
-from app.models.function import Function, FunctionVersion
+from app.models.function import Function
 from app.models.package import Package
 from app.models.query import Query
 from app.models.schedule import ScheduledJob
@@ -449,19 +449,11 @@ class PackageService:
         # Delete managed resources across all model types
         model_names = {
             Agent: "agents",
-            Function: "functions",
         }
 
-        # Children whose FK has no ON DELETE rule must be cleared first. The
-        # loop below issues Core bulk deletes, which bypass the ORM's
-        # delete-orphan cascades entirely, so a package whose functions had
-        # ever been versioned (or whose agents had ever been chatted with)
-        # failed the whole uninstall on a ForeignKeyViolationError (#63).
-        # Every other child of these tables already cascades at the DB level.
-        function_ids = select(Function.id).where(Function.managed_by == managed_by).scalar_subquery()
-        await self.db.execute(
-            delete(FunctionVersion).where(FunctionVersion.function_id.in_(function_ids))
-        )
+        # The loop below issues Core bulk deletes, which bypass the ORM's
+        # cascades, so children whose FK has no ON DELETE rule must be cleared
+        # first (#63). Functions (and their versions) go through their applier.
         # Chats outlive the package: a conversation is the user's, not the
         # package's, so only the link to the vanishing agent is cleared.
         agent_ids = select(Agent.id).where(Agent.managed_by == managed_by).scalar_subquery()
