@@ -29,7 +29,10 @@ agents:
 | `packageManagement` | string | Validate, preview, install, and uninstall Sinas packages. Install and uninstall require user approval. |
 | `artifacts` | string | Create and update artifacts: small interactive pages ([components](/build-resources/components)) shown in the chat, which the user can keep, edit and share |
 | `databaseIntrospection` | object | Read-only schema inspection of database connections. Requires `connections` list specifying which connections the agent can access. |
+| `askUser` | string | Adds `ask_user(question, options?)`: the agent asks the user a question mid-turn. The tool round suspends (no worker slot held), the question surfaces as an `input_required` stream event and via `GET /chats/{id}/pending-input`, and `POST /chats/{id}/pending-input/{tool_call_id}` with the answer resumes the round with the answer as the tool result. Questions expire after `ASK_USER_TIMEOUT_SECONDS` (default 24h). Requires a queued turn (chat created with `keep_alive: true`); on an inline stream the tool returns an error result instead of suspending. |
 | `workbench` | string | A per-chat persistent working tree. Adds `workbench_list/read/write/edit/delete` file tools, `workbench_checkout` (copy collection files in, single or bulk) and `workbench_promote` (publish back to a collection, updating a checked-out source with conflict detection). Every workbench file is private to the chat's user. Combined with `codeExecution`, workbench files are materialized into the sandbox working directory and files the code creates or modifies persist back to the workbench after the run. |
+
+Together, `workbench`, `codeExecution`, `askUser` and `artifacts` are the primitives of the Claude Code-style loop; see [Way of Working](/build-resources/way-of-working) for the shipped skill and exemplar agent that make an agent use them that way.
 
 **Artifact tools:**
 

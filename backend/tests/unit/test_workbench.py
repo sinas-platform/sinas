@@ -361,6 +361,49 @@ class TestSandboxSync:
         manifest = await build_sync_manifest(db, chat)
         assert {f["path"] for f in manifest["files"]} == {"data/input.txt", "data/output.txt"}
 
+        # A file born in an execution carries that provenance (like uploads
+        # and spilled tool results do); a file the code merely modified keeps
+        # the metadata it had.
+        wb = await get_or_create_workbench(db, chat)
+        from sqlalchemy import select
+        rows = {
+            f.name: f
+            for f in (await db.execute(select(File).where(File.collection_id == wb.id))).scalars()
+        }
+        assert rows["data/output.txt"].file_metadata == {"origin": "execution"}
+        assert rows["data/input.txt"].file_metadata == {}
+        rows["data/input.txt"].file_metadata = {PROVENANCE_KEY: {"collection": "test/src", "file_id": "x", "version": 1}}
+        await db.flush()
+        result = await apply_sync_changes(
+            db, chat, uid,
+            [{"path": "data/input.txt", "content_b64": base64.b64encode(b"43\n").decode()}],
+        )
+        assert result["synced"] == ["data/input.txt"]
+        await db.refresh(rows["data/input.txt"])
+        assert rows["data/input.txt"].current_version == 2
+        assert rows["data/input.txt"].file_metadata[PROVENANCE_KEY]["collection"] == "test/src"
+
+    def test_wrapper_runs_user_code_in_its_own_namespace(self):
+        """The trailing expression and nested scopes must see the names the
+        code defined. Running user code in the handler's own frame relied on
+        locals() being one shared dict, which Python 3.13 (PEP 667) ended:
+        every program ending in an expression failed with a NameError."""
+        from app.services.code_execution import _build_wrapper
+
+        cases = {
+            "x = 1\nx + 1\n": 2,
+            "import json\nd = {'a': 1}\njson.dumps(d)\n": '{"a": 1}',
+            "rows = [1.5, 2]\ntotal = sum(float(r) for r in rows)\ntotal\n": 3.5,
+            "x = 1\ndef f():\n    return x\nf()\n": 1,
+        }
+        for code, expected in cases.items():
+            for workbench in (False, True):
+                ns: dict = {}
+                exec(_build_wrapper(code, workbench=workbench), ns)
+                output = ns["handler"]({"workbench_files": [], "workbench_limits": {}}, {})
+                assert output["status"] == "completed", (code, output.get("error"))
+                assert output["result"] == expected, code
+
     @pytest.mark.asyncio
     async def test_manifest_marks_oversized_files_lazy(self, db, chat, test_user, monkeypatch):
         from app.core.config import settings as app_settings

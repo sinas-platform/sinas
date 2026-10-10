@@ -1,0 +1,100 @@
+---
+title: "Way of Working"
+description: "Give an agent the Claude Code-style loop: files, code, verification, approvals"
+---
+
+An agent with the [workbench](/build-resources/system-tools), code execution, `ask_user` and artifacts has every primitive of the Claude Code / Cowork loop. What makes it *use* them that way is a way of working: deliverables as files rather than chat text, numbers computed rather than estimated, things run before they are claimed to work, content moved by reference, collections checked out and promoted, questions only when blocked.
+
+Sinas ships that as a package: a preloadable skill plus an exemplar agent wired for the full loop.
+
+## Install the package
+
+The package lives in the repository at `packages/way-of-working.yaml`. Install it like any [package](/admin/packages):
+
+```bash
+curl -X POST $SINAS_URL/api/v1/packages/install \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"source\": $(jq -Rs . < packages/way-of-working.yaml)}"
+```
+
+It installs two resources, both tagged `managed_by: pkg:way-of-working`:
+
+| Resource | What it is |
+|---|---|
+| Skill `way-of-working/workbench-loop` | The way of working, as concise directive instructions. Meant to be **preloaded** (injected into the system prompt of every turn), so it is kept short. |
+| Agent `way-of-working/assistant` | An exemplar with the loop switched on: `workbench`, `codeExecution`, `askUser` and `artifacts`; the skill preloaded; a system prompt that complements it; approval rules that let reads and workbench edits run unattended and gate publishing and deletion. |
+
+Chat with `way-of-working/assistant` as it is, or treat it as the reference for your own agents.
+
+## Enable the loop on your own agent
+
+Three things, all in the agent's config:
+
+```yaml
+agents:
+  - namespace: analytics
+    name: data-assistant
+    systemPrompt: |
+      You are a hands-on analyst for the finance team. ...
+    systemTools:
+      - workbench        # the per-chat file tree (and sandbox sync with codeExecution)
+      - codeExecution    # run Python over the workbench files
+      - askUser          # ask the user mid-turn; the round suspends until they answer
+      - artifacts        # optional: interactive pages shown in the chat
+    enabledSkills:
+      - skill: way-of-working/workbench-loop
+        preload: true    # every turn, not on demand
+    toolApprovals:
+      default: auto
+      rules:
+        - { match: workbench_promote, action: ask }
+        - { match: workbench_delete, action: ask }
+        - { match: "write_file_*", action: ask }
+        - { match: "edit_file_*", action: ask }
+        - { match: "delete_file_*", action: ask }
+```
+
+1. **System tools.** `workbench` gives the agent `workbench_list/read/write/edit/delete`, `workbench_checkout` and `workbench_promote`; with `codeExecution` the workbench is materialized into the sandbox working directory and files the code writes persist back, versioned. `askUser` adds `ask_user`. Suspending on a question needs a queued turn: create the chat with `keep_alive: true` (or use the invoke endpoint); on a plain inline stream `ask_user` returns an error result instead of pausing. Upload the user's files to the chat's workbench (`POST /chats/{id}/workbench/files`) and the agent finds them with `workbench_list`.
+2. **The skill, preloaded.** `preload: true` injects the skill under a `# Preloaded Skills` heading after your system prompt, so your prompt sets the role and domain defaults and the skill sets the method. Keep your own prompt about *what* the agent is for; leave *how it works* to the skill, or copy the skill and adapt it.
+3. **Permission mode.** `toolApprovals` decides which tool calls run unattended and which stop the turn for the user's approval. The pattern above is the Claude Code default: everything that only reads, computes or changes the chat's own workbench is `auto`; anything that publishes beyond the chat (promote, collection writes) or destroys data asks first.
+
+## Tool approvals
+
+`toolApprovals` is per agent:
+
+```yaml
+toolApprovals:
+  default: auto          # "auto" (run) or "ask" (stop for approval); auto when unset
+  rules:                 # first matching rule wins; glob over the tool name
+    - match: workbench_promote
+      action: ask
+    - match: "sinas_package_*"
+      action: ask
+```
+
+Resolution for one call: a per-chat "always allow" grant the user gave earlier wins; then the first matching rule; then the tool's own `requiresApproval` flag; then `default`. A rule with `action: auto` deliberately overrides a function's `requiresApproval` (the "auto-allow reads" case), since both settings belong to the agent's author. An asked call surfaces as an `approval_required` stream event; `POST /chats/{id}/approve-tool/{tool_call_id}` with `approved` and optional `always_allow` resumes the round.
+
+## What the loop looks like
+
+With the exemplar agent, "I uploaded sales_raw.csv, it's messy — clean it following the conventions in demo/sales, write me a summary, publish the cleaned file" runs as:
+
+```
+workbench_list                   look first: sales_raw.csv (uploaded)
+workbench_checkout               conventions.md from demo/sales, provenance recorded
+workbench_read                   the first lines of the input
+execute_code                     clean → sales_clean.csv, summary.md, summary.html; prints its checks
+workbench_read                   the full result spilled to tool_results/ (the inline copy was truncated)
+execute_code                     the checks showed mis-parsed quoted amounts → fix, rerun (new file versions)
+workbench_edit                   fill in the summary's method section
+create_artifact                  html: {"$workbench": "summary.html"} — content by reference
+ask_user                         "Where should sales_clean.csv be published?" → round suspends
+workbench_promote                on the answer; stops for approval (ask rule) → runs on approval
+reply                            the files that exist now, what was verified and how
+```
+
+Every step of that sequence is pinned by `backend/tests/unit/test_way_of_working_loop.py`, which drives the real stack with a scripted model, so a change in the plumbing shows up there.
+
+## Tuning the skill
+
+The skill is an ordinary [skill](/build-resources/skills): edit it in the console or ship your own under a different name. Editing a package-managed skill detaches it from the package (it survives uninstall and no longer follows upgrades). It is injected into every turn, so additions should earn their tokens: a rule that changes what the agent does, not an explanation of why.

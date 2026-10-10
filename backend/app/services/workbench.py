@@ -713,6 +713,11 @@ async def apply_sync_changes(
         except Exception:
             rejected.append({"path": path, "reason": "invalid base64 content"})
             continue
+        # Provenance, like uploads ("upload") and spilled results ("tool"):
+        # a file born in an execution is stamped so; a file that already
+        # existed keeps its metadata — in particular a checked-out file that
+        # code modified must not lose the provenance promote relies on. The
+        # create-vs-update decision happens under _write_bytes' row lock.
         result = await _write_bytes(
             db,
             storage,
@@ -722,6 +727,7 @@ async def apply_sync_changes(
             content_type=_infer_content_type(path),
             user_id=user_id,
             visibility="private",
+            creation_metadata={"origin": "execution"},
         )
         if "error" in result:
             rejected.append({"path": path, "reason": result["error"]})
@@ -742,8 +748,14 @@ async def _write_bytes(
     visibility: str,
     file_metadata: Optional[dict[str, Any]] = None,
     existing: Optional[File] = None,
+    creation_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Byte-level write into a collection/workbench (checkout + promote path).
+
+    `file_metadata` replaces the file's metadata (create or update);
+    `creation_metadata` applies only when this write CREATES the file — the
+    existence decision is made under the row lock, so a concurrent upload
+    of the same path can't have its metadata clobbered by a racing stamp.
 
     Mirrors CollectionToolConverter._write_file but takes bytes (binary-safe)
     and lets the caller pin metadata, visibility, and the target File row.
@@ -789,7 +801,7 @@ async def _write_bytes(
             user_id=uuid_lib.UUID(user_id),
             content_type=content_type,
             current_version=1,
-            file_metadata=file_metadata or {},
+            file_metadata=file_metadata or creation_metadata or {},
             visibility=visibility,
         )
         db.add(file_record)

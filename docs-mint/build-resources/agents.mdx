@@ -32,6 +32,7 @@ Agents are configurable AI assistants. Each agent has an LLM provider, a system 
 | `enabled_pipelines` | [Pipelines](/build-resources/pipelines) available as tools — only those marked `asTool`. Supports wildcards. Each becomes one semantic tool whose parameters are the pipeline's `inputSchema`. |
 | `hooks` | Message lifecycle hooks. `{"on_user_message": [...], "on_assistant_message": [...]}` |
 | `system_tools` | Platform capabilities. List of strings or config objects. See [System Tools](#system-tools). |
+| `tool_approvals` | Permission mode: which tool calls run unattended and which stop for the user's approval. `{"default": "auto"\|"ask", "rules": [{"match": "<glob over tool name>", "action": "auto"\|"ask"}]}`, first matching rule wins. Config key: `toolApprovals`. See [Way of Working](/build-resources/way-of-working#tool-approvals). |
 | `icon` | Icon reference (see [Icons](#icons)) |
 
 **Wildcard patterns** for `enabled_*` fields:
