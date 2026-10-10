@@ -126,8 +126,10 @@ class FunctionConfig(BaseModel):
     outputSchema: Optional[dict[str, Any]] = None
     icon: Optional[str] = None
     timeout: Optional[int] = None
+    # Unset: a new function gets the default, an existing one keeps its value.
     sharedPool: Optional[bool] = None
     requiresApproval: Optional[bool] = None
+    isActive: Optional[bool] = None
 
 
 class SkillConfig(BaseModel):

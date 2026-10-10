@@ -23,7 +23,6 @@ from app.services.config_apply.data_sources import (
 )
 from app.services.config_apply.resources import (
     apply_dependencies,
-    apply_functions,
     apply_pipelines,
     apply_secrets,
 )
@@ -77,7 +76,6 @@ class ConfigApplyService:
         self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
-        self.function_ids: dict[str, str] = {}
         self.agent_ids: dict[str, str] = {}
         self.llm_provider_ids: dict[str, str] = {}
         self.database_connection_ids: dict[str, str] = {}
@@ -149,6 +147,32 @@ class ConfigApplyService:
             }
             for kind in ("functions", "agents", "pipelines")
         }
+        # A function the config leaves isActive unset on keeps its current
+        # state (FunctionApplier), so a disabled one stays disabled: a preview
+        # must see that, or it accepts a reference the real apply refuses.
+        unset = [f for f in config.spec.functions if f.isActive is None]
+        if unset:
+            from sqlalchemy import or_, select
+
+            from app.models.function import Function
+
+            disabled = (await self.db.execute(
+                select(Function.namespace, Function.name).where(
+                    Function.is_active.is_(False),
+                    or_(*(
+                        (Function.namespace == f.namespace) & (Function.name == f.name)
+                        for f in unset
+                    )),
+                )
+            )).all()
+            # A declaration that does set isActive (say, the same function
+            # listed again) decides, as it does in the real apply.
+            explicit = {
+                f"{f.namespace}/{f.name}" for f in config.spec.functions if f.isActive is not None
+            }
+            for namespace, name in disabled:
+                if f"{namespace}/{name}" not in explicit:
+                    self._pending_references["functions"][f"{namespace}/{name}"] = False
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {
@@ -207,12 +231,6 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            if "functions" not in self.skip_resource_types:
-                await apply_functions(
-                    **common_with_owner,
-                    functions=config.spec.functions,
-                    function_ids=self.function_ids,
-                )
             if "agents" not in self.skip_resource_types:
                 await apply_agents(
                     **common_with_owner,
@@ -227,12 +245,12 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            # Kinds with a per-resource applier: connectors, skills, queries,
-            # templates, collections, stores, manifests, components, webhooks,
-            # schedules, databaseTriggers — after
+            # Kinds with a per-resource applier: connectors, functions,
+            # skills, queries, templates, collections, stores, manifests,
+            # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
-            # connector, skill or query yet; when agents and pipelines
-            # migrate, those move ahead of them.)
+            # connector, function, skill or query from agents or pipelines
+            # yet; when those migrate, these move ahead of them.)
             from app.services.resources.registry import all_appliers
 
             for applier in all_appliers():

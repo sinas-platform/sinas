@@ -1,6 +1,12 @@
-"""Functions API endpoints."""
+"""Functions API endpoints.
+
+Writes go through FunctionApplier, the path config apply and package install
+use too: the same ownership, versions and change history on every channel.
+Code execution being off and the shared-pool permission gate this API only;
+config and packages may still declare functions.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -11,9 +17,12 @@ from app.models.function import Function, FunctionVersion
 from app.schemas import FunctionCreate, FunctionResponse, FunctionUpdate, FunctionVersionResponse
 from app.services.execution_engine import executor
 from app.services.icon_resolver import resolve_icon_url
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.functions import FunctionApplier
 
 router = APIRouter(prefix="/functions", tags=["functions"])
+
+_applier = FunctionApplier()
 
 
 async def _function_response(func: "Function", db: AsyncSession) -> FunctionResponse:
@@ -64,50 +73,15 @@ async def create_function(
             )
         set_permission_used(request, shared_pool_permission)
 
-    # Check if function name already exists in this namespace
-    result = await db.execute(
-        select(Function).where(
-            and_(Function.namespace == function_data.namespace, Function.name == function_data.name)
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Function 'ns/name' already exists", as before; the
+    # applier records version 1.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, function_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Function '{function_data.namespace}/{function_data.name}' already exists",
-        )
-
-    # Create function
-    function = Function(
-        user_id=user_id,
-        namespace=function_data.namespace,
-        name=function_data.name,
-        description=function_data.description,
-        code=function_data.code,
-        input_schema=function_data.input_schema,
-        output_schema=function_data.output_schema,
-        icon=function_data.icon,
-        shared_pool=function_data.shared_pool,
-        requires_approval=function_data.requires_approval,
-        timeout=function_data.timeout,
-    )
-
-    db.add(function)
-    await db.flush()
-
-    # Create initial version
-    version = FunctionVersion(
-        function_id=function.id,
-        version=1,
-        code=function.code,
-        input_schema=function.input_schema,
-        output_schema=function.output_schema,
-        created_by=str(user_id),
-    )
-    db.add(version)
-    await db.flush()
-    await db.refresh(function)
-
-    return await _function_response(function, db)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return await _function_response(result.obj, db)
 
 
 @router.get("", response_model=list[FunctionResponse])
@@ -187,8 +161,6 @@ async def update_function(
 
     set_permission_used(request, f"sinas.functions/{namespace}/{name}.update")
 
-    detach_if_package_managed(function)
-
     # Check shared_pool permission (admin-only) if trying to enable it
     if function_data.shared_pool is not None and function_data.shared_pool:
         shared_pool_permission = "sinas.functions.shared_pool:all"
@@ -199,72 +171,18 @@ async def update_function(
             )
         set_permission_used(request, shared_pool_permission)
 
-    # Check for namespace/name conflict if renaming
-    new_namespace = function_data.namespace or function.namespace
-    new_name = function_data.name or function.name
-    if new_namespace != function.namespace or new_name != function.name:
-        result = await db.execute(
-            select(Function).where(
-                and_(
-                    Function.namespace == new_namespace,
-                    Function.name == new_name,
-                    Function.id != function.id,
-                )
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Function '{new_namespace}/{new_name}' already exists"
-            )
-
-    # Update fields
-    if function_data.namespace is not None:
-        function.namespace = function_data.namespace
-    if function_data.name is not None:
-        function.name = function_data.name
-    if function_data.description is not None:
-        function.description = function_data.description
-    if function_data.code is not None:
-        function.code = function_data.code
-        # Create new version if code changed
-        result = await db.execute(
-            select(FunctionVersion)
-            .where(FunctionVersion.function_id == function.id)
-            .order_by(FunctionVersion.version.desc())
-            .limit(1)
-        )
-        latest_version = result.scalar_one_or_none()
-        new_version_num = (latest_version.version + 1) if latest_version else 1
-
-        version = FunctionVersion(
-            function_id=function.id,
-            version=new_version_num,
-            code=function.code,
-            input_schema=function.input_schema
-            if function_data.input_schema is None
-            else function_data.input_schema,
-            output_schema=function.output_schema
-            if function_data.output_schema is None
-            else function_data.output_schema,
-            created_by=str(user_id),
-        )
-        db.add(version)
-
-    if function_data.input_schema is not None:
-        function.input_schema = function_data.input_schema
-    if function_data.output_schema is not None:
-        function.output_schema = function_data.output_schema
-    if function_data.icon is not None:
-        function.icon = function_data.icon
-    if function_data.shared_pool is not None:
-        function.shared_pool = function_data.shared_pool
-    if function_data.requires_approval is not None:
-        function.requires_approval = function_data.requires_approval
-    if function_data.timeout is not None:
-        function.timeout = function_data.timeout
-    if function_data.is_active is not None:
-        function.is_active = function_data.is_active
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    function = await rest.locked(_applier, ctx, function)
+    # As before: a field left out or sent as null stays as it is, and a new
+    # namespace/name renames it (a clash is a 400). A new version is recorded
+    # when code or schemas actually change.
+    patch = {
+        field: value
+        for field, value in function_data.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, function, patch), existing=function)
+    await rest.commit(db, ctx)
     await db.refresh(function)
 
     # Clear execution engine cache to ensure updated code is used
@@ -296,8 +214,9 @@ async def delete_function(
 
     set_permission_used(request, f"sinas.functions/{namespace}/{name}.delete")
 
-    await db.delete(function)
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, function), ctx)
+    await rest.commit(db, ctx)
 
     # Clear execution engine cache
     executor.clear_cache()

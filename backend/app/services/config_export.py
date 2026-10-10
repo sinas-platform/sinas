@@ -256,8 +256,9 @@ class ConfigExportService:
         return [serialize_pipeline(p) for p in result.scalars().all()]
 
     async def _export_functions(self) -> list[dict]:
-        """Export functions"""
-        stmt = select(Function).where(Function.is_active == True)
+        """Export functions, disabled ones included (as isActive: false):
+        leaving them out dropped them from any instance restored from it."""
+        stmt = select(Function).order_by(Function.namespace, Function.name)
         if self.managed_only:
             stmt = stmt.where(Function.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

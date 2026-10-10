@@ -22,18 +22,10 @@ def _remove_none_values(d: dict) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def serialize_function(func) -> dict:
-    return _remove_none_values({
-        "namespace": func.namespace,
-        "name": func.name,
-        "description": func.description,
-        "code": func.code,
-        "inputSchema": func.input_schema,
-        "outputSchema": func.output_schema,
-        "icon": func.icon,
-        "sharedPool": func.shared_pool if func.shared_pool else None,
-        "requiresApproval": func.requires_approval if func.requires_approval else None,
-        "timeout": func.timeout,
-    })
+    """Config form of a function — delegated to its spec."""
+    from app.services.resources.functions import FunctionApplier
+
+    return FunctionApplier().spec_from_row(func).to_config()
 
 
 def serialize_skill(skill) -> dict:

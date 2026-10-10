@@ -3,13 +3,13 @@ Identity resource appliers: roles, role permissions, users, user roles
 """
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Role, RolePermission, User, UserIdentity, UserRole
-from app.schemas.config import OwnershipSkip, ResourceChange
+from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
