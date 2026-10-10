@@ -25,7 +25,6 @@ from app.services.config_apply.resources import (
     apply_dependencies,
     apply_pipelines,
 )
-from app.services.config_apply.agents import apply_agents
 from pydantic.alias_generators import to_camel
 
 from app.services.resources import ApplyContext, SideEffectBus
@@ -79,7 +78,6 @@ class ConfigApplyService:
         self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
-        self.agent_ids: dict[str, str] = {}
         self.llm_provider_ids: dict[str, str] = {}
         self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
@@ -150,32 +148,35 @@ class ConfigApplyService:
             }
             for kind in ("functions", "agents", "pipelines")
         }
-        # A function the config leaves isActive unset on keeps its current
-        # state (FunctionApplier), so a disabled one stays disabled: a preview
-        # must see that, or it accepts a reference the real apply refuses.
-        unset = [f for f in config.spec.functions if f.isActive is None]
-        if unset:
-            from sqlalchemy import or_, select
+        # A function or agent the config leaves isActive unset on keeps its
+        # current state, so a disabled one stays disabled: a preview must see
+        # that, or it accepts a reference the real apply refuses. A
+        # declaration that does set isActive (the same one listed again)
+        # decides, as it does in the real apply.
+        from sqlalchemy import or_, select
 
-            from app.models.function import Function
+        from app.models.agent import Agent
+        from app.models.function import Function
 
+        for kind, model in (("functions", Function), ("agents", Agent)):
+            items = getattr(config.spec, kind)
+            unset = [i for i in items if i.isActive is None]
+            if not unset:
+                continue
+            explicit = {f"{i.namespace}/{i.name}" for i in items if i.isActive is not None}
             disabled = (await self.db.execute(
-                select(Function.namespace, Function.name).where(
-                    Function.is_active.is_(False),
-                    or_(*(
-                        (Function.namespace == f.namespace) & (Function.name == f.name)
-                        for f in unset
-                    )),
+                select(model.namespace, model.name).where(
+                    model.is_active.is_(False),
+                    or_(*((model.namespace == i.namespace) & (model.name == i.name) for i in unset)),
                 )
             )).all()
-            # A declaration that does set isActive (say, the same function
-            # listed again) decides, as it does in the real apply.
-            explicit = {
-                f"{f.namespace}/{f.name}" for f in config.spec.functions if f.isActive is not None
-            }
             for namespace, name in disabled:
                 if f"{namespace}/{name}" not in explicit:
-                    self._pending_references["functions"][f"{namespace}/{name}"] = False
+                    self._pending_references[kind][f"{namespace}/{name}"] = False
+        if "llmProviders" not in self.skip_resource_types:
+            self._pending_references["llmProviders"] = {
+                item.name: True for item in config.spec.llmProviders
+            }
         self._pending_references["secrets"] = {name: True for name in self.supplied_secrets}
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
@@ -230,13 +231,6 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            if "agents" not in self.skip_resource_types:
-                await apply_agents(
-                    **common_with_owner,
-                    agents=config.spec.agents,
-                    llm_provider_ids=self.llm_provider_ids,
-                    agent_ids=self.agent_ids,
-                )
             # Pipelines apply after connectors/functions/queries/agents (their
             # step references), and before the triggers that may target them.
             if "pipelines" not in self.skip_resource_types:
@@ -244,7 +238,7 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            # Kinds with a per-resource applier: secrets, connectors, functions,
+            # Kinds with a per-resource applier: secrets, connectors, functions, agents,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a

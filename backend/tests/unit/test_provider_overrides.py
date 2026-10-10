@@ -4,7 +4,6 @@ Whitelisted behavior settings only — the first key is prompt_caching, which
 retires the "duplicate the provider as X-Uncached" pattern.
 """
 
-from types import SimpleNamespace
 
 from app.providers import AnthropicProvider, OpenAIProvider
 from app.providers.factory import (
@@ -66,36 +65,28 @@ class TestApplication:
 
 
 class TestConfigApply:
+    """Config's providerOverrides are checked by the agent spec (every channel)."""
+
     def test_valid_overrides_pass_through(self):
-        from app.services.config_apply.agents import _validated_overrides
+        from app.schemas.spec.agent import AgentSpec
 
-        cfg = SimpleNamespace(
-            namespace="default", name="a",
-            providerOverrides={"prompt_caching": False},
-        )
-        errors: list[str] = []
-        assert _validated_overrides(cfg, errors) == {"prompt_caching": False}
-        assert errors == []
+        spec = AgentSpec.model_validate({"name": "a", "providerOverrides": {"prompt_caching": False}})
+        assert spec.provider_overrides == {"prompt_caching": False}
 
-    def test_invalid_overrides_become_apply_errors(self):
-        from app.services.config_apply.agents import _validated_overrides
+    def test_invalid_overrides_are_refused(self):
+        import pytest
+        from pydantic import ValidationError
 
-        cfg = SimpleNamespace(
-            namespace="default", name="a",
-            providerOverrides={"base_url": "https://evil.example"},
-        )
-        errors: list[str] = []
-        assert _validated_overrides(cfg, errors) is None
-        assert len(errors) == 1
-        assert "default/a" in errors[0]
+        from app.schemas.spec.agent import AgentSpec
 
-    def test_absent_is_none(self):
-        from app.services.config_apply.agents import _validated_overrides
+        with pytest.raises(ValidationError):
+            AgentSpec.model_validate({"name": "a", "providerOverrides": {"base_url": "https://evil.example"}})
 
-        cfg = SimpleNamespace(namespace="default", name="a", providerOverrides=None)
-        errors: list[str] = []
-        assert _validated_overrides(cfg, errors) is None
-        assert errors == []
+    def test_absent_or_empty_is_none(self):
+        from app.schemas.spec.agent import AgentSpec
+
+        assert AgentSpec.model_validate({"name": "a"}).provider_overrides is None
+        assert AgentSpec.model_validate({"name": "a", "providerOverrides": {}}).provider_overrides is None
 
 
 class TestAgentAPI:

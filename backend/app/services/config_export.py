@@ -265,25 +265,17 @@ class ConfigExportService:
         return [serialize_function(f) for f in result.scalars().all()]
 
     async def _export_agents(self) -> list[dict]:
-        """Export agents"""
-        stmt = select(Agent).where(Agent.is_active == True)
+        """Export agents, deleted (switched-off) ones included as isActive: false."""
+        from app.services.resources.agents import provider_name
+
+        stmt = select(Agent).order_by(Agent.namespace, Agent.name)
         if self.managed_only:
             stmt = stmt.where(Agent.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
-        agents = result.scalars().all()
-
-        exported = []
-        for agent in agents:
-            provider_name = None
-            if agent.llm_provider_id:
-                provider_result = await self.db.execute(
-                    select(LLMProvider).where(LLMProvider.id == agent.llm_provider_id)
-                )
-                provider = provider_result.scalar_one_or_none()
-                if provider:
-                    provider_name = provider.name
-            exported.append(serialize_agent(agent, provider_name))
-        return exported
+        return [
+            serialize_agent(agent, await provider_name(self.db, agent.llm_provider_id))
+            for agent in result.scalars().all()
+        ]
 
     async def _export_collections(self) -> list[dict]:
         """Export collections."""
