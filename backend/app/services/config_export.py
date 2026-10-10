@@ -218,7 +218,7 @@ class ConfigExportService:
 
     async def _export_secrets(self) -> list[dict]:
         """Export secrets (names and descriptions only, never values)."""
-        stmt = select(Secret)
+        stmt = select(Secret).where(Secret.visibility == "shared").order_by(Secret.name)
         if self.managed_only:
             stmt = stmt.where(Secret.managed_by == self.managed_by)
 

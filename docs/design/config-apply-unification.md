@@ -577,6 +577,27 @@ invalidation effect).
   may still declare functions (decided: they just can't run).
 - The dead `function_ids` cache (keyed by bare name) is gone.
 
+### Slice 8: secrets (decisions)
+
+- **Shared secrets only.** They're what config declares, what package secret
+  variables fill in, and what connectors/pipelines resolve. Private secrets
+  are a user's own credentials, not configuration: written directly, not in
+  history.
+- **History never holds a value.** `SecretSpec.canonical()` puts a keyed
+  stand-in (`history.redact`) in place of the value, so history, diffs and
+  the stored checksum never carry it; the real value is kept encrypted beside
+  the revision for restores (`secret_values` / `with_secrets`).
+- **Value and description are kept unless declared**; a new secret still
+  needs a value (also refused in a dry run).
+- **Packages may fill in, never delete.** New applier knobs: `ownership()`
+  (secrets let a package adopt an existing row — its secret variables write
+  it just before the package applies, as before) and `deleted_with_package`
+  (off for secrets: uninstall and upgrades never deleted them, and still
+  don't). Package secret variables now write through the applier as the
+  installing user's own entry.
+- Export lists shared secrets only (private names used to be exported, and
+  re-applying them failed for lack of a value).
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

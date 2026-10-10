@@ -476,6 +476,8 @@ class PackageService:
             config_name=package_name,
         )
         for applier in all_appliers():
+            if not applier.deleted_with_package:
+                continue
             # Locked, and the ownership filter re-checked on the locked row: a
             # concurrent manual edit detaches a row (managed_by = NULL), and
             # must not be deleted after its save succeeded.
@@ -819,26 +821,26 @@ class PackageService:
                     # a name-only lookup could silently overwrite another
                     # user's PRIVATE secret of the same name (same bug class
                     # the config-apply secrets path fixed).
-                    from app.core.encryption import encryption_service
-                    from app.models.secret import Secret
-                    existing = await self.db.execute(
-                        select(Secret).where(
-                            Secret.name == name, Secret.visibility == "shared"
-                        )
+                    # Through the applier, as the installing user's own entry
+                    # (recorded, value redacted). It stays theirs: the
+                    # package may fill it in but never deletes it.
+                    from app.services.resources import ApplyContext
+                    from app.services.resources.secrets import SecretApplier
+
+                    applier = SecretApplier()
+                    ctx = ApplyContext(
+                        db=self.db, origin="api",
+                        actor_user_id=str(user_id), owner_user_id=str(user_id),
                     )
-                    secret = existing.scalar_one_or_none()
-                    if secret:
-                        secret.encrypted_value = encryption_service.encrypt(str(value))
+                    secret = await applier.find(ctx, name)
+                    if secret is None:
+                        spec = applier.spec_model.model_validate({
+                            "name": name, "value": str(value),
+                            "description": decl.get("description"),
+                        })
                     else:
-                        secret = Secret(
-                            name=name,
-                            encrypted_value=encryption_service.encrypt(str(value)),
-                            description=decl.get("description"),
-                            user_id=user_id,
-                            visibility="shared",
-                        )
-                        self.db.add(secret)
-                    await self.db.flush()
+                        spec = applier.spec_from_row(secret).model_copy(update={"value": str(value)})
+                    await applier.apply(spec, ctx, existing=secret)
                 # The substitution value is the secret reference syntax
                 resolved[name] = f"{{{{{name}}}}}"
                 stored_values[name] = "***"
