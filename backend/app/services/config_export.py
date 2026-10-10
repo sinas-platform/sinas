@@ -245,11 +245,12 @@ class ConfigExportService:
         return [serialize_connector(c) for c in result.scalars().all()]
 
     async def _export_pipelines(self) -> list[dict]:
-        """Export pipelines (cursor/failure state is runtime, not exported)."""
+        """Export pipelines, inactive ones included (as isActive: false).
+        Cursor and failure state are runtime, not exported."""
         from app.models.pipeline import Pipeline
         from app.services.resource_serializers import serialize_pipeline
 
-        stmt = select(Pipeline).where(Pipeline.is_active == True)
+        stmt = select(Pipeline).order_by(Pipeline.namespace, Pipeline.name)
         if self.managed_only:
             stmt = stmt.where(Pipeline.managed_by == self.managed_by)
         result = await self.db.execute(stmt)

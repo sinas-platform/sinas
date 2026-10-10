@@ -532,7 +532,9 @@ class PipelineConfig(BaseModel):
     disableAfterFailures: Optional[int] = None
     output: Optional[Any] = None
     outputExpr: Optional[str] = Field(default=None, alias="output.$")
-    isActive: bool = True
+    # Unset: a new pipeline is active, an existing one keeps its state (it
+    # may have been switched off, or auto-disabled after failures).
+    isActive: Optional[bool] = None
 
     def output_mapping(self) -> Optional[dict[str, Any]]:
         """Build the stored output-mapping dict from the YAML-level fields."""

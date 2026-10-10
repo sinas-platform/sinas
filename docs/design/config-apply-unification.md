@@ -621,6 +621,24 @@ invalidation effect).
 - Not changed: references to functions, skills etc. are still only checked
   by the config parser, not on REST writes.
 
+### Slice 10: pipelines (decisions)
+
+- One applier for REST, config, packages and restore. The definition rules
+  (`validate_pipeline_definition`) are the spec's whole-spec rule, so every
+  channel refuses the same things; a REST PUT with an invalid merged
+  definition stays a 400.
+- **`isActive` is kept unless declared:** a pipeline switched off by hand,
+  or auto-disabled after failures, stays off when config is re-applied
+  (config switched every one back on). Switching one back on clears the
+  failure state; the cursor stays. Export includes inactive ones.
+- Config's top-level `output` / `output.$` map to `output_mapping` in the
+  spec and back on export.
+- **Packages now remove their pipelines** on uninstall and prune them on
+  upgrade; pipelines were never part of package uninstall before.
+- References in steps are still not checked at write time (run time fails
+  clearly), as before.
+- The legacy normalizers module is gone: nothing uses it any more.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

@@ -23,7 +23,6 @@ from app.services.config_apply.data_sources import (
 )
 from app.services.config_apply.resources import (
     apply_dependencies,
-    apply_pipelines,
 )
 from pydantic.alias_generators import to_camel
 
@@ -157,8 +156,9 @@ class ConfigApplyService:
 
         from app.models.agent import Agent
         from app.models.function import Function
+        from app.models.pipeline import Pipeline
 
-        for kind, model in (("functions", Function), ("agents", Agent)):
+        for kind, model in (("functions", Function), ("agents", Agent), ("pipelines", Pipeline)):
             items = getattr(config.spec, kind)
             unset = [i for i in items if i.isActive is None]
             if not unset:
@@ -231,14 +231,7 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            # Pipelines apply after connectors/functions/queries/agents (their
-            # step references), and before the triggers that may target them.
-            if "pipelines" not in self.skip_resource_types:
-                await apply_pipelines(
-                    **common_with_owner,
-                    pipelines=config.spec.pipelines,
-                )
-            # Kinds with a per-resource applier: secrets, connectors, functions, agents,
+            # Kinds with a per-resource applier: secrets, connectors, functions, agents, pipelines,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
