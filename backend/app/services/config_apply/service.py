@@ -176,6 +176,18 @@ class ConfigApplyService:
                 item.name: True for item in config.spec.llmProviders
             }
         self._pending_references["secrets"] = {name: True for name in self.supplied_secrets}
+        if not dry_run:
+            # Promotions to "the default" serialize on a lock taken before any
+            # row lock this apply takes (lock order: see lock_singleton).
+            from app.services.resources import ApplyContext
+            from app.services.resources.base import lock_singleton
+            from app.services.resources.registry import all_appliers
+
+            for applier in all_appliers():
+                if applier.singleton_lock and applier.kind not in self.skip_resource_types and any(
+                    getattr(item, "isDefault", None) for item in getattr(config.spec, applier.config_section)
+                ):
+                    await lock_singleton(ApplyContext(db=self.db, origin="config"), applier.singleton_lock)
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {

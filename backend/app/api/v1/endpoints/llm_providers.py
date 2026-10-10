@@ -19,6 +19,7 @@ from app.schemas.llm_provider import (
 )
 
 from app.services.resources import rest
+from app.services.resources.base import lock_singleton
 from app.services.resources.llm_providers import LLMProviderApplier
 
 router = APIRouter()
@@ -34,6 +35,9 @@ async def create_llm_provider(
 ):
     """Create a new LLM provider configuration. Admin only."""
     ctx = rest.api_context(db, user_id)
+    if request.is_default:
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
     data = request.model_dump()
     data["is_default"] = bool(data.get("is_default"))
     try:
@@ -91,6 +95,9 @@ async def update_llm_provider(
         )
 
     ctx = rest.api_context(db, user_id)
+    if request.is_default:
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
     provider = await rest.locked(_applier, ctx, provider)
     # As before: a field left out or sent as null stays as it is; config is
     # replaced as a whole.

@@ -29,6 +29,7 @@ class LLMProviderApplier(ResourceApplier[LLMProviderSpec]):
     model = LLMProvider
     # The key is write-only: left out, it's kept. Switched off (deleted) and
     # the default chosen in the console are operator state.
+    singleton_lock = "default-llm-provider"
     keep_unless_declared = ("api_key", "is_active", "is_default")
     deleted_with_package = False
 
@@ -95,7 +96,7 @@ class LLMProviderApplier(ResourceApplier[LLMProviderSpec]):
         from app.services.resources.base import lock_singleton
         from app.services.resources.history import record_revision
 
-        await lock_singleton(ctx, "default-llm-provider")
+        await lock_singleton(ctx, self.singleton_lock)
         stmt = select(LLMProvider).where(LLMProvider.is_default.is_(True)).with_for_update()
         if row.id is not None:
             stmt = stmt.where(LLMProvider.id != row.id)

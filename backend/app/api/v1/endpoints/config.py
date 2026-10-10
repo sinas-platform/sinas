@@ -340,6 +340,11 @@ async def restore_config_revision(
         reference_scope_user_id=None,
         restored_from_id=revision.id,
     )
+    if applier.singleton_lock and spec.is_default:
+        # Before the row lock below (lock order: see lock_singleton).
+        from app.services.resources.base import lock_singleton
+
+        await lock_singleton(ctx, applier.singleton_lock)
     current = (
         await applier.find_by_id(ctx, revision.resource_id) if revision.resource_id else None
     )

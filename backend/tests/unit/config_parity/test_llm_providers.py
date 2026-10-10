@@ -195,4 +195,41 @@ class TestReviewFixes:
 
         monkeypatch.setattr(base, "lock_singleton", spy)
         assert (await _apply(db, admin_user, llmProviders=[_yaml(_name(), isDefault=True)])).success
-        assert taken == ["default-llm-provider"]
+        # At the apply's start (before any row lock), and again (re-entrant)
+        # where the previous default is unset.
+        assert taken and set(taken) == {"default-llm-provider"}
+
+
+async def test_every_promotion_takes_the_lock_before_row_locks(client, db: AsyncSession, admin_user, monkeypatch):
+    """Lock order: config apply takes it at its start, REST before locking
+    the row. Recorded against the row locks the appliers take."""
+    from app.services.resources import base
+
+    events = []
+    original_lock, original_find = base.lock_singleton, None
+
+    async def spy_lock(ctx, name):
+        events.append(("singleton", name))
+        await original_lock(ctx, name)
+
+    monkeypatch.setattr(base, "lock_singleton", spy_lock)
+    import app.api.v1.endpoints.llm_providers as endpoint
+
+    monkeypatch.setattr(endpoint, "lock_singleton", spy_lock)
+    from app.services.resources import rest
+
+    original_locked = rest.locked
+
+    async def spy_locked(applier, ctx, authorized):
+        events.append(("row", applier.kind))
+        return await original_locked(applier, ctx, authorized)
+
+    monkeypatch.setattr(rest, "locked", spy_locked)
+    name, h = _name(), auth_headers(admin_user)
+    await client.post("/api/v1/llm-providers", json={"name": name, "provider_type": "openai"}, headers=h)
+    events.clear()
+    provider_id = (await _row(db, name)).id
+    r = await client.patch(f"/api/v1/llm-providers/{provider_id}", json={"is_default": True}, headers=h)
+    assert r.status_code == 200, r.text
+    assert events[0] == ("singleton", "default-llm-provider")
+    assert ("row", "llmProviders") in events

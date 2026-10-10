@@ -220,7 +220,13 @@ async def lock_singleton(ctx: "ApplyContext", name: str) -> None:
     """Serialize changes to a one-row-at-most invariant (the default agent,
     the default provider) until the transaction ends. Row locks can't: with
     no current default there is no row to lock, so two promotions could both
-    see none and both commit."""
+    see none and both commit.
+
+    Lock order: every entry point that may promote takes this lock FIRST,
+    before any row lock (config apply at its start, REST before locking the
+    row, restore before finding it). Taken later, a request holding a row
+    lock and waiting here deadlocks with one holding this and wanting that
+    row. Re-entrant: the applier takes it again when it unsets the others."""
     import zlib
 
     from sqlalchemy import text
@@ -253,6 +259,9 @@ class ResourceApplier(Generic[TSpec]):
     # Operator state a config sets only when it says so: left out of the
     # YAML, an existing resource keeps its value (see apply's `keep`).
     keep_unless_declared: ClassVar[tuple[str, ...]] = ()
+    # Kinds with an `is_default` that at most one row may have: the name of
+    # the lock that serializes promotions (see lock_singleton).
+    singleton_lock: ClassVar[Optional[str]] = None
     # Whether a package uninstall, or an upgrade that no longer ships one,
     # deletes rows of this kind. Off for kinds whose rows hold what an
     # operator entered (secrets): they outlive the package.
