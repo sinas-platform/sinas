@@ -362,6 +362,8 @@ class ManifestConfig(BaseModel):
     # Package variables substitute into it, so an installer can supply e.g.
     # the browser-reachable URL of the service this manifest describes.
     publicInfo: dict[str, Any] = Field(default_factory=dict)
+    # Unset: a new manifest is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
 
     @field_validator("publicInfo")
     @classmethod

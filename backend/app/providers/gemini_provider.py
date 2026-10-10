@@ -44,7 +44,7 @@ class GeminiProvider(OpenAIProvider):
         self._upload_root = f"{scheme_host}/upload/v1{api_path}"
 
     def _files_headers(self) -> dict[str, str]:
-        return {"x-goog-api-key": self.api_key or ""}
+        return {"x-goog-api-key": self.api_key or "", **self._context_headers()}
 
     async def _upload_batch_file(self, jsonl: bytes) -> str:
         """Upload via Google's resumable Files API; returns the file name

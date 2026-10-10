@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import Any, Optional
 
+from app.core.auth import current_api_key_id
 from app.core.config import settings
 from app.core.redis import get_arq_pool, get_redis
 from app.core.telemetry import inject_trace_context
@@ -328,6 +329,9 @@ class QueueService:
             pending_delegation_id=pending_delegation_id,
             parent_tool_call_id=parent_tool_call_id,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 
@@ -388,6 +392,9 @@ class QueueService:
             approved=approved,
             channel_id=channel_id,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 
@@ -402,12 +409,13 @@ class QueueService:
         channel_id: str,
         conversation_context: dict[str, Any],
         job_timeout: Optional[int] = None,
-        mirror_channel_id: Optional[str] = None,
+        job_id: Optional[str] = None,
     ) -> str:
         """Enqueue continuation of a parent suspended on delegations (issue #90).
 
-        `mirror_channel_id`: also publish the resumed stream to this (the
-        suspended round's original) channel, for listeners still on it.
+        `job_id`: a fixed id makes the enqueue idempotent (arq won't queue a
+        second job under an id it already has, and a status already recorded
+        for it — possibly "completed" by now — is left as it is).
 
         Fired by the last finishing child. Routed by the parent's own
         delegation depth, so a suspended sub-agent resumes on the sub-agent
@@ -416,7 +424,8 @@ class QueueService:
         pool = await get_arq_pool()
         redis = await get_redis()
 
-        job_id = str(uuid.uuid4())
+        fixed_id = job_id is not None
+        job_id = job_id or str(uuid.uuid4())
         depth = conversation_context.get("delegation_depth", 0)
         use_sub_queue = depth > 0 and settings.agent_subagent_queue
         queue_label = "agents:sub" if use_sub_queue else "agents"
@@ -433,6 +442,7 @@ class QueueService:
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps(status_data),
             ex=JOB_TTL,
+            nx=fixed_id,
         )
 
         enqueue_kwargs: dict[str, Any] = {
@@ -450,8 +460,10 @@ class QueueService:
             user_token=user_token,
             channel_id=channel_id,
             conversation_context=conversation_context,
-            mirror_channel_id=mirror_channel_id,
             trace_context=inject_trace_context(),
+            # The API key the run acts through: its tools check the key's
+            # permissions, not the owner's (core/auth get_effective_permissions).
+            api_key_id=current_api_key_id(),
             **enqueue_kwargs,
         )
 

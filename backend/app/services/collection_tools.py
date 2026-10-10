@@ -323,7 +323,7 @@ class CollectionToolConverter:
             user_id: Current user ID
             metadata: Tool metadata containing collection_ref and tool_type
         """
-        from app.core.auth import get_user_permissions
+        from app.core.auth import get_effective_permissions
         from app.core.permissions import check_permission
 
         coll_ref = metadata.get("collection_ref", "")
@@ -338,7 +338,7 @@ class CollectionToolConverter:
             return {"error": f"Collection '{coll_ref}' not found"}
 
         # Permission check: read operations need download, write operations need upload
-        user_permissions = await get_user_permissions(db, user_id)
+        user_permissions = await get_effective_permissions(db, user_id)
         is_write = tool_type in ("collection_write_file", "collection_edit_file", "collection_delete_file")
         if is_write:
             perm = f"sinas.collections/{namespace}/{name}.upload:own"

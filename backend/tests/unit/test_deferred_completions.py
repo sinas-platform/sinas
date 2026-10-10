@@ -272,31 +272,6 @@ async def test_resume_without_fresh_channel_uses_the_suspended_rounds_channel(
 
 
 @pytest.mark.asyncio
-async def test_fresh_resume_channel_mirrors_the_original(env, capture_resume):
-    """A blocking parent agent waits for `done` on the channel it opened for
-    its child; an answer arriving over the API resumes on a fresh channel,
-    so the original must be mirrored or the parent times out."""
-    row_id = await _suspend(
-        env, {"call_q": {"completer": dc.HUMAN_INPUT, "question": "Which?"}}
-    )
-    await dc.complete(row_id, "call_q", '{"answer": "A"}', user_token="tok",
-                      resume_channel_id="chan-fresh")
-    (resume,) = capture_resume
-    assert resume["channel_id"] == "chan-fresh"
-    assert resume["mirror_channel_id"] == "chan-orig"
-
-
-@pytest.mark.asyncio
-async def test_resume_on_original_channel_has_no_mirror(env, capture_resume):
-    row_id = await _suspend(
-        env, {"call_del": {"completer": dc.SUB_AGENT, "sub_chat_id": "sc", "agent": "ns/a"}}
-    )
-    await dc.complete(row_id, "call_del", "{}", user_token="tok")
-    (resume,) = capture_resume
-    assert resume.get("mirror_channel_id") is None
-
-
-@pytest.mark.asyncio
 async def test_duplicate_completion_is_a_noop(env, capture_resume):
     row_id = await _suspend(
         env,
@@ -470,3 +445,160 @@ async def test_suspend_delegations_checkpoints_then_enqueues_children(
     assert await _get_row(row_id) is None
     (resume,) = capture_resume
     assert resume["conversation_context"] == {"delegation_depth": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_blocked_delegated_child_resumes_where_its_parent_waits(env, capture_resume):
+    """A "block"-mode child's parent waits on the child's original channel;
+    answering its question must continue the child there, not on the
+    answerer's fresh channel (the parent would never get the reply)."""
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={"provider": "p", "model": "m", "delegation_depth": 1},
+    )
+    outcome = await dc.complete(
+        row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="tok",
+        resume_channel_id="chan-fresh",
+    )
+    assert outcome["channel_id"] == "chan-orig"
+    (resume,) = capture_resume
+    assert resume["channel_id"] == "chan-orig"
+
+
+@pytest.mark.asyncio
+async def test_a_suspend_mode_child_may_resume_on_a_fresh_channel(env, capture_resume):
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={
+            "provider": "p", "model": "m", "delegation_depth": 1,
+            "parent_pending_delegation_id": "parent-row",
+        },
+    )
+    outcome = await dc.complete(
+        row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="tok",
+        resume_channel_id="chan-fresh",
+    )
+    assert outcome["channel_id"] == "chan-fresh"
+
+
+@pytest.mark.asyncio
+async def test_the_resume_acts_through_the_rounds_api_key(env, monkeypatch):
+    """A round suspended in a chat run through an API key resumes through
+    that key — even when completed with no request bound (expiry sweep)."""
+    from app.core.auth import current_api_key_id
+
+    seen: list = []
+
+    async def fake(**kwargs):
+        seen.append(current_api_key_id())
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", fake)
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={"provider": "p", "model": "m", "api_key_id": "key-123"},
+    )
+    await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="")
+    assert seen == ["key-123"]
+    assert current_api_key_id() is None
+
+
+@pytest.mark.asyncio
+async def test_a_round_whose_api_key_was_stored_as_none_resumes_without_one(env, monkeypatch):
+    """A round suspended outside any key stays outside one, even if the
+    completion arrives on a request bound to some key."""
+    from app.core.auth import bind_api_key, current_api_key_id, reset_api_key
+
+    seen: list = []
+
+    async def fake(**kwargs):
+        seen.append(current_api_key_id())
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", fake)
+    row_id = await _suspend(
+        env,
+        {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}},
+        context={"provider": "p", "model": "m", "api_key_id": None},
+    )
+    token = bind_api_key("other-key")
+    try:
+        await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="")
+    finally:
+        reset_api_key(token)
+    assert seen == [None]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_resume_enqueue_keeps_the_checkpoint_and_the_sweep_retries(env, monkeypatch):
+    calls: list[dict] = []
+    failing = {"on": True}
+
+    async def flaky(**kwargs):
+        calls.append(kwargs)
+        if failing["on"]:
+            raise ConnectionError("redis down")
+        return "job-id"
+
+    monkeypatch.setattr(queue_service, "enqueue_agent_delegate_resume", flaky)
+    monkeypatch.setattr(dc, "_ENQUEUE_BACKOFF_SECONDS", 0)
+    row_id = await _suspend(env, {"call_ask": {"completer": dc.HUMAN_INPUT, "question": "?"}})
+
+    outcome = await dc.complete(row_id, "call_ask", json.dumps({"answer": "yes"}), user_token="tok")
+    # Not reported as resumed: nothing is running on that channel yet.
+    assert (outcome["resumed"], outcome["resume_pending"]) == (False, True)
+    assert outcome["channel_id"]
+    # Retried a few times while the answering caller's token was at hand.
+    assert [c["user_token"] for c in calls] == ["tok"] * dc._ENQUEUE_ATTEMPTS
+    row = await _get_row(row_id)
+    assert row is not None and row.remaining <= 0  # kept: nothing outstanding, not yet resumed
+    assert len(await _tool_messages(env["chat_id"])) == 1  # the answer itself is safe
+
+    failing["on"] = False
+    await dc.expire_due()
+    assert await _get_row(row_id) is None
+    # Every attempt used the same job id, so a retry can never resume twice.
+    attempts = dc._ENQUEUE_ATTEMPTS + 1
+    assert [c["job_id"] for c in calls] == [f"resume-{row_id}"] * attempts
+    assert calls[-1]["chat_id"] == env["chat_id"]
+    assert calls[-1]["channel_id"] == outcome["channel_id"]
+
+    await dc.expire_due()  # nothing left to retry
+    assert len(calls) == attempts
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_resume_enqueue_never_rewrites_the_jobs_status(monkeypatch):
+    """A retry may race a resume that already ran: its status (by now
+    "completed") must not go back to "queued"."""
+    from app.services import queue_service as qs
+
+    sets: list[dict] = []
+
+    class _Redis:
+        async def set(self, key, value, **kwargs):
+            sets.append(kwargs)
+
+    class _Pool:
+        async def enqueue_job(self, *a, **k):
+            return None  # arq: a job under that id exists already
+
+    async def pool():
+        return _Pool()
+
+    async def redis():
+        return _Redis()
+
+    monkeypatch.setattr(qs, "get_arq_pool", pool)
+    monkeypatch.setattr(qs, "get_redis", redis)
+    await queue_service.enqueue_agent_delegate_resume(
+        chat_id="c", user_id="u", user_token="", channel_id="ch",
+        conversation_context={}, job_id="resume-1",
+    )
+    await queue_service.enqueue_agent_delegate_resume(
+        chat_id="c", user_id="u", user_token="", channel_id="ch", conversation_context={},
+    )
+    assert [s.get("nx") for s in sets] == [True, False]

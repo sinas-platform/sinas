@@ -1,9 +1,11 @@
 """arq job handlers for agent message processing."""
 import asyncio
+import functools
 import json
 import logging
 import traceback
 import uuid as uuid_lib
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -11,13 +13,31 @@ from opentelemetry import trace
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.core.telemetry import otel_attr
+from app.core.telemetry import attached, extract_trace_context, otel_attr
 from app.models.execution import Execution, ExecutionStatus
 from app.services.queue_service import JOB_STATUS_PREFIX, JOB_TTL
 
 logger = logging.getLogger(__name__)
 
 PING_INTERVAL = 15  # seconds between keep-alive pings
+
+
+def _acting_as_job_key(job):
+    """Run an agent job through the API key its request came in on (if any):
+    its tools then check the key's permissions, as in the request itself."""
+    import functools
+
+    from app.core.auth import bind_api_key, reset_api_key
+
+    @functools.wraps(job)
+    async def wrapper(ctx: dict, **kwargs: Any) -> None:
+        token = bind_api_key(kwargs.get("api_key_id"))
+        try:
+            return await job(ctx, **kwargs)
+        finally:
+            reset_api_key(token)
+
+    return wrapper
 
 
 def _is_suspension_chunk(chunk: dict) -> bool:
@@ -28,6 +48,24 @@ def _is_suspension_chunk(chunk: dict) -> bool:
     from app.services.deferred_completions import SUSPENSION_EVENT_TYPES
 
     return chunk.get("type") in SUSPENSION_EVENT_TYPES
+
+
+def _in_enqueued_context(
+    job: Callable[..., Awaitable[None]],
+) -> Callable[..., Awaitable[None]]:
+    """Run a queued job inside the trace context it was enqueued with.
+
+    The enqueue side passes `trace_context` (`inject_trace_context`); making
+    it current for the whole job means the model calls a continuation makes
+    carry the caller's trace and baggage, as the turn it continues did.
+    """
+
+    @functools.wraps(job)
+    async def run(ctx: dict[str, Any], **kwargs: Any) -> None:
+        with attached(extract_trace_context(kwargs.get("trace_context") or {})):
+            await job(ctx, **kwargs)
+
+    return run
 
 
 async def _ping_loop(channel_id: str, ttl: int | None = None) -> None:
@@ -77,6 +115,7 @@ async def _terminate_execution_row(
             await batch_service.on_execution_terminated(db=db, batch_id=execution.batch_id)
 
 
+@_acting_as_job_key
 async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     """
     Process an agent message in a worker.
@@ -90,7 +129,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     from app.services.message_service import MessageService
     from app.services.stream_relay import stream_relay
 
-    from app.core.telemetry import extract_trace_context, get_tracer
+    from app.core.telemetry import get_tracer
 
     job_id = kwargs["job_id"]
     chat_id = kwargs["chat_id"]
@@ -164,7 +203,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
 
     completed = False
     span_ctx = {"context": parent_ctx} if parent_ctx else {}
-    with tracer.start_as_current_span(
+    with attached(parent_ctx), tracer.start_as_current_span(
         "agent.job",
         **span_ctx,
         attributes={
@@ -339,6 +378,8 @@ async def _persist_turn_error(chat_id: str, error: Exception) -> None:
             f"Could not persist turn error for chat {chat_id}: {persist_error}"
         )
 
+@_acting_as_job_key
+@_in_enqueued_context
 async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     """
     Resume agent processing after tool approval in a worker.
@@ -531,6 +572,8 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
                 logger.error(f"Failed to update status for cancelled agent resume job {job_id}")
 
 
+@_acting_as_job_key
+@_in_enqueued_context
 async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     """Continue a parent conversation suspended on sub-agent delegations.
 
@@ -556,9 +599,6 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     user_id = kwargs["user_id"]
     user_token = kwargs["user_token"]
     channel_id = kwargs["channel_id"]
-    # The suspended round's original channel, when resuming on a fresh one:
-    # a blocking parent agent may still be listening there.
-    mirror_channel_id = kwargs.get("mirror_channel_id")
     context = kwargs["conversation_context"]
     # Inherited from the suspended job (see message_service suspend block).
     execution_id = context.get("execution_id")
@@ -593,20 +633,6 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     stream_ttl = context.get("stream_ttl")
     ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))
 
-    _targets = [channel_id] + ([mirror_channel_id] if mirror_channel_id else [])
-
-    async def _publish(chunk: dict) -> None:
-        for target in _targets:
-            await stream_relay.publish(target, chunk, ttl=stream_ttl)
-
-    async def _publish_done() -> None:
-        for target in _targets:
-            await stream_relay.publish_done(target)
-
-    async def _publish_error(message: str) -> None:
-        for target in _targets:
-            await stream_relay.publish_error(target, message)
-
     completed = False
     _suspended = False
     _output_parts: list[str] = []
@@ -616,7 +642,9 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     try:
         lock_token = await chat_steering.acquire_chat_lock_wait(chat_id)
         if lock_token is None:
-            await _publish_error("Chat is busy with another running turn — try again")
+            await stream_relay.publish_error(
+                channel_id, "Chat is busy with another running turn — try again"
+            )
             return
         async with AsyncSessionLocal() as db:
             message_service = MessageService(db)
@@ -639,7 +667,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
                         _output_parts.append(chunk["content"])
                     if _is_suspension_chunk(chunk):
                         _suspended = True
-                    await _publish(chunk)
+                    await stream_relay.publish(channel_id, chunk, ttl=stream_ttl)
 
         if _suspended:
             # Suspended again on a further round of pending completions —
@@ -653,7 +681,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
             logger.info(f"Delegate-resume job {job_id} suspended again on delegation")
             return
 
-        await _publish_done()
+        await stream_relay.publish_done(channel_id)
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps({**base_fields, "status": "completed"}),
@@ -689,7 +717,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         logger.error(f"Delegate-resume job {job_id} failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         await _persist_turn_error(chat_id, e)
-        await _publish_error(str(e))
+        await stream_relay.publish_error(channel_id, str(e))
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
             json.dumps({**base_fields, "status": "failed", "error": str(e)}),

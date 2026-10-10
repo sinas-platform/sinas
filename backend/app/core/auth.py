@@ -4,6 +4,7 @@ import random
 import secrets
 import string
 import uuid as uuid_lib
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Optional
 
@@ -693,6 +694,65 @@ async def _refresh_usage_stamps(
         await db.commit()
 
 
+# The API key the current request or agent run acts through, if any. Agent
+# tools check the caller's permissions; for a key, that's the key's — narrower
+# than its owner's. Set where a key authenticates, carried into queued agent
+# jobs (queue_service), read by get_effective_permissions.
+_acting_api_key: ContextVar[Optional[str]] = ContextVar("sinas_acting_api_key", default=None)
+
+
+def current_api_key_id() -> Optional[str]:
+    return _acting_api_key.get()
+
+
+def bind_api_key(api_key_id: Optional[str]):
+    """Act through this API key (None: none) for the rest of this task.
+    Returns a token for reset_api_key."""
+    return _acting_api_key.set(str(api_key_id) if api_key_id else None)
+
+
+def reset_api_key(token) -> None:
+    _acting_api_key.reset(token)
+
+
+async def get_effective_permissions(db: AsyncSession, user_id: str) -> dict[str, bool]:
+    """The permissions to check a call against: the user's, or — when the run
+    acts through an API key — the key's live ones (revoked, expired or
+    narrowed keys take effect at once; another user's key grants nothing)."""
+    api_key_id = current_api_key_id()
+    if not api_key_id:
+        return await get_user_permissions(db, user_id)
+    api_key = await db.get(APIKey, uuid_lib.UUID(str(api_key_id)))
+    if (
+        api_key is None
+        or not api_key.is_active
+        or (api_key.expires_at and api_key.expires_at < datetime.now(UTC))
+        or str(api_key.user_id) != str(user_id)
+    ):
+        return {}
+    user = await db.get(User, api_key.user_id)
+    if user is None or not user.is_active:
+        return {}
+    return await resolve_api_key_permissions(db, api_key, user)
+
+
+async def _lookup_api_key(db: AsyncSession, key: str) -> Optional[tuple[APIKey, User]]:
+    """The active, unexpired key and its active owner, or None."""
+    result = await db.execute(
+        select(APIKey).where(APIKey.key_hash == hash_api_key(key), APIKey.is_active == True)
+    )
+    api_key = result.scalar_one_or_none()
+    if not api_key:
+        return None
+    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
+        return None
+    result = await db.execute(select(User).where(User.id == api_key.user_id))
+    user = result.scalar_one_or_none()
+    if not user or not user.is_active:
+        return None
+    return api_key, user
+
+
 async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, dict[str, bool]]]:
     """
     Validate an API key and return the user and permissions.
@@ -704,29 +764,14 @@ async def validate_api_key(db: AsyncSession, key: str) -> Optional[tuple[User, d
     Returns:
         Tuple of (user, permissions) if valid, None otherwise
     """
-    key_hash = hash_api_key(key)
-
-    # Find active API key
-    result = await db.execute(
-        select(APIKey).where(APIKey.key_hash == key_hash, APIKey.is_active == True)
-    )
-    api_key = result.scalar_one_or_none()
-
-    if not api_key:
+    found = await _lookup_api_key(db, key)
+    if not found:
         return None
-
-    # Check if expired
-    if api_key.expires_at and api_key.expires_at < datetime.now(UTC):
-        return None
-
-    result = await db.execute(select(User).where(User.id == api_key.user_id))
-    user = result.scalar_one_or_none()
-
-    if not user or not user.is_active:
-        return None
-
+    api_key, user = found
     await _refresh_usage_stamps(db, datetime.now(UTC), api_key=api_key, user=user)
-
+    # Everything this request does — agent runs and their tools included —
+    # acts through the key.
+    bind_api_key(str(api_key.id))
     return user, await resolve_api_key_permissions(db, api_key, user)
 
 
@@ -788,8 +833,18 @@ async def _verify_component_token(
             share_id=str(share.id), read_only=read_only,
         )
 
+    if claims.get("api_key_id"):
+        # Rendered for an API key: the page acts through that key, capped by
+        # its (live) permissions rather than its owner's.
+        bind_api_key(claims["api_key_id"])
+        scope = ComponentScope(
+            scope.namespace, scope.name, scope.session_start,
+            share_id=scope.share_id, read_only=scope.read_only,
+            api_key_id=str(claims["api_key_id"]),
+        )
+
     permissions = scoped_permissions(
-        component, await get_user_permissions(db, str(user.id)), read_only
+        component, await get_effective_permissions(db, str(user.id)), read_only
     )
     request.state.component_scope = scope
     return str(user.id), user.email, permissions

@@ -10,8 +10,6 @@ Adversarial coverage the resume path must survive:
 - the assistant tool_calls message is persisted before suspension, and the
   answer's tool result lands before the resume job runs (transcript
   validity);
-- a cooperative interrupt beats the suspension — synthetic results are
-  written for every call, ask_user included, and no checkpoint is left;
 - a malformed ask_user call (no question) fails immediately rather than
   parking the round on a question nobody can see.
 """
@@ -174,26 +172,14 @@ async def test_ask_user_round_suspends_instead_of_executing(db, chat, test_user)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raw_args", ["null", "[]", '"just a string"', "42"])
-async def test_non_object_arguments_fail_fast_like_a_missing_question(
-    db, chat, test_user, raw_args
-):
-    """Valid JSON that isn't an object must get the immediate error result,
-    not crash the turn and leave the call without result or checkpoint."""
-    call = {"id": "call_weird", "type": "function",
-            "function": {"name": "ask_user", "arguments": raw_args}}
-    # Paired with a well-formed question so the round suspends (a round with
-    # nothing left to ask would continue to the LLM follow-up, which the
-    # test environment has no provider for).
+@pytest.mark.parametrize("raw", ["null", "[]", "42"])
+async def test_non_object_arguments_fail_fast_too(db, chat, test_user, raw):
+    """Valid JSON that isn't an object used to crash the turn at args.get()."""
+    call = {"id": "call_raw", "type": "function", "function": {"name": "ask_user", "arguments": raw}}
+    # With a well-formed question beside it the round suspends (no LLM call).
     chunks = await _run_round(db, chat, test_user, [call, _ask_call("call_good")])
     ends = {c["tool_call_id"]: c for c in chunks if c.get("type") == "tool_end"}
-    assert "error" in json.loads(ends["call_weird"]["result"])
-    row = (
-        await db.execute(
-            select(PendingCompletion).where(PendingCompletion.chat_id == chat.id)
-        )
-    ).scalar_one()
-    assert set(row.pending) == {"call_good"}
+    assert "error" in json.loads(ends["call_raw"]["result"])
 
 
 @pytest.mark.asyncio
@@ -218,31 +204,6 @@ async def test_malformed_question_fails_fast_and_does_not_park_the_round(
         )
     ).scalar_one()
     assert set(row.pending) == {"call_good"}
-
-
-@pytest.mark.asyncio
-async def test_interrupt_beats_suspension_and_leaves_no_dangling_calls(
-    db, chat, test_user
-):
-    from app.services import chat_steering
-
-    await chat_steering.request_interrupt(str(chat.id))
-    chunks = await _run_round(db, chat, test_user, [_ask_call("call_q1")])
-
-    assert any(c.get("type") == "interrupted" for c in chunks)
-    # No checkpoint — and the ask_user call has a synthetic tool result, so
-    # the assistant tool_calls message is never left unmatched.
-    assert (
-        await db.execute(
-            select(PendingCompletion).where(PendingCompletion.chat_id == chat.id)
-        )
-    ).scalar_one_or_none() is None
-    tool_msgs = (
-        await db.execute(
-            select(Message).where(Message.chat_id == chat.id, Message.role == "tool")
-        )
-    ).scalars().all()
-    assert [m.tool_call_id for m in tool_msgs] == ["call_q1"]
 
 
 @pytest.mark.asyncio

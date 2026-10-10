@@ -55,6 +55,7 @@ class ComponentScope:
     # link allows writes.
     share_id: Optional[str] = None
     read_only: bool = False
+    api_key_id: Optional[str] = None
 
     @property
     def ref(self) -> str:
@@ -67,6 +68,7 @@ def generate_component_access_token(
     name: str,
     session_start: Optional[int] = None,
     share_id: Optional[str] = None,
+    api_key_id: Optional[str] = None,
 ) -> str:
     now = int(time.time())
     payload = {
@@ -79,6 +81,10 @@ def generate_component_access_token(
     }
     if share_id:
         payload["share_id"] = str(share_id)
+    if api_key_id:
+        # Rendered for an API key's request or agent run: acts with the key's
+        # permissions (core/auth get_effective_permissions).
+        payload["api_key_id"] = str(api_key_id)
     # Internal purpose token, like render and file-serve tokens: HS256.
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 

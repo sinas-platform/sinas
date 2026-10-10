@@ -13,10 +13,22 @@ from app.services.file_storage import generate_file_url
 logger = logging.getLogger(__name__)
 
 
+_CURRENT_KEY = object()
+
+
 def generate_component_render_token(
-    namespace: str, name: str, user_id: str, expires_in: int = 3600
+    namespace: str, name: str, user_id: str, expires_in: int = 3600,
+    api_key_id=_CURRENT_KEY,
 ) -> str:
-    """Generate a signed render token for a component."""
+    """Generate a signed render token for a component.
+
+    Made during a request or agent run that acts through an API key, it
+    carries the key: the page then acts with the key's permissions, not the
+    owner's (pass api_key_id explicitly to override)."""
+    if api_key_id is _CURRENT_KEY:
+        from app.core.auth import current_api_key_id
+
+        api_key_id = current_api_key_id()
     payload = {
         "namespace": namespace,
         "name": name,
@@ -24,6 +36,8 @@ def generate_component_render_token(
         "purpose": "component_render",
         "exp": int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp()),
     }
+    if api_key_id:
+        payload["api_key_id"] = str(api_key_id)
     # Internal purpose tokens are pinned to HS256 regardless of JWT_ALGORITHM:
     # only Sinas itself verifies them, so asymmetric signing buys nothing.
     return jose_jwt.encode(payload, settings.secret_key, algorithm="HS256")
@@ -135,13 +149,21 @@ def refresh_component_render_tokens(
             if not namespace or not name:
                 raise ValueError("Missing namespace or name in token")
 
-            # Keep existing token if still > 10 min remaining
+            # Read through an API key, the token must act through that key,
+            # however fresh: one made in the owner's own session would carry
+            # the owner's rights. Otherwise it keeps the key it was made under.
+            from app.core.auth import current_api_key_id
+
+            reader_key = current_api_key_id()
+            api_key_id = reader_key or payload.get("api_key_id")
             exp = payload.get("exp", 0)
-            if exp - time.time() > 600:
+            if exp - time.time() > 600 and payload.get("api_key_id") == api_key_id:
                 refreshed.append(part)
                 continue
 
-            new_token = generate_component_render_token(namespace, name, user_id)
+            new_token = generate_component_render_token(
+                namespace, name, user_id, api_key_id=api_key_id
+            )
             refreshed.append({**part, "render_token": new_token})
         except Exception:
             logger.debug(
@@ -150,6 +172,29 @@ def refresh_component_render_tokens(
             refreshed.append(part)
 
     return refreshed
+
+
+def strip_render_tokens(content: str | None) -> str | None:
+    """Message content without component render tokens — for readers that
+    must not get a credential acting as the chat's owner (an API key reading
+    the message log: such a token would render with the owner's rights)."""
+    if not content:
+        return content
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return content
+
+    def strip(part):
+        if isinstance(part, dict) and part.get("type") == "component" and "render_token" in part:
+            return {**part, "render_token": None}
+        return part
+
+    if isinstance(parsed, list):
+        return json.dumps([strip(p) for p in parsed])
+    if isinstance(parsed, dict):
+        return json.dumps(strip(parsed))
+    return content
 
 
 def strip_base64_data(content: str | None) -> str | None:

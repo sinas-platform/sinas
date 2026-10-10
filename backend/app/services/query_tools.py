@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.permissions import check_permission
 from app.models.query import Query
 from app.services.database_pool import DatabasePoolManager
@@ -196,7 +196,7 @@ class QueryToolConverter:
             return {"error": f"Query not found: {namespace}/{name}"}
 
         # Check permissions
-        user_permissions = await get_user_permissions(db, user_id)
+        user_permissions = await get_effective_permissions(db, user_id)
         perm = f"sinas.queries/{namespace}/{name}.execute:own"
         if not check_permission(user_permissions, perm):
             return {
