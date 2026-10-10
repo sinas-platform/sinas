@@ -1,4 +1,10 @@
-"""Roles API endpoints."""
+"""Roles API endpoints.
+
+A role's definition (name, description, email domain, permissions) is
+written through RoleApplier, the path config apply and packages use too:
+the same rules and change history everywhere. Memberships are bindings,
+written here directly.
+"""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -20,7 +26,28 @@ from app.schemas import (
     UserRoleResponse,
 )
 
+from app.services.resources import rest
+from app.services.resources.roles import RoleApplier, default_role_names
+
 router = APIRouter(prefix="/roles", tags=["roles"])
+
+_applier = RoleApplier()
+
+
+async def _write(ctx, spec, **kwargs):
+    try:
+        return await rest.write(_applier, ctx, spec, **kwargs)
+    except HTTPException as e:
+        if e.status_code == 400 and "already exists" in str(e.detail):
+            # The messages these endpoints always gave.
+            if kwargs.get("must_create"):
+                raise HTTPException(status_code=400, detail=f"Role '{spec.name}' already exists")
+            raise HTTPException(status_code=400, detail=f"Role name '{spec.name}' already exists")
+        raise
+
+
+async def _patched(ctx, role, patch):
+    return rest.patch_spec(_applier, role, patch, current=await _applier.current_spec(ctx, role))
 
 
 @router.post("", response_model=RoleResponse, status_code=status.HTTP_201_CREATED)
@@ -47,28 +74,6 @@ async def create_role(
             status_code=403, detail="Not authorized to manage role permissions"
         )
 
-    # Check if role name already exists
-    result = await db.execute(select(Role).where(Role.name == role_data.name))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Role '{role_data.name}' already exists")
-
-    # Create role
-    role = Role(
-        name=role_data.name,
-        description=role_data.description,
-        email_domain=role_data.email_domain,
-    )
-
-    db.add(role)
-    await db.flush()
-
-    for perm_key, perm_value in (role_data.permissions or {}).items():
-        db.add(
-            RolePermission(
-                role_id=role.id, permission_key=perm_key, permission_value=perm_value
-            )
-        )
-
     # The creator is deliberately NOT added as a member. Creating a role
     # defines a container of authority; it must not grant it (#167). Silent
     # self-membership is a delayed-escalation path: an admin later attaches
@@ -76,10 +81,11 @@ async def create_role(
     # them from that moment, including through any API key they own, without
     # anyone having decided to grant them. Config-applied roles already work
     # this way, as do package-shipped roles ("define, never bind").
-    await db.flush()
-    await db.refresh(role)
-
-    return role
+    ctx = rest.api_context(db, user_id)
+    result = await _write(ctx, rest.parse_spec(_applier, role_data.model_dump()), must_create=True)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return result.obj
 
 
 @router.get("", response_model=list[RoleResponse])
@@ -173,25 +179,18 @@ async def update_role(
 
     set_permission_used(request, "sinas.roles.update:all")
 
-    # Update fields
-    if role_data.name is not None:
-        # Check if new name already exists
-        result = await db.execute(
-            select(Role).where(and_(Role.name == role_data.name, Role.id != role.id))
+    ctx = rest.api_context(db, user_id)
+    role = await rest.locked(_applier, ctx, role)
+    if role_data.name is not None and role_data.name != role.name and role.name in default_role_names():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Role '{role.name}' is a default role: Sinas finds it by name, so it can't be renamed",
         )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Role name '{role_data.name}' already exists"
-            )
-        role.name = role_data.name
-
-    if role_data.description is not None:
-        role.description = role_data.description
-    if role_data.email_domain is not None:
-        role.email_domain = role_data.email_domain
-    await db.flush()
+    # As before: a field left out or sent as null stays as it is.
+    patch = {f: v for f, v in role_data.model_dump(exclude_unset=True).items() if v is not None}
+    await _write(ctx, await _patched(ctx, role, patch), existing=role)
+    await rest.commit(db, ctx)
     await db.refresh(role)
-
     return role
 
 
@@ -217,9 +216,14 @@ async def delete_role(
 
     set_permission_used(request, "sinas.roles.delete:all")
 
-    await db.delete(role)
-    await db.flush()
-
+    if role.name in default_role_names():
+        raise HTTPException(
+            status_code=400, detail=f"Role '{role.name}' is a default role and can't be deleted"
+        )
+    # Its permissions and memberships go with it (recorded; restorable).
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, role), ctx)
+    await rest.commit(db, ctx)
     return None
 
 
@@ -461,35 +465,20 @@ async def set_role_permission(
     if permission_data.permission_key == "sinas.*:all" and not permission_data.permission_value:
         raise HTTPException(status_code=403, detail="Cannot disable sinas.*:all — this would remove all access for the role")
 
-    # Check if permission already exists
-    result = await db.execute(
-        select(RolePermission).where(
-            and_(
+    ctx = rest.api_context(db, user_id)
+    role = await rest.locked(_applier, ctx, role)
+    current = await _applier.current_spec(ctx, role)
+    permissions = {**current.permissions, permission_data.permission_key: permission_data.permission_value}
+    await _write(ctx, current.model_copy(update={"permissions": permissions}), existing=role)
+    await rest.commit(db, ctx)
+    return (
+        await db.execute(
+            select(RolePermission).where(
                 RolePermission.role_id == role.id,
                 RolePermission.permission_key == permission_data.permission_key,
             )
         )
-    )
-    existing = result.scalar_one_or_none()
-
-    if existing:
-        existing.permission_value = permission_data.permission_value
-        await db.flush()
-        await db.refresh(existing)
-        return existing
-
-    # Create new permission
-    new_permission = RolePermission(
-        role_id=role.id,
-        permission_key=permission_data.permission_key,
-        permission_value=permission_data.permission_value,
-    )
-
-    db.add(new_permission)
-    await db.flush()
-    await db.refresh(new_permission)
-
-    return new_permission
+    ).scalar_one()
 
 
 @router.delete("/{name}/permissions", status_code=status.HTTP_204_NO_CONTENT)
@@ -521,23 +510,15 @@ async def delete_role_permission(
     if permission_key == "sinas.*:all":
         raise HTTPException(status_code=403, detail="Cannot delete sinas.*:all — this would remove all access for the role")
 
-    result = await db.execute(
-        select(RolePermission).where(
-            and_(
-                RolePermission.role_id == role.id, RolePermission.permission_key == permission_key
-            )
-        )
-    )
-    permission = result.scalar_one_or_none()
-
-    if not permission:
+    ctx = rest.api_context(db, user_id)
+    role = await rest.locked(_applier, ctx, role)
+    current = await _applier.current_spec(ctx, role)
+    if permission_key not in current.permissions:
         raise HTTPException(status_code=404, detail="Permission not found")
-
-    await db.delete(permission)
-    await db.flush()
-
+    permissions = {k: v for k, v in current.permissions.items() if k != permission_key}
+    await _write(ctx, current.model_copy(update={"permissions": permissions}), existing=role)
+    await rest.commit(db, ctx)
     return None
-
 
 @router.get("/permissions/reference")
 async def get_permissions_reference(

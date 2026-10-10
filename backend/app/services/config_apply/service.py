@@ -16,7 +16,7 @@ from app.schemas.config import (
     SinasConfig,
 )
 
-from app.services.config_apply.identity import apply_roles, apply_users
+from app.services.config_apply.identity import apply_users
 from app.services.config_apply.data_sources import (
     apply_connection_annotations,
 )
@@ -70,7 +70,6 @@ class ConfigApplyService:
         self.warnings: list[str] = []
 
         # Resource lookup caches (name -> id)
-        self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
@@ -204,17 +203,16 @@ class ConfigApplyService:
             common_with_owner = dict(**common, owner_user_id=self.owner_user_id)
 
             # Apply resources in dependency order
+            from app.services.resources.registry import all_appliers
+
+            # Roles first: users (still applied by the legacy path) hold them.
+            role_applier = next(a for a in all_appliers() if a.kind == "roles")
             if "roles" not in self.skip_resource_types:
-                await apply_roles(
-                    **common,
-                    roles=config.spec.roles,
-                    role_ids=self.role_ids,
-                )
+                await self._apply_kind(role_applier, config.spec.roles, dry_run)
             if "users" not in self.skip_resource_types:
                 await apply_users(
                     **common,
                     users=config.spec.users,
-                    role_ids=self.role_ids,
                     user_ids=self.user_ids,
                 )
 
@@ -227,7 +225,7 @@ class ConfigApplyService:
             from app.services.resources.registry import all_appliers
 
             for applier in all_appliers():
-                if applier.kind not in self.skip_resource_types:
+                if applier.kind not in self.skip_resource_types and applier.kind != "roles":
                     await self._apply_kind(
                         applier, getattr(config.spec, applier.config_section), dry_run
                     )

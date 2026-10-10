@@ -690,6 +690,25 @@ invalidation effect).
   still splits.
 - `config_apply/resources.py` is gone: every kind it held has an applier.
 
+### Slice 14: roles (decisions)
+
+- **Definition only**: name, description, email domain and the permission
+  map. Memberships and API-key bindings stay outside ("define, never
+  bind"); a restore brings the definition back, not who held it.
+- Roles apply first in config apply (before the legacy users path), and
+  users now find roles by name in the database (a config user can hold a
+  role declared elsewhere, e.g. Admins).
+- Permissions are upserted in place; `permissions: []` now clears them
+  (it never did). History holds the permission map.
+- **Default roles** (Admins, Users, GuestUsers) stay the platform's: config
+  and packages skip them as before (`ownership()`), the API edits them
+  without detaching; nobody renames or deletes one (`pinned_fields`, delete
+  guard; the API answers 400), and Admins' permissions stay locked.
+- Packages: uninstall goes through the applier (memberships and API-key
+  bindings go with the role, as before); an upgrade now prunes a role the
+  new version dropped. Governance (`package_role_violations`) unchanged.
+- Users stay on their own path (identity, not config); small fixes follow.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

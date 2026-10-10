@@ -95,7 +95,7 @@ class ConfigExportService:
 
     async def _export_roles(self) -> list[dict]:
         """Export roles"""
-        stmt = select(Role)
+        stmt = select(Role).order_by(Role.name)
         if self.managed_only:
             stmt = stmt.where(Role.managed_by == self.managed_by)
 
@@ -112,7 +112,11 @@ class ConfigExportService:
                 role_dict["emailDomain"] = role.email_domain
 
             # Export permissions
-            perm_stmt = select(RolePermission).where(RolePermission.role_id == role.id)
+            perm_stmt = (
+                select(RolePermission)
+                .where(RolePermission.role_id == role.id)
+                .order_by(RolePermission.permission_key)
+            )
             perm_result = await self.db.execute(perm_stmt)
             permissions = perm_result.scalars().all()
             if permissions:
