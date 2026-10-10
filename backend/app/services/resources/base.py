@@ -77,6 +77,9 @@ class StoredFilesRemoved:
             await asyncio.sleep(0)
 
 
+PUBLISH_TIMEOUT_SECONDS = 5
+
+
 class SideEffectBus:
     """Effects recorded during a write, published only after it commits.
 
@@ -109,14 +112,21 @@ class SideEffectBus:
         # Notifications first: workers (scheduler, CDC) shouldn't wait for
         # slower cleanup work.
         if messages:
-            try:
+            import asyncio
+
+            async def publish() -> None:
                 from app.core.redis import get_redis
 
                 redis = await get_redis()
                 for effect in messages:
                     await redis.publish(effect.channel, effect.message())
+
+            try:
+                # Bounded: a Redis that stops answering must not hold up the
+                # cleanup below (the write has committed either way).
+                await asyncio.wait_for(publish(), timeout=PUBLISH_TIMEOUT_SECONDS)
             except Exception as e:  # pragma: no cover - logged, never raised
-                logger.warning(f"Failed to publish side effects {messages}: {e}")
+                logger.warning(f"Failed to publish side effects {messages}: {e!r}")
         for task in tasks:  # work to do after the commit (e.g. storage cleanup)
             try:
                 await task.run()

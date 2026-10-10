@@ -138,3 +138,24 @@ async def test_files_are_locked_before_their_paths_are_read(db: AsyncSession, ad
     lock = next(i for i, s in enumerate(statements) if s.startswith("select files.id") and "for update" in s)
     read = next(i for i, s in enumerate(statements) if "file_versions.storage_path" in s)
     assert lock < read
+
+
+async def test_a_stalled_redis_doesnt_hold_up_cleanup(monkeypatch, storage):
+    import asyncio
+
+    from app.services.resources import base
+
+    class _StuckRedis:
+        async def publish(self, *a):
+            await asyncio.sleep(3600)
+
+    async def stuck():
+        return _StuckRedis()
+
+    monkeypatch.setattr("app.core.redis.get_redis", stuck)
+    monkeypatch.setattr(base, "PUBLISH_TIMEOUT_SECONDS", 0.05)
+    bus = base.SideEffectBus()
+    bus.add(base.SchedulerJobChanged("add", "job-1"))
+    bus.add(base.StoredFilesRemoved(("a/b",)))
+    await asyncio.wait_for(bus.flush(), timeout=2)
+    assert storage == ["a/b"]
