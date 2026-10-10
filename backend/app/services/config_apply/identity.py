@@ -13,8 +13,21 @@ from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
 
-# What str.strip() (normalize_email) removes, for the database-side match.
-_WHITESPACE = " \t\n\r\x0b\x0c"
+
+async def _find_user(db: AsyncSession, email: str) -> User | None:
+    """The user whose stored email normalizes to `email` (normalized), as
+    login and the API match: one stored un-normalized by an earlier apply is
+    found, not duplicated. Candidates are narrowed in the database, then
+    compared with normalize_email itself, so every character it strips
+    counts. An exact match wins, then the oldest."""
+    from app.core.auth import normalize_email
+
+    candidates = (await db.execute(
+        select(User)
+        .where(func.lower(User.email).contains(email, autoescape=True))
+        .order_by((User.email == email).desc(), User.created_at)
+    )).scalars().all()
+    return next((u for u in candidates if normalize_email(u.email) == email), None)
 
 
 async def apply_users(
@@ -34,12 +47,7 @@ async def apply_users(
         try:
             # Matched as login and the API match (trimmed, any case), so a user
             # an earlier apply stored un-normalized is found, not duplicated.
-            existing = (await db.execute(
-                select(User)
-                .where(func.lower(func.btrim(User.email, _WHITESPACE)) == user_config.email)
-                .order_by((User.email == user_config.email).desc(), User.created_at)
-                .limit(1)
-            )).scalar_one_or_none()
+            existing = await _find_user(db, user_config.email)
 
             config_hash = calculate_hash(
                 {
