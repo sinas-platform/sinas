@@ -45,8 +45,12 @@ class ConfigApplyService:
         auto_commit: bool = True,
         skip_resource_types: Optional[set[str]] = None,
         prune_missing: bool = False,
+        supplied_secrets: Optional[set[str]] = None,
     ):
         self.db = db
+        # Shared secrets whose value a package preview has but doesn't save
+        # (secret variables): the dry run counts them as present.
+        self.supplied_secrets = supplied_secrets or set()
         self.config_name = config_name
         self.owner_user_id = owner_user_id
         self.managed_by = managed_by
@@ -172,6 +176,7 @@ class ConfigApplyService:
             for namespace, name in disabled:
                 if f"{namespace}/{name}" not in explicit:
                     self._pending_references["functions"][f"{namespace}/{name}"] = False
+        self._pending_references["secrets"] = {name: True for name in self.supplied_secrets}
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {

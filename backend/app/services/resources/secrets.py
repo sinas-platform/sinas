@@ -89,8 +89,9 @@ class SecretApplier(ResourceApplier[SecretSpec]):
         return ownership_decision(row.managed_by, ctx, row.config_name)
 
     async def check_references(self, spec: SecretSpec, ctx: ApplyContext) -> None:
-        # Runs on create (no reference fields to change on update).
-        if spec.value is None:
+        # Runs on create (no reference fields to change on update). A package
+        # preview has the value of a secret variable without saving it.
+        if spec.value is None and not ctx.declared("secrets", spec.name):
             raise ApplierError(
                 f"Secret '{spec.name}' does not exist and no value provided — cannot create."
             )

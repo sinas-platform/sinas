@@ -178,3 +178,17 @@ class TestPackages:
         await service.uninstall(pkg, actor_user_id=str(admin_user.id))
         assert _value(await _shared(db, name)) == "s3cret"
         assert "delete" not in [r.action for r in await _revisions(db, name)]
+
+
+async def test_a_first_install_preview_counts_a_supplied_secret_variable(db: AsyncSession, admin_user):
+    """The install saves the variable's value before applying; the preview
+    saves nothing, and must still not call the declared secret valueless."""
+    from app.services.package_service import PackageService
+
+    pkg, name = f"pkg-{uuid.uuid4().hex[:8]}", _name()
+    yaml_text = _package(pkg, "1.0.0", name, declare=True)
+    result, *_ = await PackageService(db).preview(yaml_text, str(admin_user.id), variables={name: "s3cret"})
+    assert result.success, result.errors
+    assert await _shared(db, name) is None  # nothing saved by the preview
+    result, *_ = await PackageService(db).preview(yaml_text, str(admin_user.id), variables={})
+    assert not result.success

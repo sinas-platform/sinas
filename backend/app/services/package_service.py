@@ -400,6 +400,11 @@ class PackageService:
             skip_resource_types=PACKAGE_SKIP_TYPES,
             # An upgrade removes what the new version no longer ships.
             prune_missing=True,
+            # The real install saves these before applying; the preview doesn't.
+            supplied_secrets={
+                v["name"] for v in variable_declarations
+                if v.get("type") == "secret" and (variables or {}).get(v["name"]) is not None
+            },
         )
 
         result = await apply_service.apply_config(config, dry_run=True)
