@@ -103,7 +103,17 @@ class DatabaseConnectionConfig(BaseModel):
     password: Optional[str] = None  # Stored encrypted; no env interpolation
     sslMode: Optional[str] = None
     config: dict[str, Any] = Field(default_factory=dict)
+    # Unset: a new connection is active and writable; an existing one keeps
+    # what it has (switched off, or made read-only, in the console).
+    readOnly: Optional[bool] = None
+    isActive: Optional[bool] = None
     annotations: list[DatabaseAnnotationConfig] = Field(default_factory=list)
+
+    @field_validator("password")
+    @classmethod
+    def _blank_password_is_unset(cls, value: Optional[str]) -> Optional[str]:
+        # An empty password keeps the stored one, as it always did.
+        return value or None
 
 
 class QueryConfig(BaseModel):

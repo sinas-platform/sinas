@@ -18,7 +18,7 @@ from app.schemas.config import (
 
 from app.services.config_apply.identity import apply_roles, apply_users
 from app.services.config_apply.data_sources import (
-    apply_database_connections,
+    apply_connection_annotations,
 )
 from app.services.config_apply.resources import (
     apply_dependencies,
@@ -76,7 +76,6 @@ class ConfigApplyService:
         self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
-        self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
 
     def _calculate_hash(self, data: dict[str, Any]) -> str:
@@ -221,21 +220,13 @@ class ConfigApplyService:
                     role_ids=self.role_ids,
                     user_ids=self.user_ids,
                 )
-            if "databaseConnections" not in self.skip_resource_types:
-                await apply_database_connections(
-                    **common,
-                    connections=config.spec.databaseConnections,
-                    database_connection_ids=self.database_connection_ids,
-                )
-
-
             if "dependencies" not in self.skip_resource_types:
                 await apply_dependencies(
                     **common_with_owner,
                     dependencies=config.spec.dependencies,
                 )
 
-            # Kinds with a per-resource applier: secrets, llmProviders, connectors, functions, agents, pipelines,
+            # Kinds with a per-resource applier: secrets, llmProviders, databaseConnections, connectors, functions, agents, pipelines,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
@@ -247,6 +238,12 @@ class ConfigApplyService:
                 if applier.kind not in self.skip_resource_types:
                     await self._apply_kind(
                         applier, getattr(config.spec, applier.config_section), dry_run
+                    )
+                if applier.kind == "databaseConnections" and applier.kind not in self.skip_resource_types:
+                    # Table annotations: an additive layer on the connections
+                    # just applied (never removed by config).
+                    await apply_connection_annotations(
+                        self.db, config.spec.databaseConnections, dry_run, self._track_change, self.errors
                     )
 
             if self.prune_missing:

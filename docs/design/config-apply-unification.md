@@ -659,6 +659,23 @@ invalidation effect).
   includes switched-off providers, and the key only with include_secrets.
 - REST delete stays a soft delete (agents point at the provider by id).
 
+### Slice 12: database connections (decisions)
+
+- One applier for config and REST; owner-less like providers. The password
+  is redacted in history (restorable via `secret_values`), kept when left
+  out or blank. `isActive` and `readOnly` can now be declared, and are
+  kept unless declared. REST delete stays a soft delete (queries and
+  triggers point at the connection by id); the pool is invalidated after
+  REST writes as before (other processes notice via the pool's config hash).
+- **The built-in connection** (`managed_by: system`) stays the platform's:
+  config and packages skip it, and an API edit of the fields the endpoint
+  lets change doesn't detach it (`ownership()` override).
+- **Annotations stay outside the spec**: an additive layer applied right
+  after the connections, as before.
+- Connections are exported now (they weren't), with their annotations; the
+  password only with include_secrets (an unreadable one fails that export);
+  the built-in connection is left out.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**
