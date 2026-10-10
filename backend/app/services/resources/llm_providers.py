@@ -80,10 +80,9 @@ class LLMProviderApplier(ResourceApplier[LLMProviderSpec]):
             await self._unset_other_defaults(row, ctx)
         row.name = spec.name
         row.provider_type = spec.provider_type
+        # Write-only, and never cleared by leaving it out (or sending "").
         if spec.api_key is not None:
             row.api_key = encryption_service.encrypt(spec.api_key)
-        elif current is not None and current.api_key is not None:
-            row.api_key = None  # cleared on purpose (an unreadable one stays)
         row.api_endpoint = spec.api_endpoint
         row.default_model = spec.default_model
         row.config = dict(spec.config)
@@ -93,8 +92,10 @@ class LLMProviderApplier(ResourceApplier[LLMProviderSpec]):
     async def _unset_other_defaults(self, row: LLMProvider, ctx: ApplyContext) -> None:
         """One default provider; the previous one's change is recorded too."""
         from app.schemas.spec.base import diff_specs
+        from app.services.resources.base import lock_singleton
         from app.services.resources.history import record_revision
 
+        await lock_singleton(ctx, "default-llm-provider")
         stmt = select(LLMProvider).where(LLMProvider.is_default.is_(True)).with_for_update()
         if row.id is not None:
             stmt = stmt.where(LLMProvider.id != row.id)
@@ -107,6 +108,19 @@ class LLMProviderApplier(ResourceApplier[LLMProviderSpec]):
                 ctx, self, other, "update", state, diff_specs(self.history_spec(before), state),
                 self.secret_values(after),
             )
+
+    def readable_key(self, row: LLMProvider) -> Optional[str]:
+        """The key for an export that must carry it: an unreadable one is an
+        error, not a silently missing credential."""
+        if not row.api_key:
+            return None
+        try:
+            return encryption_service.decrypt(row.api_key)
+        except Exception as e:
+            raise ValueError(
+                f"The API key of LLM provider '{row.name}' can't be decrypted "
+                "(was ENCRYPTION_KEY changed?); export it without secrets or set the key again"
+            ) from e
 
     def secret_values(self, spec: LLMProviderSpec) -> dict[str, Any]:
         return {"api_key": spec.api_key} if spec.api_key is not None else {}

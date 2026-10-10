@@ -156,8 +156,10 @@ class AgentApplier(ResourceApplier[AgentSpec]):
 
     async def _unset_other_defaults(self, row: Agent, ctx: ApplyContext) -> None:
         from app.schemas.spec.base import diff_specs
+        from app.services.resources.base import lock_singleton
         from app.services.resources.history import record_revision
 
+        await lock_singleton(ctx, "default-agent")
         stmt = select(Agent).where(Agent.is_default.is_(True)).with_for_update()
         if row.id is not None:
             stmt = stmt.where(Agent.id != row.id)

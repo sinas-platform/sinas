@@ -158,3 +158,41 @@ class TestRest:
         assert defaults == [b]
         last = (await _revisions(db, a))[-1]
         assert last.changes == {"is_default": {"from": True, "to": False}}
+
+
+class TestReviewFixes:
+    async def test_a_blank_key_keeps_the_stored_one(self, client, db: AsyncSession, admin_user):
+        name = _name()
+        assert (await _apply(db, admin_user, llmProviders=[_yaml(name, apiKey="sk-keep-1")])).success
+        assert (await _apply(db, admin_user, llmProviders=[_yaml(name, apiKey="")])).success
+        row = await _row(db, name)
+        assert encryption_service.decrypt(row.api_key) == "sk-keep-1"
+        r = await client.patch(f"/api/v1/llm-providers/{row.id}", json={"api_key": ""}, headers=auth_headers(admin_user))
+        assert r.status_code == 200, r.text
+        assert encryption_service.decrypt((await _row(db, name)).api_key) == "sk-keep-1"
+
+    async def test_an_unreadable_key_fails_a_secret_export(self, db: AsyncSession, admin_user):
+        import pytest
+
+        name = _name()
+        db.add(LLMProvider(name=name, provider_type="openai", api_key="not-a-fernet-token"))
+        await db.flush()
+        with pytest.raises(ValueError, match=name):
+            await ConfigExportService(db, include_secrets=True).export_config()
+        # Without secrets the export still works.
+        doc = yaml.safe_load(await ConfigExportService(db).export_config())["spec"]
+        assert any(p["name"] == name for p in doc["llmProviders"])
+
+    async def test_default_changes_take_the_singleton_lock(self, db: AsyncSession, admin_user, monkeypatch):
+        from app.services.resources import base
+
+        taken = []
+        original = base.lock_singleton
+
+        async def spy(ctx, name):
+            taken.append(name)
+            await original(ctx, name)
+
+        monkeypatch.setattr(base, "lock_singleton", spy)
+        assert (await _apply(db, admin_user, llmProviders=[_yaml(_name(), isDefault=True)])).success
+        assert taken == ["default-llm-provider"]

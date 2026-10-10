@@ -184,10 +184,11 @@ class ConfigExportService:
             stmt = stmt.where(LLMProvider.managed_by == self.managed_by)
         exported = []
         for provider in (await self.db.execute(stmt)).scalars().all():
-            spec = applier.spec_from_row(provider)
-            provider_dict = spec.to_config()
-            if self.include_secrets and spec.api_key:
-                provider_dict["apiKey"] = spec.api_key
+            provider_dict = applier.spec_from_row(provider).to_config()
+            if self.include_secrets:
+                key = applier.readable_key(provider)
+                if key:
+                    provider_dict["apiKey"] = key
             exported.append(provider_dict)
         return exported
 

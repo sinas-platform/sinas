@@ -59,6 +59,12 @@ class UserConfig(BaseModel):
 class LLMProviderConfig(BaseModel):
     """LLM provider configuration"""
 
+    @field_validator("apiKey")
+    @classmethod
+    def _blank_key_is_unset(cls, value: Optional[str]) -> Optional[str]:
+        # An empty apiKey keeps the stored key, as it always did.
+        return value or None
+
     name: str
     type: str  # openai, azure, ollama, anthropic, etc.
     apiKey: Optional[str] = None

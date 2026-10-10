@@ -213,6 +213,23 @@ def ownership_decision(
     return "skip"
 
 
+# --------------------------------------------------------------- shared invariants
+
+
+async def lock_singleton(ctx: "ApplyContext", name: str) -> None:
+    """Serialize changes to a one-row-at-most invariant (the default agent,
+    the default provider) until the transaction ends. Row locks can't: with
+    no current default there is no row to lock, so two promotions could both
+    see none and both commit."""
+    import zlib
+
+    from sqlalchemy import text
+
+    await ctx.db.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"), {"key": zlib.crc32(f"sinas:{name}".encode())}
+    )
+
+
 # --------------------------------------------------------------- applier
 
 
