@@ -235,7 +235,10 @@ class ConfigExportService:
 
     async def _export_dependencies(self) -> list[dict]:
         """Export Python dependencies."""
-        result = await self.db.execute(select(Dependency))
+        stmt = select(Dependency).order_by(Dependency.package_name)
+        if self.managed_only:
+            stmt = stmt.where(Dependency.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
         dependencies = result.scalars().all()
 
         exported = []

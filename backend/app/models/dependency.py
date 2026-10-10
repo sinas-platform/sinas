@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, uuid_pk
@@ -27,6 +27,11 @@ class Dependency(Base):
     installed_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )  # Audit only
+
+    # Config management (who declared it: a config file or a package)
+    managed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    config_checksum: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationship
     installed_by_user: Mapped[Optional["User"]] = relationship("User", foreign_keys=[installed_by])
