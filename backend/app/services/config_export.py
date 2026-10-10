@@ -70,6 +70,7 @@ class ConfigExportService:
         config_dict["spec"]["roles"] = await self._export_roles()
         config_dict["spec"]["users"] = await self._export_users()
         config_dict["spec"]["llmProviders"] = await self._export_llm_providers()
+        config_dict["spec"]["databaseConnections"] = await self._export_database_connections()
 
 
         config_dict["spec"]["dependencies"] = await self._export_dependencies()
@@ -171,6 +172,46 @@ class ConfigExportService:
 
             exported.append(user_dict)
 
+        return exported
+
+    async def _export_database_connections(self) -> list[dict]:
+        """Export database connections (they weren't exported at all), with
+        their annotations. The password only with include_secrets. The
+        built-in connection is the platform's, per instance: left out."""
+        from app.models.database_connection import DatabaseConnection
+        from app.models.table_annotation import TableAnnotation
+        from app.services.resources.database_connections import SYSTEM, DatabaseConnectionApplier
+
+        applier = DatabaseConnectionApplier()
+        stmt = (
+            select(DatabaseConnection)
+            .where(DatabaseConnection.managed_by.is_distinct_from(SYSTEM))
+            .order_by(DatabaseConnection.name)
+        )
+        if self.managed_only:
+            stmt = stmt.where(DatabaseConnection.managed_by == self.managed_by)
+        exported = []
+        for connection in (await self.db.execute(stmt)).scalars().all():
+            entry = applier.spec_from_row(connection).to_config()
+            if self.include_secrets:
+                password = applier.readable_password(connection)
+                if password:
+                    entry["password"] = password
+            annotations = (await self.db.execute(
+                select(TableAnnotation)
+                .where(TableAnnotation.database_connection_id == connection.id)
+                .order_by(TableAnnotation.schema_name, TableAnnotation.table_name, TableAnnotation.column_name)
+            )).scalars().all()
+            if annotations:
+                entry["annotations"] = [
+                    _remove_none_values({
+                        "schemaName": a.schema_name, "tableName": a.table_name,
+                        "columnName": a.column_name, "displayName": a.display_name,
+                        "description": a.description,
+                    })
+                    for a in annotations
+                ]
+            exported.append(entry)
         return exported
 
     async def _export_llm_providers(self) -> list[dict]:

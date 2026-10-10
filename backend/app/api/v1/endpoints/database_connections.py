@@ -20,7 +20,12 @@ from app.schemas.database_connection import (
     DatabaseConnectionUpdate,
 )
 
+from app.services.resources import rest
+from app.services.resources.database_connections import DatabaseConnectionApplier
+
 router = APIRouter()
+
+_applier = DatabaseConnectionApplier()
 
 
 @router.post("", response_model=DatabaseConnectionResponse, status_code=status.HTTP_201_CREATED)
@@ -30,40 +35,21 @@ async def create_database_connection(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new database connection. Admin only."""
-    result = await db.execute(
-        select(DatabaseConnection).where(DatabaseConnection.name == request.name)
-    )
-    existing = result.scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Database connection with name '{request.name}' already exists",
+    ctx = rest.api_context(db, user_id)
+    try:
+        result = await rest.write(
+            _applier, ctx, rest.parse_spec(_applier, request.model_dump()), must_create=True
         )
-
-    encrypted_password = None
-    if request.password:
-        encryption_service = EncryptionService()
-        encrypted_password = encryption_service.encrypt(request.password)
-
-    connection = DatabaseConnection(
-        name=request.name,
-        connection_type=request.connection_type,
-        host=request.host,
-        port=request.port,
-        database=request.database,
-        username=request.username,
-        password=encrypted_password,
-        ssl_mode=request.ssl_mode,
-        config=request.config or {},
-        is_active=True,
-        read_only=request.read_only,
-    )
-
-    db.add(connection)
-    await db.flush()
-    await db.refresh(connection)
-
-    return DatabaseConnectionResponse.model_validate(connection)
+    except HTTPException as e:
+        if e.status_code == 400 and "already exists" in str(e.detail):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Database connection with name '{request.name}' already exists",
+            )
+        raise
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return DatabaseConnectionResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[DatabaseConnectionResponse])
@@ -151,43 +137,23 @@ async def update_database_connection(
                 ),
             )
 
-    if request.name is not None:
-        name_check = await db.execute(
-            select(DatabaseConnection).where(
-                DatabaseConnection.name == request.name,
-                DatabaseConnection.id != connection.id,
-            )
-        )
-        if name_check.scalar_one_or_none():
+    ctx = rest.api_context(db, user_id)
+    connection = await rest.locked(_applier, ctx, connection)
+    # As before: a field left out or sent as null stays as it is (a blank
+    # password too); config is replaced as a whole.
+    patch = {f: v for f, v in request.model_dump(exclude_unset=True).items() if v is not None}
+    if not patch.get("password"):
+        patch.pop("password", None)
+    try:
+        await rest.write(_applier, ctx, rest.patch_spec(_applier, connection, patch), existing=connection)
+    except HTTPException as e:
+        if e.status_code == 400 and "already exists" in str(e.detail):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Database connection with name '{request.name}' already exists",
             )
-        connection.name = request.name
-
-    if request.connection_type is not None:
-        connection.connection_type = request.connection_type
-    if request.host is not None:
-        connection.host = request.host
-    if request.port is not None:
-        connection.port = request.port
-    if request.database is not None:
-        connection.database = request.database
-    if request.username is not None:
-        connection.username = request.username
-    if request.password is not None:
-        encryption_service = EncryptionService()
-        connection.password = encryption_service.encrypt(request.password)
-    if request.ssl_mode is not None:
-        connection.ssl_mode = request.ssl_mode
-    if request.config is not None:
-        connection.config = request.config
-    if request.is_active is not None:
-        connection.is_active = request.is_active
-    if request.read_only is not None:
-        connection.read_only = request.read_only
-
-    await db.commit()
+        raise
+    await rest.commit(db, ctx)
     await db.refresh(connection)
 
     # Invalidate pool on config change
@@ -213,8 +179,13 @@ async def delete_database_connection(
             detail=f"Database connection '{connection_id}' not found",
         )
 
-    connection.is_active = False
-    await db.commit()
+    # A soft delete: queries and triggers point at it by id. Recorded;
+    # restorable by an update with is_active: true.
+    ctx = rest.api_context(db, user_id)
+    connection = await rest.locked(_applier, ctx, connection)
+    current = _applier.spec_from_row(connection)
+    await rest.write(_applier, ctx, current.model_copy(update={"is_active": False}), existing=connection)
+    await rest.commit(db, ctx)
 
     # Invalidate pool
     await DatabasePoolManager.get_instance().invalidate(str(connection_id))
