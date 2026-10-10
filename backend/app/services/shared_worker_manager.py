@@ -2,6 +2,7 @@
 import asyncio
 import io
 import json
+import logging
 import tarfile
 from datetime import datetime
 from typing import Any, Optional
@@ -11,6 +12,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 WORKER_EXEC_COUNT_KEY = "sinas:worker:executions"
 
