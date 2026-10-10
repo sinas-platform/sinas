@@ -165,8 +165,14 @@ class ConfigApplyService:
                     )),
                 )
             )).all()
+            # A declaration that does set isActive (say, the same function
+            # listed again) decides, as it does in the real apply.
+            explicit = {
+                f"{f.namespace}/{f.name}" for f in config.spec.functions if f.isActive is not None
+            }
             for namespace, name in disabled:
-                self._pending_references["functions"][f"{namespace}/{name}"] = False
+                if f"{namespace}/{name}" not in explicit:
+                    self._pending_references["functions"][f"{namespace}/{name}"] = False
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {
