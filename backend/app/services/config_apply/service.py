@@ -20,9 +20,6 @@ from app.services.config_apply.identity import apply_roles, apply_users
 from app.services.config_apply.data_sources import (
     apply_connection_annotations,
 )
-from app.services.config_apply.resources import (
-    apply_dependencies,
-)
 from pydantic.alias_generators import to_camel
 
 from app.services.resources import ApplyContext, SideEffectBus
@@ -220,13 +217,8 @@ class ConfigApplyService:
                     role_ids=self.role_ids,
                     user_ids=self.user_ids,
                 )
-            if "dependencies" not in self.skip_resource_types:
-                await apply_dependencies(
-                    **common_with_owner,
-                    dependencies=config.spec.dependencies,
-                )
 
-            # Kinds with a per-resource applier: secrets, llmProviders, databaseConnections, connectors, functions, agents, pipelines,
+            # Kinds with a per-resource applier: secrets, llmProviders, databaseConnections, dependencies, connectors, functions, agents, pipelines,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a

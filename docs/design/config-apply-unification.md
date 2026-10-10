@@ -676,6 +676,20 @@ invalidation effect).
   password only with include_secrets (an unreadable one fails that export);
   the built-in connection is left out.
 
+### Slice 13: dependencies (decisions)
+
+- Migration `d3p4e5n6d7s8` adds the ownership columns (existing rows stay
+  unmanaged). One applier for config, packages and REST; history included.
+- **Packages keep what they add** (agreed): `deleted_with_package = False`,
+  so uninstall and upgrades never remove a dependency.
+- **A package can't approve what the deployment refuses**
+  (ALLOW_PACKAGE_INSTALLATION / ALLOWED_PACKAGES), as the API can't; checked
+  on create, in previews too. The operator's own config stays exempt, as
+  it always was.
+- A version left out keeps the pinned one; `name==version` in one field
+  still splits.
+- `config_apply/resources.py` is gone: every kind it held has an applier.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**
