@@ -192,3 +192,30 @@ def test_annotations_are_not_part_of_the_spec(field):
 
     spec = DatabaseConnectionSpec.model_validate({**_yaml("x"), field: [{"tableName": "t"}]})
     assert field not in spec.model_dump()
+
+
+class TestReviewFixes:
+    async def test_a_restore_keeps_the_built_in_connections_platform_fields(self, client, db: AsyncSession, admin_user):
+        name, h = _name(), auth_headers(admin_user)
+        db.add(DatabaseConnection(
+            name=name, connection_type="postgresql", host="old-host", port=5432,
+            database="sinas_data", username="sinas", managed_by="system",
+        ))
+        await db.flush()
+        row = await _row(db, name)
+        await client.patch(f"/api/v1/database-connections/{row.id}", json={"read_only": True}, headers=h)
+        revision = (await _revisions(db, name))[-1]
+        row.host = "new-host"  # startup follows a deployment change
+        await db.flush()
+        r = await client.post(f"/api/v1/config/history/{revision.id}/restore", headers=h)
+        assert r.status_code == 200, r.text
+        row = await _row(db, name)
+        assert (row.host, row.read_only) == ("new-host", True)
+
+    async def test_an_unchanged_password_is_not_re_encrypted(self, db: AsyncSession, admin_user):
+        name = _name()
+        assert (await _apply(db, admin_user, databaseConnections=[_yaml(name, password="pw-same")])).success
+        before = (await _row(db, name)).password
+        assert (await _apply(db, admin_user, databaseConnections=[_yaml(name, readOnly=True)])).success
+        row = await _row(db, name)
+        assert row.read_only is True and row.password == before

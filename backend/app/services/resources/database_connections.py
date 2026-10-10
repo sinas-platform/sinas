@@ -30,6 +30,9 @@ from app.services.resources.base import (
 logger = logging.getLogger(__name__)
 
 SYSTEM = "system"
+# What the platform owns on the built-in connection: its identity, target
+# and credentials follow the deployment's own database settings.
+PLATFORM_FIELDS = ("name", "connection_type", "host", "port", "database", "username", "password")
 
 
 class DatabaseConnectionApplier(ResourceApplier[DatabaseConnectionSpec]):
@@ -85,15 +88,24 @@ class DatabaseConnectionApplier(ResourceApplier[DatabaseConnectionSpec]):
     def new_row(self, spec: DatabaseConnectionSpec, ctx: ApplyContext) -> DatabaseConnection:
         return DatabaseConnection()
 
-    def write_fields(self, row: DatabaseConnection, spec: DatabaseConnectionSpec) -> None:
+    def pinned_fields(self, row: DatabaseConnection) -> tuple[str, ...]:
+        # Kept on every write, restores included (the endpoint also refuses
+        # an API edit of them with a clear message).
+        return PLATFORM_FIELDS if row.managed_by == SYSTEM else ()
+
+    async def write_row(
+        self, row: DatabaseConnection, spec: DatabaseConnectionSpec, ctx: ApplyContext,
+        current: Optional[DatabaseConnectionSpec] = None,
+    ) -> None:
         row.name = spec.name
         row.connection_type = spec.connection_type
         row.host = spec.host
         row.port = spec.port
         row.database = spec.database
         row.username = spec.username
-        # Write-only, and never cleared by leaving it out.
-        if spec.password is not None:
+        # Write-only, never cleared by leaving it out, and re-encrypted only
+        # when it changes: the pool notices new ciphertext and reconnects.
+        if spec.password is not None and (current is None or spec.password != current.password):
             row.password = encryption_service.encrypt(spec.password)
         row.ssl_mode = spec.ssl_mode
         row.config = dict(spec.config)

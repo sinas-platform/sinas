@@ -312,6 +312,12 @@ class ResourceApplier(Generic[TSpec]):
         stay that id, whatever its name resolves to by now."""
         self.write_fields(row, spec)
 
+    def pinned_fields(self, row: Any) -> tuple[str, ...]:
+        """Fields of this row no write may change, on any channel (restores
+        included): they keep their current value. For rows whose parts the
+        platform owns."""
+        return ()
+
     def ownership(self, row: Any, ctx: ApplyContext) -> OwnershipDecision:
         """Who may write an existing row (design §4.4). Override only with a
         reason the shared state machine doesn't cover."""
@@ -374,6 +380,10 @@ class ResourceApplier(Generic[TSpec]):
         keep = set(keep)
         if current is not None and keep:
             spec = spec.model_copy(update={field: getattr(current, field) for field in keep})
+        if current is not None:
+            pinned = self.pinned_fields(row)
+            if pinned:
+                spec = spec.model_copy(update={field: getattr(current, field) for field in pinned})
         new_canonical = self.history_spec(spec)
 
         # ---- create ----------------------------------------------------------
