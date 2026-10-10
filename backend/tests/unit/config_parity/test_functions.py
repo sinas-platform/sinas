@@ -271,3 +271,14 @@ async def test_versions_have_no_gaps_after_config_updates(db: AsyncSession, admi
         select(func.count()).select_from(FunctionVersion).where(FunctionVersion.function_id == row.id)
     )).scalar()
     assert await _versions(db, row) == [1, 2, 3] and count == 3
+
+
+async def test_a_preview_sees_a_kept_disabled_state(db: AsyncSession, admin_user):
+    """Left without isActive, a disabled function stays disabled; a schedule
+    on it must fail in the preview just as in the real apply."""
+    name = f"p_{_uid()}"
+    assert (await _apply(db, admin_user, functions=[_yaml(name, isActive=False)])).success
+    schedule = {"name": f"s-{_uid()}", "functionName": f"{NS}/{name}", "cronExpression": "0 3 * * *"}
+    for dry_run in (True, False):
+        result = await _apply(db, admin_user, dry_run=dry_run, functions=[_yaml(name)], schedules=[schedule])
+        assert not result.success, (dry_run, result.summary)

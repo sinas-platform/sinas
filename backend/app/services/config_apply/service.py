@@ -147,6 +147,26 @@ class ConfigApplyService:
             }
             for kind in ("functions", "agents", "pipelines")
         }
+        # A function the config leaves isActive unset on keeps its current
+        # state (FunctionApplier), so a disabled one stays disabled: a preview
+        # must see that, or it accepts a reference the real apply refuses.
+        unset = [f for f in config.spec.functions if f.isActive is None]
+        if unset:
+            from sqlalchemy import or_, select
+
+            from app.models.function import Function
+
+            disabled = (await self.db.execute(
+                select(Function.namespace, Function.name).where(
+                    Function.is_active.is_(False),
+                    or_(*(
+                        (Function.namespace == f.namespace) & (Function.name == f.name)
+                        for f in unset
+                    )),
+                )
+            )).all()
+            for namespace, name in disabled:
+                self._pending_references["functions"][f"{namespace}/{name}"] = False
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {
