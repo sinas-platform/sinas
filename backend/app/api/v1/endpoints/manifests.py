@@ -1,7 +1,11 @@
-"""Manifests API endpoints."""
+"""Manifests API endpoints.
+
+Writes go through ManifestApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
+from sqlalchemy import and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -9,9 +13,12 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.manifest import Manifest
 from app.schemas.manifest import ManifestCreate, ManifestResponse, ManifestUpdate
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.manifests import ManifestApplier
 
 router = APIRouter(prefix="/manifests", tags=["manifests"])
+
+_applier = ManifestApplier()
 
 
 @router.post("", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
@@ -30,34 +37,14 @@ async def create_manifest(
         raise HTTPException(status_code=403, detail="Not authorized to create manifests")
     set_permission_used(request, permission)
 
-    # Check if manifest name already exists in this namespace
-    result = await db.execute(
-        select(Manifest).where(and_(Manifest.namespace == manifest_data.namespace, Manifest.name == manifest_data.name))
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Manifest 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, manifest_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Manifest '{manifest_data.namespace}/{manifest_data.name}' already exists",
-        )
-
-    manifest = Manifest(
-        user_id=user_id,
-        namespace=manifest_data.namespace,
-        name=manifest_data.name,
-        description=manifest_data.description,
-        required_resources=[r.model_dump() for r in manifest_data.required_resources],
-        required_permissions=manifest_data.required_permissions,
-        optional_permissions=manifest_data.optional_permissions,
-        exposed_namespaces=manifest_data.exposed_namespaces,
-        store_dependencies=[s.model_dump() for s in manifest_data.store_dependencies],
-        public_info=manifest_data.public_info,
-    )
-
-    db.add(manifest)
-    await db.flush()
-    await db.refresh(manifest)
-
-    return ManifestResponse.model_validate(manifest)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return ManifestResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[ManifestResponse])
@@ -135,47 +122,18 @@ async def update_manifest(
 
     set_permission_used(request, f"sinas.manifests/{namespace}/{name}.update")
 
-    detach_if_package_managed(manifest)
-
-    # If namespace or name is being updated, check for conflicts
-    new_namespace = manifest_data.namespace or manifest.namespace
-    new_name = manifest_data.name or manifest.name
-
-    if new_namespace != manifest.namespace or new_name != manifest.name:
-        result = await db.execute(
-            select(Manifest).where(
-                and_(Manifest.namespace == new_namespace, Manifest.name == new_name, Manifest.id != manifest.id)
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=400, detail=f"Manifest '{new_namespace}/{new_name}' already exists"
-            )
-
-    if manifest_data.namespace is not None:
-        manifest.namespace = manifest_data.namespace
-    if manifest_data.name is not None:
-        manifest.name = manifest_data.name
-    if manifest_data.description is not None:
-        manifest.description = manifest_data.description
-    if manifest_data.required_resources is not None:
-        manifest.required_resources = [r.model_dump() for r in manifest_data.required_resources]
-    if manifest_data.required_permissions is not None:
-        manifest.required_permissions = manifest_data.required_permissions
-    if manifest_data.optional_permissions is not None:
-        manifest.optional_permissions = manifest_data.optional_permissions
-    if manifest_data.exposed_namespaces is not None:
-        manifest.exposed_namespaces = manifest_data.exposed_namespaces
-    if manifest_data.store_dependencies is not None:
-        manifest.store_dependencies = [s.model_dump() for s in manifest_data.store_dependencies]
-    if manifest_data.public_info is not None:
-        manifest.public_info = manifest_data.public_info
-    if manifest_data.is_active is not None:
-        manifest.is_active = manifest_data.is_active
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    manifest = await rest.locked(_applier, ctx, manifest)
+    # As before: a field left out or sent as null stays as it is; a new
+    # namespace/name renames it (a clash is a 400).
+    patch = {
+        field: value
+        for field, value in manifest_data.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, manifest, patch), existing=manifest)
+    await rest.commit(db, ctx)
     await db.refresh(manifest)
-
     return ManifestResponse.model_validate(manifest)
 
 
@@ -201,7 +159,7 @@ async def delete_manifest(
 
     set_permission_used(request, f"sinas.manifests/{namespace}/{name}.delete")
 
-    await db.delete(manifest)
-    await db.flush()
-
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, manifest), ctx)
+    await rest.commit(db, ctx)
     return None

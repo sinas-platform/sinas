@@ -159,6 +159,8 @@ class AnthropicProvider(BaseLLMProvider):
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
 
+        self._add_context_headers(params)
+
         try:
             response = await self.client.messages.create(**params)
         except ValueError as e:
@@ -230,6 +232,8 @@ class AnthropicProvider(BaseLLMProvider):
 
         if self.enable_prompt_caching:
             self._apply_cache_control(params)
+
+        self._add_context_headers(params)
 
         # Track tool calls being built across chunks
         current_tool_calls = {}
@@ -641,7 +645,8 @@ class AnthropicProvider(BaseLLMProvider):
             requests=[
                 {"custom_id": req["custom_id"], "params": self._build_batch_params(req)}
                 for req in requests
-            ]
+            ],
+            extra_headers=self._context_headers() or None,
         )
         return batch.id
 

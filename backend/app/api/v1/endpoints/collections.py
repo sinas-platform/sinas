@@ -1,6 +1,10 @@
-"""Collection management endpoints."""
+"""Collection management endpoints.
+
+Writes go through CollectionApplier, the path config apply and package
+install use too: the same validation, ownership and change history on every
+channel.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -8,9 +12,12 @@ from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.file import Collection
 from app.schemas.file import CollectionCreate, CollectionResponse, CollectionUpdate
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.collections import CollectionApplier
 
 router = APIRouter(prefix="/collections", tags=["collections"])
+
+_applier = CollectionApplier()
 
 
 @router.post("", response_model=CollectionResponse, status_code=status.HTTP_201_CREATED)
@@ -33,41 +40,14 @@ async def create_collection(
         )
     set_permission_used(request, permission)
 
-    # Check if collection name already exists in this namespace
-    result = await db.execute(
-        select(Collection).where(
-            and_(
-                Collection.namespace == collection_data.namespace,
-                Collection.name == collection_data.name
-            )
-        )
+    ctx = rest.api_context(db, user_id)
+    # A clash is a 400 "Collection 'ns/name' already exists", as before.
+    result = await rest.write(
+        _applier, ctx, rest.parse_spec(_applier, collection_data.model_dump()), must_create=True
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=400,
-            detail=f"Collection '{collection_data.namespace}/{collection_data.name}' already exists",
-        )
-
-    # Create collection
-    collection = Collection(
-        user_id=user_id,
-        namespace=collection_data.namespace,
-        name=collection_data.name,
-        metadata_schema=collection_data.metadata_schema,
-        content_filter_function=collection_data.content_filter_function,
-        post_upload_function=collection_data.post_upload_function,
-        max_file_size_mb=collection_data.max_file_size_mb,
-        max_total_size_gb=collection_data.max_total_size_gb,
-        is_public=collection_data.is_public,
-        allow_shared_files=collection_data.allow_shared_files,
-        allow_private_files=collection_data.allow_private_files,
-    )
-
-    db.add(collection)
-    await db.flush()
-    await db.refresh(collection)
-
-    return CollectionResponse.model_validate(collection)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return CollectionResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[CollectionResponse])
@@ -155,29 +135,17 @@ async def update_collection(
 
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.update")
 
-    detach_if_package_managed(collection)
-
-    # Update fields
-    if collection_data.metadata_schema is not None:
-        collection.metadata_schema = collection_data.metadata_schema
-    if collection_data.content_filter_function is not None:
-        collection.content_filter_function = collection_data.content_filter_function
-    if collection_data.post_upload_function is not None:
-        collection.post_upload_function = collection_data.post_upload_function
-    if collection_data.max_file_size_mb is not None:
-        collection.max_file_size_mb = collection_data.max_file_size_mb
-    if collection_data.max_total_size_gb is not None:
-        collection.max_total_size_gb = collection_data.max_total_size_gb
-    if collection_data.is_public is not None:
-        collection.is_public = collection_data.is_public
-    if collection_data.allow_shared_files is not None:
-        collection.allow_shared_files = collection_data.allow_shared_files
-    if collection_data.allow_private_files is not None:
-        collection.allow_private_files = collection_data.allow_private_files
-
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    collection = await rest.locked(_applier, ctx, collection)
+    # As before: a field left out or sent as null stays as it is.
+    patch = {
+        field: value
+        for field, value in collection_data.model_dump(exclude_unset=True).items()
+        if value is not None
+    }
+    await rest.write(_applier, ctx, rest.patch_spec(_applier, collection, patch), existing=collection)
+    await rest.commit(db, ctx)
     await db.refresh(collection)
-
     return CollectionResponse.model_validate(collection)
 
 
@@ -207,7 +175,7 @@ async def delete_collection(
 
     set_permission_used(request, f"sinas.collections/{namespace}/{name}.delete")
 
-    await db.delete(collection)
-    await db.flush()
-
+    ctx = rest.api_context(db, user_id)
+    await _applier.delete(await rest.locked(_applier, ctx, collection), ctx)
+    await rest.commit(db, ctx)
     return None

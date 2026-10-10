@@ -44,7 +44,9 @@ class OllamaProvider(BaseLLMProvider):
             if tools:
                 payload["tools"] = self._convert_tools_to_ollama_format(tools)
 
-            response = await client.post(f"{self.base_url}/api/chat", json=payload)
+            response = await client.post(
+                f"{self.base_url}/api/chat", json=payload, headers=self._context_headers()
+            )
 
             # Debug logging
             if response.status_code != 200:
@@ -101,7 +103,9 @@ class OllamaProvider(BaseLLMProvider):
             if tools:
                 payload["tools"] = self._convert_tools_to_ollama_format(tools)
 
-            async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
+            async with client.stream(
+                "POST", f"{self.base_url}/api/chat", json=payload, headers=self._context_headers()
+            ) as response:
                 response.raise_for_status()
 
                 async for line in response.aiter_lines():
