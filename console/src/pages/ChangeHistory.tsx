@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, History, RotateCcw } from 'lucide-react';
 import { apiClient, getApiErrorMessage } from '../lib/api';
@@ -47,15 +47,35 @@ function who(revision: ConfigRevision): string {
   return revision.actor_email ?? 'unknown';
 }
 
-const isHidden = (value: unknown) => typeof value === 'string' && value.startsWith('<redacted:');
+// History never holds secret values: they're recorded as "<redacted:…>"
+// markers (whole values, or inside headers, token params and URLs). They're
+// shown as "hidden", or "hidden (new value)" where the marker changed.
+const MARKER = /<redacted:[0-9a-f]+>/g;
+const isHidden = (value: unknown) => typeof value === 'string' && /^<redacted:[0-9a-f]+>$/.test(value);
 
-function Value({ value, changedSecret }: { value: unknown; changedSecret?: boolean }) {
+function markersIn(value: unknown): Set<string> {
+  return new Set(JSON.stringify(value ?? null).match(MARKER) ?? []);
+}
+
+function masked(value: unknown, before?: Set<string>): unknown {
+  const label = (marker: string) =>
+    before && !before.has(marker) ? '‹hidden (new value)›' : '‹hidden›';
+  if (typeof value === 'string') return value.replace(MARKER, label);
+  if (Array.isArray(value)) return value.map((v) => masked(v, before));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, masked(v, before)]));
+  }
+  return value;
+}
+
+function Value({ value, before }: { value: unknown; before?: unknown }) {
   if (value === null || value === undefined) return <span className="text-gray-500 italic">none</span>;
+  if (isHidden(value)) {
+    const changed = before !== undefined && !markersIn(before).has(value as string);
+    return <span className="text-gray-500 italic">{changed ? 'hidden (new value)' : 'hidden'}</span>;
+  }
+  value = masked(value, before !== undefined ? markersIn(before) : undefined);
   if (typeof value === 'string') {
-    if (isHidden(value)) {
-      // Secrets are never shown; a changed one still shows as changed.
-      return <span className="text-gray-500 italic">{changedSecret ? 'hidden (new value)' : 'hidden'}</span>;
-    }
     if (value.includes('\n') || value.length > 120) {
       return <pre className="whitespace-pre-wrap break-words text-xs max-h-48 overflow-auto">{value}</pre>;
     }
@@ -133,7 +153,7 @@ function RevisionDetail({ revision }: { revision: ConfigRevision }) {
                         <Value value={change.from} />
                       </td>
                       <td className="py-2 text-gray-200">
-                        <Value value={change.to} changedSecret={isHidden(change.from) && isHidden(change.to)} />
+                        <Value value={change.to} before={change.from} />
                       </td>
                     </>
                   ) : (
@@ -171,14 +191,20 @@ function RevisionDetail({ revision }: { revision: ConfigRevision }) {
 export function ChangeHistory() {
   const [kind, setKind] = useState('');
   const [key, setKey] = useState('');
+  const [name, setName] = useState('');  // `key`, once typing pauses
   const [open, setOpen] = useState<number | null>(null);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setName(key.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [key]);
+
   const history = useInfiniteQuery({
-    queryKey: ['config-history', kind, key.trim()],
+    queryKey: ['config-history', kind, name],
     queryFn: ({ pageParam }) =>
       apiClient.listConfigHistory({
         kind: kind || undefined,
-        key: key.trim() || undefined,
+        key: name || undefined,
         before: pageParam,
         limit: PAGE_SIZE,
       }),
