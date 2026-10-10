@@ -182,6 +182,10 @@ async def create_provider(
     else:
         raise ValueError(f"Unknown provider type: {provider_type}")
 
+    # Provider-level only, never per agent: whether a call carries the trace
+    # context and baggage to the model API (see BaseLLMProvider).
+    provider.propagate_context = bool((provider_config.config or {}).get("propagate_context"))
+
     # Per-agent behavior overrides (Agent.provider_overrides), applied after
     # construction so they win over the provider-level config.
     _apply_overrides(provider, overrides)

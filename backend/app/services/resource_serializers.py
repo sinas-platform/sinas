@@ -44,30 +44,17 @@ def serialize_skill(skill) -> dict:
 
 
 def serialize_collection(coll) -> dict:
-    return _remove_none_values({
-        "namespace": coll.namespace,
-        "name": coll.name,
-        "metadataSchema": coll.metadata_schema or None,
-        "contentFilterFunction": coll.content_filter_function,
-        "postUploadFunction": coll.post_upload_function,
-        "maxFileSizeMb": coll.max_file_size_mb,
-        "maxTotalSizeGb": coll.max_total_size_gb,
-        "isPublic": getattr(coll, "is_public", None),
-        "allowSharedFiles": coll.allow_shared_files,
-        "allowPrivateFiles": coll.allow_private_files,
-    })
+    """Config form of a collection — delegated to its spec."""
+    from app.services.resources.collections import CollectionApplier
+
+    return CollectionApplier().spec_from_row(coll).to_config()
 
 
 def serialize_store(store) -> dict:
-    return _remove_none_values({
-        "namespace": store.namespace,
-        "name": store.name,
-        "description": store.description,
-        "schema": store.schema or None,
-        "strict": store.strict,
-        "defaultVisibility": store.default_visibility,
-        "encrypted": store.encrypted,
-    })
+    """Config form of a store — delegated to its spec."""
+    from app.services.resources.stores import StoreApplier
+
+    return StoreApplier().spec_from_row(store).to_config()
 
 
 def serialize_component(comp) -> dict:
@@ -78,17 +65,10 @@ def serialize_component(comp) -> dict:
 
 
 def serialize_manifest(manifest) -> dict:
-    return _remove_none_values({
-        "namespace": manifest.namespace,
-        "name": manifest.name,
-        "description": manifest.description,
-        "requiredResources": manifest.required_resources or None,
-        "requiredPermissions": manifest.required_permissions or None,
-        "optionalPermissions": manifest.optional_permissions or None,
-        "exposedNamespaces": manifest.exposed_namespaces or None,
-        "storeDependencies": getattr(manifest, "store_dependencies", None) or None,
-        "publicInfo": getattr(manifest, "public_info", None) or None,
-    })
+    """Config form of a manifest — delegated to its spec."""
+    from app.services.resources.manifests import ManifestApplier
+
+    return ManifestApplier().spec_from_row(manifest).to_config()
 
 
 def serialize_template(template) -> dict:

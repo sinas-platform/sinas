@@ -4,6 +4,7 @@ import logging
 import time
 import traceback
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 from opentelemetry import trace
@@ -11,7 +12,7 @@ from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.permissions import check_permission
 from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
@@ -478,6 +479,9 @@ async def check_approval_requirements(
         })
 
         # Create PendingToolApproval record
+        from app.services.deferred_completions import deadline_from_now
+
+        approval_deadline = deadline_from_now(settings.tool_approval_timeout_seconds)
         pending_approval = PendingToolApproval(
             chat_id=chat_id,
             message_id=message_id,
@@ -486,6 +490,9 @@ async def check_approval_requirements(
             function_namespace=namespace,
             function_name=name,
             arguments=parsed_args,
+            expires_at=(
+                datetime.fromisoformat(approval_deadline) if approval_deadline else None
+            ),
             all_tool_calls=tool_calls,
             conversation_context={
                 "provider": provider,
@@ -536,7 +543,7 @@ async def prepare_agent_delegation(
         return {"error": depth_error}
 
     # Check user has permission to use this sub-agent
-    user_permissions = await get_user_permissions(db, user_id)
+    user_permissions = await get_effective_permissions(db, user_id)
     agent_perm = f"sinas.agents/{agent.namespace}/{agent.name}.chat:all"
     if not check_permission(user_permissions, agent_perm):
         return {
@@ -790,6 +797,18 @@ async def execute_single_tool(
                         "available_tool_call_ids": available,
                     }
 
+            elif tool_name == "ask_user":
+                # Deferred tool: in queued/streamed chats the round suspends
+                # on it before execution (message_service splits it off), so
+                # reaching this branch means a synchronous path with no
+                # stream channel — there is nobody to wait for.
+                result = {
+                    "error": (
+                        "ask_user is unavailable in this synchronous context "
+                        "— there is no live conversation to pause. Answer "
+                        "with the information you have."
+                    )
+                }
             elif tool_name == "continue_execution":
                 result = await fn_executor.resume_execution(
                     execution_id=arguments["execution_id"],
@@ -817,7 +836,7 @@ async def execute_single_tool(
                     tool_name=tool_name,
                     arguments=arguments,
                     user_id=user_id,
-                    permissions=await get_user_permissions(db, user_id),
+                    permissions=await get_effective_permissions(db, user_id),
                     agent=chat_agent,
                 )
                 logger.debug(f"Artifact tool completed in {time.time() - start_time:.3f}s: {tool_name}")
@@ -833,7 +852,7 @@ async def execute_single_tool(
                     if chat_agent:
                         agent_system_tools = chat_agent.system_tools or []
 
-                user_permissions = await get_user_permissions(db, user_id)
+                user_permissions = await get_effective_permissions(db, user_id)
 
                 result = await execute_package_tool(
                     db=db,

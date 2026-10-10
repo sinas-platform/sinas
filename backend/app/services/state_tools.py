@@ -342,12 +342,14 @@ class StateTools:
         1. Agent's enabled_stores gates which stores are available as tools
         2. User's RBAC permissions gate actual access at execution time
         """
-        from app.core.auth import get_user_permissions
+        from app.core.auth import get_effective_permissions
         from app.core.permissions import check_permission
 
-        # Get agent's enabled_stores for validation
+        # Get agent's enabled_stores for validation. Reads without a named
+        # store reach only these (none: nothing), never every store the user
+        # has states in.
         write_stores = None
-        all_allowed_stores = None
+        all_allowed_stores: Optional[list[str]] = []
         if agent_id:
             from app.models.agent import Agent
 
@@ -366,11 +368,22 @@ class StateTools:
                     "allowed_stores": write_stores,
                 }
 
-        # Check user's RBAC permissions for store access
+        # Check the caller's RBAC permissions for store access (the key's,
+        # for a run through an API key).
+        user_permissions = await get_effective_permissions(db, user_id)
+
+        # Reads without a named store (search, overview) cover only the
+        # agent's stores the caller may read — they used to reach every store
+        # the user had states in.
+        if all_allowed_stores is not None:
+            all_allowed_stores = [
+                ref for ref in all_allowed_stores
+                if check_permission(user_permissions, f"sinas.stores/{ref}.read_state:own")
+            ]
+
         requested_store = arguments.get("store")
         if requested_store and "/" in requested_store:
             ns, name = requested_store.split("/", 1)
-            user_permissions = await get_user_permissions(db, user_id)
             is_write = tool_name in ("save_state", "update_state", "delete_state")
             perm = f"sinas.stores/{ns}/{name}.write_state:own" if is_write else f"sinas.stores/{ns}/{name}.read_state:own"
             if not check_permission(user_permissions, perm):
@@ -647,18 +660,20 @@ class StateTools:
         # Build query
         visibility_filter = State.user_id == user_uuid
 
-        # Also include shared states from allowed stores
-        if allowed_stores:
-            store_ids = []
+        # Readable stores: the agent's, filtered by the caller's read
+        # permission (execute_tool). Own and shared states, only there.
+        store_ids = []
+        if allowed_stores is not None:
             for s_ref in allowed_stores:
                 s = await StateTools._resolve_store(db, s_ref)
                 if s:
                     store_ids.append(s.id)
-            if store_ids:
-                visibility_filter = or_(
-                    visibility_filter,
-                    and_(State.visibility == "shared", State.store_id.in_(store_ids)),
-                )
+            if not store_ids:
+                return {"error": "No readable stores"}
+            visibility_filter = or_(
+                visibility_filter,
+                and_(State.visibility == "shared", State.store_id.in_(store_ids)),
+            )
 
         query = select(State).where(
             and_(
@@ -666,6 +681,8 @@ class StateTools:
                 visibility_filter,
             )
         )
+        if store_ids:
+            query = query.where(State.store_id.in_(store_ids))
 
         if store:
             query = query.where(State.store_id == store.id)
