@@ -53,6 +53,33 @@ class CdcTriggerChanged:
         return json.dumps({"action": self.action, "trigger_id": self.trigger_id})
 
 
+@dataclass(frozen=True)
+class StoredFilesRemoved:
+    """Remove files from storage once the rows that pointed at them are gone
+    for good: after the commit, so a rolled-back delete never loses a file.
+    Best-effort per file (one that's already missing is fine)."""
+
+    paths: tuple[str, ...]
+
+    async def run(self) -> None:
+        from app.services.file_storage import get_storage
+
+        import asyncio
+
+        storage = get_storage()
+        for path in self.paths:
+            try:
+                await storage.delete(path)
+            except Exception as e:  # pragma: no cover - logged, never raised
+                logger.warning(f"Could not remove stored file {path}: {e}")
+            # Local storage deletes synchronously: let other requests run
+            # between files, or a large collection stalls the worker.
+            await asyncio.sleep(0)
+
+
+PUBLISH_TIMEOUT_SECONDS = 5
+
+
 class SideEffectBus:
     """Effects recorded during a write, published only after it commits.
 
@@ -76,20 +103,40 @@ class SideEffectBus:
     def discard(self) -> None:
         self._effects.clear()
 
+    async def _publish(self, messages: list[Any]) -> None:
+        """Each publish is bounded on its own: a healthy batch of any size
+        goes out, while a Redis that stops answering is given up on (and the
+        cleanup after it still runs)."""
+        import asyncio
+
+        sent = 0
+        try:
+            from app.core.redis import get_redis
+
+            redis = await asyncio.wait_for(get_redis(), timeout=PUBLISH_TIMEOUT_SECONDS)
+            for effect in messages:
+                await asyncio.wait_for(
+                    redis.publish(effect.channel, effect.message()), timeout=PUBLISH_TIMEOUT_SECONDS
+                )
+                sent += 1
+        except Exception as e:  # pragma: no cover - logged, never raised
+            logger.warning(f"Failed to publish side effects {messages[sent:]}: {e!r}")
+
     async def flush(self) -> None:
         """Publish and clear. Best-effort: the write already committed, so a
         failed notification must not turn into a failed request."""
         effects, self._effects = self._effects, []
-        if not effects:
-            return
-        try:
-            from app.core.redis import get_redis
-
-            redis = await get_redis()
-            for effect in effects:
-                await redis.publish(effect.channel, effect.message())
-        except Exception as e:  # pragma: no cover - logged, never raised
-            logger.warning(f"Failed to publish side effects {effects}: {e}")
+        tasks = [e for e in effects if hasattr(e, "run")]
+        messages = [e for e in effects if not hasattr(e, "run")]
+        # Notifications first: workers (scheduler, CDC) shouldn't wait for
+        # slower cleanup work.
+        if messages:
+            await self._publish(messages)
+        for task in tasks:  # work to do after the commit (e.g. storage cleanup)
+            try:
+                await task.run()
+            except Exception as e:  # pragma: no cover - logged, never raised
+                logger.warning(f"Post-commit effect {task!r} failed: {e}")
 
 
 # --------------------------------------------------------------- context + results
