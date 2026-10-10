@@ -24,7 +24,6 @@ from app.services.config_apply.data_sources import (
 from app.services.config_apply.resources import (
     apply_dependencies,
     apply_pipelines,
-    apply_secrets,
 )
 from app.services.config_apply.agents import apply_agents
 from pydantic.alias_generators import to_camel
@@ -46,8 +45,12 @@ class ConfigApplyService:
         auto_commit: bool = True,
         skip_resource_types: Optional[set[str]] = None,
         prune_missing: bool = False,
+        supplied_secrets: Optional[set[str]] = None,
     ):
         self.db = db
+        # Shared secrets whose value a package preview has but doesn't save
+        # (secret variables): the dry run counts them as present.
+        self.supplied_secrets = supplied_secrets or set()
         self.config_name = config_name
         self.owner_user_id = owner_user_id
         self.managed_by = managed_by
@@ -173,6 +176,7 @@ class ConfigApplyService:
             for namespace, name in disabled:
                 if f"{namespace}/{name}" not in explicit:
                     self._pending_references["functions"][f"{namespace}/{name}"] = False
+        self._pending_references["secrets"] = {name: True for name in self.supplied_secrets}
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {
@@ -219,11 +223,6 @@ class ConfigApplyService:
                     database_connection_ids=self.database_connection_ids,
                 )
 
-            if "secrets" not in self.skip_resource_types:
-                await apply_secrets(
-                    **common_with_owner,
-                    secrets=config.spec.secrets,
-                )
 
             if "dependencies" not in self.skip_resource_types:
                 await apply_dependencies(
@@ -245,7 +244,7 @@ class ConfigApplyService:
                     **common_with_owner,
                     pipelines=config.spec.pipelines,
                 )
-            # Kinds with a per-resource applier: connectors, functions,
+            # Kinds with a per-resource applier: secrets, connectors, functions,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a
@@ -326,7 +325,7 @@ class ConfigApplyService:
 
         ctx = self._resource_context(dry_run)
         for applier in all_appliers():
-            if applier.kind in self.skip_resource_types:
+            if applier.kind in self.skip_resource_types or not applier.deleted_with_package:
                 continue
             declared = {
                 applier.config_key(item)

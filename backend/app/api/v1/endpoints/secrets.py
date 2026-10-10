@@ -1,4 +1,9 @@
-"""Secrets API endpoints."""
+"""Secrets API endpoints.
+
+Shared secrets are written through SecretApplier, the path config apply and
+packages use too (recorded in change history, value redacted). Private ones
+are a user's own credentials and are written here directly.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +14,25 @@ from app.core.encryption import encryption_service
 from app.core.permissions import check_permission
 from app.models.secret import Secret
 from app.schemas.secret import SecretCreate, SecretResponse, SecretUpdate
+from app.services.resources import rest
+from app.services.resources.secrets import SecretApplier
 
 router = APIRouter(prefix="/secrets", tags=["secrets"])
+
+_applier = SecretApplier()
+
+
+async def _write_shared(db: AsyncSession, user_id, secret: Secret | None, patch: dict) -> Secret:
+    """Create or change a shared secret through the applier."""
+    ctx = rest.api_context(db, user_id)
+    if secret is None:
+        result = await rest.write(_applier, ctx, rest.parse_spec(_applier, patch))
+    else:
+        secret = await rest.locked(_applier, ctx, secret)
+        result = await rest.write(_applier, ctx, rest.patch_spec(_applier, secret, patch), existing=secret)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return result.obj
 
 
 @router.post("", response_model=SecretResponse, status_code=status.HTTP_201_CREATED)
@@ -43,6 +65,12 @@ async def create_or_update_secret(
             )
         )
     existing = result.scalar_one_or_none()
+
+    if secret_data.visibility == "shared":
+        patch = {"name": secret_data.name, "value": secret_data.value}
+        if secret_data.description is not None or existing is None:
+            patch["description"] = secret_data.description
+        return SecretResponse.model_validate(await _write_shared(db, user_id, existing, patch))
 
     if existing:
         existing.encrypted_value = encryption_service.encrypt(secret_data.value)
@@ -170,6 +198,10 @@ async def update_secret(
     if not secret:
         raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
 
+    if secret.visibility == "shared":
+        patch = {f: v for f, v in secret_data.model_dump(exclude_unset=True).items() if v is not None}
+        return SecretResponse.model_validate(await _write_shared(db, user_id, secret, patch))
+
     if secret_data.value is not None:
         secret.encrypted_value = encryption_service.encrypt(secret_data.value)
     if secret_data.description is not None:
@@ -216,6 +248,12 @@ async def delete_secret(
 
     if not secret:
         raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
+
+    if secret.visibility == "shared":
+        ctx = rest.api_context(db, user_id)
+        await _applier.delete(await rest.locked(_applier, ctx, secret), ctx)
+        await rest.commit(db, ctx)
+        return None
 
     await db.delete(secret)
     await db.flush()

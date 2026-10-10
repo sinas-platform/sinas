@@ -11,106 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import timezone as tz
 
-from app.core.encryption import encryption_service
 from app.models.dependency import Dependency
-from app.models.secret import Secret
 
 from app.services.config_apply.normalizers import should_skip_existing
-from app.schemas.config import OwnershipSkip
 
 logger = logging.getLogger(__name__)
-
-
-async def apply_secrets(
-    db: AsyncSession,
-    secrets: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    owner_user_id: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-) -> None:
-    """Apply secret configurations."""
-    for secret_config in secrets:
-        resource_name = secret_config.name
-        try:
-            # Scope to shared secrets. Config declares platform-level secrets,
-            # while `private` rows are per-user overrides (see
-            # connector_service._resolve_secret_value). Matching on name alone
-            # could select — and then overwrite the value of — another user's
-            # private secret. Shared names are globally unique (partial unique
-            # index on name where visibility='shared'), so this stays a
-            # single-row lookup.
-            stmt = select(Secret).where(
-                Secret.name == secret_config.name, Secret.visibility == "shared"
-            )
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            # Hash only includes name (not value) so re-apply without value doesn't trigger update
-            config_hash = calculate_hash(
-                {
-                    "name": secret_config.name,
-                    "description": secret_config.description,
-                }
-            )
-
-            if existing:
-                if existing.managed_by and existing.managed_by != managed_by:
-                    warnings.append(
-                        OwnershipSkip(f"Secret '{resource_name}' exists but is managed by '{existing.managed_by}'. Skipping.")
-                    )
-                    track_change("unchanged", "secrets", resource_name)
-                    continue
-
-                # Always update value if provided, regardless of hash (secrets don't have is_active)
-                needs_update = existing.config_checksum != config_hash or secret_config.value is not None
-
-                if not needs_update:
-                    track_change("unchanged", "secrets", resource_name)
-                    continue
-
-                if not dry_run:
-                    if secret_config.value is not None:
-                        existing.encrypted_value = encryption_service.encrypt(secret_config.value)
-                    if secret_config.description is not None:
-                        existing.description = secret_config.description
-                    existing.managed_by = managed_by
-                    existing.config_name = config_name
-                    existing.config_checksum = config_hash
-
-                track_change("update", "secrets", resource_name)
-            else:
-                if secret_config.value is None:
-                    errors.append(
-                        f"Secret '{resource_name}' does not exist and no value provided — cannot create."
-                    )
-                    continue
-
-                if not dry_run:
-                    secret = Secret(
-                        user_id=owner_user_id,
-                        name=secret_config.name,
-                        # Explicit rather than relying on the model default:
-                        # visibility decides who can read this, so it should be
-                        # stated at the point of creation, not inherited.
-                        visibility="shared",
-                        encrypted_value=encryption_service.encrypt(secret_config.value),
-                        description=secret_config.description,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(secret)
-
-                track_change("create", "secrets", resource_name)
-
-        except Exception as e:
-            errors.append(f"Failed to apply secret '{resource_name}': {e}")
-            logger.exception(f"Error applying secret '{resource_name}'")
 
 
 async def apply_dependencies(

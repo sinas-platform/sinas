@@ -236,6 +236,10 @@ class ResourceApplier(Generic[TSpec]):
     # Operator state a config sets only when it says so: left out of the
     # YAML, an existing resource keeps its value (see apply's `keep`).
     keep_unless_declared: ClassVar[tuple[str, ...]] = ()
+    # Whether a package uninstall, or an upgrade that no longer ships one,
+    # deletes rows of this kind. Off for kinds whose rows hold what an
+    # operator entered (secrets): they outlive the package.
+    deleted_with_package: ClassVar[bool] = True
 
     # ---- hooks -------------------------------------------------------------
 
@@ -281,6 +285,11 @@ class ResourceApplier(Generic[TSpec]):
         create): a reference held by id that the spec leaves as it was must
         stay that id, whatever its name resolves to by now."""
         self.write_fields(row, spec)
+
+    def ownership(self, row: Any, ctx: ApplyContext) -> OwnershipDecision:
+        """Who may write an existing row (design §4.4). Override only with a
+        reason the shared state machine doesn't cover."""
+        return ownership_decision(row.managed_by, ctx, getattr(row, "config_name", None))
 
     async def check_references(self, spec: TSpec, ctx: ApplyContext) -> None:
         """Raise ReferenceNotFound if the spec points at something missing."""
@@ -365,7 +374,7 @@ class ResourceApplier(Generic[TSpec]):
             return ApplyResult("create", obj=row, changes=changes, revision=revision)
 
         # ---- update ----------------------------------------------------------
-        decision = ownership_decision(row.managed_by, ctx, getattr(row, "config_name", None))
+        decision = self.ownership(row, ctx)
         if decision == "skip":
             if row.managed_by is None:
                 warning = (
