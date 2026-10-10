@@ -1,7 +1,13 @@
-"""Agent endpoints."""
+"""Agent endpoints.
+
+Writes go through AgentApplier, the path config apply and package install
+use too: the same validation, ownership and change history on every channel.
+"""
+import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_, select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import (
@@ -17,9 +23,36 @@ from app.schemas.agent import (
     AgentUpdate,
 )
 from app.services.icon_resolver import resolve_icon_url
-from app.services.package_service import detach_if_package_managed
+from app.services.resources import rest
+from app.services.resources.agents import AgentApplier, provider_name
 
 router = APIRouter()
+
+_applier = AgentApplier()
+
+
+async def _provider_name(provider_id: Optional[uuid.UUID], db: AsyncSession) -> Optional[str]:
+    """The REST API names the provider by id; the spec holds its name."""
+    if provider_id is None:
+        return None
+    name = await provider_name(db, provider_id)
+    if name is None:
+        raise HTTPException(status_code=404, detail="LLM provider not found")
+    return name
+
+
+def _same_provider(agent: Agent, requested: Optional[uuid.UUID]) -> None:
+    # Resolved by name: a provider renamed in between could have given
+    # another id than the one requested.
+    if agent.llm_provider_id != requested:
+        raise HTTPException(status_code=409, detail="The LLM provider changed while saving; try again")
+
+
+async def _any_state(db: AsyncSession, namespace: str, name: str, user_id=None) -> Optional[Agent]:
+    stmt = select(Agent).where(Agent.namespace == namespace, Agent.name == name)
+    if user_id is not None:
+        stmt = stmt.where(Agent.user_id == user_id)
+    return (await db.execute(stmt)).scalar_one_or_none()
 
 
 async def _agent_response(agent: Agent, db: AsyncSession) -> AgentResponse:
@@ -49,67 +82,24 @@ async def create_agent(
         raise HTTPException(status_code=403, detail="Not authorized to create agents")
     set_permission_used(req, create_perm)
 
-    # Check if agent name already exists in this namespace (only among active agents)
-    result = await db.execute(
-        select(Agent).where(
-            and_(
-                Agent.namespace == agent_data.namespace,
-                Agent.name == agent_data.name,
-                Agent.is_active == True,
-            )
-        )
-    )
-    if result.scalar_one_or_none():
+    ctx = rest.api_context(db, user_id)
+    key = f"{agent_data.namespace}/{agent_data.name}"
+    existing = await _applier.find(ctx, key)
+    if existing is not None and not existing.is_active:
+        # Deleting an agent switches it off; its name stays taken.
         raise HTTPException(
             status_code=400,
-            detail=f"Agent '{agent_data.namespace}/{agent_data.name}' already exists",
+            detail=f"Agent '{key}' exists but was deleted. Restore it (PUT with "
+            "is_active: true) or choose another name.",
         )
-    # If setting as default, unset other defaults
-    if agent_data.is_default:
-        await db.execute(update(Agent).values(is_default=False))
-
-    agent = Agent(
-        user_id=user_id,
-        namespace=agent_data.namespace,
-        name=agent_data.name,
-        description=agent_data.description,
-        llm_provider_id=agent_data.llm_provider_id,
-        model=agent_data.model,
-        provider_overrides=agent_data.provider_overrides,
-        temperature=agent_data.temperature or 0.7,
-        max_tokens=agent_data.max_tokens,
-        system_prompt=agent_data.system_prompt,
-        input_schema=agent_data.input_schema or {},
-        output_schema=agent_data.output_schema or {},
-        initial_messages=agent_data.initial_messages,
-        enabled_functions=agent_data.enabled_functions or [],
-        enabled_agents=agent_data.enabled_agents or [],
-        enabled_skills=[skill.model_dump() for skill in agent_data.enabled_skills]
-        if agent_data.enabled_skills
-        else [],
-        function_parameters=agent_data.function_parameters or {},
-        status_templates=agent_data.status_templates or {},
-        enabled_queries=agent_data.enabled_queries or [],
-        query_parameters=agent_data.query_parameters or {},
-        enabled_stores=[s.model_dump() for s in agent_data.enabled_stores] if agent_data.enabled_stores else [],
-        enabled_collections=[c.model_dump() for c in agent_data.enabled_collections] if agent_data.enabled_collections else [],
-        enabled_components=agent_data.enabled_components or [],
-        enabled_connectors=agent_data.enabled_connectors or [],
-        enabled_pipelines=agent_data.enabled_pipelines or [],
-        hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
-        icon=agent_data.icon,
-        is_active=True,
-        is_default=agent_data.is_default or False,
-        default_job_timeout=agent_data.default_job_timeout,
-        default_keep_alive=agent_data.default_keep_alive or False,
-        system_tools=[t.model_dump() if hasattr(t, 'model_dump') else t for t in (agent_data.system_tools or [])],
-    )
-
-    db.add(agent)
-    await db.flush()
-    await db.refresh(agent)
-
-    return await _agent_response(agent, db)
+    data = agent_data.model_dump(exclude={"llm_provider_id"})
+    data["llm_provider_name"] = await _provider_name(agent_data.llm_provider_id, db)
+    # A clash is a 400 "Agent 'ns/name' already exists", as before.
+    result = await rest.write(_applier, ctx, rest.parse_spec(_applier, data), must_create=True)
+    _same_provider(result.obj, agent_data.llm_provider_id)
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return await _agent_response(result.obj, db)
 
 
 @router.get("", response_model=list[AgentResponse])
@@ -183,13 +173,15 @@ async def update_agent(
     # Check permissions first to determine query scope
     has_all_permission = check_permission(permissions, "sinas.agents.update:all")
 
+    # Deleted (switched-off) agents too: an update with is_active: true
+    # restores one.
     if has_all_permission:
         # Admin can update all agents - don't filter by user_id
-        agent = await Agent.get_by_name(db, namespace, name, user_id=None)
+        agent = await _any_state(db, namespace, name, user_id=None)
         set_permission_used(req, "sinas.agents.update:all")
     else:
         # Regular user - filter by user_id
-        agent = await Agent.get_by_name(db, namespace, name, user_id=user_id)
+        agent = await _any_state(db, namespace, name, user_id=user_id)
         set_permission_used(req, f"sinas.agents/{namespace}/{name}.update:own")
 
     if not agent:
@@ -202,83 +194,24 @@ async def update_agent(
     if not has_all_permission and str(agent.user_id) != str(user_id):
         raise HTTPException(status_code=403, detail="Not authorized to update this agent")
 
-    detach_if_package_managed(agent)
-
-    # Update fields
-    if agent_data.namespace is not None:
-        agent.namespace = agent_data.namespace
-    if agent_data.name is not None:
-        agent.name = agent_data.name
-    if agent_data.description is not None:
-        agent.description = agent_data.description
-    if agent_data.llm_provider_id is not None:
-        agent.llm_provider_id = agent_data.llm_provider_id
-    if agent_data.model is not None:
-        agent.model = agent_data.model
-    if agent_data.provider_overrides is not None:
-        # {} clears all overrides (back to pure inherit); keys are whitelisted
-        # by the schema validator.
-        agent.provider_overrides = agent_data.provider_overrides or None
-    if agent_data.temperature is not None:
-        agent.temperature = agent_data.temperature
-    if agent_data.max_tokens is not None:
-        agent.max_tokens = agent_data.max_tokens
-    if agent_data.system_prompt is not None:
-        agent.system_prompt = agent_data.system_prompt
-    if agent_data.input_schema is not None:
-        agent.input_schema = agent_data.input_schema
-    if agent_data.output_schema is not None:
-        agent.output_schema = agent_data.output_schema
-    if agent_data.initial_messages is not None:
-        agent.initial_messages = agent_data.initial_messages
-    if agent_data.enabled_functions is not None:
-        agent.enabled_functions = agent_data.enabled_functions
-    if agent_data.enabled_agents is not None:
-        agent.enabled_agents = agent_data.enabled_agents
-    if agent_data.enabled_skills is not None:
-        agent.enabled_skills = [skill.model_dump() for skill in agent_data.enabled_skills]
-    if agent_data.function_parameters is not None:
-        agent.function_parameters = agent_data.function_parameters
-    if agent_data.status_templates is not None:
-        agent.status_templates = agent_data.status_templates
-    if agent_data.enabled_queries is not None:
-        agent.enabled_queries = agent_data.enabled_queries
-    if agent_data.query_parameters is not None:
-        agent.query_parameters = agent_data.query_parameters
-    if agent_data.enabled_stores is not None:
-        agent.enabled_stores = [s.model_dump() for s in agent_data.enabled_stores]
-    if agent_data.enabled_collections is not None:
-        agent.enabled_collections = [c.model_dump() for c in agent_data.enabled_collections]
-    if agent_data.enabled_components is not None:
-        agent.enabled_components = agent_data.enabled_components
-    if agent_data.enabled_connectors is not None:
-        agent.enabled_connectors = agent_data.enabled_connectors
-    if agent_data.enabled_pipelines is not None:
-        agent.enabled_pipelines = agent_data.enabled_pipelines
-    if agent_data.hooks is not None:
-        agent.hooks = agent_data.hooks.model_dump(by_alias=True)
-    if agent_data.icon is not None:
-        agent.icon = agent_data.icon
-    if agent_data.is_active is not None:
-        agent.is_active = agent_data.is_active
-    if agent_data.is_default is not None:
-        if agent_data.is_default:
-            await db.execute(
-                update(Agent).where(Agent.id != agent.id).values(is_default=False)
-            )
-        agent.is_default = agent_data.is_default
-    if agent_data.default_job_timeout is not None:
-        agent.default_job_timeout = agent_data.default_job_timeout
-    if agent_data.default_keep_alive is not None:
-        agent.default_keep_alive = agent_data.default_keep_alive
-    if agent_data.system_tools is not None:
-        agent.system_tools = [
-            t.model_dump() if hasattr(t, 'model_dump') else t
-            for t in agent_data.system_tools
-        ]
-    await db.flush()
+    ctx = rest.api_context(db, user_id)
+    agent = await rest.locked(_applier, ctx, agent)
+    # As before: a field left out or sent as null stays as it is; {} clears
+    # provider_overrides; a new namespace/name renames it (a clash is a 400).
+    patch = {
+        field: value
+        for field, value in agent_data.model_dump(exclude_unset=True).items()
+        if value is not None and field != "llm_provider_id"
+    }
+    requested = agent_data.llm_provider_id
+    if requested is not None and requested != agent.llm_provider_id:
+        patch["llm_provider_name"] = await _provider_name(requested, db)
+    current = _applier.spec_from_row(agent, await provider_name(db, agent.llm_provider_id))
+    spec = rest.patch_spec(_applier, agent, patch, current=current)
+    await rest.write(_applier, ctx, spec, existing=agent)
+    _same_provider(agent, requested if requested is not None else agent.llm_provider_id)
+    await rest.commit(db, ctx)
     await db.refresh(agent)
-
     return await _agent_response(agent, db)
 
 
@@ -315,7 +248,12 @@ async def delete_agent(
     if not has_all_permission and str(agent.user_id) != str(user_id):
         raise HTTPException(status_code=403, detail="Not authorized to delete this agent")
 
-    agent.is_active = False
-    await db.flush()
-
+    # A soft delete: switched off (recorded), restorable with an update.
+    ctx = rest.api_context(db, user_id)
+    agent = await rest.locked(_applier, ctx, agent)
+    current = _applier.spec_from_row(agent, await provider_name(db, agent.llm_provider_id))
+    await rest.write(
+        _applier, ctx, current.model_copy(update={"is_active": False}), existing=agent
+    )
+    await rest.commit(db, ctx)
     return None

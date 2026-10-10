@@ -598,6 +598,29 @@ invalidation effect).
 - Export lists shared secrets only (private names used to be exported, and
   re-applying them failed for lack of a value).
 
+### Slice 9: agents (decisions)
+
+- **Delete stays a soft delete** (decided): the API switches an agent off,
+  recorded in history; an update with `is_active: true` restores it;
+  recreating its name is a 400 that says so. Config and packages keep that
+  state unless they declare `isActive` (config used to bring deleted agents
+  back). Package uninstall and upgrade prune delete the row; chats are kept,
+  unlinked (they keep the agent's namespace/name).
+- **`isDefault` is operator state too**, kept unless declared; making one
+  the default unsets the others, on every channel.
+- **The LLM provider is held by id, declared by name** (as queries do with
+  connections): REST translates at the boundary, an unknown provider is a
+  404/clear apply error (was a 500 / unchecked in previews), and a write
+  re-resolves the name only when the spec names another provider.
+- **Config's normalizations are spec validators**, so REST gets them too:
+  bare function/skill/collection names mean `default/`, a bare store name
+  means read-write, and camelCase hooks are stored as the snake_case the
+  runtime reads (they were silently ignored).
+- REST: temperature 0 stays 0 (was 0.7); a rename clash is a 400 (was 500).
+- The unused `agent_ids` cache and the legacy normalizers are gone.
+- Not changed: references to functions, skills etc. are still only checked
+  by the config parser, not on REST writes.
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

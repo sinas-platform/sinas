@@ -223,7 +223,11 @@ class AgentConfig(BaseModel):
     initialMessages: Optional[list[dict[str, str]]] = None
     hooks: Optional[dict[str, Any]] = None  # {"onUserMessage": [...], "onAssistantMessage": [...]}
     icon: Optional[str] = None
-    isDefault: bool = False
+    # Unset: a new agent is not the default and is active; an existing one
+    # keeps what it has (the console may have made it the default, or it
+    # may have been deleted, which switches it off).
+    isDefault: Optional[bool] = None
+    isActive: Optional[bool] = None
     defaultJobTimeout: Optional[int] = None
     defaultKeepAlive: bool = False
     systemTools: list[Any] = Field(

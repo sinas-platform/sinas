@@ -119,40 +119,10 @@ def serialize_connector(conn) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
-    return _remove_none_values({
-        "namespace": agent.namespace,
-        "name": agent.name,
-        "description": agent.description,
-        "model": agent.model,
-        "llmProviderName": provider_name,
-        "temperature": agent.temperature,
-        "maxTokens": agent.max_tokens,
-        "systemPrompt": agent.system_prompt,
-        "inputSchema": agent.input_schema if agent.input_schema else None,
-        "outputSchema": agent.output_schema if agent.output_schema else None,
-        "initialMessages": agent.initial_messages or None,
-        "enabledFunctions": agent.enabled_functions or None,
-        "functionParameters": agent.function_parameters or None,
-        "statusTemplates": agent.status_templates or None,
-        "enabledAgents": agent.enabled_agents or None,
-        "enabledSkills": agent.enabled_skills or None,
-        "enabledStores": agent.enabled_stores or None,
-        "enabledQueries": agent.enabled_queries or None,
-        "queryParameters": agent.query_parameters or None,
-        "enabledCollections": agent.enabled_collections or None,
-        "enabledComponents": agent.enabled_components or None,
-        "enabledConnectors": agent.enabled_connectors or None,
-        "enabledPipelines": agent.enabled_pipelines or None,
-        "hooks": agent.hooks or None,
-        "icon": agent.icon,
-        "isDefault": agent.is_default if agent.is_default else None,
-        "defaultJobTimeout": agent.default_job_timeout,
-        "defaultKeepAlive": agent.default_keep_alive if agent.default_keep_alive else None,
-        "systemTools": agent.system_tools if agent.system_tools else None,
-        # Round-trips through export/import; without it an exported agent
-        # re-imported at model-default effort and caching.
-        "providerOverrides": agent.provider_overrides or None,
-    })
+    """Config form of an agent — delegated to its spec."""
+    from app.services.resources.agents import AgentApplier
+
+    return AgentApplier().spec_from_row(agent, provider_name).to_config()
 
 
 def serialize_query(query, connection_name: Optional[str] = None) -> dict:

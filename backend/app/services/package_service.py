@@ -6,11 +6,10 @@ import re
 from typing import Any, Optional
 
 import yaml
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
-from app.models.chat import Chat
 from app.models.connector import Connector
 from app.models.manifest import Manifest
 from app.models.component import Component
@@ -451,21 +450,6 @@ class PackageService:
 
         deleted_counts = {}
 
-        # Delete managed resources across all model types
-        model_names = {
-            Agent: "agents",
-        }
-
-        # The loop below issues Core bulk deletes, which bypass the ORM's
-        # cascades, so children whose FK has no ON DELETE rule must be cleared
-        # first (#63). Functions (and their versions) go through their applier.
-        # Chats outlive the package: a conversation is the user's, not the
-        # package's, so only the link to the vanishing agent is cleared.
-        agent_ids = select(Agent.id).where(Agent.managed_by == managed_by).scalar_subquery()
-        await self.db.execute(
-            update(Chat).where(Chat.agent_id.in_(agent_ids)).values(agent_id=None)
-        )
-
         # Kinds with an applier go through it rather than a bulk delete: each
         # deletion is recorded in the change history (so it can be restored),
         # and running workers are told — a bulk delete left the scheduler
@@ -498,12 +482,6 @@ class PackageService:
                 await applier.delete(row, applier_ctx)
             if rows:
                 deleted_counts[applier.kind] = len(rows)
-
-        for model, type_name in model_names.items():
-            stmt = delete(model).where(model.managed_by == managed_by)
-            result = await self.db.execute(stmt)
-            if result.rowcount > 0:
-                deleted_counts[type_name] = result.rowcount
 
         # Package-managed roles: children first (their FKs have no ON DELETE),
         # then the roles. User assignments vanish with the role — deliberate:
