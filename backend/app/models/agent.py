@@ -127,6 +127,13 @@ class Agent(Base, PermissionMixin):
         JSON, nullable=False, default=list, server_default="[]"
     )
 
+    # Tool approval rules (permission modes): first-match glob rules over
+    # tool names, e.g. {"default": "auto", "rules": [{"match": "write_*",
+    # "action": "ask"}]}. An explicit "auto" rule overrides a function's
+    # requires_approval; unmatched tools fall back to requires_approval,
+    # then to "default". NULL = today's behavior (requires_approval only).
+    tool_approvals: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[created_at]

@@ -178,6 +178,7 @@ async def apply_agents(
                     "default_job_timeout": agent_config.defaultJobTimeout,
                     "default_keep_alive": agent_config.defaultKeepAlive,
                     "system_tools": agent_config.systemTools,
+                    "tool_approvals": agent_config.toolApprovals,
                 }
             # Provider overrides (effort, prompt_caching) are part of what an
             # agent IS: without them in the hash, a config changing only
@@ -240,6 +241,7 @@ async def apply_agents(
                     existing.default_job_timeout = agent_config.defaultJobTimeout
                     existing.default_keep_alive = agent_config.defaultKeepAlive
                     existing.system_tools = agent_config.systemTools
+                    existing.tool_approvals = agent_config.toolApprovals
                     if agent_config.isDefault:
                         await db.execute(
                             Agent.__table__.update()
@@ -301,6 +303,7 @@ async def apply_agents(
                         default_job_timeout=agent_config.defaultJobTimeout,
                         default_keep_alive=agent_config.defaultKeepAlive,
                         system_tools=agent_config.systemTools,
+                        tool_approvals=agent_config.toolApprovals,
                         user_id=owner_user_id,
                         is_active=True,
                         managed_by=managed_by,

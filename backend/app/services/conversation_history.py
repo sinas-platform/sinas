@@ -144,8 +144,22 @@ async def build_conversation_history(
     )
     all_messages = result.scalars().all()
 
-    # Apply windowing if conversation exceeds max_history_messages
+    # Apply windowing if conversation exceeds max_history_messages.
+    # Compaction (summarize-and-continue) rides on top: a stored summary of
+    # the dropped prefix is injected as context, and a background refresh is
+    # scheduled whenever the summary lags the window start — so the history
+    # never just falls off a cliff.
     if len(all_messages) > settings.max_history_messages:
+        from app.services import compaction
+
+        if settings.compaction_enabled:
+            stored = compaction.get_compaction(chat)
+            dropped = len(all_messages) - settings.max_history_messages
+            if stored:
+                messages.append(compaction.summary_message(stored))
+            if not stored or stored.get("covered_count", 0) < dropped:
+                compaction.maybe_schedule_compaction(str(chat.id))
+
         chat_messages = all_messages[-settings.max_history_messages:]
 
         # Ensure tool call/result pairs aren't split by the window boundary.
