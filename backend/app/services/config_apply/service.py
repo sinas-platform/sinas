@@ -19,7 +19,6 @@ from app.schemas.config import (
 from app.services.config_apply.identity import apply_roles, apply_users
 from app.services.config_apply.data_sources import (
     apply_database_connections,
-    apply_llm_providers,
 )
 from app.services.config_apply.resources import (
     apply_dependencies,
@@ -77,7 +76,6 @@ class ConfigApplyService:
         self.role_ids: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.datasource_ids: dict[str, str] = {}
-        self.llm_provider_ids: dict[str, str] = {}
         self.database_connection_ids: dict[str, str] = {}
         self.webhook_ids: dict[str, str] = {}
 
@@ -178,6 +176,18 @@ class ConfigApplyService:
                 item.name: True for item in config.spec.llmProviders
             }
         self._pending_references["secrets"] = {name: True for name in self.supplied_secrets}
+        if not dry_run:
+            # Promotions to "the default" serialize on a lock taken before any
+            # row lock this apply takes (lock order: see lock_singleton).
+            from app.services.resources import ApplyContext
+            from app.services.resources.base import lock_singleton
+            from app.services.resources.registry import all_appliers
+
+            for applier in all_appliers():
+                if applier.singleton_lock and applier.kind not in self.skip_resource_types and any(
+                    getattr(item, "isDefault", None) for item in getattr(config.spec, applier.config_section)
+                ):
+                    await lock_singleton(ApplyContext(db=self.db, origin="config"), applier.singleton_lock)
         # Packages skip connections: one declared there is never created.
         if "databaseConnections" not in self.skip_resource_types:
             self._pending_references["databaseConnections"] = {
@@ -211,12 +221,6 @@ class ConfigApplyService:
                     role_ids=self.role_ids,
                     user_ids=self.user_ids,
                 )
-            if "llmProviders" not in self.skip_resource_types:
-                await apply_llm_providers(
-                    **common,
-                    providers=config.spec.llmProviders,
-                    llm_provider_ids=self.llm_provider_ids,
-                )
             if "databaseConnections" not in self.skip_resource_types:
                 await apply_database_connections(
                     **common,
@@ -231,7 +235,7 @@ class ConfigApplyService:
                     dependencies=config.spec.dependencies,
                 )
 
-            # Kinds with a per-resource applier: secrets, connectors, functions, agents, pipelines,
+            # Kinds with a per-resource applier: secrets, llmProviders, connectors, functions, agents, pipelines,
             # skills, queries, templates, collections, stores, manifests,
             # components, webhooks, schedules, databaseTriggers — after
             # everything they can point at. (Nothing checks a reference to a

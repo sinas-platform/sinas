@@ -25,6 +25,7 @@ from app.schemas.agent import (
 from app.services.icon_resolver import resolve_icon_url
 from app.services.resources import rest
 from app.services.resources.agents import AgentApplier, provider_name
+from app.services.resources.base import lock_singleton
 
 router = APIRouter()
 
@@ -83,6 +84,9 @@ async def create_agent(
     set_permission_used(req, create_perm)
 
     ctx = rest.api_context(db, user_id)
+    if agent_data.is_default:
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
     key = f"{agent_data.namespace}/{agent_data.name}"
     existing = await _applier.find(ctx, key)
     if existing is not None and not existing.is_active:
@@ -195,6 +199,9 @@ async def update_agent(
         raise HTTPException(status_code=403, detail="Not authorized to update this agent")
 
     ctx = rest.api_context(db, user_id)
+    if agent_data.is_default:
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
     agent = await rest.locked(_applier, ctx, agent)
     # As before: a field left out or sent as null stays as it is; {} clears
     # provider_overrides; a new namespace/name renames it (a clash is a 400).

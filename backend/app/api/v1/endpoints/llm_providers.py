@@ -1,4 +1,8 @@
-"""LLM Provider endpoints for managing LLM configurations."""
+"""LLM Provider endpoints for managing LLM configurations.
+
+Writes go through LLMProviderApplier, the path config apply uses too: the
+same ownership and change history (the API key redacted) on every channel.
+"""
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import require_permission
 from app.core.database import get_db
-from app.core.encryption import EncryptionService
 from app.models import LLMProvider
 from app.schemas.llm_provider import (
     LLMProviderCreate,
@@ -15,7 +18,13 @@ from app.schemas.llm_provider import (
     LLMProviderUpdate,
 )
 
+from app.services.resources import rest
+from app.services.resources.base import lock_singleton
+from app.services.resources.llm_providers import LLMProviderApplier
+
 router = APIRouter()
+
+_applier = LLMProviderApplier()
 
 
 @router.post("", response_model=LLMProviderResponse, status_code=status.HTTP_201_CREATED)
@@ -25,41 +34,21 @@ async def create_llm_provider(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new LLM provider configuration. Admin only."""
-    # Check if provider with same name already exists
-    result = await db.execute(select(LLMProvider).where(LLMProvider.name == request.name))
-    existing = result.scalar_one_or_none()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Provider with name '{request.name}' already exists",
-        )
-
-    # If this is set as default, unset other defaults
+    ctx = rest.api_context(db, user_id)
     if request.is_default:
-        await db.execute(LLMProvider.__table__.update().values(is_default=False))
-
-    # Encrypt API key if provided
-    encrypted_api_key = None
-    if request.api_key:
-        encryption_service = EncryptionService()
-        encrypted_api_key = encryption_service.encrypt(request.api_key)
-
-    provider = LLMProvider(
-        name=request.name,
-        provider_type=request.provider_type,
-        api_key=encrypted_api_key,
-        api_endpoint=request.api_endpoint,
-        default_model=request.default_model,
-        config=request.config or {},
-        is_default=request.is_default or False,
-        is_active=True,
-    )
-
-    db.add(provider)
-    await db.flush()
-    await db.refresh(provider)
-
-    return LLMProviderResponse.model_validate(provider)
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
+    data = request.model_dump()
+    data["is_default"] = bool(data.get("is_default"))
+    try:
+        result = await rest.write(_applier, ctx, rest.parse_spec(_applier, data), must_create=True)
+    except HTTPException as e:
+        if e.status_code == 400 and "already exists" in str(e.detail):
+            raise HTTPException(status_code=400, detail=f"Provider with name '{request.name}' already exists")
+        raise
+    await rest.commit(db, ctx)
+    await db.refresh(result.obj)
+    return LLMProviderResponse.model_validate(result.obj)
 
 
 @router.get("", response_model=list[LLMProviderResponse])
@@ -105,54 +94,24 @@ async def update_llm_provider(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Provider '{provider_id}' not found"
         )
 
-    # If setting as default, unset other defaults
+    ctx = rest.api_context(db, user_id)
     if request.is_default:
-        await db.execute(
-            LLMProvider.__table__.update()
-            .where(LLMProvider.id != provider.id)
-            .values(is_default=False)
-        )
-
-    # Update fields
-    if request.name is not None:
-        # Check name uniqueness
-        name_check = await db.execute(
-            select(LLMProvider).where(
-                LLMProvider.name == request.name, LLMProvider.id != provider.id
-            )
-        )
-        if name_check.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Provider with name '{request.name}' already exists",
-            )
-        provider.name = request.name
-
-    if request.provider_type is not None:
-        provider.provider_type = request.provider_type
-
-    if request.api_key is not None:
-        encryption_service = EncryptionService()
-        provider.api_key = encryption_service.encrypt(request.api_key)
-
-    if request.api_endpoint is not None:
-        provider.api_endpoint = request.api_endpoint
-
-    if request.default_model is not None:
-        provider.default_model = request.default_model
-
-    if request.config is not None:
-        provider.config = request.config
-
-    if request.is_default is not None:
-        provider.is_default = request.is_default
-
-    if request.is_active is not None:
-        provider.is_active = request.is_active
-
-    await db.flush()
+        # Before any row lock (lock order: see lock_singleton).
+        await lock_singleton(ctx, _applier.singleton_lock)
+    provider = await rest.locked(_applier, ctx, provider)
+    # As before: a field left out or sent as null stays as it is; config is
+    # replaced as a whole.
+    patch = {f: v for f, v in request.model_dump(exclude_unset=True).items() if v is not None}
+    if not patch.get("api_key"):
+        patch.pop("api_key", None)  # "" keeps the stored key, like null
+    try:
+        await rest.write(_applier, ctx, rest.patch_spec(_applier, provider, patch), existing=provider)
+    except HTTPException as e:
+        if e.status_code == 400 and "already exists" in str(e.detail):
+            raise HTTPException(status_code=400, detail=f"Provider with name '{request.name}' already exists")
+        raise
+    await rest.commit(db, ctx)
     await db.refresh(provider)
-
     return LLMProviderResponse.model_validate(provider)
 
 
@@ -170,5 +129,10 @@ async def delete_llm_provider(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Provider '{provider_id}' not found"
         )
 
-    provider.is_active = False
-    await db.flush()
+    # A soft delete: agents point at it by id. Recorded; restorable by an
+    # update with is_active: true.
+    ctx = rest.api_context(db, user_id)
+    provider = await rest.locked(_applier, ctx, provider)
+    current = _applier.spec_from_row(provider)
+    await rest.write(_applier, ctx, current.model_copy(update={"is_active": False}), existing=provider)
+    await rest.commit(db, ctx)

@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.encryption import encryption_service
 from app.models.database_connection import DatabaseConnection
-from app.models.llm_provider import LLMProvider
 from app.models.table_annotation import TableAnnotation
 from app.schemas.config import OwnershipSkip
 
@@ -33,122 +32,6 @@ def _secret_changed(stored: Optional[str], declared: Optional[str]) -> bool:
         return encryption_service.decrypt(stored) != declared
     except Exception:
         return True  # unreadable (e.g. a rotated encryption key): write it fresh
-
-async def apply_llm_providers(
-    db: AsyncSession,
-    providers: list,
-    dry_run: bool,
-    managed_by: str,
-    config_name: str,
-    calculate_hash: Any,
-    track_change: Any,
-    errors: list[str],
-    warnings: list[str],
-    llm_provider_ids: dict[str, str],
-) -> None:
-    """Apply LLM provider configurations"""
-    for provider_config in providers:
-        try:
-            stmt = select(LLMProvider).where(LLMProvider.name == provider_config.name)
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            # Don't include API key in hash (it's encrypted)
-            config_hash = calculate_hash(
-                {
-                    "name": provider_config.name,
-                    "type": provider_config.type,
-                    "endpoint": provider_config.endpoint,
-                    "models": sorted(provider_config.models),
-                    "default_model": provider_config.defaultModel,
-                    "is_default": provider_config.isDefault,
-                    "config": provider_config.config,
-                    "is_active": provider_config.isActive,
-                }
-            )
-
-            if existing:
-                if existing.managed_by != managed_by:
-                    warnings.append(
-                        OwnershipSkip(f"LLM provider '{provider_config.name}' exists but is not managed by '{managed_by}'. Skipping.")
-                    )
-                    track_change("unchanged", "llmProviders", provider_config.name)
-                    llm_provider_ids[provider_config.name] = str(existing.id)
-                    continue
-
-                if existing.config_checksum == config_hash and not _secret_changed(
-                    existing.api_key, provider_config.apiKey
-                ):
-                    track_change("unchanged", "llmProviders", provider_config.name)
-                    llm_provider_ids[provider_config.name] = str(existing.id)
-                    continue
-
-                if not dry_run:
-                    existing.provider_type = provider_config.type
-                    existing.api_endpoint = provider_config.endpoint
-                    existing.default_model = provider_config.defaultModel
-                    # Merge managed keys into the existing config, preserving any
-                    # keys set out-of-band. Assign a new dict so SQLAlchemy flags
-                    # the JSON column as dirty.
-                    merged_config = dict(existing.config or {})
-                    merged_config["models"] = provider_config.models
-                    merged_config.update(provider_config.config or {})
-                    existing.config = merged_config
-                    existing.is_active = provider_config.isActive
-                    if provider_config.isDefault:
-                        await db.execute(
-                            LLMProvider.__table__.update()
-                            .where(LLMProvider.name != provider_config.name)
-                            .values(is_default=False)
-                        )
-                    existing.is_default = provider_config.isDefault
-                    if provider_config.apiKey:
-                        existing.api_key = encryption_service.encrypt(provider_config.apiKey)
-                    existing.config_checksum = config_hash
-                    existing.updated_at = datetime.utcnow()
-
-                track_change("update", "llmProviders", provider_config.name)
-                llm_provider_ids[provider_config.name] = str(existing.id)
-
-            else:
-                if not dry_run:
-                    encrypted_key = None
-                    if provider_config.apiKey:
-                        encrypted_key = encryption_service.encrypt(provider_config.apiKey)
-
-                    if provider_config.isDefault:
-                        await db.execute(
-                            LLMProvider.__table__.update()
-                            .where(LLMProvider.name != provider_config.name)
-                            .values(is_default=False)
-                        )
-
-                    new_provider = LLMProvider(
-                        name=provider_config.name,
-                        provider_type=provider_config.type,
-                        api_key=encrypted_key,
-                        api_endpoint=provider_config.endpoint,
-                        default_model=provider_config.defaultModel,
-                        config={"models": provider_config.models, **(provider_config.config or {})},
-                        is_default=provider_config.isDefault,
-                        is_active=provider_config.isActive,
-                        managed_by=managed_by,
-                        config_name=config_name,
-                        config_checksum=config_hash,
-                    )
-                    db.add(new_provider)
-                    await db.flush()
-                    llm_provider_ids[provider_config.name] = str(new_provider.id)
-                else:
-                    llm_provider_ids[provider_config.name] = "dry-run-id"
-
-                track_change("create", "llmProviders", provider_config.name)
-
-        except Exception as e:
-            errors.append(
-                f"Error applying LLM provider '{provider_config.name}': {str(e)}"
-            )
-
 
 async def apply_database_connections(
     db: AsyncSession,

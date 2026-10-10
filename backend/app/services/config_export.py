@@ -8,7 +8,6 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.encryption import encryption_service
 from app.models.agent import Agent
 from app.models.component import Component
 from app.models.connector import Connector
@@ -175,30 +174,22 @@ class ConfigExportService:
         return exported
 
     async def _export_llm_providers(self) -> list[dict]:
-        """Export LLM providers"""
-        stmt = select(LLMProvider).where(LLMProvider.is_active == True)
+        """Export LLM providers, switched-off ones included (isActive: false).
+        The key only with include_secrets."""
+        from app.services.resources.llm_providers import LLMProviderApplier
+
+        applier = LLMProviderApplier()
+        stmt = select(LLMProvider).order_by(LLMProvider.name)
         if self.managed_only:
             stmt = stmt.where(LLMProvider.managed_by == self.managed_by)
-
-        result = await self.db.execute(stmt)
-        providers = result.scalars().all()
-
         exported = []
-        for provider in providers:
-            provider_dict = {
-                "name": provider.name,
-                "type": provider.provider_type,
-                "models": provider.config.get("models", []) if provider.config else [],
-                "isActive": provider.is_active,
-            }
-            if provider.api_endpoint:
-                provider_dict["endpoint"] = provider.api_endpoint
-
-            if self.include_secrets and provider.api_key:
-                provider_dict["apiKey"] = encryption_service.decrypt(provider.api_key)
-
+        for provider in (await self.db.execute(stmt)).scalars().all():
+            provider_dict = applier.spec_from_row(provider).to_config()
+            if self.include_secrets:
+                key = applier.readable_key(provider)
+                if key:
+                    provider_dict["apiKey"] = key
             exported.append(provider_dict)
-
         return exported
 
     async def _export_dependencies(self) -> list[dict]:

@@ -13,6 +13,7 @@ def _applier_classes() -> list[type[ResourceApplier]]:
     from app.services.resources.connectors import ConnectorApplier
     from app.services.resources.database_triggers import DatabaseTriggerApplier
     from app.services.resources.functions import FunctionApplier
+    from app.services.resources.llm_providers import LLMProviderApplier
     from app.services.resources.manifests import ManifestApplier
     from app.services.resources.pipelines import PipelineApplier
     from app.services.resources.queries import QueryApplier
@@ -24,7 +25,7 @@ def _applier_classes() -> list[type[ResourceApplier]]:
     from app.services.resources.webhooks import WebhookApplier
 
     return [
-        SecretApplier, ConnectorApplier, FunctionApplier, SkillApplier, QueryApplier, TemplateApplier, CollectionApplier,
+        SecretApplier, LLMProviderApplier, ConnectorApplier, FunctionApplier, SkillApplier, QueryApplier, TemplateApplier, CollectionApplier,
         StoreApplier, ManifestApplier, AgentApplier, PipelineApplier,
         ComponentApplier, WebhookApplier, ScheduleApplier,
         DatabaseTriggerApplier,

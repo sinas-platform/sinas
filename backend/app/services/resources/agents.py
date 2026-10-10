@@ -39,6 +39,7 @@ class AgentApplier(ResourceApplier[AgentSpec]):
     reference_fields = ("llm_provider_name",)
     # Operator state: a deleted (switched-off) agent stays off, and the
     # default chosen in the console stays the default, unless config says so.
+    singleton_lock = "default-agent"
     keep_unless_declared = ("is_active", "is_default")
 
     def key_of(self, spec: AgentSpec) -> str:
@@ -156,8 +157,10 @@ class AgentApplier(ResourceApplier[AgentSpec]):
 
     async def _unset_other_defaults(self, row: Agent, ctx: ApplyContext) -> None:
         from app.schemas.spec.base import diff_specs
+        from app.services.resources.base import lock_singleton
         from app.services.resources.history import record_revision
 
+        await lock_singleton(ctx, self.singleton_lock)
         stmt = select(Agent).where(Agent.is_default.is_(True)).with_for_update()
         if row.id is not None:
             stmt = stmt.where(Agent.id != row.id)

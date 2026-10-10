@@ -639,6 +639,26 @@ invalidation effect).
   clearly), as before.
 - The legacy normalizers module is gone: nothing uses it any more.
 
+### Slice 11: LLM providers (decisions)
+
+- Final batch scope (agreed): providers, database connections, dependencies
+  and roles move to appliers, one PR each; users stay on their own path
+  (identity, not config) with small fixes. Packages keep the dependencies
+  they add.
+- One applier for config and REST. Owner-less (admin-managed); `rest.locked`
+  compares the key alone for such kinds.
+- The API key is redacted like a secret's value (`canonical()`), restorable
+  via `secret_values`, and kept when left out. `isActive` and `isDefault`
+  are kept unless declared (config switched deleted providers back on and
+  unset a console default); making one the default records the previous
+  default's change too.
+- Config's top-level `models` lives in `config.models`, as in the database;
+  `config` is now the declared state (it was merged with keys set
+  elsewhere — those are console edits, which detach the provider).
+- Export no longer drops `defaultModel`, `isDefault` and extra `config`,
+  includes switched-off providers, and the key only with include_secrets.
+- REST delete stays a soft delete (agents point at the provider by id).
+
 ### Parity test strategy
 
 New `backend/tests/unit/config_parity/` harness (there are currently **zero**

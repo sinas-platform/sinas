@@ -59,18 +59,26 @@ class UserConfig(BaseModel):
 class LLMProviderConfig(BaseModel):
     """LLM provider configuration"""
 
+    @field_validator("apiKey")
+    @classmethod
+    def _blank_key_is_unset(cls, value: Optional[str]) -> Optional[str]:
+        # An empty apiKey keeps the stored key, as it always did.
+        return value or None
+
     name: str
     type: str  # openai, azure, ollama, anthropic, etc.
     apiKey: Optional[str] = None
     endpoint: Optional[str] = None
     models: list[str] = Field(default_factory=list)
     defaultModel: Optional[str] = None
-    isDefault: bool = False
+    # Unset: a new provider is not the default and is active; an existing one
+    # keeps what it has (made default, or deleted, in the console).
+    isDefault: Optional[bool] = None
     # Passthrough for provider-specific config (merged into the DB `config`
     # column, not overwritten). For Azure: api_version, azure_deployment,
     # max_tokens_param, drop_params, extra_params.
     config: dict[str, Any] = Field(default_factory=dict)
-    isActive: bool = True
+    isActive: Optional[bool] = None
 
 
 class DatabaseAnnotationConfig(BaseModel):
