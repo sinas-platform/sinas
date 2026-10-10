@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Role, User, UserIdentity, UserRole
@@ -29,14 +29,19 @@ async def apply_users(
     """Apply user configurations (roles are applied before, by their applier)."""
     for user_config in users:
         try:
-            stmt = select(User).where(User.email == user_config.email)
-            result = await db.execute(stmt)
-            existing = result.scalar_one_or_none()
+            # Matched as login and the API match (trimmed, any case), so a user
+            # an earlier apply stored un-normalized is found, not duplicated.
+            existing = (await db.execute(
+                select(User)
+                .where(func.lower(func.trim(User.email)) == user_config.email)
+                .order_by((User.email == user_config.email).desc(), User.created_at)
+                .limit(1)
+            )).scalar_one_or_none()
 
             config_hash = calculate_hash(
                 {
                     "email": user_config.email,
-                    "roles": sorted(user_config.roles),
+                    "roles": sorted(user_config.roles) if user_config.roles is not None else None,
                     "customFields": user_config.customFields,
                     "identities": sorted(
                         ([i.provider, i.subject, i.metadata] for i in user_config.identities),
@@ -60,6 +65,7 @@ async def apply_users(
                     continue
 
                 if not dry_run:
+                    existing.email = user_config.email  # normalized
                     existing.custom_fields = user_config.customFields
                     existing.config_checksum = config_hash
                     existing.updated_at = datetime.utcnow()
@@ -85,7 +91,7 @@ async def apply_users(
                 track_change("create", "users", user_config.email)
 
             # Apply role memberships
-            if not dry_run and user_config.roles:
+            if not dry_run and user_config.roles is not None:
                 await apply_user_roles(
                     db, user_ids[user_config.email], user_config.roles, warnings,
                 )

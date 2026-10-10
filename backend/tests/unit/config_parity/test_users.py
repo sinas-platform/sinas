@@ -73,3 +73,27 @@ async def test_export_lists_only_current_memberships(db: AsyncSession, admin_use
     doc = yaml.safe_load(await ConfigExportService(db).export_config())["spec"]
     exported = next(u for u in doc["users"] if u["email"] == email)
     assert exported["roles"] == [a.name] and "lastLoginAt" not in exported
+
+
+async def test_a_user_stored_un_normalized_is_found_and_fixed(db: AsyncSession, admin_user):
+    local = f"bob-{uuid.uuid4().hex[:6]}"
+    db.add(User(email=f"{local.upper()}@Example.com ", managed_by="config", config_name="people"))
+    await db.flush()
+    assert (await _apply(db, admin_user, users=[{"email": f"{local}@example.com", "customFields": {"a": 1}}])).success
+    rows = (await db.execute(select(User).where(User.email.ilike(f"%{local}%")))).scalars().all()
+    assert [u.email for u in rows] == [f"{local}@example.com"]
+
+
+async def test_removing_the_last_role_ends_it_and_leaving_roles_out_doesnt(db: AsyncSession, admin_user):
+    a = await _role(db, f"ra-{uuid.uuid4().hex[:6]}")
+    email = f"u-{uuid.uuid4().hex[:8]}@example.com"
+    assert (await _apply(db, admin_user, users=[{"email": email, "roles": [a.name]}])).success
+    user = (await db.execute(select(User).where(User.email == email))).scalar_one()
+    # No roles key: memberships aren't this config's business.
+    assert (await _apply(db, admin_user, users=[{"email": email, "customFields": {"x": 1}}])).success
+    row = (await db.execute(select(UserRole).where(UserRole.user_id == user.id))).scalar_one()
+    assert row.active is True
+    # An explicit empty list: the user holds none.
+    assert (await _apply(db, admin_user, users=[{"email": email, "roles": []}])).success
+    await db.refresh(row)
+    assert row.active is False and row.removed_at is not None
