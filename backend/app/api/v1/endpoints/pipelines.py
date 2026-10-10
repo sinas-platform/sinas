@@ -117,6 +117,11 @@ async def update_pipeline(
             status_code=400, detail="; ".join(err["msg"].removeprefix("Value error, ") for err in e.detail)
         )
     await rest.write(_applier, ctx, spec, existing=pipeline)
+    if data.is_active:
+        # Sending is_active: true resets the failure state even when the
+        # pipeline is still on (runtime state, not config: not in history).
+        pipeline.consecutive_failures = 0
+        pipeline.error_message = None
     await rest.commit(db, ctx)
     await db.refresh(pipeline)
     return PipelineResponse.model_validate(pipeline)

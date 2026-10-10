@@ -206,3 +206,20 @@ class TestPackages:
         assert await _row(db, keep) is None
         assert (await _row(db, edited)).managed_by is None
         assert await _actions(db, keep) == ["create", "delete"]
+
+
+async def test_sending_is_active_true_resets_failures_of_a_running_pipeline(client, db: AsyncSession, admin_user):
+    name, h = f"p{_uid()}", auth_headers(admin_user)
+    await client.post("/api/v1/pipelines", json=_rest(name), headers=h)
+    row = await _row(db, name)
+    row.consecutive_failures, row.error_message = 4, "boom"
+    await db.flush()
+    r = await client.put(f"/api/v1/pipelines/{NS}/{name}", json={"is_active": True}, headers=h)
+    assert r.status_code == 200, r.text
+    row = await _row(db, name)
+    assert (row.consecutive_failures, row.error_message) == (0, None)
+    # Config re-applies leave it alone.
+    row.consecutive_failures = 2
+    await db.flush()
+    assert (await _apply(db, admin_user, pipelines=[_yaml(name, isActive=True)])).success
+    assert (await _row(db, name)).consecutive_failures == 2
