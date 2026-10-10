@@ -14,6 +14,7 @@ from app.models.llm_provider import LLMProvider
 from app.services.config_apply.normalizers import (
     normalize_collection_references,
     normalize_function_references,
+    normalize_mcp_server_references,
     normalize_skill_references,
     normalize_store_references,
     should_skip_existing,
@@ -126,6 +127,10 @@ async def apply_agents(
                 else []
             )
 
+            normalized_mcp_servers = normalize_mcp_server_references(
+                agent_config.enabledMcpServers
+            )
+
             hash_payload = {
                     "namespace": agent_config.namespace,
                     "name": agent_config.name,
@@ -189,6 +194,10 @@ async def apply_agents(
             # and an upgrade doesn't re-apply every config-managed agent at once.
             if agent_config.providerOverrides:
                 hash_payload["provider_overrides"] = agent_config.providerOverrides
+            # Same reasoning: only in the hash when set, so agents that never
+            # enabled an MCP server keep their existing hash.
+            if normalized_mcp_servers:
+                hash_payload["enabled_mcp_servers"] = normalized_mcp_servers
             config_hash = calculate_hash(hash_payload)
 
             if existing:
@@ -232,6 +241,7 @@ async def apply_agents(
                     existing.enabled_collections = normalized_collections
                     existing.enabled_components = agent_config.enabledComponents
                     existing.enabled_connectors = agent_config.enabledConnectors
+                    existing.enabled_mcp_servers = normalized_mcp_servers
                     existing.enabled_pipelines = agent_config.enabledPipelines
                     existing.input_schema = agent_config.inputSchema or {}
                     existing.output_schema = agent_config.outputSchema or {}
@@ -296,6 +306,7 @@ async def apply_agents(
                         enabled_collections=normalized_collections,
                         enabled_components=agent_config.enabledComponents,
                         enabled_connectors=agent_config.enabledConnectors,
+                        enabled_mcp_servers=normalized_mcp_servers,
                         enabled_pipelines=agent_config.enabledPipelines,
                         hooks=agent_config.hooks,
                         icon=agent_config.icon,

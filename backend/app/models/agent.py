@@ -107,6 +107,11 @@ class Agent(Base, PermissionMixin):
         JSON, nullable=False, default=list, server_default="[]"
     )  # [{"connector": "ns/name", "operations": [...], "parameters": {...}}]
 
+    # MCP server access
+    enabled_mcp_servers: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )  # [{"server": "ns/name", "tools": ["glob", ...]}]  (empty tools = every tool)
+
     # Pipeline access (pipelines with asTool exposed as tools)
     enabled_pipelines: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"

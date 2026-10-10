@@ -291,6 +291,7 @@ export interface Agent {
   enabled_collections: EnabledCollectionConfig[];
   enabled_components: string[];
   enabled_connectors: EnabledConnectorConfig[];
+  enabled_mcp_servers: EnabledMcpServerConfig[];
   enabled_pipelines: string[];
   hooks: AgentHooks | null;
   status_templates: Record<string, string>;
@@ -327,6 +328,7 @@ export interface AgentCreate {
   enabled_stores?: EnabledStoreConfig[];
   enabled_collections?: EnabledCollectionConfig[];
   enabled_connectors?: EnabledConnectorConfig[];
+  enabled_mcp_servers?: EnabledMcpServerConfig[];
   enabled_pipelines?: string[];
   hooks?: AgentHooks;
   icon?: string;
@@ -359,6 +361,7 @@ export interface AgentUpdate {
   enabled_collections?: EnabledCollectionConfig[];
   enabled_components?: string[];
   enabled_connectors?: EnabledConnectorConfig[];
+  enabled_mcp_servers?: EnabledMcpServerConfig[];
   enabled_pipelines?: string[];
   hooks?: AgentHooks;
   status_templates?: Record<string, string>;
@@ -525,6 +528,32 @@ export interface HookConfig {
 export interface AgentHooks {
   on_user_message: HookConfig[];
   on_assistant_message: HookConfig[];
+}
+
+// MCP servers
+export interface McpServer {
+  id: string;
+  namespace: string;
+  name: string;
+  description: string | null;
+  url: string;
+  transport: 'streamable_http' | 'sse' | string;
+  auth: { type: string; secret?: string; header?: string };
+  headers: Record<string, string>;
+  tool_allow: string[];
+  tool_deny: string[];
+  timeout_seconds: number;
+  connect_timeout_seconds: number;
+  is_active: boolean;
+  managed_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Enabled MCP server config for agents
+export interface EnabledMcpServerConfig {
+  server: string;  // "namespace/name"
+  tools?: string[];  // glob patterns; empty = every tool the server allows
 }
 
 // Enabled connector config for agents

@@ -32,6 +32,25 @@ async def _agent_response(agent: Agent, db: AsyncSession) -> AgentResponse:
 # Agent endpoints
 
 
+async def _check_mcp_server_bindings(db, user_id, permissions, bindings) -> None:
+    """A binding is accepted only for a server the caller can read: the chat
+    runtime applies the same check, so a binding nobody could use would only
+    produce a warning per turn — and a user must not be able to point an
+    agent at another owner's server (and credentials) by name."""
+    from app.models.mcp_server import McpServer
+
+    for binding in bindings or []:
+        ref = binding.server
+        parts = ref.split("/", 1)
+        if len(parts) != 2 or not all(parts):
+            raise HTTPException(status_code=422, detail=f"Invalid MCP server reference '{ref}'")
+        server = await McpServer.get_by_name(db, parts[0], parts[1])
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"MCP server '{ref}' not found")
+        if not server.can_user_access(str(user_id), permissions, "read"):
+            raise HTTPException(status_code=403, detail=f"Not authorized to use MCP server '{ref}'")
+
+
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     req: Request,
@@ -48,6 +67,8 @@ async def create_agent(
         set_permission_used(req, create_perm, has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to create agents")
     set_permission_used(req, create_perm)
+
+    await _check_mcp_server_bindings(db, user_id, permissions, agent_data.enabled_mcp_servers)
 
     # Check if agent name already exists in this namespace (only among active agents)
     result = await db.execute(
@@ -95,6 +116,9 @@ async def create_agent(
         enabled_collections=[c.model_dump() for c in agent_data.enabled_collections] if agent_data.enabled_collections else [],
         enabled_components=agent_data.enabled_components or [],
         enabled_connectors=agent_data.enabled_connectors or [],
+        enabled_mcp_servers=[m.model_dump() for m in agent_data.enabled_mcp_servers]
+        if agent_data.enabled_mcp_servers
+        else [],
         enabled_pipelines=agent_data.enabled_pipelines or [],
         hooks=agent_data.hooks.model_dump(by_alias=True) if agent_data.hooks else None,
         icon=agent_data.icon,
@@ -254,6 +278,9 @@ async def update_agent(
         agent.enabled_components = agent_data.enabled_components
     if agent_data.enabled_connectors is not None:
         agent.enabled_connectors = agent_data.enabled_connectors
+    if agent_data.enabled_mcp_servers is not None:
+        await _check_mcp_server_bindings(db, user_id, permissions, agent_data.enabled_mcp_servers)
+        agent.enabled_mcp_servers = [m.model_dump() for m in agent_data.enabled_mcp_servers]
     if agent_data.enabled_pipelines is not None:
         agent.enabled_pipelines = agent_data.enabled_pipelines
     if agent_data.hooks is not None:

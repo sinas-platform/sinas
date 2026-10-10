@@ -640,6 +640,36 @@ class APIClient {
     await this.configClient.delete(`/connectors/${namespace}/${name}/oauth/token`);
   }
 
+  // MCP servers
+  async listMcpServers(): Promise<any[]> {
+    const response = await this.configClient.get('/mcp-servers');
+    return response.data;
+  }
+
+  async getMcpServer(namespace: string, name: string): Promise<any> {
+    const response = await this.configClient.get(`/mcp-servers/${namespace}/${name}`);
+    return response.data;
+  }
+
+  async createMcpServer(data: any): Promise<any> {
+    const response = await this.configClient.post('/mcp-servers', data);
+    return response.data;
+  }
+
+  async updateMcpServer(namespace: string, name: string, data: any): Promise<any> {
+    const response = await this.configClient.put(`/mcp-servers/${namespace}/${name}`, data);
+    return response.data;
+  }
+
+  async deleteMcpServer(namespace: string, name: string): Promise<void> {
+    await this.configClient.delete(`/mcp-servers/${namespace}/${name}`);
+  }
+
+  async listMcpServerTools(namespace: string, name: string): Promise<any> {
+    const response = await this.configClient.post(`/mcp-servers/${namespace}/${name}/tools`);
+    return response.data;
+  }
+
   // Store management (admin CRUD)
   async listStores(params?: { namespace?: string }): Promise<any[]> {
     const response = await this.configClient.get('/stores', { params });

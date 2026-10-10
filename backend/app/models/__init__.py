@@ -14,6 +14,7 @@ from .file import Collection, ContentFilterEvaluation, File, FileVersion
 from .function import Function, FunctionVersion
 from .llm_provider import LLMProvider
 from .llm_usage import LLMUsage
+from .mcp_server import McpServer
 
 from .dependency import Dependency
 from .package import Package
@@ -78,6 +79,7 @@ __all__ = [
     "ComponentShare",
     "Connector",
     "ConnectorOAuthToken",
+    "McpServer",
     "LLMProvider",
     "LLMUsage",
     "DatabaseConnection",

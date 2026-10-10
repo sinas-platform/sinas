@@ -75,6 +75,12 @@ export function AgentDetail() {
     retry: false,
   });
 
+  const { data: mcpServers } = useQuery({
+    queryKey: ['mcp-servers'],
+    queryFn: () => apiClient.listMcpServers(),
+    retry: false,
+  });
+
   const { data: databaseConnections } = useQuery({
     queryKey: ['databaseConnections'],
     queryFn: () => apiClient.listDatabaseConnections(),
@@ -88,9 +94,12 @@ export function AgentDetail() {
     retry: false,
   });
 
-  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'pipelines' | 'hooks' | 'status' | 'platform'>('assistants');
+  const [toolsTab, setToolsTab] = useState<'assistants' | 'skills' | 'functions' | 'queries' | 'states' | 'collections' | 'components' | 'connectors' | 'mcp' | 'pipelines' | 'hooks' | 'status' | 'platform'>('assistants');
   const [expandedFunctionParams, setExpandedFunctionParams] = useState<Set<string>>(new Set());
   const [expandedConnectorParams, setExpandedConnectorParams] = useState<Set<string>>(new Set());
+  // Raw text of an MCP tool-pattern input while it is being edited; split
+  // into patterns on blur (splitting on every keystroke ate the separators).
+  const [mcpPatternDrafts, setMcpPatternDrafts] = useState<Record<string, string>>({});
   const [iconMode, setIconMode] = useState<'collection' | 'url'>('collection');
   const [iconCollectionNs, setIconCollectionNs] = useState('');
   const [iconCollectionName, setIconCollectionName] = useState('');
@@ -123,6 +132,7 @@ export function AgentDetail() {
         enabled_collections: agent.enabled_collections || [],
         enabled_components: agent.enabled_components || [],
         enabled_connectors: agent.enabled_connectors || [],
+        enabled_mcp_servers: agent.enabled_mcp_servers || [],
         enabled_pipelines: agent.enabled_pipelines || [],
         hooks: agent.hooks || { on_user_message: [], on_assistant_message: [] },
         status_templates: agent.status_templates || {},
@@ -820,6 +830,17 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             </button>
             <button
               type="button"
+              onClick={() => setToolsTab('mcp')}
+              className={`px-4 py-2 text-sm font-medium transition-colors ${
+                toolsTab === 'mcp'
+                  ? 'text-primary-600 border-b-2 border-primary-600'
+                  : 'text-gray-400 hover:text-gray-100'
+              }`}
+            >
+              MCP
+            </button>
+            <button
+              type="button"
               onClick={() => setToolsTab('pipelines')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
                 toolsTab === 'pipelines'
@@ -1391,6 +1412,73 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
             )}
 
             {/* Pipelines Tab */}
+            {/* MCP Servers Tab */}
+            {toolsTab === 'mcp' && (
+              <div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Enable MCP servers as tool sources. The server's tools are discovered at chat time
+                  (named <code className="text-xs bg-surface-1 px-1 rounded">mcp_&lt;namespace&gt;__&lt;server&gt;__&lt;tool&gt;</code>),
+                  so approval rules can gate them by name. Optionally narrow to tool name patterns.
+                </p>
+                {mcpServers && mcpServers.length > 0 ? (
+                  <div className="space-y-3">
+                    {mcpServers.filter((s: any) => s.is_active).map((server: any) => {
+                      const ref = `${server.namespace}/${server.name}`;
+                      const enabled: any[] = formData.enabled_mcp_servers || agent.enabled_mcp_servers || [];
+                      const entry = enabled.find((e: any) => e.server === ref);
+                      return (
+                        <div key={ref} className="border border-line-soft rounded-lg p-3">
+                          <label className="flex items-start cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!!entry}
+                              onChange={(e) => {
+                                const updated = e.target.checked
+                                  ? [...enabled, { server: ref, tools: [] }]
+                                  : enabled.filter((x: any) => x.server !== ref);
+                                setFormData({ ...formData, enabled_mcp_servers: updated });
+                              }}
+                              className="mt-1 w-4 h-4 text-primary-600 border-line rounded focus:ring-primary-500"
+                            />
+                            <div className="ml-3 flex-1">
+                              <span className="text-sm font-medium text-gray-100 font-mono">{ref}</span>
+                              <span className="text-xs text-gray-500 ml-2">{server.url}</span>
+                              {server.description && (
+                                <p className="text-xs text-gray-500 mt-0.5">{server.description}</p>
+                              )}
+                            </div>
+                          </label>
+                          {entry && (
+                            <div className="mt-3 ml-7">
+                              <label className="text-xs text-gray-500">Tool patterns (comma-separated globs; empty = all)</label>
+                              <input
+                                type="text"
+                                value={mcpPatternDrafts[ref] ?? (entry.tools || []).join(', ')}
+                                onChange={(e) => setMcpPatternDrafts({ ...mcpPatternDrafts, [ref]: e.target.value })}
+                                onBlur={(e) => {
+                                  const tools = e.target.value.split(',').map((t: string) => t.trim()).filter(Boolean);
+                                  const updated = enabled.map((x: any) => (x.server === ref ? { ...x, tools } : x));
+                                  setFormData({ ...formData, enabled_mcp_servers: updated });
+                                  const { [ref]: _draft, ...rest } = mcpPatternDrafts;
+                                  setMcpPatternDrafts(rest);
+                                }}
+                                placeholder="search_*, get_*"
+                                className="input w-full font-mono text-sm mt-1"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-surface-0 rounded-lg p-3 border border-line-soft">
+                    <p className="text-sm text-gray-500">No MCP servers available. Register one under Configure → MCP Servers first.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {toolsTab === 'pipelines' && (
               <div>
                 <p className="text-xs text-gray-500 mb-3">
@@ -1884,6 +1972,11 @@ for chunk in client.chats.stream(chat["id"], "Hello"):
                 (entry.operations || []).forEach((opName: string) => {
                   enabledTools.push({ key: `connector:${connRef}/${opName}`, label: `${connRef}/${opName}`, type: 'Connector' });
                 });
+              });
+              // MCP servers (tools are discovered at chat time; one entry per server)
+              (formData.enabled_mcp_servers || agent.enabled_mcp_servers || []).forEach((entry: any) => {
+                const ref = entry.server || '';
+                enabledTools.push({ key: `mcp:${ref}/*`, label: `${ref} (all tools)`, type: 'MCP' });
               });
 
               return (

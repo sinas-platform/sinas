@@ -12,6 +12,7 @@ from app.core.encryption import encryption_service
 from app.models.agent import Agent
 from app.models.component import Component
 from app.models.connector import Connector
+from app.models.mcp_server import McpServer
 from app.models.dependency import Dependency
 from app.models.file import Collection
 from app.models.function import Function
@@ -35,6 +36,7 @@ from app.services.resource_serializers import (
     serialize_collection,
     serialize_component,
     serialize_connector,
+    serialize_mcp_server,
     serialize_database_trigger,
     serialize_function,
     serialize_manifest,
@@ -76,6 +78,7 @@ class ConfigExportService:
         config_dict["spec"]["dependencies"] = await self._export_dependencies()
         config_dict["spec"]["secrets"] = await self._export_secrets()
         config_dict["spec"]["connectors"] = await self._export_connectors()
+        config_dict["spec"]["mcpServers"] = await self._export_mcp_servers()
         config_dict["spec"]["collections"] = await self._export_collections()
         config_dict["spec"]["queries"] = await self._export_queries()
         config_dict["spec"]["functions"] = await self._export_functions()
@@ -243,6 +246,14 @@ class ConfigExportService:
             stmt = stmt.where(Connector.managed_by == self.managed_by)
         result = await self.db.execute(stmt)
         return [serialize_connector(c) for c in result.scalars().all()]
+
+    async def _export_mcp_servers(self) -> list[dict]:
+        """Export MCP servers, disabled ones included (as isActive: false)."""
+        stmt = select(McpServer).order_by(McpServer.namespace, McpServer.name)
+        if self.managed_only:
+            stmt = stmt.where(McpServer.managed_by == self.managed_by)
+        result = await self.db.execute(stmt)
+        return [serialize_mcp_server(s) for s in result.scalars().all()]
 
     async def _export_pipelines(self) -> list[dict]:
         """Export pipelines (cursor/failure state is runtime, not exported)."""

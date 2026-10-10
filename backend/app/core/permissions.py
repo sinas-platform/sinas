@@ -311,6 +311,11 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.connectors/*/*.read:own": True,
         "sinas.connectors/*/*.update:own": True,
         "sinas.connectors/*/*.delete:own": True,
+        # MCP servers (namespaced)
+        "sinas.mcp_servers/*/*.create:own": True,
+        "sinas.mcp_servers/*/*.read:own": True,
+        "sinas.mcp_servers/*/*.update:own": True,
+        "sinas.mcp_servers/*/*.delete:own": True,
         # Pipelines (namespaced) — read + run for users; create/update stay
         # admin-granted (conservative default, matching queries).
         "sinas.pipelines/*/*.read:own": True,

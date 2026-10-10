@@ -62,6 +62,26 @@ def normalize_skill_references(skills: list[Any]) -> list[dict[str, Any]]:
     return normalized
 
 
+def normalize_mcp_server_references(servers: list[Any]) -> list[dict[str, Any]]:
+    """Normalize enabled MCP server references to {"server", "tools"} dicts.
+
+    Accepts the string form "namespace/name" (every tool the server allows)
+    and the dict form {"server": ..., "tools": [...]}; stored sorted by
+    server so the agent's config hash is order-independent.
+    """
+    normalized: list[dict[str, Any]] = []
+    for item in servers or []:
+        if isinstance(item, str):
+            normalized.append({"server": item, "tools": []})
+            continue
+        data = item if isinstance(item, dict) else item.model_dump()
+        normalized.append({
+            "server": data.get("server", ""),
+            "tools": sorted(data.get("tools") or []),
+        })
+    return sorted(normalized, key=lambda x: x["server"])
+
+
 def normalize_store_references(store_refs: list) -> list[dict]:
     """Normalize store references to dict format."""
     normalized = []

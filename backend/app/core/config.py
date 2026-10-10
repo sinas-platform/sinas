@@ -361,6 +361,14 @@ class Settings(BaseSettings):
     tool_approval_timeout_seconds: int = 0
     agent_delegate_suspend_timeout_seconds: int = 0
 
+    # MCP servers (see ADR 2026-10-09-mcp-client). A server's tool list is
+    # cached in-process so a chat turn doesn't re-handshake with every
+    # enabled server; a failed listing is cached for a shorter time so a dead
+    # server degrades to "no tools" without being retried on every message.
+    # 0 disables that cache.
+    mcp_tool_list_ttl_seconds: int = 60
+    mcp_tool_list_failure_ttl_seconds: int = 15
+
     # Encryption
     encryption_key: Optional[str] = None  # Fernet key for encrypting sensitive data
 

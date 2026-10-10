@@ -121,6 +121,13 @@ def serialize_connector(conn) -> dict:
     return ConnectorApplier().spec_from_row(conn).to_config()
 
 
+def serialize_mcp_server(server) -> dict:
+    """Config form of an MCP server — delegated to its spec."""
+    from app.services.resources.mcp_servers import McpServerApplier
+
+    return McpServerApplier().spec_from_row(server).to_config()
+
+
 # ─────────────────────────────────────────────────────────────
 # Serializers that need resolved foreign keys (provider name,
 # connection name). Caller passes the resolved name.
@@ -150,6 +157,7 @@ def serialize_agent(agent, provider_name: Optional[str] = None) -> dict:
         "enabledCollections": agent.enabled_collections or None,
         "enabledComponents": agent.enabled_components or None,
         "enabledConnectors": agent.enabled_connectors or None,
+        "enabledMcpServers": getattr(agent, "enabled_mcp_servers", None) or None,
         "enabledPipelines": agent.enabled_pipelines or None,
         "hooks": agent.hooks or None,
         "icon": agent.icon,

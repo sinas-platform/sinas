@@ -183,6 +183,18 @@ class EnabledSkillConfigYaml(BaseModel):
     )
 
 
+class EnabledMcpServerConfigYaml(BaseModel):
+    """Configuration for an enabled MCP server in agent config"""
+
+    model_config = {"extra": "forbid"}
+
+    server: str = Field(..., description="MCP server identifier in format 'namespace/name'")
+    tools: list[str] = Field(
+        default_factory=list,
+        description="Glob patterns on the server's tool names; empty = every tool the server allows",
+    )
+
+
 class AgentConfig(BaseModel):
     """Agent configuration"""
 
@@ -215,6 +227,9 @@ class AgentConfig(BaseModel):
     enabledCollections: list[Union[str, EnabledCollectionConfigYaml]] = Field(default_factory=list)
     enabledComponents: list[str] = Field(default_factory=list)  # List of "namespace/name" component refs
     enabledConnectors: list[dict[str, Any]] = Field(default_factory=list)  # [{"connector": "ns/name", "operations": [...]}]
+    enabledMcpServers: list[Union[str, EnabledMcpServerConfigYaml]] = Field(
+        default_factory=list
+    )  # "ns/name" or {"server": "ns/name", "tools": [...]}
     enabledPipelines: list[str] = Field(default_factory=list)  # List of "namespace/name" pipeline refs (asTool)
     inputSchema: Optional[dict[str, Any]] = None
     outputSchema: Optional[dict[str, Any]] = None
@@ -512,6 +527,37 @@ class ConnectorConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
+class McpServerAuthConfig(BaseModel):
+    """MCP server auth configuration"""
+
+    model_config = {"extra": "forbid"}
+
+    type: str = "none"
+    secret: Optional[str] = None
+    header: Optional[str] = None
+
+
+class McpServerConfig(BaseModel):
+    """MCP server configuration (see ADR 2026-10-09-mcp-client)"""
+
+    # A misspelt key (toolDney:) must fail the apply, not silently drop a filter.
+    model_config = {"extra": "forbid"}
+
+    namespace: str = "default"
+    name: str
+    description: Optional[str] = None
+    url: str
+    transport: str = "streamable_http"
+    auth: McpServerAuthConfig = Field(default_factory=McpServerAuthConfig)
+    headers: dict[str, str] = Field(default_factory=dict)
+    toolAllow: list[str] = Field(default_factory=list)
+    toolDeny: list[str] = Field(default_factory=list)
+    timeoutSeconds: int = 60
+    connectTimeoutSeconds: int = 10
+    # Unset: a new server is active, an existing one keeps its state.
+    isActive: Optional[bool] = None
+
+
 class PipelineConfig(BaseModel):
     """Pipeline configuration (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
 
@@ -592,6 +638,7 @@ class ConfigSpec(BaseModel):
     dependencies: list[DependencyConfig] = Field(default_factory=list)
     secrets: list[SecretConfig] = Field(default_factory=list)
     connectors: list[ConnectorConfig] = Field(default_factory=list)
+    mcpServers: list[McpServerConfig] = Field(default_factory=list)
 
     skills: list[SkillConfig] = Field(default_factory=list)
     components: list[ComponentConfig] = Field(default_factory=list)

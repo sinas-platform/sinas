@@ -99,6 +99,12 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "namespaced": True,
     },
     {
+        "resource": "mcp_servers",
+        "description": "MCP (Model Context Protocol) servers",
+        "actions": ["create", "read", "update", "delete"],
+        "namespaced": True,
+    },
+    {
         "resource": "secrets",
         "description": "Encrypted secrets",
         "actions": ["create", "read", "update", "delete"],

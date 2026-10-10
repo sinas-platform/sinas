@@ -53,6 +53,11 @@ dependencies = [
     "opentelemetry-api>=1.25.0",
     "opentelemetry-sdk>=1.25.0",
     "opentelemetry-exporter-otlp-proto-http>=1.25.0",
+    # Model Context Protocol client (agents calling tools on remote MCP
+    # servers). Bounded to the 2.x line we code against: the 1.x → 2.0 move
+    # replaced the client API (mcp.Client, transports as context managers),
+    # so an unbounded range would let an image resolve a breaking major.
+    "mcp>=2.2.0,<3",
 ]
 
 [project.optional-dependencies]
