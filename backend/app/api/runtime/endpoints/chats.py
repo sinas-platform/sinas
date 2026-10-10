@@ -771,8 +771,31 @@ async def approve_tool_call(
     if not pending_approval:
         raise HTTPException(404, "Pending approval not found or already processed")
 
-    # Update approval status
-    pending_approval.approved = request.approved
+    # Resolve it only while it is still undecided and not past its deadline:
+    # the expiry sweep resolves it the same conditional way, so exactly one of
+    # the two wins (an expired approval can never be approved afterwards).
+    from datetime import datetime, timezone
+
+    from sqlalchemy import or_, update
+
+    resolved = (
+        await db.execute(
+            update(PendingToolApproval)
+            .where(
+                PendingToolApproval.id == pending_approval.id,
+                PendingToolApproval.approved.is_(None),
+                or_(
+                    PendingToolApproval.expires_at.is_(None),
+                    PendingToolApproval.expires_at > datetime.now(timezone.utc),
+                ),
+            )
+            .values(approved=request.approved)
+            .returning(PendingToolApproval.id)
+        )
+    ).scalar_one_or_none()
+    if resolved is None:
+        await db.rollback()
+        raise HTTPException(409, "This approval was already resolved or has expired")
     await db.commit()
 
     # "Always allow": remember the user's decision for this chat so the
@@ -899,18 +922,28 @@ async def answer_pending_input(
         raise HTTPException(409, "Pending input was already resolved")
 
     resumed = outcome.get("resumed", False)
+    pending = outcome.get("resume_pending", False)
+    # The channel the conversation actually resumes on (a delegated child
+    # keeps its original one, which its parent is waiting on).
+    channel_id = outcome.get("channel_id") or channel_id
+    if resumed:
+        message = f"Resume job enqueued. Connect to /chats/{chat_id}/stream/{channel_id} for results."
+    elif pending:
+        message = (
+            "Answer recorded, but the resume could not be queued yet; it is retried "
+            f"within a minute or two on /chats/{chat_id}/stream/{channel_id}."
+        )
+    else:
+        message = "Answer recorded; the conversation resumes when its remaining completions land."
     return JSONResponse(
         status_code=202,
         content={
             "status": "answered",
             "tool_call_id": tool_call_id,
             "resumed": resumed,
-            "channel_id": outcome.get("channel_id") if resumed else None,
-            "message": (
-                f"Resume job enqueued. Connect to /chats/{chat_id}/stream/{channel_id} for results."
-                if resumed
-                else "Answer recorded; the conversation resumes when its remaining completions land."
-            ),
+            "resume_pending": pending,
+            "channel_id": channel_id if (resumed or pending) else None,
+            "message": message,
         },
     )
 

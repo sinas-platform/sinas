@@ -13,7 +13,7 @@ result content is when the entry times out. The core is completer-agnostic:
 `complete()` persists the tool result, decrements the outstanding count,
 and — on the last completion — enqueues the round-resume job
 (`execute_agent_delegate_resume_job`, which re-enters
-`MessageService._stream_followup_after_tools` under the chat lock).
+`MessageService._stream_followup_after_tools`).
 
 Kinds today:
 - ``sub_agent``  — suspend-on-delegate (issue #90); completed by the child
@@ -25,11 +25,14 @@ Invariants the resume path must keep (verified by tests):
 - every tool_call in the suspended assistant message ends up with a tool
   result row before the round resumes — completions and timeouts both write
   the result *first*, in the same transaction that decrements the count;
-- the resume job holds the per-chat lock and checks the cooperative
-  interrupt (it re-enters the same follow-up path as an inline round).
+- the checkpoint outlives the resume enqueue: it is deleted only once the
+  resume job is queued (under an idempotent job id), so a failed enqueue is
+  retried by the expiry sweep instead of stranding the round.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import json
 import logging
@@ -40,6 +43,11 @@ from typing import Any, Callable, Optional
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
+
+# Enqueueing a finished round's resume: tries while the completing caller's
+# token is at hand, before leaving it to the expiry sweep.
+_ENQUEUE_ATTEMPTS = 3
+_ENQUEUE_BACKOFF_SECONDS = 0.5
 
 # Stream event type announcing any suspension (superset of the older
 # delegation_pending event, which is still emitted for delegation rounds).
@@ -200,7 +208,8 @@ async def complete(
     Writes the result as the parent's tool-role Message row (the source the
     follow-up LLM turn is rebuilt from) in the same transaction that
     decrements the outstanding count, then — on the last completion —
-    deletes the checkpoint and enqueues the resume job. Concurrency-safe via
+    enqueues the resume job (idempotent job id), deleting the checkpoint only
+    once it is queued; if queueing fails, the expiry sweep retries it. Concurrency-safe via
     SELECT ... FOR UPDATE on the checkpoint row; a completion for an entry
     that is no longer pending (double delivery, already expired) is a no-op.
 
@@ -215,7 +224,6 @@ async def complete(
     from app.core.database import AsyncSessionLocal
     from app.models.chat import Message
     from app.models.pending_completion import PendingCompletion
-    from app.services.queue_service import queue_service
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -270,8 +278,25 @@ async def complete(
         is_last = row.remaining <= 0
         ctx = row.conversation_context
         chat_id, user_id, channel_id = str(row.chat_id), str(row.user_id), row.channel_id
+        row_id = str(row.id)
+        resume_channel = None
         if is_last:
-            await db.delete(row)
+            # A delegated child in "block" mode has its parent waiting on the
+            # child's ORIGINAL channel for the reply and `done`: resume there,
+            # whatever fresh channel the completing caller offered (the answer
+            # API returns the channel actually used). A "suspend"-mode child
+            # reports to its parent's checkpoint instead, so a fresh channel
+            # is fine.
+            blocking_parent = (ctx or {}).get("delegation_depth", 0) > 0 and not (
+                ctx or {}
+            ).get("parent_pending_delegation_id")
+            resume_channel = (
+                channel_id if blocking_parent else (resume_channel_id or channel_id)
+            )
+            # The checkpoint stays (nothing left pending) until the resume is
+            # queued: if queueing fails, the expiry sweep retries it — an
+            # answer is never stranded with no continuation.
+            row.channel_id = resume_channel
         await db.commit()
 
     # Progressive UX: close this tool call on the suspended round's stream
@@ -294,25 +319,66 @@ async def complete(
     if not is_last:
         return {"status": "completed", "resumed": False}
 
-    resume_channel = resume_channel_id or channel_id
-    # A fresh resume channel serves the API caller's reconnect; the suspended
-    # round's ORIGINAL channel may still have a listener — a parent agent
-    # blocking on a delegated child (block mode waits for `done` on the
-    # channel it opened). Mirror the resumed stream there so it never
-    # misses the child's answer and times out.
-    mirror_channel = channel_id if resume_channel != channel_id else None
-    await queue_service.enqueue_agent_delegate_resume(
-        chat_id=chat_id,
-        user_id=user_id,
-        user_token=user_token,
-        channel_id=resume_channel,
-        conversation_context=ctx,
-        mirror_channel_id=mirror_channel,
-    )
-    logger.info(
-        "All pending completions landed for chat %s — resume job enqueued", chat_id
-    )
-    return {"status": "completed", "resumed": True, "channel_id": resume_channel}
+    # A few quick tries while this caller's token is still at hand: the
+    # sweep's retry has none (like an expiry), so tools needing the user's
+    # token fail in a round it resumes.
+    for attempt in range(_ENQUEUE_ATTEMPTS):
+        if attempt:
+            await asyncio.sleep(_ENQUEUE_BACKOFF_SECONDS * attempt)
+        if await _enqueue_resume(row_id, chat_id, user_id, user_token, resume_channel, ctx):
+            logger.info(
+                "All pending completions landed for chat %s — resume job enqueued", chat_id
+            )
+            return {"status": "completed", "resumed": True, "channel_id": resume_channel}
+    # Not queued yet: the expiry sweep retries it, on the same channel.
+    return {
+        "status": "completed",
+        "resumed": False,
+        "resume_pending": True,
+        "channel_id": resume_channel,
+    }
+
+
+async def _enqueue_resume(
+    row_id: str, chat_id: str, user_id: str, user_token: str, channel_id: str, ctx
+) -> bool:
+    """Queue the continuation of a fully completed checkpoint, then drop the
+    checkpoint. Idempotent: the job id is derived from the checkpoint, so a
+    retry (expiry sweep) or a racing second attempt can't queue it twice.
+    On failure the checkpoint stays for the sweep to retry; returns False."""
+    from app.core.auth import bind_api_key, current_api_key_id, reset_api_key
+    from app.core.database import AsyncSessionLocal
+    from app.models.pending_completion import PendingCompletion
+    from app.services.queue_service import queue_service
+
+    # The resumed run acts through the key the round ran under — including
+    # "none" (a stored None) — not through whoever completed it. Only
+    # checkpoints from before the key was recorded fall back to the caller's.
+    stored = (ctx or {})
+    key_token = bind_api_key(stored["api_key_id"] if "api_key_id" in stored else current_api_key_id())
+    try:
+        await queue_service.enqueue_agent_delegate_resume(
+            chat_id=chat_id,
+            user_id=user_id,
+            user_token=user_token,
+            channel_id=channel_id,
+            conversation_context=ctx,
+            job_id=f"resume-{row_id}",
+        )
+    except Exception:
+        logger.exception(
+            "Could not queue the continuation of checkpoint %s; the sweep will retry", row_id
+        )
+        return False
+    finally:
+        reset_api_key(key_token)
+
+    async with AsyncSessionLocal() as db:
+        row = await db.get(PendingCompletion, row_id)
+        if row is not None and row.remaining <= 0:
+            await db.delete(row)
+            await db.commit()
+    return True
 
 
 async def list_pending_inputs(db, chat_id: str) -> list[dict[str, Any]]:
@@ -403,6 +469,21 @@ async def expire_due(now: Optional[datetime] = None) -> int:
                 entry_kind(entry),
                 row_id,
             )
+
+    # Checkpoints whose every completion landed but whose continuation could
+    # not be queued (queue down at the time): queue it now.
+    async with AsyncSessionLocal() as db:
+        stranded = (
+            await db.execute(select(PendingCompletion).where(PendingCompletion.remaining <= 0))
+        ).scalars().all()
+        stranded = [
+            (str(r.id), str(r.chat_id), str(r.user_id), r.channel_id, r.conversation_context)
+            for r in stranded
+        ]
+    for row_id, chat_id, user_id, channel_id, ctx in stranded:
+        if await _enqueue_resume(row_id, chat_id, user_id, "", channel_id, ctx):
+            resolved += 1
+            logger.info("Queued the stranded continuation of checkpoint %s", row_id)
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(

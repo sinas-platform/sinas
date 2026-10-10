@@ -11,14 +11,14 @@ sweep; NULL (all existing rows) means "never expires", exactly the prior
 behavior.
 
 Revision ID: d1f2c3m4p5l6
-Revises: t1a2p3r4v5l6
+Revises: s1h2a3r4e5m6
 Create Date: 2026-09-02
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "d1f2c3m4p5l6"
-down_revision = "t1a2p3r4v5l6"
+down_revision = "s1h2a3r4e5m6"
 branch_labels = None
 depends_on = None
 

@@ -60,7 +60,11 @@ class Collection(Base, PermissionMixin):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="collections")
-    files: Mapped[list["File"]] = relationship("File", back_populates="collection", cascade="all, delete-orphan")
+    # passive_deletes: the database cascades files and their versions, so
+    # deleting a collection doesn't load every file first.
+    files: Mapped[list["File"]] = relationship(
+        "File", back_populates="collection", cascade="all, delete-orphan", passive_deletes=True
+    )
 
     __table_args__ = (
         UniqueConstraint("namespace", "name", name="uq_collection_namespace_name"),

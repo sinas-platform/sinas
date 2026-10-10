@@ -21,6 +21,32 @@ class BaseLLMProvider(ABC):
         """
         self.api_key = api_key
         self.base_url = base_url
+        # Whether calls carry the current W3C trace context and baggage
+        # (`traceparent`, `baggage`) to the model API. Off by default: the
+        # baggage says whom a request is for, which a public model API has no
+        # use for; on for a gateway that records it, such as a LiteLLM proxy.
+        # Set from the provider's config (`propagate_context`).
+        self.propagate_context = False
+
+    def _context_headers(self) -> dict[str, str]:
+        """The headers that carry the current trace context, when enabled."""
+        if not self.propagate_context:
+            return {}
+        from app.core.telemetry import inject_trace_context
+
+        return inject_trace_context()
+
+    def _add_context_headers(self, call_kwargs: dict[str, Any]) -> None:
+        """Add the current trace context to an SDK call's `extra_headers`, in
+        place, when enabled.
+
+        For the keyword arguments of the call that sends a request, never for
+        a request body: the context travels as HTTP headers, and a body that
+        is sent as data (a batch item) would carry it as an unknown field.
+        """
+        headers = self._context_headers()
+        if headers:
+            call_kwargs["extra_headers"] = {**(call_kwargs.get("extra_headers") or {}), **headers}
 
     @abstractmethod
     async def complete(

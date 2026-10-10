@@ -59,9 +59,15 @@ the round resumes when the last completion lands. Concretely:
   resume job. The resume job is the existing
   `execute_agent_delegate_resume_job` — unchanged queue contract, now
   understood as the generic *round resume*: it re-enters
-  `_stream_followup_after_tools`, holds the per-chat lock
-  (`acquire_chat_lock_wait`), and hits the cooperative-interrupt check at
-  the round boundary like any inline round.
+  `_stream_followup_after_tools` like any inline round. The checkpoint is
+  deleted only once that job is queued (job id `resume-<checkpoint id>`, so
+  a retry can't queue it twice); if queueing fails, `complete()` retries a
+  few times while the completing caller's token is still at hand, reports
+  `resume_pending`, and leaves the row for the expiry sweep, which retries
+  rows with nothing left outstanding. A sweep retry, like an expiry, has no
+  user token (see below). This branch has no per-chat
+  lock or cooperative interrupt; when those land, the resume path should
+  take the lock and check the interrupt like an inline round does.
 - **Completers shipped:**
   - `sub_agent` — the existing suspend-on-delegate flow.
     `delegation.suspend_delegations` / `on_child_complete` are now thin
@@ -146,8 +152,8 @@ consumers that predate the unification). Agent jobs treat any
   tokens in the checkpoint would be worse (long-lived credentials at
   rest, and likely expired by the time a 24h deadline fires). A
   service-token or token-refresh story would fix this properly.
-- **User messages during suspension.** The chat lock is free while a
-  round is suspended, so a new user turn can start; the rebuilt history
+- **User messages during suspension.** Nothing stops a new user turn
+  while a round is suspended; the rebuilt history
   repairs the dangling `tool_calls` in-memory
   (`conversation_history` orphan repair), but a completion landing
   *after* that turn appends its tool result out of adjacency order.

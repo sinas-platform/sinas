@@ -12,7 +12,7 @@ from opentelemetry import trace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import get_user_permissions
+from app.core.auth import get_effective_permissions
 from app.core.permissions import check_permission
 from app.core.database import AsyncSessionLocal
 from app.models import Agent, Chat, Message
@@ -543,7 +543,7 @@ async def prepare_agent_delegation(
         return {"error": depth_error}
 
     # Check user has permission to use this sub-agent
-    user_permissions = await get_user_permissions(db, user_id)
+    user_permissions = await get_effective_permissions(db, user_id)
     agent_perm = f"sinas.agents/{agent.namespace}/{agent.name}.chat:all"
     if not check_permission(user_permissions, agent_perm):
         return {
@@ -851,7 +851,7 @@ async def execute_single_tool(
                     tool_name=tool_name,
                     arguments=arguments,
                     user_id=user_id,
-                    permissions=await get_user_permissions(db, user_id),
+                    permissions=await get_effective_permissions(db, user_id),
                     agent=chat_agent,
                 )
                 logger.debug(f"Artifact tool completed in {time.time() - start_time:.3f}s: {tool_name}")
@@ -867,7 +867,7 @@ async def execute_single_tool(
                     if chat_agent:
                         agent_system_tools = chat_agent.system_tools or []
 
-                user_permissions = await get_user_permissions(db, user_id)
+                user_permissions = await get_effective_permissions(db, user_id)
 
                 result = await execute_package_tool(
                     db=db,
