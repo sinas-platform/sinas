@@ -137,6 +137,17 @@ curl -X POST https://yourdomain.com/agents/support/helper/invoke \
 4. If tools are called, Sinas executes them (in parallel where possible) and sends results back to the LLM for a follow-up response
 5. The final response is streamed to the client via Server-Sent Events
 
+**Thinking while it streams.** Reasoning models can think for several seconds before their first word. When the model sends its thinking, a `message` event carries it in a `thinking` field instead of `content`. Show it, or show that the model is working. The OpenAI-compatible endpoints send the same text as `delta.reasoning_content`. Where it comes from:
+
+- **Anthropic:** an empty `thinking` the moment the model starts thinking, then the text when the model shows it.
+- **OpenAI-compatible servers** that send `reasoning_content` or `reasoning`, such as DeepSeek, vLLM, OpenRouter and Groq.
+- **Mistral** reasoning models (Magistral).
+- **Ollama** thinking models.
+
+OpenAI's own API doesn't stream reasoning. Thinking is never saved with the message.
+
+To spend less time thinking, lower it per agent: `provider_overrides: {"effort": "low"}` on Anthropic models.
+
 **Ephemeral chats** can be created with a TTL by passing `expires_in` (seconds) when creating the chat. Expired chats are automatically hard-deleted (with all messages) by a scheduled cleanup job:
 
 ```bash

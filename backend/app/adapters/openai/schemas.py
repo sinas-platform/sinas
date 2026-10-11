@@ -67,6 +67,9 @@ class ChatCompletionResponse(BaseModel):
 class DeltaContent(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
+    # The model's thinking, as it streams (the common `reasoning_content`
+    # extension; clients that don't know it ignore it).
+    reasoning_content: Optional[str] = None
 
 
 class StreamChoice(BaseModel):

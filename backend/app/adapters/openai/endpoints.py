@@ -224,6 +224,15 @@ async def _agent_stream(
             user_token=user_token,
             content=content,
         ):
+            thinking = chunk.get("thinking")
+            if thinking:
+                data_chunk = ChatCompletionChunk(
+                    id=chunk_id,
+                    created=created,
+                    model=model_name,
+                    choices=[StreamChoice(delta=DeltaContent(reasoning_content=thinking))],
+                )
+                yield f"data: {data_chunk.model_dump_json()}\n\n"
             text = chunk.get("content", "")
             if text:
                 data_chunk = ChatCompletionChunk(
@@ -336,6 +345,15 @@ async def _passthrough_stream(
             model=model_name,
             **kwargs,
         ):
+            thinking = chunk.get("thinking")
+            if thinking:
+                data_chunk = ChatCompletionChunk(
+                    id=chunk_id,
+                    created=created,
+                    model=model_name,
+                    choices=[StreamChoice(delta=DeltaContent(reasoning_content=thinking))],
+                )
+                yield f"data: {data_chunk.model_dump_json()}\n\n"
             text = chunk.get("content", "")
             if text:
                 data_chunk = ChatCompletionChunk(

@@ -125,6 +125,11 @@ class OllamaProvider(BaseLLMProvider):
                             "finish_reason": "stop" if done else None,
                         }
 
+                        # Thinking models (with thinking on) send it apart
+                        # from the answer.
+                        if message.get("thinking"):
+                            result["thinking"] = message["thinking"]
+
                         if done:
                             # Final chunk carries prompt_eval_count/eval_count
                             result["usage"] = self.extract_usage(data)

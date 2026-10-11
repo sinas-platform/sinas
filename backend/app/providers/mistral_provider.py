@@ -4,7 +4,32 @@ from typing import Any, Optional
 
 from openai import AsyncOpenAI
 
-from .base import BaseLLMProvider
+from .base import BaseLLMProvider, reasoning_text
+
+
+def _split_content(content: Any) -> tuple[Optional[str], Optional[str]]:
+    """(text, thinking) from a delta's content.
+
+    Usually a string. Mistral's reasoning models (Magistral) send a list of
+    chunks instead, the thinking as `{"type": "thinking", "thinking": [...]}`
+    and the answer as `{"type": "text", "text": ...}`.
+    """
+    if not content:
+        return None, None
+    if isinstance(content, str):
+        return content, None
+    text, thinking = [], []
+    for part in content if isinstance(content, list) else []:
+        part = part if isinstance(part, dict) else getattr(part, "model_dump", lambda: {})()
+        if part.get("type") == "text" and isinstance(part.get("text"), str):
+            text.append(part["text"])
+        elif part.get("type") == "thinking":
+            inner = part.get("thinking")
+            for item in inner if isinstance(inner, list) else [inner]:
+                value = item.get("text") if isinstance(item, dict) else item
+                if isinstance(value, str):
+                    thinking.append(value)
+    return "".join(text) or None, "".join(thinking) or None
 
 
 class MistralProvider(BaseLLMProvider):
@@ -118,12 +143,17 @@ class MistralProvider(BaseLLMProvider):
                 continue
 
             delta = chunk.choices[0].delta
+            text, thinking = _split_content(delta.content)
 
             chunk_data = {
-                "content": delta.content if delta.content else None,
+                "content": text,
                 "tool_calls": None,
                 "finish_reason": chunk.choices[0].finish_reason,
             }
+
+            thinking = thinking or reasoning_text(delta)
+            if thinking:
+                chunk_data["thinking"] = thinking
 
             if usage:
                 chunk_data["usage"] = usage

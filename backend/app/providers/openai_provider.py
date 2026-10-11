@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from openai import AsyncOpenAI
 
-from .base import BaseLLMProvider
+from .base import BaseLLMProvider, reasoning_text
 
 
 class OpenAIProvider(BaseLLMProvider):
@@ -136,6 +136,10 @@ class OpenAIProvider(BaseLLMProvider):
                 "tool_calls": None,
                 "finish_reason": chunk.choices[0].finish_reason,
             }
+
+            thinking = reasoning_text(delta)
+            if thinking:
+                result["thinking"] = thinking
 
             if usage:
                 result["usage"] = usage

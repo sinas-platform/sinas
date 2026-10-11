@@ -4,6 +4,20 @@ from collections.abc import AsyncIterator
 from typing import Any, Optional
 
 
+def reasoning_text(delta: Any) -> Optional[str]:
+    """The thinking in an OpenAI-style stream delta, if the server sends it.
+
+    OpenAI's own API never streams reasoning, but most OpenAI-compatible
+    servers do, as an extra field: `reasoning_content` (DeepSeek, vLLM,
+    LM Studio, Gemini) or `reasoning` (OpenRouter, Groq, Ollama's /v1).
+    """
+    for field in ("reasoning_content", "reasoning"):
+        value = delta.get(field) if isinstance(delta, dict) else getattr(delta, field, None)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 class BaseLLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
