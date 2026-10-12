@@ -225,7 +225,8 @@ async def _agent_stream(
             content=content,
         ):
             thinking = chunk.get("thinking")
-            if thinking:
+            # "" counts: the model has started thinking, text or not.
+            if thinking is not None:
                 data_chunk = ChatCompletionChunk(
                     id=chunk_id,
                     created=created,
@@ -346,7 +347,8 @@ async def _passthrough_stream(
             **kwargs,
         ):
             thinking = chunk.get("thinking")
-            if thinking:
+            # "" counts: the model has started thinking, text or not.
+            if thinking is not None:
                 data_chunk = ChatCompletionChunk(
                     id=chunk_id,
                     created=created,

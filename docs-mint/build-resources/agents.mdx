@@ -146,7 +146,7 @@ curl -X POST https://yourdomain.com/agents/support/helper/invoke \
 
 OpenAI's own API doesn't stream reasoning. Thinking is never saved with the message.
 
-To spend less time thinking, lower it per agent: `provider_overrides: {"effort": "low"}` on Anthropic models.
+To spend less time thinking, lower it per agent: `provider_overrides: {"effort": "low"}` on Anthropic models that support effort. Claude Haiku 4.5 and Sonnet 4.5 reject it, so leave it out for agents on those models.
 
 **Ephemeral chats** can be created with a TTL by passing `expires_in` (seconds) when creating the chat. Expired chats are automatically hard-deleted (with all messages) by a scheduled cleanup job:
 

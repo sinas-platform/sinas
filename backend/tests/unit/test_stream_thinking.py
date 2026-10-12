@@ -133,6 +133,7 @@ async def test_openai_adapter_passes_it_on_as_reasoning_content():
 
     class Provider:
         async def stream(self, **_):
+            yield {"thinking": "", "content": None}
             yield {"thinking": "Hmm", "content": None}
             yield {"content": "Hi", "finish_reason": "stop"}
 
@@ -144,5 +145,6 @@ async def test_openai_adapter_passes_it_on_as_reasoning_content():
         if line.startswith("data: {")
     ]
     deltas = [f["choices"][0]["delta"] for f in frames if f["choices"]]
-    assert {"reasoning_content": "Hmm"}.items() <= next(d for d in deltas if d.get("reasoning_content")).items()
+    # The empty signal goes through too: the model has started thinking.
+    assert [d["reasoning_content"] for d in deltas if d.get("reasoning_content") is not None] == ["", "Hmm"]
     assert any(d.get("content") == "Hi" for d in deltas)
