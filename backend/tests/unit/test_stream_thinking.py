@@ -128,7 +128,7 @@ async def test_ollama_thinking_field(monkeypatch):
     assert _content(chunks) == "Yes"
 
 
-async def test_openai_adapter_passes_it_on_as_reasoning_content():
+async def _adapter_deltas(include_thinking: bool) -> list[dict]:
     from app.adapters.openai.endpoints import _passthrough_stream
 
     class Provider:
@@ -137,14 +137,83 @@ async def test_openai_adapter_passes_it_on_as_reasoning_content():
             yield {"thinking": "Hmm", "content": None}
             yield {"content": "Hi", "finish_reason": "stop"}
 
-    response = await _passthrough_stream(Provider(), [], "m", {})
+    response = await _passthrough_stream(Provider(), [], "m", {}, include_thinking)
     frames = [
         json.loads(line[len("data: "):])
         async for part in response.body_iterator
         for line in (part if isinstance(part, str) else part.decode()).splitlines()
         if line.startswith("data: {")
     ]
-    deltas = [f["choices"][0]["delta"] for f in frames if f["choices"]]
-    # The empty signal goes through too: the model has started thinking.
+    return [f["choices"][0]["delta"] for f in frames if f["choices"]]
+
+
+async def test_openai_adapter_sends_the_text_as_reasoning_content_when_asked():
+    deltas = await _adapter_deltas(include_thinking=True)
     assert [d["reasoning_content"] for d in deltas if d.get("reasoning_content") is not None] == ["", "Hmm"]
     assert any(d.get("content") == "Hi" for d in deltas)
+
+
+async def test_openai_adapter_only_says_it_is_thinking_by_default():
+    deltas = await _adapter_deltas(include_thinking=False)
+    assert [d["reasoning_content"] for d in deltas if d.get("reasoning_content") is not None] == [""]
+    assert any(d.get("content") == "Hi" for d in deltas)
+
+
+class TestThinkingFilter:
+    def _run(self, include: bool, chunks: list[dict]) -> list[dict]:
+        from app.services.stream_thinking import ThinkingFilter
+
+        show = ThinkingFilter(include)
+        return [out for c in chunks if (out := show(c)) is not None]
+
+    CHUNKS = [
+        {"content": None, "tool_calls": None, "finish_reason": None, "thinking": "a"},
+        {"content": None, "tool_calls": None, "finish_reason": None, "thinking": "b"},
+        {"content": "Hi", "tool_calls": None, "finish_reason": None},
+        {"type": "tool_start", "tool_call_id": "t"},
+        {"content": None, "tool_calls": None, "finish_reason": None, "thinking": "c"},
+        {"content": "Done", "tool_calls": None, "finish_reason": "stop"},
+    ]
+
+    def test_without_asking_only_the_start_of_each_thinking_round(self):
+        out = self._run(False, self.CHUNKS)
+        assert [c.get("thinking") for c in out] == ["", None, None, "", None]
+        assert all(c.get("thinking") in (None, "") for c in out)
+
+    def test_asked_everything_goes_through(self):
+        assert self._run(True, self.CHUNKS) == self.CHUNKS
+
+    def test_a_chunk_that_carries_more_keeps_the_rest(self):
+        out = self._run(False, [
+            {"content": None, "thinking": "a"},
+            {"content": None, "thinking": "b", "usage": {"total_tokens": 3}},
+        ])
+        assert out == [{"content": None, "thinking": ""}, {"content": None, "usage": {"total_tokens": 3}}]
+
+
+async def test_chat_stream_hides_the_text_unless_asked(client, admin_user, monkeypatch):
+    from app.services.message_service import MessageService
+    from tests.conftest import auth_headers
+
+    async def fake_stream(self, **_):
+        yield {"content": None, "tool_calls": None, "finish_reason": None, "thinking": "secret plan"}
+        yield {"content": "Hi", "tool_calls": None, "finish_reason": "stop"}
+
+    monkeypatch.setattr(MessageService, "send_message_stream", fake_stream)
+    h = auth_headers(admin_user)
+    r = await client.post("/api/v1/agents", json={"namespace": "think", "name": "bot"}, headers=h)
+    assert r.status_code in (200, 201), r.text
+    r = await client.post("/agents/think/bot/chats", json={}, headers=h)
+    assert r.status_code in (200, 201), r.text
+    chat = r.json()["id"]
+
+    async def events(body: dict) -> list[dict]:
+        r = await client.post(f"/chats/{chat}/messages/stream", json=body, headers=h)
+        assert r.status_code == 200, r.text
+        return [json.loads(line[5:]) for line in r.text.splitlines() if line.startswith("data:") and "{" in line]
+
+    hidden = await events({"content": "hi"})
+    assert "secret plan" not in json.dumps(hidden)
+    assert any(e.get("thinking") == "" for e in hidden)
+    shown = await events({"content": "hi", "include_thinking": True})
+    assert any(e.get("thinking") == "secret plan" for e in shown)

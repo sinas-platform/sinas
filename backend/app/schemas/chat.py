@@ -141,6 +141,11 @@ class MessageSendRequest(BaseModel):
             ],
         ],
     )
+    include_thinking: bool = Field(
+        default=False,
+        description="Streaming only: send the model's thinking text in `thinking`. "
+        "Without it, a stream still gets one empty `thinking` when the model starts thinking.",
+    )
 
 
 class PendingApprovalResponse(BaseModel):

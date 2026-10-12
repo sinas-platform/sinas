@@ -18,6 +18,7 @@ from app.models.llm_provider import LLMProvider
 from app.models.user import User
 from app.providers import create_provider
 from app.services.message_service import MessageService
+from app.services.stream_thinking import ThinkingFilter
 
 from .schemas import (
     ChatCompletionChunk,
@@ -170,7 +171,7 @@ async def _agent_mode(
     if request.stream:
         return await _agent_stream(
             message_service, chat_id_str, user_id, user_token,
-            last_user_msg, model_name, chat_id_str,
+            last_user_msg, model_name, chat_id_str, request.include_thinking,
         )
     else:
         response_message = await message_service.send_message(
@@ -200,6 +201,7 @@ async def _agent_stream(
     content: str,
     model_name: str,
     response_chat_id: str,
+    include_thinking: bool = False,
 ):
     """Stream agent response in OpenAI SSE format."""
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -208,6 +210,7 @@ async def _agent_stream(
         import time
 
         created = int(time.time())
+        show = ThinkingFilter(include_thinking)
 
         # First chunk with role
         first_chunk = ChatCompletionChunk(
@@ -224,6 +227,9 @@ async def _agent_stream(
             user_token=user_token,
             content=content,
         ):
+            chunk = show(chunk)
+            if chunk is None:
+                continue
             thinking = chunk.get("thinking")
             # "" counts: the model has started thinking, text or not.
             if thinking is not None:
@@ -298,7 +304,7 @@ async def _passthrough_mode(
 
     if request.stream:
         return await _passthrough_stream(
-            llm_provider, messages, model_name, kwargs
+            llm_provider, messages, model_name, kwargs, request.include_thinking
         )
     else:
         response = await llm_provider.complete(
@@ -324,6 +330,7 @@ async def _passthrough_stream(
     messages: list,
     model_name: str,
     kwargs: dict,
+    include_thinking: bool = False,
 ):
     """Stream passthrough response in OpenAI SSE format."""
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
@@ -332,6 +339,7 @@ async def _passthrough_stream(
         import time
 
         created = int(time.time())
+        show = ThinkingFilter(include_thinking)
 
         first_chunk = ChatCompletionChunk(
             id=chunk_id,
@@ -346,6 +354,9 @@ async def _passthrough_stream(
             model=model_name,
             **kwargs,
         ):
+            chunk = show(chunk)
+            if chunk is None:
+                continue
             thinking = chunk.get("thinking")
             # "" counts: the model has started thinking, text or not.
             if thinking is not None:

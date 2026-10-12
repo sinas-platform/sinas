@@ -45,6 +45,7 @@ from app.core.callback import CallbackURLError, validate_callback_url
 from app.services.message_service import MessageService, refresh_message_tokens
 from app.services.queue_service import queue_service
 from app.services.stream_relay import STREAM_TTL_KEEP_ALIVE, stream_relay
+from app.services.stream_thinking import ThinkingFilter
 from app.services.template_renderer import render_template
 from app.utils.schema import validate_with_coercion
 
@@ -536,9 +537,14 @@ async def stream_message(
         )
 
         async def keep_alive_generator():
+            show = ThinkingFilter(request.include_thinking)
             try:
                 async for event in stream_relay.subscribe(channel_id, last_id="0"):
                     event_type = event.get("type", "message")
+                    if event_type not in ("ping", "done", "error"):
+                        event = show(event)
+                        if event is None:
+                            continue
                     if event_type == "ping":
                         yield {"event": "ping", "data": ""}
                     elif event_type == "done":
@@ -571,10 +577,15 @@ async def stream_message(
     accumulated_content = {"content": ""}
 
     async def event_generator():
+        show = ThinkingFilter(request.include_thinking)
         try:
             async for chunk in message_service.send_message_stream(
                 chat_id=str(chat.id), user_id=user_id, user_token=user_token, content=content_str
             ):
+                if isinstance(chunk, dict):
+                    chunk = show(chunk)
+                    if chunk is None:
+                        continue
                 # Accumulate content BEFORE yielding
                 if chunk.get("content") and isinstance(chunk["content"], str):
                     accumulated_content["content"] += chunk["content"]
@@ -658,6 +669,9 @@ async def reconnect_stream(
     channel_id: str,
     http_request: Request,
     last_id: str = Query(default="0", description="Last received Redis stream entry ID"),
+    include_thinking: bool = Query(
+        default=False, description="Stream the model's thinking text, not only that it is thinking"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
 ):
@@ -683,9 +697,14 @@ async def reconnect_stream(
         raise HTTPException(403, "Not authorized")
 
     async def event_generator():
+        show = ThinkingFilter(include_thinking)
         try:
             async for event in stream_relay.subscribe(channel_id, last_id=last_id):
                 event_type = event.get("type", "message")
+                if event_type not in ("ping", "done", "error"):
+                    event = show(event)
+                    if event is None:
+                        continue
 
                 if event_type == "ping":
                     yield {"event": "ping", "data": ""}
