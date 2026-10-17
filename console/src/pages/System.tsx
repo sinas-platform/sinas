@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
+import { useAuth } from '../lib/auth-context';
+import { clickHouseFeature } from '../lib/clickhouse';
+import { ClickHouseDisabledNote } from '../components/ClickHouseNotice';
 import { useState, Fragment, type ReactNode } from 'react';
 import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, X, AlertCircle, Info, RotateCw, Trash2, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -52,6 +55,8 @@ function UnavailableNote({ children }: { children: ReactNode }) {
 
 export function System() {
   const queryClient = useQueryClient();
+  const { instanceInfo } = useAuth();
+  const clickhouseDisabled = clickHouseFeature(instanceInfo) === 'disabled';
   const [jobStatusFilter, setJobStatusFilter] = useState<string>('');
   const [restartingContainer, setRestartingContainer] = useState<string | null>(null);
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
@@ -439,6 +444,12 @@ export function System() {
           </div>
           {servicesUnavailable && (
             <UnavailableNote>{servicesUnavailable}</UnavailableNote>
+          )}
+          {clickhouseDisabled && (
+            <ClickHouseDisabledNote>
+              No ClickHouse service: it is disabled on this deployment
+              (<span className="font-mono">CLICKHOUSE_HOST</span> is empty), so request logging is off.
+            </ClickHouseDisabledNote>
           )}
           {metricsUnavailable && services.length > 0 && (
             <UnavailableNote>{metricsUnavailable}</UnavailableNote>

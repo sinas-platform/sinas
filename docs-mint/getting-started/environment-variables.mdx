@@ -220,6 +220,16 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 
 ## ClickHouse (Optional)
 
+ClickHouse stores request logs (every API call, with user, permission, status and timing) and function execution events. It is optional: set `CLICKHOUSE_HOST` to an empty string to run without it, as the lite profile and the Helm chart's `clickhouse.enabled: false` do. The backend then skips ClickHouse entirely and records nothing, and everything else keeps working.
+
+With ClickHouse disabled:
+
+- `GET /info` reports `features.clickhouse: false`.
+- `/api/v1/request-logs` and `/api/v1/request-logs/stats` answer `503` with a detail saying request logging is disabled on this deployment. When ClickHouse is configured but unreachable, they also answer `503`, with a detail saying it could not be reached. They never return an empty list in either case.
+- In the console, the **Request Logs** tab of the Logs page is marked *off* and explains how to enable it. The page opens on Message Logs and Executions, which are stored in PostgreSQL and are unaffected. The System page notes that there is no ClickHouse service.
+
+To enable request logging later, run a ClickHouse server, set `CLICKHOUSE_HOST` and the other variables below on the backend and the workers, then restart them. Logging starts from that point.
+
 | Variable | Default | Description |
 |---|---|---|
 | `CLICKHOUSE_HOST` | `clickhouse` | ClickHouse host |

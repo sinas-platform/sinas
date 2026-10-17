@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test tests/pipeline-steps-model.test.mjs",
+    "test": "node --test tests/pipeline-steps-model.test.mjs tests/clickhouse.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

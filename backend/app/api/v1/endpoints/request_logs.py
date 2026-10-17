@@ -1,4 +1,13 @@
-"""Request logs API endpoints for querying access logs."""
+"""Request logs API endpoints for querying access logs.
+
+Request logs live in ClickHouse, which a deployment may leave out
+(CLICKHOUSE_HOST empty, e.g. the lite profile or `clickhouse.enabled: false`
+in the chart). Every endpoint here answers 503 with an explanatory detail
+when ClickHouse is disabled or unreachable: never a 500, never a silently
+empty result. `/info` reports `features.clickhouse` so clients can tell a
+deliberate disable from an outage before calling.
+"""
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -10,9 +19,22 @@ from app.schemas.request_log import (
     RequestLogResponse,
     RequestLogStatsResponse,
 )
-from app.services.clickhouse_logger import clickhouse_logger
+from app.services.clickhouse_logger import (
+    DISABLED_DETAIL,
+    UNAVAILABLE_DETAIL,
+    clickhouse_logger,
+)
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/request-logs", tags=["request-logs"])
+
+
+def _require_clickhouse() -> None:
+    """503 unless ClickHouse is configured and not known to be down."""
+    if not clickhouse_logger.enabled:
+        raise HTTPException(status_code=503, detail=DISABLED_DETAIL)
+    if not clickhouse_logger.available:
+        raise HTTPException(status_code=503, detail=UNAVAILABLE_DETAIL)
 
 
 @router.get("", response_model=list[RequestLogResponse])
@@ -49,17 +71,23 @@ async def list_request_logs(
     else:
         set_permission_used(request, "sinas.logs.read:all")
 
-    # Query ClickHouse
-    logs = await clickhouse_logger.query_logs(
-        user_id=user_id,
-        start_time=start_time,
-        end_time=end_time,
-        permission=permission,
-        path_pattern=path_pattern,
-        status_code=status_code,
-        limit=limit,
-        offset=offset,
-    )
+    _require_clickhouse()
+    try:
+        logs = await clickhouse_logger.query_logs(
+            user_id=user_id,
+            start_time=start_time,
+            end_time=end_time,
+            permission=permission,
+            path_pattern=path_pattern,
+            status_code=status_code,
+            limit=limit,
+            offset=offset,
+        )
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=UNAVAILABLE_DETAIL) from e
+    except Exception as e:
+        logger.error(f"Failed to query request logs from ClickHouse: {e}")
+        raise HTTPException(status_code=500, detail="Failed to query request logs") from e
 
     # Convert to response models
     return [
@@ -136,9 +164,7 @@ async def get_request_log_stats(
 
     where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-    # Query ClickHouse for stats
-    if not clickhouse_logger.available:
-        raise HTTPException(status_code=503, detail="ClickHouse not available")
+    _require_clickhouse()
 
     try:
         # Total requests and unique users
@@ -186,7 +212,8 @@ async def get_request_log_stats(
             ],
         )
 
-    except ConnectionError:
-        raise HTTPException(status_code=503, detail="ClickHouse not available")
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=UNAVAILABLE_DETAIL) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch statistics: {str(e)}")
+        logger.error(f"Failed to query request log stats from ClickHouse: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch statistics") from e

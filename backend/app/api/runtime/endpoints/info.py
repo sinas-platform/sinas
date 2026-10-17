@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.models.manifest import Manifest
 from app.schemas.auth import InfoResponse
+from app.services.clickhouse_logger import clickhouse_logger
 
 router = APIRouter()
 
@@ -39,7 +40,10 @@ async def get_info(db: AsyncSession = Depends(get_db)) -> InfoResponse:
         auth_mode=settings.auth_mode,  # type: ignore[arg-type]
         version=__version__,
         features={
-            "clickhouse": bool(settings.clickhouse_host),
+            # False when CLICKHOUSE_HOST is empty: request logs are off and
+            # the /request-logs endpoints answer 503. The console explains
+            # that in place instead of showing an empty or broken page.
+            "clickhouse": clickhouse_logger.enabled,
             "smtp": bool(settings.smtp_host),
             # Master toggle for all user-code execution — the console greys
             # out function execution and the codeExecution tool when false.

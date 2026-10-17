@@ -72,6 +72,15 @@ EXECUTION_COLUMNS = [
 
 _COLUMNS = {"request_logs": REQUEST_COLUMNS, "execution_logs": EXECUTION_COLUMNS}
 
+# What a ClickHouse-backed read endpoint answers when it can't serve: always
+# 503 with one of these details, never a 500 or a silently empty result. The
+# console tells the two apart from `/info` (`features.clickhouse`).
+DISABLED_DETAIL = (
+    "Request logging is disabled on this deployment (ClickHouse not configured). "
+    "Set CLICKHOUSE_HOST to enable it."
+)
+UNAVAILABLE_DETAIL = "Request logs are temporarily unavailable: ClickHouse could not be reached."
+
 # Failures of the connection, not of the statement: these mean ClickHouse is
 # down or unreachable, so wait before the next attempt.
 _CONNECTION_ERRORS = (OperationalError, StreamFailureError, OSError)
@@ -216,6 +225,12 @@ class ClickHouseLogger:
             raise ConnectionError("ClickHouse not available") from e
 
     @property
+    def enabled(self) -> bool:
+        """Whether ClickHouse is configured at all (CLICKHOUSE_HOST non-empty).
+        False is a deliberate deployment choice, not an outage."""
+        return not self._disabled
+
+    @property
     def available(self) -> bool:
         """Whether ClickHouse is configured and not known to be down."""
         return not self._disabled and (self.client is not None or time.monotonic() >= self._retry_at)
@@ -332,50 +347,48 @@ class ClickHouseLogger:
             offset: Offset for pagination
 
         Returns:
-            List of log entries
+            List of log entries. Empty when ClickHouse is disabled; raises
+            ConnectionError when it is configured but unreachable, so callers
+            can say so instead of showing an empty list.
         """
         if self._disabled:
             return []
 
-        try:
-            # Build WHERE conditions with parameterized queries
-            conditions = []
-            parameters = {}
+        # Build WHERE conditions with parameterized queries
+        conditions = []
+        parameters = {}
 
-            if user_id:
-                conditions.append("user_id = {user_id:String}")
-                parameters["user_id"] = user_id
-            if start_time:
-                conditions.append("timestamp >= {start_time:DateTime}")
-                parameters["start_time"] = start_time
-            if end_time:
-                conditions.append("timestamp <= {end_time:DateTime}")
-                parameters["end_time"] = end_time
-            if permission:
-                conditions.append("permission_used = {permission:String}")
-                parameters["permission"] = permission
-            if path_pattern:
-                conditions.append("path LIKE {path_pattern:String}")
-                parameters["path_pattern"] = path_pattern
-            if status_code:
-                conditions.append("status_code = {status_code:Int32}")
-                parameters["status_code"] = status_code
+        if user_id:
+            conditions.append("user_id = {user_id:String}")
+            parameters["user_id"] = user_id
+        if start_time:
+            conditions.append("timestamp >= {start_time:DateTime}")
+            parameters["start_time"] = start_time
+        if end_time:
+            conditions.append("timestamp <= {end_time:DateTime}")
+            parameters["end_time"] = end_time
+        if permission:
+            conditions.append("permission_used = {permission:String}")
+            parameters["permission"] = permission
+        if path_pattern:
+            conditions.append("path LIKE {path_pattern:String}")
+            parameters["path_pattern"] = path_pattern
+        if status_code:
+            conditions.append("status_code = {status_code:Int32}")
+            parameters["status_code"] = status_code
 
-            where_clause = " AND ".join(conditions) if conditions else "1=1"
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
 
-            query = f"""
-                SELECT *
-                FROM request_logs
-                WHERE {where_clause}
-                ORDER BY timestamp DESC
-                LIMIT {limit}
-                OFFSET {offset}
-            """
+        query = f"""
+            SELECT *
+            FROM request_logs
+            WHERE {where_clause}
+            ORDER BY timestamp DESC
+            LIMIT {limit}
+            OFFSET {offset}
+        """
 
-            return await self.query(query, parameters)
-        except Exception as e:
-            logger.error(f"Failed to query logs from ClickHouse: {e}")
-            return []
+        return await self.query(query, parameters)
 
     def _execution_event(
         self,

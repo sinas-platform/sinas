@@ -171,7 +171,7 @@ For packing several small instances onto one box (e.g. **3 instances on a
 ```yaml
 # compact-values.yaml — ≈650–750MB per instance at idle
 clickhouse:
-  enabled: false          # no ClickHouse pod; request/execution log UI stays empty
+  enabled: false          # no ClickHouse pod; request logging off (console explains)
 
 backend:
   resources:
@@ -204,8 +204,10 @@ for a few concurrent 192Mi sandbox pods across tenants. Keep
 `SANDBOX_EXECUTOR=disabled` for trusted-only tiers.
 
 With `clickhouse.enabled: false` the backend detects the empty
-`CLICKHOUSE_HOST` and disables logging cleanly (no reconnect attempts); the
-Logs pages return empty results.
+`CLICKHOUSE_HOST` and disables logging cleanly (no reconnect attempts). The
+console's Request Logs tab says request logging is off on this deployment, and
+the request-log API answers `503` with that explanation. See
+[ClickHouse](/getting-started/environment-variables#clickhouse-optional).
 
 ## Key values
 
