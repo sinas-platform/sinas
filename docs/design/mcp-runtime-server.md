@@ -359,9 +359,24 @@ stay stable when resources are added:
 | function | `call_{ns}__{name}` | `call_support__lookup_customer` |
 | query | `query_{ns}__{name}` | `query_reports__open_tickets` |
 
-Characters outside `[A-Za-z0-9_-]` become `_`, the manifest key is not
-repeated (clients already prefix the server), and a name over 64
-characters is cut to 55 plus `_` and an 8-character hash of the full ref.
+The manifest key is not repeated (clients already prefix the server).
+The mapping must be injective, since two resources must never share a
+tool name, and stable, depending on nothing but the resource's own ref:
+- A ref is *clean* when both its namespace and its name match
+  `[A-Za-z0-9-]+(_[A-Za-z0-9-]+)*` (no `__`, no leading or trailing `_`).
+  Clean refs map as in the table; the `__` separator then cannot be
+  produced any other way, so distinct clean refs give distinct names.
+- Any other ref (spaces, dots, `__` inside a part) is sanitised (other
+  characters become `_`) and always gets `_` plus an 8-character hash of
+  the exact ref, so `support/risk analyst` and `support/risk_analyst` stay
+  two tools (`ask_support__risk_analyst_3f2a9c1e` and
+  `ask_support__risk_analyst`).
+- A name over 64 characters is cut to 55 plus `_` and the same hash.
+- Calls are dispatched through the name-to-ref map built for the listing,
+  never by parsing the name. If two refs still produce one name (a hash
+  collision, or a clean name that happens to end like a hash suffix),
+  neither is listed and the manifest's status reports it, rather than one
+  call reaching the wrong resource.
 The strict alphabet and the 64 limit are tighter than MCP's own rule
 (1 to 128 characters of `A-Za-z0-9_-.`) because several clients turn MCP
 tools into model function names (OpenAI's `^[a-zA-Z0-9_-]{1,64}$`,
@@ -376,11 +391,20 @@ semantics through the same service code (not over HTTP):
   sub-agent tools), plus `session` (string, optional). An `input_schema`
   property named `message` or `session` is nested under `input` instead.
   Content parts (images) are not offered in phase 1.
-- `outputSchema`: the agent's `output_schema` when set; then the reply is
-  also returned as `structuredContent`.
-- Result: `content` = the reply text; `structuredContent` = `{reply |
-  <output>, status, chat_id, session}`; `_meta["co.sinas/usage"]` = the
-  invoke's `TurnUsage`.
+- `outputSchema` always describes the whole envelope, so a schema-checking
+  client never rejects a successful call:
+  `{status: enum[completed, input_required, approval_required,
+  in_progress], session: string, chat_id: string, reply: string,
+  output: <the agent's output_schema>}`, with `status` and `session`
+  required. `output` (present only for `completed` turns of agents with an
+  `output_schema`) is nested, never merged, so the agent's own
+  `required` and `additionalProperties` keep their meaning.
+- Result: `structuredContent` = that envelope; `content` = the reply text
+  (and the JSON of `output` when there is one, as the spec suggests for
+  older clients); `_meta["co.sinas/usage"]` = the invoke's `TurnUsage`.
+- Pipelines, functions and queries follow the same rule: their
+  `outputSchema` is the envelope `{status, run_id?, output: <the
+  resource's output schema, if any>}`.
 
 **Conversations: a server-minted `session` handle.** No `session`
 argument starts a fresh chat. Every agent result returns a `session`
@@ -406,8 +430,9 @@ Rejected:
 
 **Pipelines** are typed tools: `inputSchema` = the pipeline's
 `input_schema`; the call is a sync run under `syncTimeoutSeconds`
-(`run_pipeline_endpoint` semantics); the result is `PipelineRunResponse`
-as `structuredContent` (`output` also as text). A run past its budget is
+(`run_pipeline_endpoint` semantics); the result is the envelope above
+built from `PipelineRunResponse` (`status`, `run_id`, `output`; the step
+details stay in the run history), with `output` also as text. A run past its budget is
 handed to Tasks or the fallback (D6). `allUsers` fan-out is never offered.
 
 **Functions and queries** only when the manifest lists them in
@@ -536,9 +561,11 @@ holds the response open behind proxies.
   hidden tool, invalid arguments (`-32602`), a malformed `requestState`.
   Anything that happened while running the resource is a tool result with
   `isError: true`, so the client's model sees it and can react: text =
-  the envelope's `detail`, `structuredContent` = `{code, retryable,
-  upstream_status?, retry_after?}` from the #299 envelope
-  (`budget_exceeded`, `rate_limited`, `provider_*`, `job_timeout`, ...).
+  the envelope's `detail`; the #299 fields `{code, retryable,
+  upstream_status?, retry_after?}` (`budget_exceeded`, `rate_limited`,
+  `provider_*`, `job_timeout`, ...) go in `_meta["co.sinas/error"]`, not
+  in `structuredContent`, which stays reserved for results that match the
+  advertised `outputSchema`.
   A pipeline `PipelineBusyError` is `isError` with `code: "busy"`. A tool
   the user may not call is "unknown tool" (never "forbidden": it was never
   listed). HTTP-level: 401 with the challenge (§5.3), 403
@@ -709,8 +736,13 @@ consent. Tokens hang off it:
   through the token endpoint). Verified at `/mcp/...` with the audience set
   to that endpoint's canonical URL; the grant is checked active (cached
   ≤ 30 s) and the user active, so a revoked grant stops within 30 s.
-- **Refresh token:** opaque, hashed in `refresh_tokens` with a new
-  `oauth_grant_id` column; **rotated on every use** (the old row gets
+- **Refresh token:** opaque, hashed in its own table,
+  `oauth_refresh_tokens` (not `refresh_tokens`): `validate_refresh_token`
+  accepts any live row of `refresh_tokens` and `/auth/refresh` turns it
+  into an ordinary, audience-less Sinas access token, so sharing that table
+  would let an MCP client trade its refresh token for access beyond its
+  app. Only `/oauth/token` reads `oauth_refresh_tokens`, and it only ever
+  mints MCP-audience tokens. **Rotated on every use** (the old row gets
   `used_at` and `replaced_by`). Presenting an already-used refresh token
   revokes the whole grant (reuse detection, OAuth 2.1 / Security BCP),
   after a 10 s grace in which the same successor is returned (clients that
@@ -730,8 +762,9 @@ consent. Tokens hang off it:
   as #292 does for console refresh tokens.
 - **Revocation:** `POST /oauth/revoke` (either token revokes the grant),
   the user's "Connected apps" page, the admin grants page, disabling the
-  client, disabling the manifest's MCP, deactivating the user, a password
-  change and `revoke_all_refresh_tokens` all end grants.
+  client, disabling the manifest's MCP, deactivating the user and a
+  password change all end grants: `revoke_all_refresh_tokens` gains the
+  grants, since MCP refresh tokens live in their own table.
 - **Scope:** one scope, `mcp`: "use this app's tools as me". The audience
   already pins the app, so per-app scopes would repeat it, and finer scopes
   (per tool) would duplicate permissions. Requests for unknown scopes get
@@ -832,8 +865,9 @@ you."
 - `oauth_grants`: `id`, `user_id`, `client_id`, `manifest_id`, `resource`,
   `scope`, `context`, `identity_provider` (SSO cap), `expires_at`,
   `last_used_at`, `revoked_at`, `revoked_reason`, timestamps.
-- `refresh_tokens`: + `oauth_grant_id` (nullable FK), `used_at`,
-  `replaced_by`.
+- `oauth_refresh_tokens`: `token_hash`, `token_prefix`, `grant_id` (FK),
+  `expires_at`, `used_at`, `replaced_by`, `created_at`. Separate from
+  `refresh_tokens` so the console's refresh path can never redeem one.
 - Redis: parked authorization requests (10 min), codes (60 s), both
   `GETDEL`, as `oauth_state.py` does.
 
@@ -887,18 +921,28 @@ data model prevents it (a grant's `resource` is just a URL).
 6. **`tools/list`:** D5. **`tools/call`:** re-resolve exposure and
    permission for that one tool (never trust the list), then run.
 7. **Internal credential (no token passthrough):** the turn or run gets a
-   fresh short-lived Sinas access token as its `user_token` (as webhooks
-   and wakeups mint one: `webhooks.py`, `chat_wakeups.py`), never the
-   presented MCP token. Continuations that run later (wakeups, resumed
-   rounds) record `grant_id` next to `api_key_id`, and a revoked grant
-   stops them, as a deleted API key does.
+   fresh short-lived Sinas access token as its `user_token`, never the
+   presented MCP token. That token must not be broader than the caller:
+   today's minted tokens (`webhooks.py`, `chat_wakeups.py`) carry only the
+   user, and a `sinas_token` connector forwards `user_token` to an
+   endpoint that then loads the user's full permissions, while
+   `bind_api_key` narrows permissions only inside the current task. So the
+   internal token carries the credential it derives from: `akid` (the API
+   key id) or `gid` (the grant id). `verify_jwt_or_api_key`, the choke
+   point every runtime request goes through, then applies the key's
+   permissions (and refuses the token once the key is deleted or expired)
+   when `akid` is present, and refuses it once the grant is revoked when
+   `gid` is present. The same claim closes the gap for the tokens wakeups
+   and webhooks already mint on behalf of an API-key turn. Continuations
+   that run later (wakeups, resumed rounds) record `grant_id` next to
+   `api_key_id` and mint their tokens the same way.
 
 ## 7. Security considerations
 
 | Threat | Mitigation |
 |---|---|
 | **Confused deputy** (an MCP client, or a third-party AS in front of Sinas, gets Sinas to act for a user who never consented to that client) | Sinas is its own AS: every grant is a consent by the user, per client and per app. No static client id shared across third parties; DCR clients are distinct; remembered consent only for the same client + resource + redirect URI. |
-| **Token passthrough** (forbidden by the spec) | The MCP endpoint accepts only tokens whose audience is itself, or Sinas's own credentials. It never forwards the presented token: turns get a freshly minted internal token (§6.7); `sinas_token` connectors and functions see that one. MCP tokens fail on every other endpoint (audience, §1 fact 2). |
+| **Token passthrough** (forbidden by the spec) | The MCP endpoint accepts only tokens whose audience is itself, or Sinas's own credentials. It never forwards the presented token: turns get a freshly minted internal token carrying the caller's API key or grant, so it is never broader than the caller (§6, step 7); `sinas_token` connectors and functions see that one. MCP refresh tokens live in their own table and can't be redeemed at `/auth/refresh`. MCP tokens fail on every other endpoint (audience, §1 fact 2). |
 | **Token reuse across apps** | `aud` = canonical MCP URL, checked on every request; `resource` required at authorize and token, and must match the grant. |
 | **Mix-up** (a client talking to several authorization servers is tricked into sending Sinas's code elsewhere, or another AS's code to Sinas) | RFC 9207 `iss` on every authorization response, advertised in metadata; PKCE and `resource` alone don't prevent it. |
 | **SSRF through CIMD** (a `client_id` URL pointing at internal addresses) | `https` only, resolved address must be public, no redirects, size and time limits, optional host allowlist. |
