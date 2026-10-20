@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.permissions import check_permission
 from app.models.database_connection import DatabaseConnection
@@ -50,6 +51,19 @@ def _spec(data: dict) -> DatabaseTriggerSpec:
         return DatabaseTriggerSpec.model_validate(data)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=json.loads(e.json(include_url=False)))
+
+
+def _require_cdc() -> None:
+    """With CDC off, nothing polls: a trigger created or switched on now would
+    never fire, which reads as a data bug rather than a disabled feature. So
+    those are refused; viewing, pausing, editing and deleting still work, and
+    stored triggers are never rewritten, so turning CDC back on resumes them."""
+    if not settings.cdc_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="CDC is disabled on this deployment (CDC_ENABLED=false): "
+            "database triggers can't be created or switched on.",
+        )
 
 
 async def _commit_and_notify(db: AsyncSession, ctx: ApplyContext) -> None:
@@ -91,6 +105,7 @@ async def create_database_trigger(
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """Create a new database trigger."""
+    _require_cdc()
     user_id, permissions = current_user_data
 
     create_perm = "sinas.database_triggers.create:own"
@@ -210,6 +225,10 @@ async def update_database_trigger(
         request,
         "sinas.database_triggers.update:all" if has_all else "sinas.database_triggers.update:own",
     )
+    # Only switching a paused trigger on is refused: clients that send the
+    # whole object repeat is_active=true on edits, and those must still work.
+    if trigger_data.is_active and not trigger.is_active:
+        _require_cdc()
 
     ctx = _context(db, user_id, trigger.user_id)
     connection_id = trigger.database_connection_id

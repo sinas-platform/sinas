@@ -115,8 +115,9 @@ spec:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+{{- if .Values.features.cdc }}
 ---
-## cdc-worker
+## cdc-worker (dropped with features.cdc=false)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -147,4 +148,5 @@ spec:
             {{- include "sinas.backendEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.cdcWorker.resources | nindent 12 }}
+{{- end }}
 {{- end }}

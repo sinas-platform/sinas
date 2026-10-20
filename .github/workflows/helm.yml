@@ -46,3 +46,15 @@ jobs:
           ! grep -q "name: clickhouse" /tmp/compact.yaml
           # backend must get the explicit-disable signal
           grep -q 'CLICKHOUSE_HOST' /tmp/compact.yaml
+
+      - name: helm template (CDC disabled)
+        run: |
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set features.cdc=false \
+            > /tmp/no-cdc.yaml
+          ! grep -q "name: cdc-worker" /tmp/no-cdc.yaml
+          # the backend must know, so the API refuses instead of going inert
+          grep -A1 'name: CDC_ENABLED' /tmp/no-cdc.yaml | grep -q '"false"'

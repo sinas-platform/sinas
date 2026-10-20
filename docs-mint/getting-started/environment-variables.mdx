@@ -79,13 +79,14 @@ Required when `AUTH_MODE` is `otp` or `password+otp`. Skip entirely for `passwor
 
 ## Optional Features
 
-Both default on. Turning one off removes the capability — affected endpoints
+All default on. Turning one off removes the capability — affected endpoints
 reject explicitly rather than half-working.
 
 | Variable | Default | Description |
 |---|---|---|
 | `CODE_EXECUTION_ENABLED` | `true` | `false` disables **all** execution of user-supplied code: Functions and the agent `codeExecution` tool. The tool is not advertised to the model, function execution is refused at every trigger (API, webhook, schedule, agent, CDC), and sandbox/shared-worker startup is skipped entirely — no pool, no per-execution pods, no executor image. The single biggest footprint reduction available. |
 | `BUILTIN_DATABASE_ENABLED` | `true` | `false` skips creating the `sinas_data` database and its default Database Connection at startup, for deployments that only use their own connections. Does **not** affect the platform's own PostgreSQL, and an already-created database and record are left untouched (so the toggle is reversible and non-destructive). |
+| `CDC_ENABLED` | `true` | `false` turns off Database Triggers (CDC): the poller doesn't run, and the API refuses to create a trigger or switch one on (pausing, editing and deleting still work). Stored triggers are never rewritten, so turning CDC back on resumes exactly the ones that were on. The console shows them as **Disabled — CDC off**, distinct from a trigger someone paused. In the Helm chart, `features.cdc=false` sets this and drops the `cdc-worker` Deployment. |
 
 ## Usage Metering (Optional)
 

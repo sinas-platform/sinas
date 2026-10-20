@@ -2,7 +2,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, getApiErrorMessage } from '../lib/api';
 import { Activity, Plus, Trash2, PlayCircle, PauseCircle, AlertTriangle, Database } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '../lib/auth-context';
+import { CDC_OFF_REASON, canToggle, cdcEnabled as cdcFeature, triggerStatus } from '../lib/databaseTriggers';
 import type { DatabaseTrigger, DatabaseConnection } from '../types';
+
+const STATUS_BADGE = {
+  cdc_off: { label: 'Disabled — CDC off', className: 'bg-yellow-900/30 text-yellow-300' },
+  error: { label: 'Error', className: 'bg-red-900/30 text-red-300' },
+  active: { label: 'Active', className: 'bg-green-900/30 text-green-300' },
+  inactive: { label: 'Inactive', className: 'bg-surface-1 text-gray-200' },
+};
 
 function CreateTriggerModal({
   onClose,
@@ -295,6 +304,8 @@ function CreateTriggerModal({
 export function DatabaseTriggers() {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const { instanceInfo } = useAuth();
+  const cdcEnabled = cdcFeature(instanceInfo);
 
   const { data: triggers, isLoading } = useQuery({
     queryKey: ['database-triggers'],
@@ -335,11 +346,26 @@ export function DatabaseTriggers() {
             Poll external databases for changes and trigger function executions (CDC)
           </p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn btn-primary flex items-center">
+        <button
+          onClick={() => setShowCreate(true)}
+          className="btn btn-primary flex items-center disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={!cdcEnabled}
+          title={cdcEnabled ? undefined : CDC_OFF_REASON}
+        >
           <Plus className="w-5 h-5 mr-2" />
           New Trigger
         </button>
       </div>
+
+      {!cdcEnabled && (
+        <div className="px-4 py-3 rounded-md bg-yellow-900/20 border border-yellow-800/30 text-sm text-yellow-400">
+          CDC is disabled on this deployment
+          (<span className="font-mono">CDC_ENABLED=false</span>).
+          Triggers can be viewed, paused, edited and deleted, but none of them fire, and new
+          ones can't be created or switched on. Their settings are kept: turning CDC back on
+          resumes the ones that were active.
+        </div>
+      )}
 
       {showCreate && (
         <CreateTriggerModal
@@ -370,17 +396,22 @@ export function DatabaseTriggers() {
                           {op}
                         </span>
                       ))}
-                      <span
-                        className={`px-2 py-0.5 text-xs font-medium rounded ${
-                          trigger.error_message
-                            ? 'bg-red-900/30 text-red-300'
-                            : trigger.is_active
-                              ? 'bg-green-900/30 text-green-300'
-                              : 'bg-surface-1 text-gray-200'
-                        }`}
-                      >
-                        {trigger.error_message ? 'Error' : trigger.is_active ? 'Active' : 'Inactive'}
-                      </span>
+                      {(() => {
+                        const status = triggerStatus(trigger, cdcEnabled);
+                        const badge = STATUS_BADGE[status];
+                        return (
+                          <span
+                            className={`px-2 py-0.5 text-xs font-medium rounded ${badge.className}`}
+                            title={
+                              status === 'cdc_off'
+                                ? `${CDC_OFF_REASON}. This trigger stays on and resumes when CDC is turned back on.`
+                                : undefined
+                            }
+                          >
+                            {badge.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     <div className="flex items-center gap-4 mt-2">
                       <p className="text-xs text-gray-500">
@@ -433,9 +464,11 @@ export function DatabaseTriggers() {
                       trigger.is_active
                         ? 'text-amber-600 hover:text-amber-700'
                         : 'text-green-600 hover:text-green-400'
-                    }`}
-                    disabled={toggleActiveMutation.isPending}
-                    title={trigger.is_active ? 'Pause' : 'Resume'}
+                    } disabled:opacity-40 disabled:cursor-not-allowed`}
+                    disabled={toggleActiveMutation.isPending || !canToggle(trigger, cdcEnabled)}
+                    title={
+                      trigger.is_active ? 'Pause' : cdcEnabled ? 'Resume' : `Can't resume: ${CDC_OFF_REASON}`
+                    }
                   >
                     {trigger.is_active ? (
                       <PauseCircle className="w-5 h-5" />
@@ -466,7 +499,12 @@ export function DatabaseTriggers() {
           <p className="text-gray-400 mb-4">
             Create triggers to automatically run functions when data changes in external databases
           </p>
-          <button onClick={() => setShowCreate(true)} className="btn btn-primary">
+          <button
+            onClick={() => setShowCreate(true)}
+            className="btn btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!cdcEnabled}
+            title={cdcEnabled ? undefined : CDC_OFF_REASON}
+          >
             <Plus className="w-5 h-5 mr-2 inline" />
             Create Trigger
           </button>

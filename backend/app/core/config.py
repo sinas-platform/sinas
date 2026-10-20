@@ -231,6 +231,12 @@ class Settings(BaseSettings):
     # own connections); it does NOT affect the platform's own Postgres, and an
     # already-created record is left alone.
     builtin_database_enabled: bool = True
+    # cdc_enabled=False turns off Database Triggers (CDC): the poller doesn't
+    # run and the API refuses to create a trigger or switch one on. Stored
+    # triggers are left as they are, so turning CDC back on resumes exactly
+    # the ones that were on. In Kubernetes, pair it with features.cdc=false,
+    # which also drops the cdc-worker Deployment.
+    cdc_enabled: bool = True
 
     # Package management
     allow_package_installation: bool = True

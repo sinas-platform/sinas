@@ -309,7 +309,7 @@ smtp:
   domain: ""
   ipv4: ""
 
-## Optional platform features. Both default on — turning one off removes the
+## Optional platform features. All default on — turning one off removes the
 ## capability (endpoints reject explicitly rather than failing oddly).
 features:
   ## false disables ALL user-code execution: Functions and the agent
@@ -322,6 +322,11 @@ features:
   ## Does NOT affect the platform's own Postgres, and leaves an already-created
   ## record untouched.
   builtinDatabase: true
+  ## false turns off Database Triggers (CDC) and drops the cdc-worker
+  ## Deployment. The API refuses to create a trigger or switch one on, and the
+  ## console shows triggers as "Disabled — CDC off". Stored triggers are left
+  ## as they are, so toggling this off is not destructive and can be reversed.
+  cdc: true
 
 ## Access-token signing (OIDC-compatible verification).
 ## algorithm "RS256" signs access tokens with an RSA keypair and publishes the

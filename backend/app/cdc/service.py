@@ -399,7 +399,15 @@ async def run(stop_event: asyncio.Event) -> None:
     inside the API process. Owns everything except signal handling and the
     shared Redis client's lifecycle (the caller closes that).
     """
+    from app.core.config import settings
     from app.core.redis import get_redis
+
+    if not settings.cdc_enabled:
+        # Idle rather than exit, so a CDC container that is still deployed
+        # doesn't restart-loop. Triggers are left untouched.
+        print("⏸️  CDC disabled (CDC_ENABLED=false) — not polling database triggers")
+        await stop_event.wait()
+        return
 
     # --- Redis ---
     redis = await get_redis()

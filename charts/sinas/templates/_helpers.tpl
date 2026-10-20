@@ -210,6 +210,8 @@ mints a one-time setup link with `python -m app.cli setup-link` (see NOTES.txt).
   value: {{ .Values.features.codeExecution | quote }}
 - name: BUILTIN_DATABASE_ENABLED
   value: {{ .Values.features.builtinDatabase | quote }}
+- name: CDC_ENABLED
+  value: {{ .Values.features.cdc | quote }}
 {{- with (.Values.jwt).algorithm }}
 - name: JWT_ALGORITHM
   value: {{ . | quote }}
