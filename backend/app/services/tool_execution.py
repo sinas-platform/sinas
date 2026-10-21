@@ -1155,6 +1155,7 @@ async def _execute_single_tool(
                     arguments=arguments,
                     user_id=user_id,
                     metadata=tool_metadata,
+                    agent_id=str(chat.agent_id) if chat and chat.agent_id else None,
                 )
                 logger.debug(f"Collection tool completed in {time.time() - start_time:.3f}s: {tool_name}")
             elif tool_metadata.get("type") == "pipeline":

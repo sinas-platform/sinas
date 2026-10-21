@@ -265,6 +265,7 @@ class WorkbenchTools:
             return {"error": "Workbench belongs to a different user"}
 
         workbench = await get_or_create_workbench(db, chat)
+        agent_id = str(chat.agent_id) if chat.agent_id else None
 
         if tool_name == "workbench_list":
             return await self._conv._search_collection(db, workbench, _INTERNAL_NAMESPACE, user_id, arguments)
@@ -277,25 +278,33 @@ class WorkbenchTools:
             if err:
                 return {"error": err}
             return await self._conv._write_file(
-                db, workbench, _INTERNAL_NAMESPACE, user_id, arguments, visibility="private"
+                db, workbench, _INTERNAL_NAMESPACE, user_id, arguments,
+                visibility="private", agent_id=agent_id,
             )
         if tool_name == "workbench_edit":
             err = _validate_path(arguments.get("filename", ""))
             if err:
                 return {"error": err}
-            return await self._conv._edit_file(db, workbench, _INTERNAL_NAMESPACE, user_id, arguments)
+            return await self._conv._edit_file(
+                db, workbench, _INTERNAL_NAMESPACE, user_id, arguments, agent_id=agent_id
+            )
         if tool_name == "workbench_delete":
             return await self._conv._delete_file(db, workbench, _INTERNAL_NAMESPACE, user_id, arguments)
         if tool_name == "workbench_checkout":
-            return await self._checkout(db, workbench, user_id, arguments)
+            return await self._checkout(db, workbench, user_id, arguments, agent_id=agent_id)
         if tool_name == "workbench_promote":
-            return await self._promote(db, workbench, user_id, arguments)
+            return await self._promote(db, workbench, user_id, arguments, agent_id=agent_id)
         return {"error": f"Unknown workbench tool: {tool_name}"}
 
     # ── checkout ────────────────────────────────────────────────────
 
     async def _checkout(
-        self, db: AsyncSession, workbench: Collection, user_id: str, arguments: dict[str, Any]
+        self,
+        db: AsyncSession,
+        workbench: Collection,
+        user_id: str,
+        arguments: dict[str, Any],
+        agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
         coll_ref = arguments.get("collection", "")
         if "/" not in coll_ref:
@@ -372,6 +381,7 @@ class WorkbenchTools:
                 user_id=user_id,
                 visibility="private",
                 file_metadata=provenance,
+                agent_id=agent_id,
             )
             if "error" in result:
                 errors.append(f"{f.name}: {result['error']}")
@@ -392,7 +402,12 @@ class WorkbenchTools:
     # ── promote ─────────────────────────────────────────────────────
 
     async def _promote(
-        self, db: AsyncSession, workbench: Collection, user_id: str, arguments: dict[str, Any]
+        self,
+        db: AsyncSession,
+        workbench: Collection,
+        user_id: str,
+        arguments: dict[str, Any],
+        agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
         filename = arguments.get("filename", "")
         err = _validate_path(filename)
@@ -489,6 +504,7 @@ class WorkbenchTools:
                     visibility=source_file.visibility,
                     file_metadata={**(source_file.file_metadata or {}), **metadata} if metadata else None,
                     existing=source_file,
+                    agent_id=agent_id,
                 )
                 if "error" in result:
                     return result
@@ -520,6 +536,7 @@ class WorkbenchTools:
             user_id=user_id,
             visibility=visibility,
             file_metadata=metadata or None,
+            agent_id=agent_id,
         )
         if "error" in result:
             return result
@@ -965,6 +982,7 @@ async def _write_bytes(
     file_metadata: Optional[dict[str, Any]] = None,
     existing: Optional[File] = None,
     creation_metadata: Optional[dict[str, Any]] = None,
+    agent_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Byte-level write into a collection/workbench (checkout + promote path).
 
@@ -1068,6 +1086,8 @@ async def _write_bytes(
                 size_bytes=len(content),
                 hash_sha256=file_hash,
                 uploaded_by=uuid_lib.UUID(user_id),
+                actor_type="agent" if agent_id else "user",
+                agent_id=uuid_lib.UUID(str(agent_id)) if agent_id else None,
             )
         )
         await db.flush()

@@ -166,6 +166,15 @@ class FileVersion(Base):
     uploaded_by: Mapped[uuid_lib.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Who actually wrote this version. Agents write as the user (uploaded_by
+    # stays the person), so this tells typing from an agent's tool call:
+    # "user" or "agent", plus which agent when it was one.
+    actor_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="user", server_default="user"
+    )
+    agent_id: Mapped[Optional[uuid_lib.UUID]] = mapped_column(
+        ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[created_at]
 
     # Relationships

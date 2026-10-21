@@ -1406,6 +1406,8 @@ export interface FileVersion {
   size_bytes: number;
   hash_sha256: string;
   uploaded_by: string | null;
+  actor_type: 'user' | 'agent';
+  agent_id: string | null;
   created_at: string;
 }
 

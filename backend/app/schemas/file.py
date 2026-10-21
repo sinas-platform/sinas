@@ -127,6 +127,8 @@ class FileVersionResponse(BaseModel):
     size_bytes: int
     hash_sha256: str
     uploaded_by: Optional[uuid.UUID]
+    actor_type: str = "user"
+    agent_id: Optional[uuid.UUID] = None
     created_at: datetime
 
     class Config:

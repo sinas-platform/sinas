@@ -287,6 +287,7 @@ class CollectionToolConverter:
         arguments: dict[str, Any],
         user_id: str,
         metadata: dict[str, Any],
+        agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Execute a collection tool call.
@@ -297,6 +298,7 @@ class CollectionToolConverter:
             arguments: Tool arguments from the LLM
             user_id: Current user ID
             metadata: Tool metadata containing collection_ref and tool_type
+            agent_id: The agent making the call, recorded on versions it writes
         """
         from app.core.auth import get_effective_permissions
         from app.core.permissions import check_permission
@@ -330,9 +332,9 @@ class CollectionToolConverter:
         elif tool_type == "collection_get_file":
             return await self._get_file(db, collection, namespace, user_id, arguments)
         elif tool_type == "collection_write_file":
-            return await self._write_file(db, collection, namespace, user_id, arguments)
+            return await self._write_file(db, collection, namespace, user_id, arguments, agent_id=agent_id)
         elif tool_type == "collection_edit_file":
-            return await self._edit_file(db, collection, namespace, user_id, arguments)
+            return await self._edit_file(db, collection, namespace, user_id, arguments, agent_id=agent_id)
         elif tool_type == "collection_delete_file":
             return await self._delete_file(db, collection, namespace, user_id, arguments)
         else:
@@ -549,6 +551,7 @@ class CollectionToolConverter:
         user_id: str,
         arguments: dict[str, Any],
         visibility: str = "shared",
+        agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Write content to a file, creating a new version if it exists.
 
@@ -620,6 +623,8 @@ class CollectionToolConverter:
             size_bytes=len(content_bytes),
             hash_sha256=file_hash,
             uploaded_by=uuid_lib.UUID(user_id),
+            actor_type="agent" if agent_id else "user",
+            agent_id=uuid_lib.UUID(str(agent_id)) if agent_id else None,
         )
         db.add(version)
 
@@ -647,6 +652,7 @@ class CollectionToolConverter:
         namespace: str,
         user_id: str,
         arguments: dict[str, Any],
+        agent_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Surgical edit: exact string replacement in a file. Creates new version."""
         filename = arguments.get("filename")
@@ -685,7 +691,7 @@ class CollectionToolConverter:
         return await self._write_file(db, collection, namespace, user_id, {
             "filename": filename,
             "content": new_content,
-        })
+        }, agent_id=agent_id)
 
     async def _delete_file(
         self,
