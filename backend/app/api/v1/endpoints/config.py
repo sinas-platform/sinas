@@ -130,7 +130,9 @@ async def apply_config(
             strict=not apply_request.force,  # Allow missing env vars if force=True
         )
 
-        if not validation.is_valid and not apply_request.force:
+        # force skips reference checks, never a config that didn't parse
+        # (an unknown key, a wrong type): there is nothing to apply then.
+        if not validation.is_valid and (not apply_request.force or config is None):
             # Return validation errors without applying
             return ConfigApplyResponse(
                 success=False,

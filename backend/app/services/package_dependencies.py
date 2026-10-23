@@ -335,7 +335,11 @@ def _nested_requirements(yaml_content: str, values: dict[str, Any] | None = None
     waiting = sorted(set(_VAR.findall(json.dumps(meta.get("requires"), default=str))))
     if waiting:
         return [], waiting
-    return PackageMetadataConfig.model_validate(meta).requires, []
+    # Only what the requirements need: an unknown package-level key is the
+    # package's own validation's to report (with its resource-named error),
+    # not a reason to refuse reading its requirements.
+    known = {k: v for k, v in meta.items() if k in PackageMetadataConfig.model_fields}
+    return PackageMetadataConfig.model_validate(known).requires, []
 
 
 _VAR = re.compile(r"\$\{\{\s*vars\.([A-Z][A-Z0-9_]*)\s*\}\}")
