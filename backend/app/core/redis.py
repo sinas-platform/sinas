@@ -18,8 +18,9 @@ on host, database, credentials and TLS:
                             Memorystore server CA). Empty = system trust
                             store.
     REDIS_SSL_CHECK_HOSTNAME  Also match the certificate to the host name.
-                            Off by default: Memorystore is reached by IP
-                            and verified against its own per-instance CA.
+                            Unset = auto: on with the system trust store,
+                            off with a private CA (Memorystore is reached
+                            by IP and verified against its own CA).
 
 Query parameters on REDIS_URL: `db`, `ssl_ca_certs`, `ssl_cert_reqs`,
 `ssl_check_hostname`, plus redis-py's connection options
@@ -27,6 +28,7 @@ Query parameters on REDIS_URL: `db`, `ssl_ca_certs`, `ssl_cert_reqs`,
 clients honour and arq ignores.
 """
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -116,11 +118,27 @@ def parse_redis_config(
     if cert_reqs not in _CERT_REQS:
         raise ValueError(f"ssl_cert_reqs must be one of {', '.join(_CERT_REQS)}")
 
-    check_hostname = (
-        ssl_check_hostname
-        if ssl_check_hostname is not None
-        else _to_bool(query.get("ssl_check_hostname", False))
-    )
+    ca_certs = ssl_ca_certs or query.get("ssl_ca_certs") or None
+    is_ssl = parsed.scheme == "rediss"
+    if is_ssl and ca_certs and not os.path.isfile(ca_certs):
+        raise ValueError(
+            f"REDIS_SSL_CA_CERTS points at {ca_certs!r}, which is not a readable "
+            "file. Mount the Redis server CA there (Helm: "
+            "redis.external.tls.caSecret / caConfigMap) or unset it."
+        )
+
+    # Hostname check: explicit setting > URL query flag > auto. Auto = on
+    # with the system trust store (otherwise ANY publicly issued certificate
+    # would pass), off with a private CA (Memorystore: reached by IP,
+    # verified against its own per-instance CA).
+    if ssl_check_hostname is not None:
+        check_hostname = ssl_check_hostname
+    elif "ssl_check_hostname" in query:
+        check_hostname = _to_bool(query["ssl_check_hostname"])
+    else:
+        check_hostname = ca_certs is None and cert_reqs != "none"
+    if check_hostname and cert_reqs == "none":
+        raise ValueError("ssl_check_hostname cannot be on with ssl_cert_reqs=none")
 
     extra: dict[str, Any] = {}
     for name, value in query.items():
@@ -136,8 +154,8 @@ def parse_redis_config(
         username=username or url_username,
         password=password or url_password,
         unix_socket_path=unquote(parsed.path) if parsed.scheme == "unix" else None,
-        ssl=parsed.scheme == "rediss",
-        ssl_ca_certs=ssl_ca_certs or query.get("ssl_ca_certs") or None,
+        ssl=is_ssl,
+        ssl_ca_certs=ca_certs,
         ssl_cert_reqs=cert_reqs,
         ssl_check_hostname=check_hostname,
         extra=extra,
@@ -157,15 +175,36 @@ def parse_redis_config(
     return config
 
 
+_config_cache: dict[tuple, RedisConnectionConfig] = {}
+
+
 def get_redis_config() -> RedisConnectionConfig:
-    """The platform's Redis connection settings (from app settings)."""
-    return parse_redis_config(
+    """The platform's Redis connection settings (from app settings).
+
+    Parsed once per distinct setting values (so the insecure-config warnings
+    are logged once, not per client), keyed on the values themselves so a
+    changed setting is still picked up.
+    """
+    key = (
         settings.redis_url,
-        password=settings.redis_password or None,
-        username=settings.redis_username or None,
-        ssl_ca_certs=settings.redis_ssl_ca_certs or None,
-        ssl_check_hostname=settings.redis_ssl_check_hostname,
+        settings.redis_password or None,
+        settings.redis_username or None,
+        settings.redis_ssl_ca_certs or None,
+        settings.redis_ssl_check_hostname,
     )
+    config = _config_cache.get(key)
+    if config is None:
+        url, password, username, ca_certs, check_hostname = key
+        config = parse_redis_config(
+            url,
+            password=password,
+            username=username,
+            ssl_ca_certs=ca_certs,
+            ssl_check_hostname=check_hostname,
+        )
+        _config_cache.clear()  # only the current settings matter
+        _config_cache[key] = config
+    return config
 
 
 def redis_client_kwargs(config: RedisConnectionConfig) -> dict[str, Any]:

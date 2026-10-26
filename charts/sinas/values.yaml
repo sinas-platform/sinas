@@ -22,7 +22,8 @@ ingress:
 ## All-in-one ("lite") profile. When true, the queue workers, scheduler and
 ## CDC poller run inside the backend process (as asyncio tasks), the console
 ## SPA is served by the backend at /ui, and the queue-worker, queue-agent,
-## scheduler, cdc-worker and console Deployments are not rendered. The
+## queue-agent-sub, queue-pipeline, scheduler, cdc-worker and console
+## Deployments are not rendered. The
 ## backend is pinned to 1 replica / 1 uvicorn worker (the embedded
 ## scheduler/CDC loops are singletons) and uses the `lite` image (backend +
 ## console build). Pair with values-lite.yaml for the full small-footprint
@@ -189,11 +190,12 @@ redis:
       caSecretKey: "ca.crt"
       caConfigMap: ""
       caConfigMapKey: "ca.crt"
-      ## Also match the certificate to `host`. Leave off for Memorystore
-      ## (reached by IP, verified against its own CA); turn on for
-      ## publicly-issued certificates and a DNS host, or any certificate
-      ## from a public CA would be accepted.
-      checkHostname: false
+      ## Also match the certificate to `host`. Unset (null) = auto: ON
+      ## without a CA (system trust store — otherwise any publicly issued
+      ## certificate would be accepted), OFF with caSecret/caConfigMap
+      ## (Memorystore: reached by IP, verified against its own private CA).
+      ## Set true/false to override.
+      checkHostname: null
       ## There is deliberately no "skip verification" switch.
 
 ## ClickHouse
@@ -220,7 +222,8 @@ pgbouncer:
       memory: 64Mi
 
 ## File storage — shared volume for uploaded files (/var/sinas/files).
-## Mounted into backend, queue-worker, queue-agent, scheduler.
+## Mounted into backend, queue-worker, queue-agent, queue-agent-sub,
+## queue-pipeline, scheduler.
 ## Use an RWX storage class on multi-node clusters.
 fileStorage:
   size: 5Gi
@@ -250,7 +253,8 @@ networkPolicy:
   egressCidrs: []
 
 ## Scheduling — where the STATELESS workloads run (backend,
-## console, pgbouncer, queue-worker, queue-agent, scheduler, cdc-worker).
+## console, pgbouncer, queue-worker, queue-agent, queue-agent-sub,
+## queue-pipeline, scheduler, cdc-worker).
 ## The single biggest cost lever on managed Kubernetes: moving these onto
 ## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
 ## and they tolerate preemption (they restart and resume).
@@ -340,6 +344,40 @@ queueAgent:
     limits:
       cpu: "1"
       memory: "768Mi"
+
+## Sub-agent worker — delegated (agent-to-agent) agent jobs on their own
+## queue, so parents waiting on children can never starve them of slots
+## (issue #90). enabled: false drops the Deployment AND routes delegated
+## jobs to the main agent queue (AGENT_SUBAGENT_QUEUE=false). Ignored by
+## allInOne (the backend runs it in-process).
+queueAgentSub:
+  enabled: true
+  replicas: 1
+  ## Max concurrent delegated agent jobs per worker (QUEUE_AGENT_SUB_CONCURRENCY).
+  concurrency: 5
+  resources:
+    requests:
+      cpu: "150m"
+      memory: "192Mi"
+    limits:
+      cpu: "1"
+      memory: "768Mi"
+
+## Pipeline worker — pipeline runs (sinas:queue:pipelines). Required:
+## pipeline runs are always queued here. Await-heavy orchestration (child
+## steps run on the function/agent workers), so high concurrency is cheap.
+## Ignored by allInOne (the backend runs it in-process).
+queuePipeline:
+  replicas: 1
+  ## Max concurrent pipeline runs per worker (QUEUE_PIPELINE_CONCURRENCY).
+  concurrency: 50
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
 
 ## Scheduler
 scheduler:

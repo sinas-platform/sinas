@@ -298,9 +298,11 @@ class Settings(BaseSettings):
     # PEM bundle of CAs to verify the server certificate against (e.g. the
     # Memorystore server CA). Empty = the system trust store.
     redis_ssl_ca_certs: Optional[str] = None
-    # Also match the certificate to the host name. Off: Memorystore is
-    # reached by IP and verified against its own per-instance CA.
-    redis_ssl_check_hostname: bool = False
+    # Also match the certificate to the host name. None = auto: on with the
+    # system trust store (else any publicly issued certificate passes), off
+    # with a private CA (Memorystore: reached by IP, own per-instance CA).
+    # A ?ssl_check_hostname= flag on redis_url applies when this is None.
+    redis_ssl_check_hostname: Optional[bool] = None
     queue_function_concurrency: int = 10
     queue_agent_concurrency: int = 5
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker

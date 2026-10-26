@@ -80,6 +80,97 @@ spec:
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+{{- if ((.Values.queueAgentSub).enabled | default false) }}
+---
+## queue-agent-sub — delegated (agent-to-agent, depth > 0) agent jobs on
+## their own queue (sinas:queue:agents:sub), so parents blocked on children
+## can never starve them of slots (issue #90). Without this Deployment those
+## jobs would sit in the queue unconsumed; with queueAgentSub.enabled=false
+## the backend routes them to the main agent queue instead.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-agent-sub
+  labels:
+    {{- include "sinas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: queue-agent-sub
+spec:
+  replicas: {{ .Values.queueAgentSub.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: queue-agent-sub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: queue-agent-sub
+    spec:
+      ## Same as queue-agent: the agent codeExecution tool creates sandbox pods.
+      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgentSub) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: queue-agent-sub
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "arq", "app.queue.worker.SubAgentWorkerSettings"]
+          env:
+            {{- include "sinas.backendEnv" . | nindent 12 }}
+            - name: QUEUE_AGENT_SUB_CONCURRENCY
+              value: {{ .Values.queueAgentSub.concurrency | quote }}
+          volumeMounts:
+            {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          resources:
+            {{- toYaml .Values.queueAgentSub.resources | nindent 12 }}
+      volumes:
+        {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+{{- end }}
+---
+## queue-pipeline — pipeline runs (sinas:queue:pipelines). Own process so
+## long runs never starve function/agent workers. Await-heavy orchestration
+## (child jobs go through the function/agent queues), so it needs no
+## executor service account.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-pipeline
+  labels:
+    {{- include "sinas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: queue-pipeline
+spec:
+  replicas: {{ .Values.queuePipeline.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: queue-pipeline
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: queue-pipeline
+    spec:
+      {{- include "sinas.imagePullSecrets" . | nindent 6 }}
+      {{- with (include "sinas.scheduling" (dict "values" (.Values.queuePipeline) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      containers:
+        - name: queue-pipeline
+          image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "arq", "app.queue.worker.PipelineWorkerSettings"]
+          env:
+            {{- include "sinas.backendEnv" . | nindent 12 }}
+            - name: QUEUE_PIPELINE_CONCURRENCY
+              value: {{ .Values.queuePipeline.concurrency | quote }}
+          volumeMounts:
+            {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          resources:
+            {{- toYaml .Values.queuePipeline.resources | nindent 12 }}
+      volumes:
+        {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## scheduler
 apiVersion: apps/v1

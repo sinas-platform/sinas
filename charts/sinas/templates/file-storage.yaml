@@ -1,6 +1,7 @@
 {{- if (.Values.fileStorage).storageClass }}
 ## Shared persistent volume for user-uploaded files (/var/sinas/files).
-## Mounted into backend, queue-worker, queue-agent, and scheduler.
+## Mounted into backend, queue-worker, queue-agent, queue-agent-sub,
+## queue-pipeline and scheduler.
 ##
 ## Scaleway SBS (and most block storage) is ReadWriteOnce — it can only attach
 ## to a single node. All pods that mount this volume must be co-located on the

@@ -276,17 +276,21 @@ redis:
 | `redis.external.tls.enabled` | `false` | Connect with TLS (`rediss://`). Required when the instance enforces in-transit encryption. |
 | `redis.external.tls.caSecret` / `caSecretKey` | — / `ca.crt` | Secret holding the server CA (PEM). |
 | `redis.external.tls.caConfigMap` / `caConfigMapKey` | — / `ca.crt` | The same, from a ConfigMap (a CA certificate isn't secret). Set one of the two, not both. |
-| `redis.external.tls.checkHostname` | `false` | Also match the certificate to `host`. Leave it off for Memorystore, which you reach by IP and verify against its per-instance CA. Turn it on for publicly issued certificates with a DNS host. |
+| `redis.external.tls.checkHostname` | _(auto)_ | Also match the certificate to `host`. Unset means automatic. Without a CA it's on: the system trust store would otherwise accept any publicly issued certificate. With `caSecret`/`caConfigMap` it's off, which suits Memorystore, reached by IP and verified against its own per-instance CA. Set `true` or `false` to override. |
 | `redis.maxmemoryPolicy` | `allkeys-lru` | Eviction policy of the **in-cluster** Redis. See below. |
 
 The certificate is always verified; the chart has no option to skip
-verification. Without a CA, the image's system trust store is used. That
-works for services with publicly issued certificates (ElastiCache, Azure
-Cache for Redis), not for Memorystore.
+verification. Without a CA, the image's system trust store is used, and
+the certificate must also match `host`. That works for services with
+publicly issued certificates and a DNS endpoint (ElastiCache, Azure Cache
+for Redis), not for Memorystore. A `REDIS_SSL_CA_CERTS` path that doesn't
+exist stops the process at startup with an error naming the path.
 
 The CA is mounted read-only at `/etc/sinas/redis-ca/ca.crt` in every pod
-that talks to Redis (backend, queue workers, scheduler, CDC worker; just the
-backend in the all-in-one profile). The AUTH string reaches the processes as
+that talks to Redis. These are the backend, all four queue workers
+(`queue-worker`, `queue-agent`, `queue-agent-sub`, `queue-pipeline`), the
+scheduler and the CDC worker. In the all-in-one profile it's just the
+backend. The AUTH string reaches the processes as
 `REDIS_PASSWORD`, separately from `REDIS_URL`, so special characters need no
 URL-encoding. Sandbox and trusted executor pods get neither.
 
@@ -411,6 +415,9 @@ into the backend, worker, scheduler and CDC containers (for example with a
 | `networkPolicy.ingressNamespace` | _(any)_ | Restrict which namespace may reach backend/console |
 | `backend.forwardedAllowIps` | private ranges | Proxies trusted to report the client IP (see below) |
 | `redis.external.host` | — | Use a managed Redis instead of the bundled one ([External Redis](#external-redis-memorystore-elasticache-azure-cache)) |
+| `queueWorker` / `queueAgent` | 1 replica each | Function and agent queue workers (`replicas`, `concurrency`, `resources`) |
+| `queueAgentSub.enabled` | `true` | Worker for delegated (agent-to-agent) jobs on their own queue. `false` removes it and routes those jobs to the main agent queue. |
+| `queuePipeline` | 1 replica, concurrency 50 | Pipeline-run worker. Every pipeline run is queued for it. |
 
 ## Client IPs behind the ingress
 

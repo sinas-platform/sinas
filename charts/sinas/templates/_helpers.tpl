@@ -113,14 +113,24 @@ caConfigMap). REDIS_SSL_CA_CERTS points here.
 {{- end }}
 
 {{/*
-Non-empty when a Redis server CA is mounted into the pods. Fails the render
-on contradictory TLS settings. Paren-safe for `helm upgrade --reuse-values`
-from a release without redis.external.
+"true" when the external Redis is reached over TLS, else empty. The one
+place tls.enabled is read, so `true`, "true" (--set-string) and a stray
+"false" string all mean the same everywhere. Paren-safe for
+`helm upgrade --reuse-values` from a release without redis.external.
 */}}
-{{- define "sinas.redisCaEnabled" -}}
+{{- define "sinas.redisTlsOn" -}}
 {{- $ext := (.Values.redis).external | default dict }}
 {{- $tls := $ext.tls | default dict }}
-{{- if and $ext.host $tls.enabled }}
+{{- if and $ext.host (eq (toString ($tls.enabled | default false)) "true") }}true{{- end }}
+{{- end }}
+
+{{/*
+Non-empty when a Redis server CA is mounted into the pods. Fails the render
+on contradictory TLS settings.
+*/}}
+{{- define "sinas.redisCaEnabled" -}}
+{{- $tls := ((.Values.redis).external | default dict).tls | default dict }}
+{{- if include "sinas.redisTlsOn" . }}
 {{- if and $tls.caSecret $tls.caConfigMap }}
 {{- fail "redis.external.tls: set caSecret OR caConfigMap, not both" }}
 {{- end }}
@@ -135,11 +145,14 @@ carries scheme (rediss:// = TLS), host, port and db; the AUTH string comes
 from the operator's Secret as REDIS_PASSWORD, a separate variable the
 backend uses verbatim, so it never needs URL-encoding and never sits in the
 Deployment spec or in values.
+tls.checkHostname: unset = auto in the backend (on with the system trust
+store, off with a private CA); true/false is passed through explicitly.
 */}}
 {{- define "sinas.redisEnv" -}}
 {{- $ext := (.Values.redis).external | default dict }}
 {{- if $ext.host }}
 {{- $tls := $ext.tls | default dict }}
+{{- $tlsOn := include "sinas.redisTlsOn" . }}
 {{- $host := $ext.host }}
 {{- if contains ":" $host }}{{- $host = printf "[%s]" $host }}{{- end }}
 {{- with $ext.existingSecret }}
@@ -154,14 +167,17 @@ Deployment spec or in values.
   value: {{ . | quote }}
 {{- end }}
 - name: REDIS_URL
-  value: {{ printf "%s://%s:%d/%d" (ternary "rediss" "redis" (eq (toString $tls.enabled) "true")) $host (($ext.port | default 6379) | int) (($ext.database | default 0) | int) | quote }}
+  value: {{ printf "%s://%s:%d/%d" (ternary "rediss" "redis" (eq $tlsOn "true")) $host (($ext.port | default 6379) | int) (($ext.database | default 0) | int) | quote }}
+{{- if $tlsOn }}
 {{- if include "sinas.redisCaEnabled" . }}
 - name: REDIS_SSL_CA_CERTS
   value: {{ include "sinas.redisCaPath" . | quote }}
 {{- end }}
-{{- if and $tls.enabled $tls.checkHostname }}
+{{- $check := toString $tls.checkHostname }}
+{{- if or (eq $check "true") (eq $check "false") }}
 - name: REDIS_SSL_CHECK_HOSTNAME
-  value: "true"
+  value: {{ $check | quote }}
+{{- end }}
 {{- end }}
 {{- else }}
 - name: REDIS_URL
@@ -301,6 +317,14 @@ mints a one-time setup link with `python -m app.cli setup-link` (see NOTES.txt).
     secretKeyRef:
       name: {{ .Release.Name }}-secrets
       key: superadmin-password
+{{- end }}
+{{- /* No sub-agent worker (queueAgentSub.enabled=false, or a pre-0.5
+       values file without the key): delegated agent jobs must go to the
+       main agent queue, or nothing would consume them. In allInOne the
+       backend runs the sub-agent worker itself whenever routing is on. */}}
+{{- if not ((.Values.queueAgentSub).enabled | default false) }}
+- name: AGENT_SUBAGENT_QUEUE
+  value: "false"
 {{- end }}
 - name: CODE_EXECUTION_ENABLED
   value: {{ .Values.features.codeExecution | quote }}

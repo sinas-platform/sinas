@@ -330,12 +330,12 @@ class SharedWorkerManager:
         # Read execution counts from Redis (shared across processes)
         exec_counts: dict[str, int] = {}
         try:
-            from app.core.redis import create_redis_client
+            from app.core.redis import get_redis
 
-            redis = create_redis_client()
+            # The process-wide pooled client: no per-call TLS handshake/AUTH.
+            redis = await get_redis()
             raw = await redis.hgetall(WORKER_EXEC_COUNT_KEY)
             exec_counts = {k: int(v) for k, v in raw.items()}
-            await redis.aclose()
         except Exception:
             pass
 
@@ -854,11 +854,11 @@ sys.exit(1)
 
                 # Track execution count in Redis (shared across processes)
                 try:
-                    from app.core.redis import create_redis_client
+                    from app.core.redis import get_redis
 
-                    redis = create_redis_client()
+                    # Pooled client: no TLS handshake/AUTH per execution.
+                    redis = await get_redis()
                     await redis.hincrby(WORKER_EXEC_COUNT_KEY, worker_id, 1)
-                    await redis.aclose()
                 except Exception:
                     pass  # Non-critical — don't fail execution over counter
 

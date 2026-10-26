@@ -42,6 +42,26 @@ jobs:
           grep -A1 "name: REDIS_URL" /tmp/default.yaml | grep -q '"redis://redis:6379/0"'
           ! grep -q -e 'REDIS_PASSWORD' -e 'REDIS_SSL_CA_CERTS' -e 'redis-ca' /tmp/default.yaml || exit 1
           grep -A1 -- "--maxmemory-policy" /tmp/default.yaml | grep -q 'allkeys-lru'
+          # Every arq queue has a consumer in the split profile
+          for cls in WorkerSettings AgentWorkerSettings SubAgentWorkerSettings PipelineWorkerSettings; do
+            grep -q "\"app.queue.worker.$cls\"" /tmp/default.yaml || { echo "no Deployment runs $cls"; exit 1; }
+          done
+          grep -q "name: queue-agent-sub$" /tmp/default.yaml
+          grep -q "name: queue-pipeline$" /tmp/default.yaml
+          # sub-agent routing stays on while its worker exists
+          ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/default.yaml || exit 1
+
+      - name: helm template (sub-agent worker disabled)
+        run: |
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set queueAgentSub.enabled=false \
+            > /tmp/nosub.yaml
+          ! grep -q "name: queue-agent-sub$" /tmp/nosub.yaml || exit 1
+          # ...so delegated jobs must be routed to the main agent queue
+          grep -A1 "name: AGENT_SUBAGENT_QUEUE" /tmp/nosub.yaml | grep -q '"false"'
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |
@@ -102,8 +122,10 @@ jobs:
           # AUTH string only by Secret reference, never inlined
           grep -A4 "name: REDIS_PASSWORD" /tmp/redis-ext.yaml | grep -q 'name: "redis-auth"'
           grep -A1 "name: REDIS_SSL_CA_CERTS" /tmp/redis-ext.yaml | grep -q '/etc/sinas/redis-ca/ca.crt'
-          # CA mounted into all 5 Redis-using pods (mount + volume each)
-          test "$(grep -c 'name: redis-ca$' /tmp/redis-ext.yaml)" -eq 10
+          # checkHostname unset = backend auto (off with a private CA)
+          ! grep -q 'REDIS_SSL_CHECK_HOSTNAME' /tmp/redis-ext.yaml || exit 1
+          # CA mounted into all 7 Redis-using pods (mount + volume each)
+          test "$(grep -c 'name: redis-ca$' /tmp/redis-ext.yaml)" -eq 14
           grep -q 'secretName: "redis-ca"' /tmp/redis-ext.yaml
           # NetworkPolicy auto-allows the private IP on its port
           grep -A4 "cidr: 10.1.2.3/32" /tmp/redis-ext.yaml | grep -q "port: 6378"
@@ -137,6 +159,10 @@ jobs:
           grep -A1 "name: REDIS_URL" /tmp/redis-lite.yaml | grep -q '"rediss://10.1.2.3:6378/0"'
           # one all-in-one backend pod: one mount + one volume
           test "$(grep -c 'name: redis-ca$' /tmp/redis-lite.yaml)" -eq 2
+          # allInOne runs every queue worker in-process: no worker Deployments,
+          # and sub-agent routing stays on (the backend runs that worker too)
+          ! grep -q -e "name: queue-agent-sub$" -e "name: queue-pipeline$" -e "name: queue-worker$" /tmp/redis-lite.yaml || exit 1
+          ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/redis-lite.yaml || exit 1
           grep -A1 "configMap:" /tmp/redis-lite.yaml | grep -q 'name: "redis-ca"'
           # caSecret and caConfigMap together is a render error
           ! helm template ci charts/sinas \
