@@ -1,4 +1,5 @@
-"""Schema errors of a SinasConfig / SinasPackage document, one per problem.
+"""Schema errors of a SinasConfig / SinasPackage document, one per problem,
+and the fields older Sinas versions wrote that a document may still carry.
 
 Pydantic reports a document's problems as one multi-line dump, located by
 raw paths (`spec.agents.0.EnabledSkillConfigYaml.preloadd`). Here each one
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import difflib
 import types
+from dataclasses import dataclass
 from typing import Any, Optional, Union, get_args, get_origin
 
 from pydantic import BaseModel
@@ -22,108 +24,194 @@ from app.schemas.config import ConfigSpec, SinasConfig
 _EXTRA_NOUNS = {"users": "user", "variables": "variable"}
 
 
-def schema_errors(error: PydanticValidationError, document: Any) -> list[tuple[str, str]]:
-    """[(path, message)] for a failed SinasConfig validation of `document`."""
-    entries = []
-    for err in error.errors(include_url=False):
-        raw_loc = tuple(err["loc"])
-        loc, from_union = _data_path(raw_loc, document, err["type"])
-        entries.append((err, raw_loc, loc, from_union))
+# --------------------------------------------------------------- legacy fields
 
-    def is_union_mismatch(entry) -> bool:
-        err, _raw, _loc, from_union = entry
-        return from_union and err["type"].endswith("_type")
+# Fields an export or package from an older Sinas wrote that this version no
+# longer has, by spec section: dropped before validation, with a warning,
+# instead of failing a file that applied fine before. Found by diffing the
+# 0.3.0 and 0.4.0 config schemas and exports against this one.
+LEGACY_FIELDS: dict[str, dict[str, str]] = {
+    "users": {
+        # Written on every user by the 0.3/0.4 export, null included.
+        "lastLoginAt": "is runtime state, not configuration, and is ignored",
+    },
+    "components": {
+        "cssOverrides": (
+            "was removed in 0.5.0 and is ignored; move the CSS into `sourceCode` "
+            "as a <style> block"
+        ),
+    },
+}
+
+
+def strip_legacy_fields(document: Any) -> list[str]:
+    """Drop LEGACY_FIELDS from the document's resources, in place. Returns
+    one warning per field, naming the resources that had it."""
+    spec = document.get("spec") if isinstance(document, dict) else None
+    if not isinstance(spec, dict):
+        return []
+    warnings = []
+    for section, fields in LEGACY_FIELDS.items():
+        items = spec.get(section)
+        if not isinstance(items, list):
+            continue
+        for field, why in fields.items():
+            labels = []
+            for index, item in enumerate(items):
+                if isinstance(item, dict) and field in item:
+                    del item[field]
+                    labels.append(_resource_label(section, index, item))
+            if labels:
+                shown = ", ".join(labels[:5]) + (f" and {len(labels) - 5} more" if len(labels) > 5 else "")
+                warnings.append(f"`{field}` ({shown}) {why}")
+    return warnings
+
+
+# --------------------------------------------------------------- errors
+
+
+@dataclass
+class _Located:
+    err: dict
+    raw_loc: tuple
+    # Where in the document: ((segment, is_list_index), ...).
+    path: tuple
+    # The document paths at which the error went through a union member.
+    unions: tuple
+
+
+def schema_errors(
+    error: PydanticValidationError, document: Any, prefix: tuple = ()
+) -> list[tuple[str, str]]:
+    """[(path, message)] for a failed SinasConfig validation of `document`.
+    `prefix`: where the validated value sits in a SinasConfig document, for
+    a part of one validated on its own (("package",) for package metadata);
+    `document` is then the whole document, or {"package": that value}."""
+    located = [
+        _locate(err, prefix + tuple(err["loc"]), document)
+        for err in error.errors(include_url=False)
+    ]
+
+    def shallow_mismatch(e: _Located) -> bool:
+        # The value isn't even of this union member's type (a mapping where
+        # a string could go): only a guess at what was meant.
+        return bool(e.unions) and e.path == e.unions[-1] and e.err["type"].endswith("_type")
 
     out: list[tuple[str, str]] = []
-    for entry in entries:
-        err, raw_loc, loc, _ = entry
-        # A value checked against every member of a union (`- skill: x` vs a
-        # plain string) fails each member; the "should be a valid string" of
-        # the members it clearly wasn't meant as only buries the real problem.
-        if is_union_mismatch(entry) and any(
-            other is not entry
-            and not is_union_mismatch(other)
-            and other[2][: len(loc)] == loc
-            for other in entries
-        ):
-            continue
-        item = (_format_path(loc), _message(err, raw_loc, loc, document))
+    merged: set = set()
+    for e in located:
+        if shallow_mismatch(e):
+            point = e.unions[-1]
+            # A member the value got into (`- {skill: 123}` is a skill entry)
+            # says what is wrong; the members it isn't only bury that.
+            if any(o.path != point and point in o.unions for o in located):
+                continue
+            # Fits no member at all (`- 123`): one error for the union.
+            if point in merged:
+                continue
+            merged.add(point)
+            options = [
+                o.err["msg"].removeprefix("Input should be ")
+                for o in located
+                if shallow_mismatch(o) and o.unions[-1] == point
+            ]
+            message = "Input should be " + " or ".join(dict.fromkeys(options))
+        else:
+            message = None
+        item = (_format_path(e.path), _message(e, document, message))
         if item not in out:
             out.append(item)
     return out
 
 
-# --------------------------------------------------------------- locations
-
-
-def _data_path(raw_loc: tuple, document: Any, err_type: str) -> tuple[tuple, bool]:
-    """The error's location in the document: pydantic's path without the
-    union-member tags it inserts (a member's class name, `str`). Returns the
-    path and whether any tag was dropped."""
-    path: list = []
+def _locate(err: dict, raw_loc: tuple, document: Any) -> _Located:
+    """Follow pydantic's path through the schema and the document at once:
+    a segment where the schema has a union is the member's tag pydantic
+    inserts (`str`, a class name), not a key of the document."""
+    annotation: Any = SinasConfig
     current = document
-    dropped = False
-    for i, segment in enumerate(raw_loc):
-        last = i == len(raw_loc) - 1
-        if isinstance(current, dict) and segment in current:
-            current = current[segment]
-            path.append(segment)
-        elif (
-            isinstance(current, list)
-            and isinstance(segment, int)
-            and 0 <= segment < len(current)
-        ):
-            current = current[segment]
-            path.append(segment)
-        elif last and err_type == "missing":
-            path.append(segment)  # a required key that isn't there
+    path: list = []
+    unions: list = []
+    for segment in raw_loc:
+        annotation = _without_none(annotation)
+        if _is_union(annotation):
+            unions.append(tuple(path))
+            annotation = next(
+                (m for m in get_args(annotation) if _member_tag(m) == segment), None
+            )
+            continue
+        is_index = isinstance(current, list) and isinstance(segment, int)
+        if isinstance(current, dict) and not isinstance(segment, str):
+            # pydantic reports a non-text key as an int (`yes:` loads as True)
+            segment = next((k for k in current if k == segment and not isinstance(k, str)), segment)
+        path.append((segment, is_index))
+        if is_index:
+            current = current[segment] if 0 <= segment < len(current) else None
+        elif isinstance(current, dict):
+            current = current.get(segment)
         else:
-            dropped = True  # a union member's tag
-    return tuple(path), dropped
+            current = None
+        annotation = _step(annotation, segment) if annotation is not None else None
+    return _Located(err, raw_loc, tuple(path), tuple(unions))
 
 
-def _format_path(loc: tuple) -> str:
+def _format_path(path: tuple) -> str:
     out = ""
-    for segment in loc:
-        if isinstance(segment, int):
+    for segment, is_index in path:
+        if is_index:
             out += f"[{segment}]"
         else:
-            out += f".{segment}" if out else str(segment)
+            key = _key_text(segment)
+            out += f".{key}" if out else key
     return out or "root"
+
+
+def _key_text(key: Any) -> str:
+    """A mapping key as YAML would show it (`yes:` loads as True)."""
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    return str(key)
 
 
 # --------------------------------------------------------------- messages
 
 
-def _message(err: dict, raw_loc: tuple, loc: tuple, document: Any) -> str:
-    resource, within = _resource_of(loc, document)
+def _message(e: _Located, document: Any, message: Optional[str]) -> str:
+    resource, within = _resource_of(e.path, document)
+    err = e.err
     if err["type"] == "extra_forbidden":
-        key = loc[-1] if loc else ""
-        message = f"unknown field '{_format_path(within) if within else key}'"
-        hint = _did_you_mean(key, _known_keys(raw_loc[:-1]))
+        key = e.path[-1][0] if e.path else ""
+        message = f"unknown field '{_format_path(within) if within else _key_text(key)}'"
+        hint = _did_you_mean(key, _known_keys(e.raw_loc[:-1]))
         if hint:
             message += f" (did you mean '{hint}'?)"
     else:
-        message = err["msg"]
+        if err["type"] == "invalid_key" and e.path:
+            message = f"the key {_key_text(e.path[-1][0])} isn't text; quote it"
+            within = within[:-1]
+        message = message or err["msg"].removeprefix("Value error, ")
         if resource and within:  # outside a resource, the error's path says it
             message = f"{_format_path(within)}: {message}"
     return f"{resource}: {message}" if resource else message
 
 
-def _resource_of(loc: tuple, document: Any) -> tuple[Optional[str], tuple]:
+def _resource_of(path: tuple, document: Any) -> tuple[Optional[str], tuple]:
     """(`agent 'ns/name'`, the path inside it) for a location within one
-    resource of the spec; (None, loc) for anything else."""
-    if len(loc) < 3 or loc[0] != "spec" or not isinstance(loc[2], int):
-        return None, loc
-    section, index = loc[1], loc[2]
+    resource of the spec; (None, path) for anything else."""
+    if len(path) < 3 or path[0][0] != "spec" or not path[2][1]:
+        return None, path
+    section, index = path[1][0], path[2][0]
     try:
         item = document["spec"][section][index]
     except (KeyError, IndexError, TypeError):
         item = None
+    return _resource_label(section, index, item), path[3:]
+
+
+def _resource_label(section: str, index: int, item: Any) -> str:
     noun = _noun(section)
     key = _resource_key(section, item) if isinstance(item, dict) else None
-    label = f"{noun} '{key}'" if key else f"{noun} #{index + 1}"
-    return label, loc[3:]
+    return f"{noun} '{key}'" if key else f"{noun} #{index + 1}"
 
 
 def _noun(section: str) -> str:
@@ -137,7 +225,7 @@ def _noun(section: str) -> str:
                 return applier.noun
     except Exception:  # pragma: no cover - only ever a nicer label
         pass
-    return section
+    return str(section)
 
 
 def _resource_key(section: str, item: dict) -> Optional[str]:
@@ -225,16 +313,26 @@ def _step(annotation: Any, segment: Any) -> Any:
         return args[0]
     if origin is dict and len(args) == 2:
         return args[1]
-    if origin in (Union, types.UnionType):
+    if _is_union(annotation):
         for member in args:
-            if getattr(member, "__name__", None) == segment:
+            if _member_tag(member) == segment:
                 return member
     return None
 
 
+def _member_tag(member: Any) -> Optional[str]:
+    """The tag pydantic puts in an error's path for a union member: a
+    model's class name, a plain type's name (`str`)."""
+    return getattr(member, "__name__", None)
+
+
+def _is_union(annotation: Any) -> bool:
+    return get_origin(annotation) in (Union, types.UnionType)
+
+
 def _without_none(annotation: Any) -> Any:
     """Optional[X] → X (pydantic doesn't tag a union with None)."""
-    if get_origin(annotation) in (Union, types.UnionType):
+    if _is_union(annotation):
         members = [a for a in get_args(annotation) if a is not type(None)]
         if len(members) == 1:
             return members[0]

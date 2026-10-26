@@ -106,13 +106,43 @@ async def test_secrets_are_in_the_context(db, test_user, secrets, trusted_fn):
     assert secrets["OTHERS"] not in got  # another user's private secret
 
 
-async def test_the_context_matches_the_shared_executors(monkeypatch, db, test_user, secrets, trusted_fn):
+async def test_the_context_has_the_shared_executors_keys(monkeypatch, db, test_user, trusted_fn):
     res = await InProcessTrustedExecutor().execute(**_args(trusted_fn, test_user, db))
     assert res.status is ResultStatus.COMPLETED, res.error
     shared = await _k8s_context(monkeypatch, trusted_fn, test_user, db)
-
     assert res.result["keys"] == sorted(shared)
-    assert res.result["secrets"] == {name: _digest(value) for name, value in shared["secrets"].items()}
+
+
+async def test_without_a_user_only_shared_secrets(db, test_user, secrets, trusted_fn):
+    res = await InProcessTrustedExecutor().execute(**{**_args(trusted_fn, test_user, db), "user_id": None})
+    assert res.status is ResultStatus.COMPLETED, res.error
+    got = res.result["secrets"]
+    assert got[secrets["SHARED"]] == _digest("shared-value")
+    assert got[secrets["OVERRIDDEN"]] == _digest("shared-value")  # no private override
+    assert secrets["OTHERS"] not in got
+
+
+@pytest.mark.parametrize("target", ["load_trusted_secrets", "function"])
+async def test_a_lost_connection_while_preparing_is_retryable(monkeypatch, db, test_user, trusted_fn, target):
+    """Loading the function or its secrets runs before any code: a dropped
+    connection there is ExecutorUnavailable (the queue may retry), as on
+    the other executors."""
+    from sqlalchemy.exc import OperationalError
+
+    from app.services.executor import inprocess_trusted
+    from app.services.executor.base import ExecutorUnavailable
+
+    lost = OperationalError("SELECT 1", {}, ConnectionResetError("connection lost"))
+
+    async def _fail(*args, **kwargs):
+        raise lost
+
+    if target == "function":
+        monkeypatch.setattr(db, "execute", _fail)
+    else:
+        monkeypatch.setattr(inprocess_trusted, "load_trusted_secrets", _fail)
+    with pytest.raises(ExecutorUnavailable):
+        await InProcessTrustedExecutor().execute(**_args(trusted_fn, test_user, db))
 
 
 async def test_an_unreadable_secret_is_skipped_without_its_value(db, test_user, trusted_fn, caplog):

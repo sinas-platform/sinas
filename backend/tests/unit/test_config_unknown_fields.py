@@ -232,6 +232,157 @@ async def test_other_schema_errors_are_per_resource_too():
     ), errors
 
 
+@pytest.mark.parametrize(
+    "doc, expected",
+    [
+        (
+            {"apiVersion": "sinas.co/v1", "kind": "SinasConfig", "spec": {}},
+            [("metadata", "'metadata' is required for SinasConfig kind")],
+        ),
+        (
+            {"apiVersion": "sinas.co/v1", "kind": "SinasPackage", "spec": {}},
+            [("package", "'package' is required for SinasPackage kind")],
+        ),
+    ],
+)
+async def test_a_missing_metadata_or_package_is_reported_at_its_key(doc, expected):
+    assert await _errors(doc) == expected
+
+
+@pytest.mark.parametrize(
+    "entry, expected",
+    [
+        # Fits no member: one error for the entry, not one per member.
+        (123, [("spec.agents[0].enabledSkills[0]",
+                "agent 'default/a': enabledSkills[0]: Input should be a valid string "
+                "or a valid dictionary or instance of EnabledSkillConfigYaml")]),
+        # A skill entry with a bad value: only what's wrong inside it.
+        ({"skill": 123}, [("spec.agents[0].enabledSkills[0].skill",
+                           "agent 'default/a': enabledSkills[0].skill: Input should be a valid string")]),
+        ({"preload": True}, [("spec.agents[0].enabledSkills[0].skill",
+                              "agent 'default/a': enabledSkills[0].skill: Field required")]),
+    ],
+)
+async def test_a_value_checked_against_a_union_gets_one_error(entry, expected):
+    assert await _errors(_doc({"agents": [{"name": "a", "enabledSkills": [entry]}]})) == expected
+
+
+async def test_a_key_that_isnt_text_is_named_as_written():
+    # `yes:` and `2:` load as True and 2.
+    errors = await _errors(_doc({"agents": [{"name": "a", True: 1, 2: 3}]}))
+    assert errors == [
+        ("spec.agents[0].true", "agent 'default/a': the key true isn't text; quote it"),
+        ("spec.agents[0].2", "agent 'default/a': the key 2 isn't text; quote it"),
+    ]
+
+
+# ------------------------------------------------------------- older exports
+
+# What a 0.4.0 export wrote for these (config_export._export_users and
+# resource_serializers.serialize_component at the 0.4.0 tag).
+def _export_040(suffix: str) -> dict:
+    return _doc({
+        "roles": [{"name": f"r-{suffix}", "description": "Readers"}],
+        "users": [
+            {"email": f"a-{suffix}@example.com", "lastLoginAt": None, "roles": [f"r-{suffix}"]},
+            {"email": f"b-{suffix}@example.com", "lastLoginAt": "2026-09-01T10:00:00+00:00", "roles": []},
+        ],
+        "components": [{
+            "namespace": f"ns-{suffix}", "name": "card", "sourceCode": "export default () => null",
+            "cssOverrides": ".card { color: red }", "visibility": "private",
+        }],
+    }, metadata={"name": f"exported-{suffix}", "description": "Exported from SINAS database"})
+
+
+async def test_fields_older_versions_exported_are_dropped_with_a_warning():
+    suffix = uuid.uuid4().hex[:6]
+    config, validation = await ConfigParser.parse_and_validate(yaml.safe_dump(_export_040(suffix)))
+    assert validation.is_valid, [str(e) for e in validation.errors]
+    assert validation.warnings == [
+        f"`lastLoginAt` (user 'a-{suffix}@example.com', user 'b-{suffix}@example.com') "
+        "is runtime state, not configuration, and is ignored",
+        f"`cssOverrides` (component 'ns-{suffix}/card') was removed in 0.5.0 and is ignored; "
+        "move the CSS into `sourceCode` as a <style> block",
+    ]
+
+
+async def test_a_0_4_export_applies_with_warnings(client, admin_user):
+    suffix = uuid.uuid4().hex[:6]
+    text = yaml.safe_dump(_export_040(suffix), sort_keys=False)
+    r = await client.post("/api/v1/config/validate", json={"config": text}, headers=auth_headers(admin_user))
+    assert r.status_code == 200 and r.json()["valid"], r.text
+    assert any("lastLoginAt" in w["message"] for w in r.json()["warnings"])
+    r = await client.post("/api/v1/config/apply", json={"config": text}, headers=auth_headers(admin_user))
+    body = r.json()
+    assert r.status_code == 200 and body["success"], r.text
+    assert body["summary"]["created"] == {"roles": 1, "users": 2, "components": 1}
+    assert any("lastLoginAt" in w for w in body["warnings"])
+    assert any("cssOverrides" in w for w in body["warnings"])
+
+
+async def test_a_0_4_package_with_css_overrides_installs_with_a_warning(db, admin_user):
+    from app.services.package_service import PackageService
+
+    pkg = f"p-{uuid.uuid4().hex[:8]}"
+    text = yaml.safe_dump(_doc({"components": [{
+        "namespace": pkg, "name": "card", "sourceCode": "x", "cssOverrides": ".a {}",
+    }]}, kind="SinasPackage", package={"name": pkg, "version": "1.0.0"}))
+    result, *_ = await PackageService(db).preview(text, str(admin_user.id))
+    assert result.success, result.errors
+    assert any("cssOverrides" in w for w in result.warnings)
+    _package, result = await PackageService(db).install(text, str(admin_user.id))
+    assert result.success, result.errors
+    assert any("cssOverrides" in w for w in result.warnings)
+
+
+# ------------------------------------------------------------- requirement planning
+
+
+def test_planning_reads_only_name_and_requires():
+    from app.services.package_dependencies import _nested_requirements
+
+    # `version: 1.0` is a number and `bogus` unknown: the package validation
+    # reports those, the planner doesn't raise on them.
+    text = "package: {name: a, version: 1.0, bogus: 1, requires: [{name: b}]}\n"
+    requirements, waiting = _nested_requirements(text)
+    assert [r.name for r in requirements] == ["b"] and waiting == []
+
+
+@pytest.mark.parametrize(
+    "requires, expected",
+    [
+        ("[{name: b, verison: '>=1'}]",
+         "package.requires[0].verison: unknown field 'package.requires[0].verison' (did you mean 'version'?)"),
+        ("[{name: a}]", "package: package 'a' can't require itself"),
+        ("[{name: b}, {name: b}]", "package: package.requires lists 'b' twice"),
+    ],
+)
+def test_a_bad_requirement_is_reported_like_the_package_validation(requires, expected):
+    from app.services.package_dependencies import _nested_requirements
+
+    with pytest.raises(ValueError) as e:
+        _nested_requirements(f"package: {{name: a, version: 1.0, requires: {requires}}}\n")
+    assert str(e.value) == expected
+
+
+async def test_an_unknown_package_key_next_to_requires_is_reported_by_the_package_validation(db, admin_user):
+    from app.services.package_service import PackageService
+
+    pkg = f"p-{uuid.uuid4().hex[:8]}"
+    text = f"apiVersion: sinas.co/v1\nkind: SinasPackage\npackage: {{name: {pkg}, bogus: 1, requires: [{{name: zz-{pkg}}}]}}\nspec: {{}}\n"
+    # The planner reads past it, and the package validation names the key.
+    with pytest.raises(ValueError) as e:
+        await PackageService(db).preview(text, str(admin_user.id))
+    assert "package.bogus: unknown field 'package.bogus'" in str(e.value)
+    assert "PackageMetadataConfig" not in str(e.value)
+    with pytest.raises(ValueError) as e:
+        await PackageService(db).install(
+            f"apiVersion: sinas.co/v1\nkind: SinasPackage\npackage: {{name: {pkg}, bogus: 1}}\nspec: {{}}\n",
+            str(admin_user.id),
+        )
+    assert "package.bogus: unknown field 'package.bogus'" in str(e.value)
+
+
 # ------------------------------------------------------------- still accepted
 
 

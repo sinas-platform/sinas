@@ -359,7 +359,7 @@ class PackageService:
         try:
             requirements = deps._requirements_of(substituted, variables)
         except Exception as e:
-            raise ValueError(f"Package validation failed: package: {e}") from e
+            raise ValueError(f"Package validation failed: {e}") from e
         # Name and version as installed: with its variables substituted
         # (version: ${{ vars.VERSION }}), as the preview checks them.
         declared_name, version = _declared_meta(deps._substitute_known(substituted, variables or {}))

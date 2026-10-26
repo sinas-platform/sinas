@@ -320,9 +320,13 @@ def _nested_requirements(yaml_content: str, values: dict[str, Any] | None = None
     """(package.requires, variables it still waits for). When a requirement
     names a variable that has no value yet (given, or a declared default),
     the requirements can't be read until it has one: ([], those names), not
-    an error. Raises (pydantic ValidationError) only for requirements that
-    are invalid with every value they use filled in."""
+    an error. Raises ValueError (one `path: message` per problem, as the
+    package validation words them) only for requirements that are invalid
+    with every value they use filled in."""
+    from pydantic import ValidationError
+
     from app.schemas.config import PackageMetadataConfig
+    from app.services.config_schema_errors import schema_errors
 
     text = _substitute_known(yaml_content, values or {})
     try:
@@ -335,11 +339,17 @@ def _nested_requirements(yaml_content: str, values: dict[str, Any] | None = None
     waiting = sorted(set(_VAR.findall(json.dumps(meta.get("requires"), default=str))))
     if waiting:
         return [], waiting
-    # Only what the requirements need: an unknown package-level key is the
-    # package's own validation's to report (with its resource-named error),
-    # not a reason to refuse reading its requirements.
-    known = {k: v for k, v in meta.items() if k in PackageMetadataConfig.model_fields}
-    return PackageMetadataConfig.model_validate(known).requires, []
+    # Only what planning needs: the requirements, and the name for the
+    # can't-require-itself check. Anything else in `package` (an unknown
+    # key, `version: 1.0` read as a number) is the package validation's to
+    # report, in its own words, once the plan is made.
+    name = meta.get("name")
+    planning = {"name": name if isinstance(name, str) else "", "requires": meta["requires"]}
+    try:
+        return PackageMetadataConfig.model_validate(planning).requires, []
+    except ValidationError as e:
+        problems = schema_errors(e, {"package": planning}, prefix=("package",))
+        raise ValueError("; ".join(f"{path}: {message}" for path, message in problems)) from None
 
 
 _VAR = re.compile(r"\$\{\{\s*vars\.([A-Z][A-Z0-9_]*)\s*\}\}")
