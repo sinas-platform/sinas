@@ -5,10 +5,12 @@ Validates declarative configuration before application
 from typing import Any, Optional
 
 import yaml
+from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.config import SinasConfig
+from app.services.config_schema_errors import schema_errors, strip_legacy_fields
 
 
 def _is_variable_placeholder(ref: str) -> bool:
@@ -91,9 +93,18 @@ class ConfigParser:
             validation.errors.append(ConfigValidationError("root", f"Invalid YAML: {str(e)}"))
             return None, validation
 
-        # Parse into Pydantic model
+        # Parse into Pydantic model. Every problem is its own error, naming
+        # the resource it is in: an unknown key included (the config models
+        # forbid them), which used to be dropped without a word.
+        # Fields an older Sinas exported that this one no longer has: a
+        # warning, so a 0.4 export (or a file built from one) still applies.
+        validation.warnings.extend(strip_legacy_fields(config_dict))
         try:
-            config = SinasConfig(**config_dict)
+            config = SinasConfig.model_validate(config_dict)
+        except PydanticValidationError as e:
+            for path, message in schema_errors(e, config_dict):
+                validation.errors.append(ConfigValidationError(path, message))
+            return None, validation
         except Exception as e:
             validation.errors.append(
                 ConfigValidationError("root", f"Schema validation failed: {str(e)}")

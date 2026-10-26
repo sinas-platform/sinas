@@ -3,10 +3,21 @@ Pydantic schemas for declarative configuration
 """
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, validator
 
 
-class ConfigMetadata(BaseModel):
+class ConfigModel(BaseModel):
+    """Base of every model a SinasConfig / SinasPackage document is parsed
+    into. An unknown key is an error, not silently dropped: a misspelt field
+    (`output_schema:` for `outputSchema:`, `toolDney:` for `toolDeny:`) used
+    to parse and then apply without it. ConfigParser reports it per resource,
+    naming the key and, where it can tell, the field that was meant.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ConfigMetadata(ConfigModel):
     """Configuration metadata"""
 
     name: str
@@ -14,14 +25,14 @@ class ConfigMetadata(BaseModel):
     labels: Optional[dict[str, str]] = Field(default_factory=dict)
 
 
-class RolePermissionConfig(BaseModel):
+class RolePermissionConfig(ConfigModel):
     """Role permission configuration"""
 
     key: str
     value: bool
 
 
-class RoleConfig(BaseModel):
+class RoleConfig(ConfigModel):
     """Role configuration"""
 
     name: str
@@ -30,14 +41,14 @@ class RoleConfig(BaseModel):
     permissions: list[RolePermissionConfig] = Field(default_factory=list)
 
 
-class UserPermissionConfig(BaseModel):
+class UserPermissionConfig(ConfigModel):
     """User permission configuration"""
 
     key: str
     value: bool
 
 
-class UserIdentityConfig(BaseModel):
+class UserIdentityConfig(ConfigModel):
     """External identity linked to a user"""
 
     provider: str
@@ -45,7 +56,7 @@ class UserIdentityConfig(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
 
-class UserConfig(BaseModel):
+class UserConfig(ConfigModel):
     """User configuration"""
 
     email: str
@@ -67,7 +78,7 @@ class UserConfig(BaseModel):
         return normalize_email(value)
 
 
-class LLMProviderConfig(BaseModel):
+class LLMProviderConfig(ConfigModel):
     """LLM provider configuration"""
 
     @field_validator("apiKey")
@@ -99,7 +110,7 @@ class LLMProviderConfig(BaseModel):
     pricingProvider: Optional[str] = None
 
 
-class DatabaseAnnotationConfig(BaseModel):
+class DatabaseAnnotationConfig(ConfigModel):
     """Table/column annotation for semantic layer"""
 
     schemaName: str = "public"
@@ -109,7 +120,7 @@ class DatabaseAnnotationConfig(BaseModel):
     description: Optional[str] = None
 
 
-class DatabaseConnectionConfig(BaseModel):
+class DatabaseConnectionConfig(ConfigModel):
     """Database connection configuration"""
 
     name: str
@@ -134,7 +145,7 @@ class DatabaseConnectionConfig(BaseModel):
         return value or None
 
 
-class QueryConfig(BaseModel):
+class QueryConfig(ConfigModel):
     """Query configuration"""
 
     namespace: str = "default"
@@ -151,7 +162,7 @@ class QueryConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class FunctionConfig(BaseModel):
+class FunctionConfig(ConfigModel):
     """Function configuration"""
 
     namespace: str = "default"
@@ -170,7 +181,7 @@ class FunctionConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class SkillConfig(BaseModel):
+class SkillConfig(ConfigModel):
     """Skill configuration"""
 
     namespace: str = "default"
@@ -181,21 +192,21 @@ class SkillConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class EnabledStoreConfigYaml(BaseModel):
+class EnabledStoreConfigYaml(ConfigModel):
     """Configuration for an enabled store in agent/component config"""
 
     store: str = Field(..., description="Store identifier in format 'namespace/name'")
     access: str = Field(default="readonly", description="Access mode: 'readonly' or 'readwrite'")
 
 
-class EnabledCollectionConfigYaml(BaseModel):
+class EnabledCollectionConfigYaml(ConfigModel):
     """Configuration for an enabled collection in agent/component config"""
 
     collection: str = Field(..., description="Collection identifier in format 'namespace/name'")
     access: str = Field(default="readonly", description="Access mode: 'readonly' or 'readwrite'")
 
 
-class ComponentConfig(BaseModel):
+class ComponentConfig(ConfigModel):
     """Component configuration"""
 
     namespace: str = "default"
@@ -214,7 +225,7 @@ class ComponentConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class EnabledSkillConfigYaml(BaseModel):
+class EnabledSkillConfigYaml(ConfigModel):
     """Configuration for an enabled skill in agent config"""
 
     skill: str = Field(..., description="Skill identifier in format 'namespace/name'")
@@ -223,10 +234,8 @@ class EnabledSkillConfigYaml(BaseModel):
     )
 
 
-class EnabledMcpServerConfigYaml(BaseModel):
+class EnabledMcpServerConfigYaml(ConfigModel):
     """Configuration for an enabled MCP server in agent config"""
-
-    model_config = {"extra": "forbid"}
 
     server: str = Field(..., description="MCP server identifier in format 'namespace/name'")
     tools: list[str] = Field(
@@ -235,7 +244,7 @@ class EnabledMcpServerConfigYaml(BaseModel):
     )
 
 
-class AgentConfig(BaseModel):
+class AgentConfig(ConfigModel):
     """Agent configuration"""
 
     namespace: str = "default"
@@ -320,14 +329,14 @@ class AgentConfig(BaseModel):
 
 
 
-class WebhookDedupConfig(BaseModel):
+class WebhookDedupConfig(ConfigModel):
     """Webhook deduplication configuration"""
 
     key: str
     ttlSeconds: int = 300
 
 
-class WebhookConfig(BaseModel):
+class WebhookConfig(ConfigModel):
     """Webhook configuration"""
 
     path: str
@@ -372,7 +381,7 @@ class WebhookConfig(BaseModel):
         return v
 
 
-class ScheduleConfig(BaseModel):
+class ScheduleConfig(ConfigModel):
     """Schedule configuration"""
 
     name: str
@@ -401,7 +410,7 @@ class ScheduleConfig(BaseModel):
         return v
 
 
-class ManifestResourceRef(BaseModel):
+class ManifestResourceRef(ConfigModel):
     """Resource reference in manifest config"""
 
     type: str = Field(..., description="Resource type: agent, function, skill, collection")
@@ -409,7 +418,7 @@ class ManifestResourceRef(BaseModel):
     name: str
 
 
-class ManifestConfig(BaseModel):
+class ManifestConfig(ConfigModel):
     """Manifest registration configuration"""
 
     namespace: str = "default"
@@ -435,7 +444,7 @@ class ManifestConfig(BaseModel):
         return validate_public_info(v)
 
 
-class CollectionConfig(BaseModel):
+class CollectionConfig(ConfigModel):
     """Collection configuration"""
 
     namespace: str = "default"
@@ -450,7 +459,7 @@ class CollectionConfig(BaseModel):
     allowPrivateFiles: bool = True
 
 
-class StoreConfig(BaseModel):
+class StoreConfig(ConfigModel):
     """Store configuration"""
 
     namespace: str = "default"
@@ -462,7 +471,7 @@ class StoreConfig(BaseModel):
     encrypted: bool = False
 
 
-class TemplateConfig(BaseModel):
+class TemplateConfig(ConfigModel):
     """Template configuration"""
 
     namespace: str = "default"
@@ -476,7 +485,7 @@ class TemplateConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class DatabaseTriggerConfig(BaseModel):
+class DatabaseTriggerConfig(ConfigModel):
     """Database trigger (CDC) configuration"""
 
     name: str
@@ -516,7 +525,7 @@ class DatabaseTriggerConfig(BaseModel):
         return v
 
 
-class SecretConfig(BaseModel):
+class SecretConfig(ConfigModel):
     """Secret configuration"""
 
     name: str
@@ -524,7 +533,7 @@ class SecretConfig(BaseModel):
     description: Optional[str] = None
 
 
-class ConnectorOperationConfig(BaseModel):
+class ConnectorOperationConfig(ConfigModel):
     """Connector operation configuration"""
 
     name: str
@@ -536,7 +545,7 @@ class ConnectorOperationConfig(BaseModel):
     responseMapping: str = "json"
 
 
-class TokenResponsePathsConfig(BaseModel):
+class TokenResponsePathsConfig(ConfigModel):
     """Dot-paths into a nonstandard OAuth token response (issue #109)."""
 
     accessToken: Optional[str] = None
@@ -548,7 +557,7 @@ class TokenResponsePathsConfig(BaseModel):
     errorDescription: Optional[str] = None
 
 
-class ConnectorAuthConfig(BaseModel):
+class ConnectorAuthConfig(ConfigModel):
     """Connector auth configuration"""
 
     type: str = "none"
@@ -566,14 +575,14 @@ class ConnectorAuthConfig(BaseModel):
     tokenResponsePaths: Optional[TokenResponsePathsConfig] = None
 
 
-class ConnectorRetryConfig(BaseModel):
+class ConnectorRetryConfig(ConfigModel):
     """Connector retry configuration"""
 
     maxAttempts: int = 1
     backoff: str = "none"
 
 
-class ConnectorConfig(BaseModel):
+class ConnectorConfig(ConfigModel):
     """Connector configuration"""
 
     namespace: str = "default"
@@ -589,21 +598,16 @@ class ConnectorConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class McpServerAuthConfig(BaseModel):
+class McpServerAuthConfig(ConfigModel):
     """MCP server auth configuration"""
-
-    model_config = {"extra": "forbid"}
 
     type: str = "none"
     secret: Optional[str] = None
     header: Optional[str] = None
 
 
-class McpServerConfig(BaseModel):
+class McpServerConfig(ConfigModel):
     """MCP server configuration (see ADR 2026-10-09-mcp-client)"""
-
-    # A misspelt key (toolDney:) must fail the apply, not silently drop a filter.
-    model_config = {"extra": "forbid"}
 
     namespace: str = "default"
     name: str
@@ -620,20 +624,16 @@ class McpServerConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class PackageRepositoryAuthConfig(BaseModel):
+class PackageRepositoryAuthConfig(ConfigModel):
     """Package repository auth configuration"""
-
-    model_config = {"extra": "forbid"}
 
     type: str = "none"
     secret: Optional[str] = None
     header: Optional[str] = None
 
 
-class PackageRepositoryConfig(BaseModel):
+class PackageRepositoryConfig(ConfigModel):
     """Package repository (see ADR 2026-10-13-package-repositories)"""
-
-    model_config = {"extra": "forbid"}
 
     name: str
     description: Optional[str] = None
@@ -643,30 +643,24 @@ class PackageRepositoryConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class RoleMappingConfig(BaseModel):
+class RoleMappingConfig(ConfigModel):
     """An identity provider's role mapping: one matcher, the roles it grants"""
-
-    model_config = {"extra": "forbid"}
 
     group: Optional[str] = None
     emailDomain: Optional[str] = None
     roles: list[str]
 
 
-class ClaimMappingConfig(BaseModel):
+class ClaimMappingConfig(ConfigModel):
     """An identity provider's claim mapping: a claim path, the custom field it fills"""
-
-    model_config = {"extra": "forbid"}
 
     claim: str
     field: str
     target: Optional[str] = None  # "user" (default) or "session"
 
 
-class IdentityProviderConfig(BaseModel):
+class IdentityProviderConfig(ConfigModel):
     """OpenID Connect identity provider (see docs/design/oidc-sso.md)"""
-
-    model_config = {"extra": "forbid"}
 
     name: str
     displayName: str
@@ -687,7 +681,7 @@ class IdentityProviderConfig(BaseModel):
     isActive: Optional[bool] = None
 
 
-class PipelineConfig(BaseModel):
+class PipelineConfig(ConfigModel):
     """Pipeline configuration (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
 
     `steps` and `perUser` are passed through verbatim — camelCase keys and `.$`
@@ -723,7 +717,7 @@ class PipelineConfig(BaseModel):
         return None
 
 
-class DependencyConfig(BaseModel):
+class DependencyConfig(ConfigModel):
     """Python dependency configuration"""
 
     packageName: str
@@ -742,7 +736,7 @@ class DependencyConfig(BaseModel):
         return self
 
 
-class VariableConfig(BaseModel):
+class VariableConfig(ConfigModel):
     """Install-time variable declaration for packages.
 
     Variables are resolved before resource persistence via ${{ vars.NAME }}
@@ -768,10 +762,8 @@ class VariableConfig(BaseModel):
     )
 
 
-class ConfigSpec(BaseModel):
+class ConfigSpec(ConfigModel):
     """Configuration specification"""
-
-    model_config = {"extra": "forbid"}
 
     variables: list[VariableConfig] = Field(default_factory=list)
     roles: list[RoleConfig] = Field(default_factory=list)
@@ -800,11 +792,9 @@ class ConfigSpec(BaseModel):
     databaseTriggers: list[DatabaseTriggerConfig] = Field(default_factory=list)
 
 
-class PackageRequirement(BaseModel):
+class PackageRequirement(ConfigModel):
     """Another package this package needs (docs/design/package-dependencies.md).
     Not the `dependencies` resource kind, which approves Python packages."""
-
-    model_config = {"extra": "forbid"}
 
     name: str = Field(..., pattern=r"^[a-z0-9][a-z0-9._-]*$", max_length=255)
     # A version range, pyproject style: ">=1.2,<2", "~=1.4", "==1.2.*".
@@ -831,7 +821,7 @@ class PackageRequirement(BaseModel):
         return self.instance or self.name
 
 
-class PackageMetadataConfig(BaseModel):
+class PackageMetadataConfig(ConfigModel):
     """Package metadata for SinasPackage kind"""
 
     name: str
@@ -864,7 +854,7 @@ class PackageMetadataConfig(BaseModel):
         return self
 
 
-class SinasConfig(BaseModel):
+class SinasConfig(ConfigModel):
     """Root configuration schema"""
 
     apiVersion: str = Field(..., pattern=r"^sinas\.co/v\d+$")

@@ -50,6 +50,7 @@ spec:
 - **Upgrade**: Re-installing an existing package updates its resources in place (idempotent apply)
 - **Excluded types**: Packages cannot include users, LLM providers, database connections or package repositories (these are environment-specific). A package can define roles but never assign them.
 - **Dependencies**: Packages can declare Python dependencies — these are recorded in the database and installed in containers on worker restart
+- **Unknown fields are rejected**: Preview and install fail on a key Sinas doesn't know (in `package` or any resource), naming the resource and the key, as for [config files](/admin/config-manager)
 
 ## Taking over resources edited by hand
 

@@ -39,7 +39,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.services.executor.base import ExecutionResult
+from app.services.executor.base import ExecutionResult, before_run
+from app.services.executor.trusted_secrets import load_trusted_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -174,19 +175,24 @@ class InProcessTrustedExecutor:
     ) -> ExecutionResult:
         from app.models.function import Function
 
-        result = await db.execute(
-            select(Function).where(
-                Function.namespace == function_namespace,
-                Function.name == function_name,
-                Function.is_active == True,
+        async with before_run("Loading the function"):
+            result = await db.execute(
+                select(Function).where(
+                    Function.namespace == function_namespace,
+                    Function.name == function_name,
+                    Function.is_active == True,
+                )
             )
-        )
-        function = result.scalar_one_or_none()
+            function = result.scalar_one_or_none()
         if not function:
             return ExecutionResult.failed(
                 f"Function {function_namespace}/{function_name} not found"
             )
+        async with before_run("Loading secrets"):
+            secrets = await load_trusted_secrets(db, user_id)
 
+        # The same context the shared Docker workers and k8s pods build
+        # (shared_worker_manager.execute_function, K8sSharedTrustedExecutor).
         context = {
             "user_id": user_id,
             "user_email": user_email,
@@ -195,6 +201,7 @@ class InProcessTrustedExecutor:
             "execution_id": execution_id,
             "trigger_type": trigger_type,
             "chat_id": chat_id,
+            "secrets": secrets,
         }
         return await asyncio.to_thread(
             _run_handler,
