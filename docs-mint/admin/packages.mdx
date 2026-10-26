@@ -279,6 +279,22 @@ agents:
   - llmProviderName: "${{ vars.PRIMARY_LLM }}"
 ```
 
+**Secret variables and secret references:**
+
+A `type: secret` variable saves its value as a shared Secret with the variable's name. `${{ vars.NAME }}` for a secret variable substitutes to the secret *reference* `{{NAME}}`, never the value. Wherever a resource names a Secret (connector and MCP server `auth.secret`, package repository `auth.secret`, identity provider `clientSecret`), the reference may be written as `NAME` or `{{ NAME }}`. Both name the Secret `NAME`, and the bare name is what Sinas stores and exports. These are equivalent:
+
+```yaml
+spec:
+  variables:
+    - name: GITHUB_TOKEN
+      type: secret
+  connectors:
+    - name: rest-api
+      auth:
+        type: bearer
+        secret: "{{GITHUB_TOKEN}}"           # or: GITHUB_TOKEN, or: "${{ vars.GITHUB_TOKEN }}"
+```
+
 **API:**
 
 - `POST /api/v1/packages/preview` — response includes `variables` (declarations) and `requires_input` (bool). Pass `variables: {NAME: value}` in the request to preview with substitution.

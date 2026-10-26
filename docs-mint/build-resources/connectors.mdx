@@ -26,6 +26,10 @@ DELETE /api/v1/connectors/{namespace}/{name}/oauth/token         # Disconnect (d
 
 Auth is resolved from the Secrets store. Private secrets override shared for the calling user — enabling multi-tenant patterns where each user can have their own API key for the same connector.
 
+`secret` is the *name* of a Secret, never its value. It may be written bare (`secret: GITHUB_TOKEN`) or wrapped in braces (`secret: "{{GITHUB_TOKEN}}"`, whitespace inside the braces allowed). Both forms name the Secret `GITHUB_TOKEN`, and Sinas stores the bare name. Packages usually use the braced form, and a package `type: secret` variable substitutes to it (`${{ vars.GITHUB_TOKEN }}` becomes `{{GITHUB_TOKEN}}`).
+
+If a connector with `bearer`, `basic`, `api_key` or `oauth2_client_credentials` auth names no secret, or the named Secret doesn't exist for the caller, the operation fails with an error that gives the secret's name. The request is not sent unauthenticated. Connectors with `auth.type: none` need no secret.
+
 An `api_key` can be sent as a header (default; `header` names it, default `X-Api-Key`) or as a query parameter (`position: query` + `paramName`, default `api_key`).
 
 Importing an OpenAPI spec also reads its `securitySchemes` and pre-fills a suggested auth config.

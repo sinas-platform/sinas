@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.encryption import encryption_service
+from app.core.secret_refs import secret_ref_name
 from app.models.connector import Connector
 from app.models.connector_oauth_token import ConnectorOAuthToken
 from app.models.secret import Secret
@@ -235,16 +236,28 @@ class ConnectorService:
                 )
             return {"Authorization": f"Bearer {token}"}, {}
 
-        # All other types require a secret
-        secret_name = auth_config.get("secret")
-        if not secret_name:
-            logger.warning(f"Auth type '{auth_type}' requires a secret but none configured")
+        if auth_type not in ("bearer", "basic", "api_key"):
+            # Unknown types can't be written any more (the spec rejects them);
+            # a row stored before that keeps its old meaning: no credentials.
             return {}, {}
+
+        # These types require a secret. Without it the request is NOT sent:
+        # an unauthenticated call would come back as the provider's 401 (or,
+        # worse, as anonymous data), looking like a working connector.
+        secret_name = secret_ref_name(auth_config.get("secret"))
+        if not secret_name:
+            raise ConnectorAuthError(
+                f"This connector uses '{auth_type}' auth but names no secret. "
+                "Set auth.secret to the name of the Secret holding the credential."
+            )
 
         secret_value = await self._resolve_secret_value(db, secret_name, user_id)
         if secret_value is None:
             logger.warning(f"Secret '{secret_name}' not found for connector auth")
-            return {}, {}
+            raise ConnectorAuthError(
+                f"Secret '{secret_name}' for this connector's '{auth_type}' auth was not found. "
+                f"Create a Secret named '{secret_name}' (shared, or private to you)."
+            )
 
         if auth_type == "bearer":
             return {"Authorization": f"Bearer {secret_value}"}, {}
@@ -266,7 +279,14 @@ class ConnectorService:
     async def _resolve_secret_value(
         self, db: AsyncSession, secret_name: str, user_id: Optional[str] = None
     ) -> Optional[str]:
-        """Resolve a Secret by name to its decrypted value. Private overrides shared."""
+        """Resolve a Secret reference to its decrypted value. Private overrides shared.
+
+        `secret_name` is a reference: `NAME` or `{{ NAME }}` (rows stored
+        before specs normalised the braced form still carry it).
+        """
+        secret_name = secret_ref_name(secret_name)
+        if not secret_name:
+            return None
         secret = None
         if user_id:
             result = await db.execute(
@@ -300,7 +320,7 @@ class ConnectorService:
         """
         token_url = auth_config.get("token_url")
         client_id = auth_config.get("client_id")
-        secret_name = auth_config.get("secret")
+        secret_name = secret_ref_name(auth_config.get("secret"))
         if not token_url or not client_id or not secret_name:
             logger.warning(
                 "oauth2_client_credentials auth requires token_url, client_id, and secret"
@@ -345,7 +365,10 @@ class ConnectorService:
             client_secret = await self._resolve_secret_value(db, secret_name, user_id)
             if client_secret is None:
                 logger.warning(f"OAuth client secret '{secret_name}' not found")
-                return None
+                raise ConnectorAuthError(
+                    f"Secret '{secret_name}' holding this connector's OAuth client secret "
+                    "was not found."
+                )
 
             data = {"grant_type": "client_credentials"}
             if scope_str:
@@ -566,7 +589,7 @@ class ConnectorService:
         auth_config = connector.auth or {}
         token_url = auth_config.get("token_url")
         client_id = auth_config.get("client_id")
-        secret_name = auth_config.get("secret")
+        secret_name = secret_ref_name(auth_config.get("secret"))
         if not token_url or not client_id or not secret_name:
             logger.warning("oauth2_authorization_code requires token_url, client_id, and secret")
             return False
@@ -709,7 +732,7 @@ class ConnectorService:
 
                 token_url = auth_config.get("token_url")
                 client_id = auth_config.get("client_id")
-                secret_name = auth_config.get("secret")
+                secret_name = secret_ref_name(auth_config.get("secret"))
                 client_secret = (
                     await self._resolve_secret_value(session, secret_name, user_id) if secret_name else None
                 )

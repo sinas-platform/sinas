@@ -8,6 +8,7 @@ from typing import Any, ClassVar, Literal, Optional
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.secret_refs import secret_ref_name
 from app.schemas.spec.base import SpecModel
 
 TRANSPORTS = Literal["streamable_http", "sse"]
@@ -20,6 +21,12 @@ class McpServerAuthSpec(SpecModel):
     secret: Optional[str] = None  # the *name* of a Secret, never its value
     # For type "header": the header the secret's value is sent in.
     header: Optional[str] = None
+
+    @field_validator("secret", mode="before")
+    @classmethod
+    def _secret_name(cls, value: Any) -> Any:
+        # `{{ NAME }}` (what packages write) is stored as `NAME`.
+        return secret_ref_name(value)
 
 
 class McpServerSpec(SpecModel):

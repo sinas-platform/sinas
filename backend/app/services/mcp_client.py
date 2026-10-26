@@ -51,6 +51,7 @@ from pydantic import ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.secret_refs import secret_ref_name
 from app.models.mcp_server import McpServer
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,7 @@ async def resolve_headers(db: AsyncSession, server: McpServer, user_id: Optional
     auth_type = auth.get("type", "none")
     if auth_type == "none":
         return headers
-    secret_name = auth.get("secret")
+    secret_name = secret_ref_name(auth.get("secret"))
     if not secret_name:
         raise McpClientError(f"MCP server '{server.namespace}/{server.name}': auth.secret is not set")
     value = await connector_service._resolve_secret_value(db, secret_name, user_id)
