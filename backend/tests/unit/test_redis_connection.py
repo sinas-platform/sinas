@@ -266,3 +266,20 @@ def test_default_settings_build_plain_client(redis_settings):
     assert pool.connection_class is not SSLConnection
     assert pool.max_connections == 7
     assert pool.connection_kwargs["host"] == "redis"
+
+
+def test_config_cache_does_not_hold_the_password(redis_settings):
+    redis_settings(redis_url="redis://:url-secret@cache/0", redis_password="auth-secret")
+    redis_core.get_redis_config()
+    for key in redis_core._config_cache:
+        assert "auth-secret" not in key and "url-secret" not in key
+
+
+@pytest.mark.parametrize("raw", ["", "  "])
+def test_blank_check_hostname_env_means_auto(monkeypatch, raw):
+    from app.core.config import Settings
+
+    monkeypatch.setenv("REDIS_SSL_CHECK_HOSTNAME", raw)
+    assert Settings().redis_ssl_check_hostname is None
+    monkeypatch.setenv("REDIS_SSL_CHECK_HOSTNAME", "true")
+    assert Settings().redis_ssl_check_hostname is True

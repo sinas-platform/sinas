@@ -347,9 +347,9 @@ queueAgent:
 
 ## Sub-agent worker — delegated (agent-to-agent) agent jobs on their own
 ## queue, so parents waiting on children can never starve them of slots
-## (issue #90). enabled: false drops the Deployment AND routes delegated
-## jobs to the main agent queue (AGENT_SUBAGENT_QUEUE=false). Ignored by
-## allInOne (the backend runs it in-process).
+## (issue #90). enabled: false (or replicas: 0) drops the Deployment AND
+## routes delegated jobs to the main agent queue (AGENT_SUBAGENT_QUEUE=false).
+## Ignored by allInOne (the backend runs it in-process).
 queueAgentSub:
   enabled: true
   replicas: 1

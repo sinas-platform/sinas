@@ -340,6 +340,15 @@ class Settings(BaseSettings):
     # cursor for the rest. Bounds the memory one request can take.
     chats_unpaginated_max: int = 10000
 
+    @field_validator("redis_ssl_check_hostname", mode="before")
+    @classmethod
+    def _blank_check_hostname_is_auto(cls, v: object) -> object:
+        # REDIS_SSL_CHECK_HOSTNAME= (set but empty, e.g. from a compose
+        # ${VAR:-} passthrough) means "auto", not a bool parse error.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
     @field_validator("chats_unpaginated_max")
     @classmethod
     def _validate_chats_unpaginated_max(cls, v: int) -> int:

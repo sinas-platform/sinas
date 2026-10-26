@@ -62,6 +62,53 @@ jobs:
           ! grep -q "name: queue-agent-sub$" /tmp/nosub.yaml || exit 1
           # ...so delegated jobs must be routed to the main agent queue
           grep -A1 "name: AGENT_SUBAGENT_QUEUE" /tmp/nosub.yaml | grep -q '"false"'
+          # replicas: 0 is the same as disabled
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set queueAgentSub.replicas=0 \
+            > /tmp/zerosub.yaml
+          ! grep -q "name: queue-agent-sub$" /tmp/zerosub.yaml || exit 1
+          grep -A1 "name: AGENT_SUBAGENT_QUEUE" /tmp/zerosub.yaml | grep -q '"false"'
+          # allInOne runs the sub-agent worker in-process: routing stays on
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci \
+            --set queueAgentSub.enabled=false \
+            > /tmp/lite-nosub.yaml
+          ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/lite-nosub.yaml || exit 1
+
+      - name: helm template (upgrade with --reuse-values from 0.4.0)
+        # --reuse-values renders the new templates against the OLD release's
+        # values: the new chart's values.yaml defaults are NOT applied. Emulate
+        # that by swapping the 0.4.0 values.yaml into a copy of the chart, so
+        # any unguarded read of a new key fails here instead of on upgrade.
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/tags/0.4.0:refs/tags/0.4.0
+          rm -rf /tmp/oldvals && mkdir -p /tmp/oldvals
+          cp -R charts/sinas /tmp/oldvals/sinas
+          git show 0.4.0:charts/sinas/values.yaml > /tmp/oldvals/sinas/values.yaml
+          git show 0.4.0:charts/sinas/values-lite.yaml > /tmp/oldvals/values-lite-0.4.0.yaml
+          helm template ci /tmp/oldvals/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            > /tmp/upgrade.yaml
+          # new workers render with their documented defaults, sub-agent on
+          grep -q "name: queue-pipeline$" /tmp/upgrade.yaml
+          grep -q "name: queue-agent-sub$" /tmp/upgrade.yaml
+          grep -A1 "name: QUEUE_PIPELINE_CONCURRENCY" /tmp/upgrade.yaml | grep -q '"50"'
+          ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade.yaml || exit 1
+          grep -A1 "name: REDIS_URL" /tmp/upgrade.yaml | grep -q '"redis://redis:6379/0"'
+          helm template ci /tmp/oldvals/sinas -f /tmp/oldvals/values-lite-0.4.0.yaml \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci \
+            > /tmp/upgrade-lite.yaml
+          ! grep -q -e "name: queue-pipeline$" -e "name: queue-agent-sub$" /tmp/upgrade-lite.yaml || exit 1
+          ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade-lite.yaml || exit 1
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |

@@ -218,6 +218,26 @@ Every pod that gets backendEnv (and so talks to Redis) includes both.
 {{- end }}
 
 {{/*
+"true" when the split profile runs a sub-agent worker (queue-agent-sub).
+A missing queueAgentSub block or key means ON — `helm upgrade
+--reuse-values` from a release that predates it keeps the worker (and the
+issue #90 protection); only an explicit enabled: false or replicas: 0
+turns it off.
+*/}}
+{{- define "sinas.queueAgentSubOn" -}}
+{{- $qs := .Values.queueAgentSub | default dict }}
+{{- $enabled := true }}
+{{- if and (hasKey $qs "enabled") (not (kindIs "invalid" $qs.enabled)) }}
+{{- $enabled = eq (toString $qs.enabled) "true" }}
+{{- end }}
+{{- $replicas := 1 }}
+{{- if and (hasKey $qs "replicas") (not (kindIs "invalid" $qs.replicas)) }}
+{{- $replicas = $qs.replicas | int }}
+{{- end }}
+{{- if and $enabled (gt $replicas 0) }}true{{- end }}
+{{- end }}
+
+{{/*
 Backend environment — shared by backend, all workers, scheduler, cdc-worker
 */}}
 {{- define "sinas.backendEnv" -}}
@@ -318,11 +338,11 @@ mints a one-time setup link with `python -m app.cli setup-link` (see NOTES.txt).
       name: {{ .Release.Name }}-secrets
       key: superadmin-password
 {{- end }}
-{{- /* No sub-agent worker (queueAgentSub.enabled=false, or a pre-0.5
-       values file without the key): delegated agent jobs must go to the
-       main agent queue, or nothing would consume them. In allInOne the
-       backend runs the sub-agent worker itself whenever routing is on. */}}
-{{- if not ((.Values.queueAgentSub).enabled | default false) }}
+{{- /* Split profile without a sub-agent worker (queueAgentSub.enabled
+       explicitly false, or replicas 0): delegated agent jobs must go to the
+       main agent queue, or nothing would consume them. Never in allInOne:
+       the backend runs the sub-agent worker itself whenever routing is on. */}}
+{{- if and (not .Values.allInOne) (not (include "sinas.queueAgentSubOn" .)) }}
 - name: AGENT_SUBAGENT_QUEUE
   value: "false"
 {{- end }}

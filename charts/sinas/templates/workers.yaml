@@ -80,7 +80,10 @@ spec:
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
-{{- if ((.Values.queueAgentSub).enabled | default false) }}
+{{- if include "sinas.queueAgentSubOn" . }}
+{{- /* Guarded reads: `--reuse-values` from a release without the
+       queueAgentSub block must still render (defaults = values.yaml). */}}
+{{- $qs := .Values.queueAgentSub | default dict }}
 ---
 ## queue-agent-sub — delegated (agent-to-agent, depth > 0) agent jobs on
 ## their own queue (sinas:queue:agents:sub), so parents blocked on children
@@ -95,7 +98,7 @@ metadata:
     {{- include "sinas.labels" . | nindent 4 }}
     app.kubernetes.io/component: queue-agent-sub
 spec:
-  replicas: {{ .Values.queueAgentSub.replicas }}
+  replicas: {{ ternary ($qs.replicas | int) 1 (hasKey $qs "replicas") }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -109,7 +112,7 @@ spec:
       ## Same as queue-agent: the agent codeExecution tool creates sandbox pods.
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
-      {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgentSub) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.scheduling" (dict "values" $qs "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-agent-sub
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
@@ -118,16 +121,18 @@ spec:
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_AGENT_SUB_CONCURRENCY
-              value: {{ .Values.queueAgentSub.concurrency | quote }}
+              value: {{ $qs.concurrency | default 5 | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
-            {{- toYaml .Values.queueAgentSub.resources | nindent 12 }}
+            {{- toYaml ($qs.resources | default (dict "requests" (dict "cpu" "150m" "memory" "192Mi") "limits" (dict "cpu" "1" "memory" "768Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- end }}
+{{- /* Guarded reads, as for queue-agent-sub. */}}
+{{- $qp := .Values.queuePipeline | default dict }}
 ---
 ## queue-pipeline — pipeline runs (sinas:queue:pipelines). Own process so
 ## long runs never starve function/agent workers. Await-heavy orchestration
@@ -141,7 +146,7 @@ metadata:
     {{- include "sinas.labels" . | nindent 4 }}
     app.kubernetes.io/component: queue-pipeline
 spec:
-  replicas: {{ .Values.queuePipeline.replicas }}
+  replicas: {{ ternary ($qp.replicas | int) 1 (hasKey $qp "replicas") }}
   selector:
     matchLabels:
       app.kubernetes.io/instance: {{ .Release.Name }}
@@ -153,7 +158,7 @@ spec:
         app.kubernetes.io/component: queue-pipeline
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
-      {{- with (include "sinas.scheduling" (dict "values" (.Values.queuePipeline) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.scheduling" (dict "values" $qp "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-pipeline
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
@@ -162,12 +167,12 @@ spec:
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_PIPELINE_CONCURRENCY
-              value: {{ .Values.queuePipeline.concurrency | quote }}
+              value: {{ $qp.concurrency | default 50 | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
-            {{- toYaml .Values.queuePipeline.resources | nindent 12 }}
+            {{- toYaml ($qp.resources | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi") "limits" (dict "cpu" "500m" "memory" "512Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}

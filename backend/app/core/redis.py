@@ -27,6 +27,7 @@ Query parameters on REDIS_URL: `db`, `ssl_ca_certs`, `ssl_cert_reqs`,
 (`socket_timeout`, `health_check_interval`, ...), which the redis-py
 clients honour and arq ignores.
 """
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -175,26 +176,33 @@ def parse_redis_config(
     return config
 
 
-_config_cache: dict[tuple, RedisConnectionConfig] = {}
+# sha256 of the setting values -> parsed config. Keyed on a digest, not the
+# values, so the AUTH string (REDIS_PASSWORD or inside REDIS_URL) is not
+# kept around as a dict key.
+_config_cache: dict[str, RedisConnectionConfig] = {}
+
+
+def _settings_digest(values: tuple) -> str:
+    return hashlib.sha256(repr(values).encode()).hexdigest()
 
 
 def get_redis_config() -> RedisConnectionConfig:
     """The platform's Redis connection settings (from app settings).
 
     Parsed once per distinct setting values (so the insecure-config warnings
-    are logged once, not per client), keyed on the values themselves so a
-    changed setting is still picked up.
+    are logged once, not per client); a changed setting is still picked up.
     """
-    key = (
+    values = (
         settings.redis_url,
         settings.redis_password or None,
         settings.redis_username or None,
         settings.redis_ssl_ca_certs or None,
         settings.redis_ssl_check_hostname,
     )
-    config = _config_cache.get(key)
+    digest = _settings_digest(values)
+    config = _config_cache.get(digest)
     if config is None:
-        url, password, username, ca_certs, check_hostname = key
+        url, password, username, ca_certs, check_hostname = values
         config = parse_redis_config(
             url,
             password=password,
@@ -203,7 +211,7 @@ def get_redis_config() -> RedisConnectionConfig:
             ssl_check_hostname=check_hostname,
         )
         _config_cache.clear()  # only the current settings matter
-        _config_cache[key] = config
+        _config_cache[digest] = config
     return config
 
 

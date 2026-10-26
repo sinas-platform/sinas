@@ -416,7 +416,7 @@ into the backend, worker, scheduler and CDC containers (for example with a
 | `backend.forwardedAllowIps` | private ranges | Proxies trusted to report the client IP (see below) |
 | `redis.external.host` | — | Use a managed Redis instead of the bundled one ([External Redis](#external-redis-memorystore-elasticache-azure-cache)) |
 | `queueWorker` / `queueAgent` | 1 replica each | Function and agent queue workers (`replicas`, `concurrency`, `resources`) |
-| `queueAgentSub.enabled` | `true` | Worker for delegated (agent-to-agent) jobs on their own queue. `false` removes it and routes those jobs to the main agent queue. |
+| `queueAgentSub.enabled` | `true` | Worker for delegated (agent-to-agent) jobs on their own queue. `false` (or `replicas: 0`) removes it and routes those jobs to the main agent queue. Ignored with `allInOne`. |
 | `queuePipeline` | 1 replica, concurrency 50 | Pipeline-run worker. Every pipeline run is queued for it. |
 
 ## Client IPs behind the ingress
