@@ -34,15 +34,18 @@ def secret_ref_name(ref: Optional[str]) -> Optional[str]:
 # on create too), so `{{ NAME }}` can always reference it.
 SECRET_NAME_PATTERN = r"^[A-Za-z_][A-Za-z0-9_]*$"
 
-# Shape of something that could be a secret name, for messages only.
-_NAME_LIKE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,100}$")
-# Prefixes of well-known credential formats.
+# Names shown in messages are at most this long.
+_MAX_SHOWN_NAME = 100
+# Prefixes of well-known credential formats that are also valid identifiers.
 _CREDENTIAL_PREFIXES = (
-    "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "sk-", "sk_", "rk_",
-    "pk_", "xox", "AKIA", "ASIA", "AIza", "ya29.", "eyJ", "shpat_", "SG.", "npm_", "hf_",
+    "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk_", "rk_", "pk_", "xox",
+    "AKIA", "ASIA", "AIza", "eyJ", "shpat_", "shpss_", "shpca_", "shppa_", "npm_", "hf_",
+    "re_", "pat_", "sq0", "whsec_", "glpat_",
 )
-# A long run of letters AND digits: a random token, not a name.
+# A long run of letters AND digits (or a very long run of anything): a
+# random token, not a name.
 _RANDOM_RUN = re.compile(r"[A-Za-z0-9]{20,}")
+_VERY_LONG_RUN = re.compile(r"[A-Za-z0-9]{32,}")
 
 
 def looks_like_secret_name(ref: Optional[str]) -> bool:
@@ -51,15 +54,29 @@ def looks_like_secret_name(ref: Optional[str]) -> bool:
     Someone may paste the credential itself where its name belongs
     (`secret: ghp_...`); then the "name" is the value, and must not travel
     to a chat, an LLM or a pipeline record. Shape-based, so it errs on the
-    side of hiding.
+    side of hiding: only what a new Secret may be called (SECRET_NAME_PATTERN,
+    so no UUIDs, `pat-na1-...` or `user:pass`), minus known token prefixes,
+    long random-looking runs, and password-like words (`Summer2024`,
+    `realToken123`: mixed case with digits in one segment).
     """
     name = secret_ref_name(ref)
-    if not isinstance(name, str) or not _NAME_LIKE.match(name):
+    if (
+        not isinstance(name, str)
+        or len(name) > _MAX_SHOWN_NAME
+        or not re.match(SECRET_NAME_PATTERN, name)
+    ):
         return False
-    if name.startswith(_CREDENTIAL_PREFIXES):
+    if name.startswith(_CREDENTIAL_PREFIXES) or _VERY_LONG_RUN.search(name):
         return False
     for run in _RANDOM_RUN.findall(name):
         if any(c.isdigit() for c in run) and any(c.isalpha() for c in run):
+            return False
+    for segment in name.split("_"):
+        if (
+            any(c.isdigit() for c in segment)
+            and any(c.islower() for c in segment)
+            and any(c.isupper() for c in segment)
+        ):
             return False
     return True
 

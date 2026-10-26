@@ -97,8 +97,13 @@ class SecretApplier(ResourceApplier[SecretSpec]):
     ) -> None:
         # New secrets get the REST name rule, so a `{{ NAME }}` reference can
         # always name them. On create only: rows config created before the
-        # rule keep working, and can still be updated.
-        if current is None and not re.match(SECRET_NAME_PATTERN, spec.name):
+        # rule keep working, and can still be updated. Restoring a deleted
+        # one from history recreates that row, under its old name.
+        if (
+            current is None
+            and ctx.restore_resource_id is None
+            and not re.match(SECRET_NAME_PATTERN, spec.name)
+        ):
             raise ApplierError(
                 f"Secret name '{spec.name}' is not allowed: use letters, digits and _, "
                 "not starting with a digit (e.g. GITHUB_TOKEN)."

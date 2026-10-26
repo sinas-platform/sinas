@@ -32,7 +32,7 @@ class ConnectorAuthError(Exception):
     is safe to surface to the caller and usually tells them to reconnect their account.
 
     `str(e)` is what end users, agents (and so the LLM and chat history) and
-    pipeline records see. `detail` is for the admin-facing operation test and
+    pipeline records see. `detail` is for the connector's editors (the operation test) and
     may say more (which secret is missing); it defaults to the message. Neither
     ever carries a value, nor a reference that looks like one.
     """
@@ -43,7 +43,7 @@ class ConnectorAuthError(Exception):
 
 
 # Shown to users, agents and pipeline records when a connector's own secret
-# can't be used: which secret (and how it is spelled) is for the admin.
+# can't be used: which secret (and how it is spelled) is for its editors.
 _SECRET_NOT_SET_UP = (
     "This connector's credentials are not set up, so the request was not sent. "
     "Ask an administrator to check the connector's auth secret."

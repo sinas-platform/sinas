@@ -183,7 +183,10 @@ async def list_mcp_server_tools(
     try:
         listed = await mcp_client.list_tools(db, server, str(user_id), use_cache=False)
     except mcp_client.McpClientError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        # Which secret is missing is for those who may edit the server
+        # (readers get what the model gets).
+        editor = server.can_user_access(str(user_id), permissions, "update")
+        raise HTTPException(status_code=502, detail=e.detail if editor else str(e)) from e
     return McpServerToolsResponse(
         tools=[
             McpServerToolInfo(

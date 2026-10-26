@@ -38,7 +38,7 @@ mcpServers:
     connectTimeoutSeconds: 10             # connect + handshake + tools/list
 ```
 
-**Auth.** The credential is a [Secret](/build-resources/secrets), resolved and decrypted in the backend at call time. Private secrets override shared for the calling user, as for connectors. `bearer` sends `Authorization: Bearer <value>`; `header` sends the value in the header you name (`header: X-Api-Key`). `secret` may be written bare (`TRACKER_TOKEN`) or in braces (`"{{TRACKER_TOKEN}}"`, as packages write it); both name the same Secret, and the bare name is stored. A configured auth whose Secret is missing refuses the call rather than sending it unauthenticated. The sandbox never sees MCP credentials.
+**Auth.** The credential is a [Secret](/build-resources/secrets), resolved and decrypted in the backend at call time. Private secrets override shared for the calling user, as for connectors. `bearer` sends `Authorization: Bearer <value>`; `header` sends the value in the header you name (`header: X-Api-Key`). `secret` may be written bare (`TRACKER_TOKEN`) or in braces (`"{{TRACKER_TOKEN}}"`, as packages write it); both name the same Secret, and the bare name is stored. A configured auth whose Secret is missing refuses the call rather than sending it unauthenticated. Agents get a general "credentials are not set up" error. **Test & List Tools** names the missing secret for users who may edit the server. The sandbox never sees MCP credentials.
 
 **Tool filter.** `toolAllow` / `toolDeny` decide what the resource exposes at all; agents can narrow further per binding (below). The console's **Test & List Tools** shows the server's tools and which ones the filter hides.
 

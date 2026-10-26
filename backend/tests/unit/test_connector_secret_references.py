@@ -480,6 +480,11 @@ VALUE_LIKE_REFS = [
     "xox" + "b-1234567890-abcdefghij",
     "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",  # long letters+digits run, no prefix
     "me@example.com:api-token-123",  # basic-auth credentials, not a name at all
+    "a23e4567-e89b-12d3-a456-426614174000",  # UUID-format API key
+    "pat" + "-na1-a23e4567-e89b-12d3-a456-426614174000",  # HubSpot private app token
+    "shpss" + "_0123456789abcdef0123456789abcdef",  # Shopify shared secret
+    "re" + "_AbCdEf12_3456789GhIjKlMnOp",  # Resend API key
+    "Summer2024",  # an identifier-shaped password
 ]
 
 
@@ -494,7 +499,9 @@ class TestValueLikeReferencesStayOut:
         assert not looks_like_secret_name(ref)
         assert ref not in describe_secret_ref(ref)
 
-    @pytest.mark.parametrize("ref", ["GITHUB_TOKEN", "{{ JIRA_CREDENTIALS }}", "github_token", "api.key-v2"])
+    @pytest.mark.parametrize(
+        "ref", ["GITHUB_TOKEN", "{{ JIRA_CREDENTIALS }}", "github_token", "GitHub_Token", "API_KEY_V2", "_X1"]
+    )
     def test_names_are_shown(self, ref):
         from app.core.secret_refs import describe_secret_ref
 
@@ -534,6 +541,52 @@ class TestValueLikeReferencesStayOut:
         assert ref not in caplog.text
         assert _api_calls(upstream) == []
 
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS)
+    async def test_connector_detail(self, db: AsyncSession, admin_user, upstream, ref, caplog):
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": ref})
+        with pytest.raises(ConnectorAuthError) as err:
+            await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
+        assert "the configured secret reference" in err.value.detail
+        assert ref not in err.value.detail and ref not in str(err.value)
+        assert ref not in caplog.text
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS)
+    async def test_mcp_agent_path(self, db: AsyncSession, admin_user, ref, caplog):
+        """What the model and the chat receive from a failed MCP tool call."""
+        from app.services.mcp_tools import McpToolConverter
+
+        server = McpServer(
+            user_id=admin_user.id, namespace="tools", name=f"leak-{_uniq()}", url="http://unused.test/mcp",
+            transport="streamable_http", auth={"type": "bearer", "secret": ref}, headers={},
+            tool_allow=[], tool_deny=[], timeout_seconds=5, connect_timeout_seconds=5, is_active=True,
+        )
+        db.add(server)
+        await db.flush()
+        result = await McpToolConverter().execute_tool(
+            db, f"mcp_tools__{server.name}__echo", {}, str(admin_user.id),
+            {"tool_type": "mcp", "server_namespace": "tools", "server_name": server.name, "mcp_tool": "echo"},
+        )
+        assert "not set up" in result["error"]
+        assert ref not in json.dumps(result)
+        assert ref not in caplog.text
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS)
+    async def test_mcp_detail_and_repository_error(self, db: AsyncSession, ref):
+        from app.services.mcp_client import McpClientError, resolve_headers
+        from app.services.package_repositories import RepositoryError, _auth_headers
+
+        server = McpServer(namespace="t", name="m", url="https://x/mcp", headers={},
+                           auth={"type": "bearer", "secret": ref})
+        with pytest.raises(McpClientError) as err:
+            await resolve_headers(db, server, None)
+        assert "the configured secret reference" in err.value.detail
+        assert ref not in err.value.detail and ref not in str(err.value)
+
+        repo = PackageRepository(name="r", url="https://x", auth={"type": "bearer", "secret": ref})
+        with pytest.raises(RepositoryError) as err:
+            await _auth_headers(db, repo)
+        assert ref not in str(err.value)
+
     @pytest.mark.parametrize("ref", VALUE_LIKE_REFS[:2])
     async def test_api_test_endpoint(self, client, db: AsyncSession, admin_user, upstream, ref):
         connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": ref})
@@ -565,6 +618,52 @@ class TestValueLikeReferencesStayOut:
         with pytest.raises(McpClientError) as err:
             await resolve_headers(db, server, None)
         assert ref not in str(err.value)
+
+
+class TestWhoSeesWhichSecret:
+    """The name of a missing secret is for those who may edit the resource;
+    a reader of the test endpoints gets what an agent gets."""
+
+    async def _reader(self, db, test_role):
+        from app.models.user import RolePermission
+
+        for key in ("sinas.connectors/*/*.read:all", "sinas.mcp_servers/*/*.read:all"):
+            db.add(RolePermission(role_id=test_role.id, permission_key=key, permission_value=True))
+        await db.flush()
+
+    async def test_connector_test_endpoint(
+        self, client, db: AsyncSession, admin_user, test_user, test_role, upstream
+    ):
+        await self._reader(db, test_role)
+        name = f"MISSING_{_uniq().upper()}"
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": name})
+        url = f"/api/v1/connectors/{connector.namespace}/api/test/whoami"
+
+        reader = await client.post(url, json={"parameters": {}}, headers=auth_headers(test_user))
+        assert reader.status_code == 400, reader.text
+        assert name not in reader.text and "not set up" in reader.json()["detail"]
+
+        editor = await client.post(url, json={"parameters": {}}, headers=auth_headers(admin_user))
+        assert editor.status_code == 400 and name in editor.json()["detail"]
+
+    async def test_mcp_tools_endpoint(self, client, db: AsyncSession, admin_user, test_user, test_role):
+        await self._reader(db, test_role)
+        name = f"MISSING_{_uniq().upper()}"
+        server = McpServer(
+            user_id=admin_user.id, namespace="tools", name=f"who-{_uniq()}", url="http://unused.test/mcp",
+            transport="streamable_http", auth={"type": "bearer", "secret": name}, headers={},
+            tool_allow=[], tool_deny=[], timeout_seconds=5, connect_timeout_seconds=5, is_active=True,
+        )
+        db.add(server)
+        await db.flush()
+        url = f"/api/v1/mcp-servers/tools/{server.name}/tools"
+
+        reader = await client.post(url, headers=auth_headers(test_user))
+        assert reader.status_code == 502, reader.text
+        assert name not in reader.text and "not set up" in reader.json()["detail"]
+
+        editor = await client.post(url, headers=auth_headers(admin_user))
+        assert editor.status_code == 502 and name in editor.json()["detail"]
 
 
 class TestNoneAuthUnaffected:
@@ -690,6 +789,32 @@ class TestSecretNameRule:
             existing=await applier.find(ctx, old),
         )
         assert result.action == "update"
+        assert await connector_service._resolve_secret_value(db, old, None) == "two"
+
+    async def test_restoring_a_deleted_old_style_secret(self, client, db: AsyncSession, admin_user):
+        """Restore recreates the row a revision recorded, under its old name."""
+        from app.models.config_revision import ConfigRevision
+        from app.services.resources.secrets import SecretApplier
+
+        old = f"legacy-name-{_uniq()}"
+        await _shared_secret(db, admin_user, old, "one")
+        applier, ctx = SecretApplier(), self._ctx(db, admin_user)
+        row = await applier.find(ctx, old)
+        await applier.apply(  # recorded, so there is history to restore from
+            applier.spec_model.model_validate({"name": old, "value": "two"}), ctx, existing=row,
+        )
+        await applier.delete(await applier.find(ctx, old), ctx)
+        await db.flush()
+        deleted = (
+            await db.execute(
+                select(ConfigRevision.id)
+                .where(ConfigRevision.resource_kind == "secrets", ConfigRevision.resource_key == old,
+                       ConfigRevision.action == "delete")
+            )
+        ).scalar_one()
+
+        resp = await client.post(f"/api/v1/config/history/{deleted}/restore", headers=auth_headers(admin_user))
+        assert resp.status_code == 200, resp.text
         assert await connector_service._resolve_secret_value(db, old, None) == "two"
 
     @pytest.mark.parametrize("good", ["GITHUB_TOKEN", "github_token", "_X1"])
