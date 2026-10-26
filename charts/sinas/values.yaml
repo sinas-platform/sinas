@@ -138,11 +138,63 @@ postgres:
 ## Redis
 redis:
   maxmemory: "256mb"
+  ## Eviction policy of the in-cluster Redis. Redis holds the job queues,
+  ## locks, stream relays and auth/metering state — almost nothing in it is
+  ## a cache, so "noeviction" (writes fail loudly at maxmemory instead of
+  ## queued jobs or locks being silently dropped) is the safe choice for
+  ## production; size maxmemory so it is never reached. Kept at the
+  ## historical "allkeys-lru" by default for compatibility.
+  maxmemoryPolicy: "allkeys-lru"
   storage: 1Gi
   resources:
     requests:
       cpu: 50m
       memory: 320Mi  # headroom over maxmemory
+  ## External Redis (Google Memorystore for Redis / for Valkey in Cluster
+  ## Mode Disabled, ElastiCache, Azure Cache, ...). Setting external.host
+  ## skips the in-cluster redis StatefulSet, its PVC and Service; every
+  ## sinas process connects to the external instance instead.
+  ## Requirements: Redis >= 6.2 (or Valkey), a single non-cluster endpoint
+  ## (Redis Cluster / cluster-mode-enabled instances are NOT supported),
+  ## and maxmemory-policy "noeviction" (managed defaults like volatile-lru
+  ## evict queued jobs and locks under memory pressure). See the Kubernetes
+  ## docs, "External Redis".
+  ## NOTE: like postgres.external, a private IP is blocked by the default
+  ## NetworkPolicy. An IPv4-literal host is auto-allowed on `port`; a DNS
+  ## hostname resolving to a private IP needs its range in
+  ## networkPolicy.egressCidrs, or connections TIME OUT.
+  external:
+    host: ""
+    ## Memorystore for Redis: 6379 without in-transit encryption, 6378
+    ## with it. Memorystore for Valkey: 6379 either way.
+    port: 6379
+    database: 0
+    ## AUTH string from a pre-created Secret (never put it in values).
+    ## Empty = no AUTH.
+    existingSecret: ""
+    existingSecretKey: "password"
+    ## ACL username, for providers that use one (ElastiCache RBAC,
+    ## Valkey/Redis 6 ACLs). Memorystore AUTH needs none.
+    username: ""
+    tls:
+      ## rediss:// — required when the instance enforces in-transit
+      ## encryption (Memorystore SERVER_AUTHENTICATION).
+      enabled: false
+      ## Server CA to verify the certificate against, from a Secret OR a
+      ## ConfigMap (the PEM is public; either works). Mounted read-only into
+      ## every sinas pod. Empty = the image's system trust store, which
+      ## suits services with publicly-issued certificates (ElastiCache,
+      ## Azure Cache) but NOT Memorystore (per-instance private CA).
+      caSecret: ""
+      caSecretKey: "ca.crt"
+      caConfigMap: ""
+      caConfigMapKey: "ca.crt"
+      ## Also match the certificate to `host`. Leave off for Memorystore
+      ## (reached by IP, verified against its own CA); turn on for
+      ## publicly-issued certificates and a DNS host, or any certificate
+      ## from a public CA would be accepted.
+      checkHostname: false
+      ## There is deliberately no "skip verification" switch.
 
 ## ClickHouse
 clickhouse:
@@ -190,8 +242,8 @@ networkPolicy:
   egressNamespaces: []
   ## Private-IP (RFC1918) egress allowlist by CIDR, for destinations OUTSIDE
   ## the cluster — e.g. a Cloud SQL or Memorystore private IP (see
-  ## postgres.external). Applies to the sinas services only, never sandbox
-  ## pods. ports optional (all ports when omitted):
+  ## postgres.external, redis.external). Applies to the sinas services
+  ## only, never sandbox pods. ports optional (all ports when omitted):
   ##   egressCidrs:
   ##     - cidr: 10.23.96.3/32
   ##       ports: [5432]

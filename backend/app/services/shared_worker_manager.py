@@ -330,9 +330,9 @@ class SharedWorkerManager:
         # Read execution counts from Redis (shared across processes)
         exec_counts: dict[str, int] = {}
         try:
-            from redis.asyncio import Redis
+            from app.core.redis import create_redis_client
 
-            redis = Redis.from_url(settings.redis_url, decode_responses=True)
+            redis = create_redis_client()
             raw = await redis.hgetall(WORKER_EXEC_COUNT_KEY)
             exec_counts = {k: int(v) for k, v in raw.items()}
             await redis.aclose()
@@ -854,9 +854,9 @@ sys.exit(1)
 
                 # Track execution count in Redis (shared across processes)
                 try:
-                    from redis.asyncio import Redis
+                    from app.core.redis import create_redis_client
 
-                    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+                    redis = create_redis_client()
                     await redis.hincrby(WORKER_EXEC_COUNT_KEY, worker_id, 1)
                     await redis.aclose()
                 except Exception:

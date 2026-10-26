@@ -1,3 +1,6 @@
+{{- if not ((.Values.redis).external).host }}
+## In-cluster Redis. Skipped entirely (StatefulSet, PVC, Service) when
+## redis.external.host points at a managed instance.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -33,7 +36,7 @@ spec:
             - --maxmemory
             - {{ .Values.redis.maxmemory | quote }}
             - --maxmemory-policy
-            - allkeys-lru
+            - {{ .Values.redis.maxmemoryPolicy | default "allkeys-lru" | quote }}
           ports:
             - containerPort: 6379
           livenessProbe:
@@ -71,3 +74,4 @@ spec:
   ports:
     - port: 6379
       targetPort: 6379
+{{- end }}

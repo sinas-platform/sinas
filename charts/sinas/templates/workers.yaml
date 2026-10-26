@@ -33,10 +33,12 @@ spec:
               value: {{ .Values.queueWorker.concurrency | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.queueWorker.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## queue-agent
 apiVersion: apps/v1
@@ -72,10 +74,12 @@ spec:
               value: {{ .Values.queueAgent.concurrency | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.queueAgent.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## scheduler
 apiVersion: apps/v1
@@ -111,10 +115,12 @@ spec:
               value: {{ .Values.superadminEmail | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## cdc-worker
 apiVersion: apps/v1
@@ -145,6 +151,14 @@ spec:
           command: ["python", "-m", "app.cdc.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+          {{- with (include "sinas.redisCaMount" . | trim) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.cdcWorker.resources | nindent 12 }}
+      {{- with (include "sinas.redisCaVolume" . | trim) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
 {{- end }}

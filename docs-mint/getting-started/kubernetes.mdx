@@ -219,6 +219,181 @@ console's Request Logs tab says request logging is off on this deployment, and
 the request-log API answers `503` with that explanation. See
 [ClickHouse](/getting-started/environment-variables#clickhouse-optional).
 
+## External Redis (Memorystore, ElastiCache, Azure Cache)
+
+Redis holds the job queues, the streaming relay between workers and the
+API, locks, and short-lived auth state. By default the chart runs a
+single-replica Redis StatefulSet. To use a managed instance instead, set
+`redis.external.host`: the chart then renders no Redis StatefulSet, PVC or
+Service, and every Sinas process connects to the external instance.
+
+### Requirements
+
+- **Redis 6.2 or newer, or Valkey.** Sinas uses `GETDEL` (6.2), streams,
+  pub/sub, Lua scripts (`EVAL`) and `MULTI`/`WATCH` transactions. On
+  Memorystore for Redis that means version 6.x (6.2), 7.0 or 7.2. 5.0 and
+  older don't work.
+- **A single, non-cluster endpoint.** Redis Cluster isn't supported:
+  Memorystore for Redis Cluster, Memorystore for Valkey in *Cluster Mode
+  Enabled*, and ElastiCache with cluster mode enabled won't work. The queue
+  library (arq) has no cluster support, and its transactions span several
+  keys. Use Memorystore for Redis (Basic or Standard tier) or Memorystore
+  for Valkey in **Cluster Mode Disabled**. Standard tier and Valkey replicas
+  are fine; Sinas always talks to the primary endpoint.
+- **`maxmemory-policy` = `noeviction`.** See [Eviction policy](#eviction-policy).
+- **Static AUTH, if any.** A password from a Secret (Memorystore AUTH, Valkey
+  basic token auth, ElastiCache AUTH/RBAC, Azure access keys). IAM auth with
+  short-lived tokens (Memorystore for Valkey IAM, ElastiCache IAM) isn't
+  supported.
+
+Memorystore blocks `CONFIG`, `CLIENT`, `OBJECT` and a few admin commands.
+Sinas uses none of them. The Redis client library's `CLIENT SETINFO` at
+connect time is refused harmlessly.
+
+### Values
+
+```yaml
+redis:
+  external:
+    host: 10.23.96.4        # the instance's private IP
+    port: 6378              # Memorystore for Redis with in-transit encryption
+    database: 0
+    existingSecret: redis-auth
+    existingSecretKey: password
+    tls:
+      enabled: true         # rediss://
+      caSecret: redis-ca    # or caConfigMap: redis-ca
+      caSecretKey: ca.crt
+```
+
+| Value | Default | Description |
+|---|---|---|
+| `redis.external.host` | — | Host or IP. Set it to switch off the in-cluster Redis. |
+| `redis.external.port` | `6379` | Memorystore for Redis uses `6379` without in-transit encryption and `6378` with it. Memorystore for Valkey uses `6379` either way. |
+| `redis.external.database` | `0` | Database index. Use `0` unless you know the instance offers more. |
+| `redis.external.existingSecret` / `existingSecretKey` | — / `password` | Secret holding the AUTH string. Empty means no AUTH. There's no inline value: the password never goes in values or the Deployment spec. |
+| `redis.external.username` | — | ACL username (ElastiCache RBAC, Redis 6 ACLs). Not needed for Memorystore. |
+| `redis.external.tls.enabled` | `false` | Connect with TLS (`rediss://`). Required when the instance enforces in-transit encryption. |
+| `redis.external.tls.caSecret` / `caSecretKey` | — / `ca.crt` | Secret holding the server CA (PEM). |
+| `redis.external.tls.caConfigMap` / `caConfigMapKey` | — / `ca.crt` | The same, from a ConfigMap (a CA certificate isn't secret). Set one of the two, not both. |
+| `redis.external.tls.checkHostname` | `false` | Also match the certificate to `host`. Leave it off for Memorystore, which you reach by IP and verify against its per-instance CA. Turn it on for publicly issued certificates with a DNS host. |
+| `redis.maxmemoryPolicy` | `allkeys-lru` | Eviction policy of the **in-cluster** Redis. See below. |
+
+The certificate is always verified; the chart has no option to skip
+verification. Without a CA, the image's system trust store is used. That
+works for services with publicly issued certificates (ElastiCache, Azure
+Cache for Redis), not for Memorystore.
+
+The CA is mounted read-only at `/etc/sinas/redis-ca/ca.crt` in every pod
+that talks to Redis (backend, queue workers, scheduler, CDC worker; just the
+backend in the all-in-one profile). The AUTH string reaches the processes as
+`REDIS_PASSWORD`, separately from `REDIS_URL`, so special characters need no
+URL-encoding. Sandbox and trusted executor pods get neither.
+
+### Memorystore setup
+
+Create the instance with AUTH and in-transit encryption (or enable them on
+an existing one). Then copy the AUTH string and the server CA into the
+release namespace:
+
+```bash
+# AUTH string -> Secret (keep it out of your shell history and values files)
+gcloud redis instances get-auth-string sinas-redis --region=europe-west4 \
+  --format='value(authString)' | tr -d '\n' > /tmp/redis-auth
+kubectl -n sinas create secret generic redis-auth --from-file=password=/tmp/redis-auth
+rm /tmp/redis-auth
+
+# Server CA -> Secret. serverCaCerts lists every active CA (more than one
+# while a CA rotation is under way); keep them all in the bundle.
+gcloud redis instances describe sinas-redis --region=europe-west4 \
+  --format='json(serverCaCerts)' \
+  | python3 -c 'import json,sys; print("".join(c["cert"] for c in json.load(sys.stdin)["serverCaCerts"]))' \
+  > server-ca.pem
+kubectl -n sinas create secret generic redis-ca --from-file=ca.crt=server-ca.pem
+
+# Host and TLS port
+gcloud redis instances describe sinas-redis --region=europe-west4 \
+  --format='value(host,port)'
+```
+
+For **Memorystore for Valkey**, get the CA with
+`gcloud memorystore instances get-certificate-authority INSTANCE --location=REGION`
+and save the PEM blocks into one file. The instance must be in Cluster Mode
+Disabled, it uses port `6379` with TLS, and basic token auth gives you the
+password for `existingSecret`.
+
+Memorystore rotates its **server certificate** every 180 days, which drops
+connections for a few seconds; Sinas reconnects. The **CA** is valid for 10
+years. A new one is published 5 years in, so refresh the Secret then (the
+old CA stays valid until it expires). Google notes that Python 3.13+
+clients can reject the CA of Memorystore for Redis instances created before
+July 2025. The Sinas images run Python 3.11, so this doesn't affect them
+today.
+
+### Network
+
+Memorystore is reachable only from the VPC it's attached to (direct
+peering or Private Service Access). On GKE, use a VPC-native cluster in that
+network, or in a peered network that imports the routes.
+
+The chart's NetworkPolicy blocks private (RFC1918) destinations outside the
+namespace. When `redis.external.host` is an IPv4 address, the chart allows
+egress to it on `redis.external.port` automatically. A DNS hostname that
+resolves to a private IP has to go into `networkPolicy.egressCidrs`:
+otherwise connections time out rather than being refused.
+
+```yaml
+networkPolicy:
+  egressCidrs:
+    - cidr: 10.23.96.0/29
+      ports: [6378]
+```
+
+### Eviction policy
+
+Almost nothing Sinas keeps in Redis is a cache:
+
+- the queues (arq sorted sets, with no TTL) and job payloads (24-hour TTL)
+- in-progress markers
+- the chat and pipeline locks
+- the streaming relay
+- OAuth/SSO state and rate-limit counters
+- the dead-letter queue
+- the metering counters
+
+| Policy | What happens at `maxmemory` |
+|---|---|
+| `noeviction` (**recommended**) | Writes fail with an out-of-memory error. Nothing is lost silently; you see the errors and add memory. |
+| `volatile-lru` (Memorystore default) | Evicts keys that have a TTL. These include queued job payloads (the job is dropped as "expired"), the in-progress markers (a job can run twice), the chat and pipeline locks (two agent loops on one chat), and OAuth state. |
+| `allkeys-lru` | All of the above, plus whole queues, the dead-letter queue and metering counters. |
+
+Set `maxmemory-policy` to `noeviction` on the instance:
+
+```bash
+gcloud redis instances update sinas-redis --region=europe-west4 \
+  --update-redis-config maxmemory-policy=noeviction
+```
+
+Size the instance so it never gets near the limit, and alert on memory
+usage (`redis.googleapis.com/stats/memory/usage_ratio`). The main growth
+comes from job status and result keys (24 hours of job volume), streams of
+long agent runs, and the dead-letter queue, which grows until an admin
+empties it.
+
+The in-cluster Redis defaults to `allkeys-lru` for backwards compatibility,
+which carries the same risk under memory pressure. Set
+`redis.maxmemoryPolicy: noeviction` and give `redis.maxmemory` headroom for
+production.
+
+### Docker Compose
+
+Compose deployments already read `REDIS_URL` from `.env`, together with
+`REDIS_PASSWORD`, `REDIS_USERNAME`, `REDIS_SSL_CA_CERTS` and
+`REDIS_SSL_CHECK_HOSTNAME`. Use `rediss://` for TLS and mount the CA file
+into the backend, worker, scheduler and CDC containers (for example with a
+`docker-compose.override.yml`). See
+[Environment variables](/getting-started/environment-variables#database).
+
 ## Key values
 
 | Value | Default | Description |
@@ -235,6 +410,7 @@ the request-log API answers `503` with that explanation. See
 | `networkPolicy.enabled` | `true` | Namespace isolation + sandbox lockdown |
 | `networkPolicy.ingressNamespace` | _(any)_ | Restrict which namespace may reach backend/console |
 | `backend.forwardedAllowIps` | private ranges | Proxies trusted to report the client IP (see below) |
+| `redis.external.host` | — | Use a managed Redis instead of the bundled one ([External Redis](#external-redis-memorystore-elasticache-azure-cache)) |
 
 ## Client IPs behind the ingress
 
@@ -260,5 +436,7 @@ backend:
   `inprocess` trusted executor is run-to-completion. Durable pause/resume is
   tracked in [issue #79](https://github.com/sinas-platform/sinas/issues/79).
 - The bundled datastores are convenience-grade. For production, point
-  `DATABASE_URL`-family settings at managed services (e.g. RDS, ElastiCache)
-  and disable the bundled StatefulSets.
+  the chart at managed services: `postgres.external.*` (Cloud SQL, RDS) and
+  [`redis.external.*`](#external-redis-memorystore-elasticache-azure-cache)
+  (Memorystore, ElastiCache, Azure Cache). Each one replaces its bundled
+  StatefulSet.

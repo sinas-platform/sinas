@@ -289,6 +289,18 @@ class Settings(BaseSettings):
 
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"
+    # External/managed Redis (app/core/redis.py). rediss:// in redis_url
+    # turns TLS on. redis_password overrides the URL's password and is used
+    # verbatim (no URL encoding needed); redis_username likewise. Every
+    # Redis client (API, arq workers, scheduler, CDC) honours all of these.
+    redis_password: Optional[str] = None
+    redis_username: Optional[str] = None
+    # PEM bundle of CAs to verify the server certificate against (e.g. the
+    # Memorystore server CA). Empty = the system trust store.
+    redis_ssl_ca_certs: Optional[str] = None
+    # Also match the certificate to the host name. Off: Memorystore is
+    # reached by IP and verified against its own per-instance CA.
+    redis_ssl_check_hostname: bool = False
     queue_function_concurrency: int = 10
     queue_agent_concurrency: int = 5
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker

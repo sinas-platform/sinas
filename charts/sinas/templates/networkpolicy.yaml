@@ -89,6 +89,18 @@ spec:
         - port: 5432
           protocol: TCP
     {{- end }}
+    {{- $redisExt := (.Values.redis).external | default dict }}
+    {{- if and $redisExt.host (regexMatch "^(\\d{1,3}\\.){3}\\d{1,3}$" $redisExt.host) }}
+    ## External Redis (redis.external.host) — auto-allowed for the same
+    ## reason: Memorystore and friends sit on private IPs. DNS hostnames
+    ## cannot be auto-derived; allowlist their range via egressCidrs.
+    - to:
+        - ipBlock:
+            cidr: {{ $redisExt.host }}/32
+      ports:
+        - port: {{ $redisExt.port | default 6379 | int }}
+          protocol: TCP
+    {{- end }}
     {{- range .Values.networkPolicy.egressCidrs }}
     ## Operator-allowlisted private-IP egress (external datastores etc.)
     - to:
@@ -154,7 +166,10 @@ spec:
 ## Wider than sandbox — may call the Sinas API and the internet — but still
 ## no direct line to postgres/redis/clickhouse: the pods carry no credentials
 ## (meter integrity), and since in-cluster redis is unauthenticated this
-## policy is what makes that stick at the network level too.
+## policy is what makes that stick at the network level too. (An external
+## Redis on a private IP is excluded by the RFC1918 rule below; one on a
+## PUBLIC address would be reachable — keep AUTH on, which the trusted
+## pods never receive.)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

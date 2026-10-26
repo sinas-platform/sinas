@@ -105,6 +105,103 @@ key: database-password
 {{- end }}
 
 {{/*
+Where the Redis server CA is mounted (redis.external.tls.caSecret /
+caConfigMap). REDIS_SSL_CA_CERTS points here.
+*/}}
+{{- define "sinas.redisCaPath" -}}
+/etc/sinas/redis-ca/ca.crt
+{{- end }}
+
+{{/*
+Non-empty when a Redis server CA is mounted into the pods. Fails the render
+on contradictory TLS settings. Paren-safe for `helm upgrade --reuse-values`
+from a release without redis.external.
+*/}}
+{{- define "sinas.redisCaEnabled" -}}
+{{- $ext := (.Values.redis).external | default dict }}
+{{- $tls := $ext.tls | default dict }}
+{{- if and $ext.host $tls.enabled }}
+{{- if and $tls.caSecret $tls.caConfigMap }}
+{{- fail "redis.external.tls: set caSecret OR caConfigMap, not both" }}
+{{- end }}
+{{- if or $tls.caSecret $tls.caConfigMap }}true{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Redis connection environment (part of backendEnv). In-cluster: the
+unauthenticated `redis` Service. External (redis.external.host): REDIS_URL
+carries scheme (rediss:// = TLS), host, port and db; the AUTH string comes
+from the operator's Secret as REDIS_PASSWORD, a separate variable the
+backend uses verbatim, so it never needs URL-encoding and never sits in the
+Deployment spec or in values.
+*/}}
+{{- define "sinas.redisEnv" -}}
+{{- $ext := (.Values.redis).external | default dict }}
+{{- if $ext.host }}
+{{- $tls := $ext.tls | default dict }}
+{{- $host := $ext.host }}
+{{- if contains ":" $host }}{{- $host = printf "[%s]" $host }}{{- end }}
+{{- with $ext.existingSecret }}
+- name: REDIS_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ . | quote }}
+      key: {{ $ext.existingSecretKey | default "password" | quote }}
+{{- end }}
+{{- with $ext.username }}
+- name: REDIS_USERNAME
+  value: {{ . | quote }}
+{{- end }}
+- name: REDIS_URL
+  value: {{ printf "%s://%s:%d/%d" (ternary "rediss" "redis" (eq (toString $tls.enabled) "true")) $host (($ext.port | default 6379) | int) (($ext.database | default 0) | int) | quote }}
+{{- if include "sinas.redisCaEnabled" . }}
+- name: REDIS_SSL_CA_CERTS
+  value: {{ include "sinas.redisCaPath" . | quote }}
+{{- end }}
+{{- if and $tls.enabled $tls.checkHostname }}
+- name: REDIS_SSL_CHECK_HOSTNAME
+  value: "true"
+{{- end }}
+{{- else }}
+- name: REDIS_URL
+  value: "redis://redis:6379/0"
+{{- end }}
+{{- end }}
+
+{{/*
+Redis server CA volume mount / volume — empty unless a CA is configured.
+Every pod that gets backendEnv (and so talks to Redis) includes both.
+*/}}
+{{- define "sinas.redisCaMount" -}}
+{{- if include "sinas.redisCaEnabled" . }}
+- name: redis-ca
+  mountPath: /etc/sinas/redis-ca
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{- define "sinas.redisCaVolume" -}}
+{{- if include "sinas.redisCaEnabled" . }}
+{{- $tls := .Values.redis.external.tls }}
+- name: redis-ca
+{{- if $tls.caSecret }}
+  secret:
+    secretName: {{ $tls.caSecret | quote }}
+    items:
+      - key: {{ $tls.caSecretKey | default "ca.crt" | quote }}
+        path: ca.crt
+{{- else }}
+  configMap:
+    name: {{ $tls.caConfigMap | quote }}
+    items:
+      - key: {{ $tls.caConfigMapKey | default "ca.crt" | quote }}
+        path: ca.crt
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Backend environment — shared by backend, all workers, scheduler, cdc-worker
 */}}
 {{- define "sinas.backendEnv" -}}
@@ -139,8 +236,7 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: CLICKHOUSE_HOST
   value: ""
 {{- end }}
-- name: REDIS_URL
-  value: "redis://redis:6379/0"
+{{- include "sinas.redisEnv" . }}
 ## Executor selection — k8s-native: sandbox code runs in ephemeral pods
 ## created via the Kubernetes API (no Docker socket anywhere).
 - name: SANDBOX_EXECUTOR

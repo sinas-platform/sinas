@@ -37,6 +37,11 @@ jobs:
           grep -q -- "--proxy-headers" /tmp/default.yaml
           grep -A1 "name: FORWARDED_ALLOW_IPS" /tmp/default.yaml | grep -q '10.0.0.0/8'
           grep -q "name: clickhouse" /tmp/default.yaml
+          # In-cluster Redis by default, unauthenticated, no TLS plumbing
+          grep -q "name: redis$" /tmp/default.yaml
+          grep -A1 "name: REDIS_URL" /tmp/default.yaml | grep -q '"redis://redis:6379/0"'
+          ! grep -q -e 'REDIS_PASSWORD' -e 'REDIS_SSL_CA_CERTS' -e 'redis-ca' /tmp/default.yaml || exit 1
+          grep -A1 -- "--maxmemory-policy" /tmp/default.yaml | grep -q 'allkeys-lru'
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |
@@ -46,7 +51,7 @@ jobs:
             --set postgres.password=ci \
             --set clickhouse.enabled=false \
             > /tmp/compact.yaml
-          ! grep -q "name: clickhouse" /tmp/compact.yaml
+          ! grep -q "name: clickhouse" /tmp/compact.yaml || exit 1
           # backend must get the explicit-disable signal
           grep -q 'CLICKHOUSE_HOST' /tmp/compact.yaml
 
@@ -68,8 +73,76 @@ jobs:
           grep -q 'name: OTEL_EXPORTERS' /tmp/otel.yaml
           grep -q 'name: OTEL_EXPORTER_LANG_FUSE_HEADERS' /tmp/otel.yaml
           # a disabled exporter references no Secret (it may be gone)
-          ! grep -q 'OTEL_EXPORTER_OFF_HEADERS' /tmp/otel.yaml
+          ! grep -q 'OTEL_EXPORTER_OFF_HEADERS' /tmp/otel.yaml || exit 1
           # the Secret reference never lands in the exporter JSON
-          ! grep -q 'headersSecret' /tmp/otel.yaml
+          ! grep -q 'headersSecret' /tmp/otel.yaml || exit 1
           # and nothing OTel is rendered while it is off
-          ! grep -q 'OTEL_' /tmp/compact.yaml
+          ! grep -q 'OTEL_' /tmp/compact.yaml || exit 1
+
+      - name: helm template (external Redis, AUTH + TLS with a server CA)
+        run: |
+          helm lint charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
+            --set redis.external.existingSecret=redis-auth \
+            --set redis.external.tls.enabled=true --set redis.external.tls.caSecret=redis-ca
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
+            --set redis.external.existingSecret=redis-auth \
+            --set redis.external.tls.enabled=true --set redis.external.tls.caSecret=redis-ca \
+            > /tmp/redis-ext.yaml
+          # no in-cluster redis StatefulSet / Service / PVC
+          ! grep -q "name: redis$" /tmp/redis-ext.yaml || exit 1
+          grep -A1 "name: REDIS_URL" /tmp/redis-ext.yaml | grep -q '"rediss://10.1.2.3:6378/0"'
+          # AUTH string only by Secret reference, never inlined
+          grep -A4 "name: REDIS_PASSWORD" /tmp/redis-ext.yaml | grep -q 'name: "redis-auth"'
+          grep -A1 "name: REDIS_SSL_CA_CERTS" /tmp/redis-ext.yaml | grep -q '/etc/sinas/redis-ca/ca.crt'
+          # CA mounted into all 5 Redis-using pods (mount + volume each)
+          test "$(grep -c 'name: redis-ca$' /tmp/redis-ext.yaml)" -eq 10
+          grep -q 'secretName: "redis-ca"' /tmp/redis-ext.yaml
+          # NetworkPolicy auto-allows the private IP on its port
+          grep -A4 "cidr: 10.1.2.3/32" /tmp/redis-ext.yaml | grep -q "port: 6378"
+
+      - name: helm template (external Redis, plain, DNS host)
+        run: |
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set redis.external.host=redis.example.internal \
+            --set redis.external.database=2 --set redis.external.username=app \
+            > /tmp/redis-plain.yaml
+          ! grep -q "name: redis$" /tmp/redis-plain.yaml || exit 1
+          grep -A1 "name: REDIS_URL" /tmp/redis-plain.yaml | grep -q '"redis://redis.example.internal:6379/2"'
+          grep -A1 "name: REDIS_USERNAME" /tmp/redis-plain.yaml | grep -q '"app"'
+          ! grep -q -e 'REDIS_PASSWORD' -e 'REDIS_SSL_CA_CERTS' -e 'redis-ca' /tmp/redis-plain.yaml || exit 1
+          # a DNS name is not auto-allowed (egressCidrs is the operator's job)
+          ! grep -q "redis.example.internal/32" /tmp/redis-plain.yaml || exit 1
+
+      - name: helm template (lite profile, external Redis with a CA ConfigMap)
+        run: |
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci \
+            --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
+            --set redis.external.tls.enabled=true --set redis.external.tls.caConfigMap=redis-ca \
+            > /tmp/redis-lite.yaml
+          ! grep -q "name: redis$" /tmp/redis-lite.yaml || exit 1
+          grep -A1 "name: REDIS_URL" /tmp/redis-lite.yaml | grep -q '"rediss://10.1.2.3:6378/0"'
+          # one all-in-one backend pod: one mount + one volume
+          test "$(grep -c 'name: redis-ca$' /tmp/redis-lite.yaml)" -eq 2
+          grep -A1 "configMap:" /tmp/redis-lite.yaml | grep -q 'name: "redis-ca"'
+          # caSecret and caConfigMap together is a render error
+          ! helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set redis.external.host=10.1.2.3 --set redis.external.tls.enabled=true \
+            --set redis.external.tls.caSecret=a --set redis.external.tls.caConfigMap=b \
+            > /dev/null 2>&1

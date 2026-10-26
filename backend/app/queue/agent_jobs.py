@@ -308,6 +308,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     from redis.asyncio import Redis
 
     from app.core.database import AsyncSessionLocal
+    from app.core.redis import create_redis_client
     from app.services.message_service import MessageService
     from app.services.stream_relay import stream_relay
 
@@ -343,7 +344,7 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
         "parent_tool_call_id": parent_tool_call_id,
     })
 
-    redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
+    redis: Redis = ctx.get("redis") or create_redis_client()
 
     logger.info(f"Agent worker processing message for chat {chat_id} (job={job_id})")
 
@@ -586,6 +587,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     from redis.asyncio import Redis
 
     from app.core.database import AsyncSessionLocal
+    from app.core.redis import create_redis_client
     from app.models.agent import Agent
     from app.models.chat import Chat
     from app.models.pending_approval import PendingToolApproval
@@ -608,7 +610,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
     current_delegation_depth.set(kwargs.get("depth", 0))
     current_channel_id.set(channel_id)
 
-    redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
+    redis: Redis = ctx.get("redis") or create_redis_client()
 
     logger.info(f"Agent worker resuming chat {chat_id} (job={job_id}, approved={approved})")
 
@@ -825,6 +827,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
     from redis.asyncio import Redis
 
     from app.core.database import AsyncSessionLocal
+    from app.core.redis import create_redis_client
     from app.services.delegation import (
         current_channel_id,
         current_delegation_depth,
@@ -853,7 +856,7 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         "parent_tool_call_id": parent_tool_call_id,
     })
 
-    redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
+    redis: Redis = ctx.get("redis") or create_redis_client()
 
     logger.info(f"Agent worker resuming chat {chat_id} after delegation (job={job_id})")
 

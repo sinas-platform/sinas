@@ -71,6 +71,7 @@ spec:
                   key: smtp-password
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           livenessProbe:
             httpGet:
               path: /health
@@ -88,6 +89,7 @@ spec:
             {{- toYaml .Values.backend.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 apiVersion: v1
 kind: Service
