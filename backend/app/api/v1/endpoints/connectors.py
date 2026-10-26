@@ -523,7 +523,8 @@ async def test_operation(
             elapsed_ms=result.get("elapsed_ms", 0),
         )
     except ConnectorAuthError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # The admin-facing test: says which secret (never a value).
+        raise HTTPException(status_code=400, detail=e.detail)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

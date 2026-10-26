@@ -5,9 +5,11 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from app.core.secret_refs import SECRET_NAME_PATTERN
+
 
 class SecretCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=255, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    name: str = Field(..., min_length=1, max_length=255, pattern=SECRET_NAME_PATTERN)
     value: str = Field(..., min_length=1)
     description: Optional[str] = None
     visibility: str = Field(default="shared", pattern=r"^(shared|private)$")

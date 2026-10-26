@@ -1260,11 +1260,15 @@ class PackageService:
             return False
 
         elif resource_type == "secrets":
+            from app.core.secret_refs import secret_ref_name
             from app.models.secret import Secret
+            # The value is a secret reference (`NAME` or `{{ NAME }}`). Any
+            # secret by that name counts, as before; several (a shared one and
+            # private ones) must not raise MultipleResultsFound.
             result = await self.db.execute(
-                select(Secret).where(Secret.name == value)
+                select(Secret.id).where(Secret.name == secret_ref_name(value)).limit(1)
             )
-            return result.scalar_one_or_none() is not None
+            return result.first() is not None
 
         elif resource_type == "roles":
             from app.models.user import Role

@@ -397,6 +397,9 @@ class TestLegacyRowsStillResolve:
 
 
 class TestMissingSecretIsAClearError:
+    """Fails closed. Users, agents and pipelines get a general message; the
+    admin-facing detail (the operation test) says which secret."""
+
     @pytest.mark.parametrize("auth_type", ["bearer", "basic", "api_key"])
     async def test_missing_secret_row(self, db: AsyncSession, admin_user, upstream, auth_type):
         name = f"MISSING_{_uniq().upper()}"
@@ -405,13 +408,15 @@ class TestMissingSecretIsAClearError:
         )
         with pytest.raises(ConnectorAuthError) as err:
             await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
-        assert f"'{name}'" in str(err.value)  # the bare name, so it can be created as such
+        assert "not set up" in str(err.value) and name not in str(err.value)
+        assert f"'{name}'" in err.value.detail  # the bare name, so it can be created as such
         assert _api_calls(upstream) == []  # nothing went out unauthenticated
 
     async def test_no_secret_configured(self, db: AsyncSession, admin_user, upstream):
         connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer"})
-        with pytest.raises(ConnectorAuthError, match="names no secret"):
+        with pytest.raises(ConnectorAuthError) as err:
             await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
+        assert "names no secret" in err.value.detail
         assert _api_calls(upstream) == []
 
     async def test_client_credentials_missing_secret_names_it(self, db: AsyncSession, admin_user, upstream):
@@ -422,8 +427,20 @@ class TestMissingSecretIsAClearError:
         })
         with pytest.raises(ConnectorAuthError) as err:
             await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
-        assert f"'{name}'" in str(err.value)
+        assert f"'{name}'" in err.value.detail and name not in str(err.value)
         assert upstream.seen == []  # neither the token endpoint nor the API was called
+
+    async def test_client_credentials_without_secret_says_so(self, db: AsyncSession, admin_user, upstream):
+        """Was the generic "could not obtain an OAuth token"."""
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {
+            "type": "oauth2_client_credentials", "token_url": f"{_url(upstream)}/token",
+            "client_id": "cid",
+        })
+        with pytest.raises(ConnectorAuthError) as err:
+            await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
+        assert "names no secret" in err.value.detail
+        assert "not set up" in str(err.value)
+        assert upstream.seen == []
 
     async def test_secret_value_never_in_the_error(self, db: AsyncSession, admin_user, upstream):
         """A private secret of ANOTHER user is not this caller's credential:
@@ -438,7 +455,7 @@ class TestMissingSecretIsAClearError:
         connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": name})
         with pytest.raises(ConnectorAuthError) as err:
             await connector_service.execute_operation(db, connector, "whoami", {}, user_id=None)
-        assert "do-not-leak" not in str(err.value)
+        assert "do-not-leak" not in str(err.value) and "do-not-leak" not in err.value.detail
 
     async def test_test_endpoint_reports_it(self, client, db: AsyncSession, admin_user, upstream):
         name = f"MISSING_{_uniq().upper()}"
@@ -452,6 +469,102 @@ class TestMissingSecretIsAClearError:
         assert resp.status_code == 400, resp.text
         assert name in resp.json()["detail"]
         assert _api_calls(upstream) == []
+
+
+# A credential pasted where its NAME belongs. Built at runtime so no scanner
+# mistakes these test strings for leaked tokens.
+VALUE_LIKE_REFS = [
+    "ghp" + "_realToken123",
+    "ghp" + "_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8",
+    "sk" + "-proj-" + "Q7x9Lm2Pz8Rt4Vb6Nc1Kd3Fg5Hj",
+    "xox" + "b-1234567890-abcdefghij",
+    "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA",  # long letters+digits run, no prefix
+    "me@example.com:api-token-123",  # basic-auth credentials, not a name at all
+]
+
+
+class TestValueLikeReferencesStayOut:
+    """P2: a reference that looks like a credential never reaches the LLM,
+    a chat, a pipeline record or an API error."""
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS)
+    def test_shape_check(self, ref):
+        from app.core.secret_refs import describe_secret_ref, looks_like_secret_name
+
+        assert not looks_like_secret_name(ref)
+        assert ref not in describe_secret_ref(ref)
+
+    @pytest.mark.parametrize("ref", ["GITHUB_TOKEN", "{{ JIRA_CREDENTIALS }}", "github_token", "api.key-v2"])
+    def test_names_are_shown(self, ref):
+        from app.core.secret_refs import describe_secret_ref
+
+        assert describe_secret_ref(ref) == f"secret '{secret_ref_name(ref)}'"
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS)
+    async def test_agent_tool_error(self, db: AsyncSession, admin_user, upstream, ref, caplog):
+        from app.services.connector_tools import ConnectorToolConverter
+
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": ref})
+        result = await ConnectorToolConverter().execute_connector_tool(
+            db, f"connector__{connector.namespace}__api__whoami", {}, user_id=str(admin_user.id),
+        )
+        assert "error" in result and "not set up" in result["error"]
+        assert ref not in json.dumps(result)
+        assert ref not in caplog.text
+        assert _api_calls(upstream) == []
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS[:2])
+    async def test_pipeline_step_error(self, db: AsyncSession, admin_user, upstream, ref, monkeypatch, caplog):
+        import contextlib
+
+        from app.services import pipeline_runner
+
+        @contextlib.asynccontextmanager
+        async def _same_session():
+            yield db
+
+        monkeypatch.setattr(pipeline_runner, "AsyncSessionLocal", _same_session)
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": ref})
+        with pytest.raises(pipeline_runner.StepError) as err:
+            await pipeline_runner._execute_connector_step(
+                {"connector": f"{connector.namespace}/api", "operation": "whoami"}, {},
+                user_id=str(admin_user.id), user_token=None,
+            )
+        assert "not set up" in str(err.value) and ref not in str(err.value)
+        assert ref not in caplog.text
+        assert _api_calls(upstream) == []
+
+    @pytest.mark.parametrize("ref", VALUE_LIKE_REFS[:2])
+    async def test_api_test_endpoint(self, client, db: AsyncSession, admin_user, upstream, ref):
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {"type": "bearer", "secret": ref})
+        resp = await client.post(
+            f"/api/v1/connectors/{connector.namespace}/api/test/whoami",
+            json={"parameters": {}}, headers=auth_headers(admin_user),
+        )
+        assert resp.status_code == 400, resp.text
+        assert "the configured secret reference" in resp.json()["detail"]
+        assert ref not in resp.text
+
+    async def test_client_credentials(self, db: AsyncSession, admin_user, upstream, caplog):
+        ref = VALUE_LIKE_REFS[1]
+        connector = await _legacy_connector(db, admin_user, _url(upstream), {
+            "type": "oauth2_client_credentials", "token_url": f"{_url(upstream)}/token",
+            "client_id": "cid-value-like", "secret": ref,
+        })
+        with pytest.raises(ConnectorAuthError) as err:
+            await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
+        assert ref not in str(err.value) and ref not in err.value.detail
+        assert ref not in caplog.text
+
+    async def test_mcp_server(self, db: AsyncSession):
+        from app.services.mcp_client import McpClientError, resolve_headers
+
+        ref = VALUE_LIKE_REFS[1]
+        server = McpServer(namespace="t", name="m", url="https://x/mcp", headers={},
+                           auth={"type": "bearer", "secret": ref})
+        with pytest.raises(McpClientError) as err:
+            await resolve_headers(db, server, None)
+        assert ref not in str(err.value)
 
 
 class TestNoneAuthUnaffected:
@@ -482,3 +595,110 @@ class TestNoneAuthUnaffected:
         result = await connector_service.execute_operation(db, connector, "whoami", {}, user_id=str(admin_user.id))
         assert result["status_code"] == 200
         assert "Authorization" not in _api_calls(upstream)[-1]["headers"]
+
+
+# --------------------------------------------------------------------------- review follow-ups
+
+
+class TestPipelineRecredentialReset:
+    async def test_reset_matches_a_stored_braced_reference(self, db: AsyncSession, admin_user, test_user):
+        """A user re-entering their private secret clears the skip-list of
+        per-user pipelines on connectors that reference it, also when the
+        connector row still stores `{{NAME}}`."""
+        from app.models.pipeline import Pipeline, PipelineCursor
+        from app.services.pipeline_runner import reset_user_failure_state
+
+        name = f"LEG_{_uniq().upper()}"
+        connector = await _legacy_connector(
+            db, admin_user, "https://x", {"type": "bearer", "secret": f"{{{{ {name} }}}}"}
+        )
+        pipeline = Pipeline(
+            user_id=admin_user.id, namespace=f"p{_uniq()}", name="sync",
+            per_user={"connector": f"{connector.namespace}/{connector.name}"},
+        )
+        db.add(pipeline)
+        await db.flush()
+        cursor = PipelineCursor(
+            pipeline_id=pipeline.id, user_id=test_user.id, consecutive_failures=5, last_error="401",
+        )
+        db.add(cursor)
+        await db.flush()
+
+        await reset_user_failure_state(db, str(test_user.id), secret_name=name)
+
+        row = (
+            await db.execute(
+                select(PipelineCursor.consecutive_failures, PipelineCursor.last_error)
+                .where(PipelineCursor.id == cursor.id)
+            )
+        ).one()
+        assert tuple(row) == (0, None)
+
+
+class TestSecretResourceRef:
+    async def test_shared_and_private_of_the_same_name(self, db: AsyncSession, admin_user, test_user):
+        """Was MultipleResultsFound (a 500) once a private secret shared the name."""
+        name = f"REF_{_uniq().upper()}"
+        await _shared_secret(db, admin_user, name, "a")
+        db.add(Secret(user_id=test_user.id, name=name, visibility="private",
+                      encrypted_value=encryption_service.encrypt("b")))
+        await db.flush()
+        svc = PackageService(db)
+        assert await svc._validate_resource_ref("secrets", name) is True
+        assert await svc._validate_resource_ref("secrets", f"{{{{{name}}}}}") is True
+        assert await svc._validate_resource_ref("secrets", f"NOPE_{name}") is False
+
+
+class TestSecretNameRule:
+    """Config and packages create secrets under the REST name rule, so a
+    `{{ NAME }}` reference can always name them."""
+
+    def _ctx(self, db, user):
+        from app.services.resources import ApplyContext
+
+        return ApplyContext(db=db, origin="api", actor_user_id=str(user.id), owner_user_id=str(user.id))
+
+    @pytest.mark.parametrize("bad", ["my-secret", "api.key", "1TOKEN", "{{TOKEN}}", "has space"])
+    async def test_create_refuses_other_names(self, db: AsyncSession, admin_user, bad):
+        from app.services.resources.base import ApplierError
+        from app.services.resources.secrets import SecretApplier
+
+        applier = SecretApplier()
+        spec = applier.spec_model.model_validate({"name": bad, "value": "v"})
+        with pytest.raises(ApplierError, match="not allowed"):
+            await applier.apply(spec, self._ctx(db, admin_user))
+
+    async def test_package_secret_variable_with_another_name(self, db: AsyncSession, admin_user):
+        """A package's secret variable creates the secret: same rule."""
+        yaml = (
+            "apiVersion: sinas.co/v1\nkind: SinasPackage\n"
+            f"package:\n  name: secname-{_uniq()}\n  version: \"1.0.0\"\n"
+            "spec:\n  variables:\n    - {name: bad-name, type: secret}\n"
+        )
+        with pytest.raises(Exception, match="not allowed"):
+            await PackageService(db).install(yaml, str(admin_user.id), variables={"bad-name": "v"})
+
+    async def test_existing_row_with_an_old_name_can_still_be_updated(self, db: AsyncSession, admin_user):
+        from app.services.resources.secrets import SecretApplier
+
+        old = f"legacy-name-{_uniq()}"  # created before the rule
+        await _shared_secret(db, admin_user, old, "one")
+        applier = SecretApplier()
+        ctx = self._ctx(db, admin_user)
+        result = await applier.apply(
+            applier.spec_model.model_validate({"name": old, "value": "two"}), ctx,
+            existing=await applier.find(ctx, old),
+        )
+        assert result.action == "update"
+        assert await connector_service._resolve_secret_value(db, old, None) == "two"
+
+    @pytest.mark.parametrize("good", ["GITHUB_TOKEN", "github_token", "_X1"])
+    async def test_create_accepts_names(self, db: AsyncSession, admin_user, good):
+        from app.services.resources.secrets import SecretApplier
+
+        name = f"{good}_{_uniq()}"
+        applier = SecretApplier()
+        result = await applier.apply(
+            applier.spec_model.model_validate({"name": name, "value": "v"}), self._ctx(db, admin_user)
+        )
+        assert result.action == "create"

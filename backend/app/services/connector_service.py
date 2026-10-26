@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.encryption import encryption_service
-from app.core.secret_refs import secret_ref_name
+from app.core.secret_refs import describe_secret_ref, secret_ref_name
 from app.models.connector import Connector
 from app.models.connector_oauth_token import ConnectorOAuthToken
 from app.models.secret import Secret
@@ -30,7 +30,24 @@ class ConnectorAuthError(Exception):
     Distinct from a transport/HTTP error: this means we deliberately refuse to send an
     unauthenticated request (e.g. an OAuth user token is missing or expired). The message
     is safe to surface to the caller and usually tells them to reconnect their account.
+
+    `str(e)` is what end users, agents (and so the LLM and chat history) and
+    pipeline records see. `detail` is for the admin-facing operation test and
+    may say more (which secret is missing); it defaults to the message. Neither
+    ever carries a value, nor a reference that looks like one.
     """
+
+    def __init__(self, message: str, detail: Optional[str] = None):
+        super().__init__(message)
+        self.detail = detail or message
+
+
+# Shown to users, agents and pipeline records when a connector's own secret
+# can't be used: which secret (and how it is spelled) is for the admin.
+_SECRET_NOT_SET_UP = (
+    "This connector's credentials are not set up, so the request was not sent. "
+    "Ask an administrator to check the connector's auth secret."
+)
 
 # Connection pool limits
 MAX_CONNECTIONS = 200          # Total across all hosts
@@ -247,16 +264,19 @@ class ConnectorService:
         secret_name = secret_ref_name(auth_config.get("secret"))
         if not secret_name:
             raise ConnectorAuthError(
-                f"This connector uses '{auth_type}' auth but names no secret. "
-                "Set auth.secret to the name of the Secret holding the credential."
+                _SECRET_NOT_SET_UP,
+                detail=f"This connector uses '{auth_type}' auth but names no secret. "
+                "Set auth.secret to the name of the Secret holding the credential.",
             )
 
         secret_value = await self._resolve_secret_value(db, secret_name, user_id)
         if secret_value is None:
-            logger.warning(f"Secret '{secret_name}' not found for connector auth")
+            ref = describe_secret_ref(secret_name)
+            logger.warning(f"Connector auth: {ref} not found")
             raise ConnectorAuthError(
-                f"Secret '{secret_name}' for this connector's '{auth_type}' auth was not found. "
-                f"Create a Secret named '{secret_name}' (shared, or private to you)."
+                _SECRET_NOT_SET_UP,
+                detail=f"The {ref} for this connector's '{auth_type}' auth was not found: "
+                "no shared Secret by that name, and none private to you.",
             )
 
         if auth_type == "bearer":
@@ -321,7 +341,13 @@ class ConnectorService:
         token_url = auth_config.get("token_url")
         client_id = auth_config.get("client_id")
         secret_name = secret_ref_name(auth_config.get("secret"))
-        if not token_url or not client_id or not secret_name:
+        if not secret_name:
+            raise ConnectorAuthError(
+                _SECRET_NOT_SET_UP,
+                detail="This connector uses 'oauth2_client_credentials' auth but names no "
+                "secret. Set auth.secret to the name of the Secret holding the client secret.",
+            )
+        if not token_url or not client_id:
             logger.warning(
                 "oauth2_client_credentials auth requires token_url, client_id, and secret"
             )
@@ -364,10 +390,12 @@ class ConnectorService:
 
             client_secret = await self._resolve_secret_value(db, secret_name, user_id)
             if client_secret is None:
-                logger.warning(f"OAuth client secret '{secret_name}' not found")
+                ref = describe_secret_ref(secret_name)
+                logger.warning(f"OAuth client secret: {ref} not found")
                 raise ConnectorAuthError(
-                    f"Secret '{secret_name}' holding this connector's OAuth client secret "
-                    "was not found."
+                    _SECRET_NOT_SET_UP,
+                    detail=f"The {ref} holding this connector's OAuth client secret was not "
+                    "found: no shared Secret by that name, and none private to you.",
                 )
 
             data = {"grant_type": "client_credentials"}
@@ -596,7 +624,7 @@ class ConnectorService:
 
         client_secret = await self._resolve_secret_value(db, secret_name, user_id)
         if client_secret is None:
-            logger.warning(f"OAuth client secret '{secret_name}' not found")
+            logger.warning(f"OAuth client secret: {describe_secret_ref(secret_name)} not found")
             return False
 
         payload = await self._post_token_request(
