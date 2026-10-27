@@ -323,11 +323,22 @@ class Settings(BaseSettings):
     # First retry delay (seconds) of a failed function job; doubles per
     # failed attempt, capped at 5 minutes, plus jitter.
     queue_retry_delay: int = 10
+    # Dead-letter queue (sinas:queue:dlq) cap: the newest N entries are
+    # kept, older ones dropped as new ones arrive (logged, and counted as
+    # `dlq.dropped` in the queue stats). An entry holds the job's full input,
+    # so an unbounded DLQ grows until Redis runs out of memory. 0 = no cap.
+    queue_dlq_max_entries: int = 10000
     # How often an idle worker checks its queue for new jobs (seconds). arq's
     # default, 0.5, added up to half a second before a queued job started: an
     # agent message on a keep-alive chat, and every function a tool call
     # runs. A check is one cheap Redis command.
     queue_poll_delay: float = 0.05
+    # Stream relays (one Redis stream per turn, sinas:stream:<channel>):
+    # roughly how many events one stream keeps (XADD MAXLEN ~). A client
+    # replaying a turn from its start (reconnect with last_id=0) misses the
+    # oldest events of a turn longer than this; a client resuming from its
+    # last id misses nothing unless it fell that far behind. 0 = no cap.
+    stream_relay_max_entries: int = 100000
 
     # Pipeline runs (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
     # Runs are await-heavy orchestration → high concurrency is cheap.

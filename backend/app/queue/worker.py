@@ -18,12 +18,12 @@ from app.core.telemetry import traced_job
 from app.schemas.spec.function import MAX_FUNCTION_RETRIES
 from app.services.shared_admission import SharedPoolSaturated
 from app.services.queue_service import (
-    DLQ_KEY,
     JOB_FAILURES_PREFIX,
     JOB_RESULT_PREFIX,
     JOB_STATUS_PREFIX,
     JOB_TTL,
     JOB_DONE_CHANNEL_PREFIX,
+    push_dead_letter,
 )
 
 logger = logging.getLogger(__name__)
@@ -297,8 +297,8 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         await redis.delete(failures_key)
         if dead_letter:
             # Full kwargs, so POST /queue/dlq/{job_id}/retry can requeue it
-            await redis.lpush(
-                DLQ_KEY,
+            await push_dead_letter(
+                redis,
                 json.dumps({
                     "job_id": job_id,
                     "function": fn_label,

@@ -535,8 +535,11 @@ async def start_background_job(
                     "queued_at": _now().isoformat(), "wait": pending_completion_id is not None}),
         ex=BG_JOB_TTL,
     )
-    await redis.sadd(f"{CHAT_BG_JOBS_PREFIX}{chat_id}", job_id)
-    await redis.expire(f"{CHAT_BG_JOBS_PREFIX}{chat_id}", BG_JOB_TTL)
+    # One MULTI: never a chat's job index without its TTL.
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.sadd(f"{CHAT_BG_JOBS_PREFIX}{chat_id}", job_id)
+        pipe.expire(f"{CHAT_BG_JOBS_PREFIX}{chat_id}", BG_JOB_TTL)
+        await pipe.execute()
 
     pool = await get_arq_pool()
     await pool.enqueue_job(

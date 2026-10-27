@@ -10,6 +10,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
+from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.telemetry import untraced
 
@@ -38,17 +39,25 @@ class StreamRelay:
         """
         redis = await get_redis()
         stream_key = f"{STREAM_PREFIX}{channel_id}"
+        max_entries = settings.stream_relay_max_entries
 
         # Not traced: called per streamed chunk, it would add two Redis
         # spans per token to the turn's trace.
         with untraced():
-            entry_id = await redis.xadd(
-                stream_key,
-                {"data": json.dumps(event, default=str)},
-            )
-
-            # Set TTL on stream key (refresh on each write)
-            await redis.expire(stream_key, ttl or STREAM_TTL)
+            # One MULTI: a stream is never left without its TTL (a crash
+            # between a separate XADD and EXPIRE kept it forever). The TTL is
+            # refreshed on each write, so a finished turn's stream expires
+            # `ttl` after its last event. MAXLEN ~ caps one runaway stream;
+            # approximate trimming only drops whole old nodes (cheap).
+            async with redis.pipeline(transaction=True) as pipe:
+                pipe.xadd(
+                    stream_key,
+                    {"data": json.dumps(event, default=str)},
+                    maxlen=max_entries if max_entries > 0 else None,
+                    approximate=True,
+                )
+                pipe.expire(stream_key, ttl or STREAM_TTL)
+                entry_id, _ = await pipe.execute()
 
         return entry_id
 

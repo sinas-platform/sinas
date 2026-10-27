@@ -24,6 +24,8 @@ PIPELINE_QUEUE = "sinas:queue:pipelines"
 JOB_RESULT_PREFIX = "sinas:job:result:"
 JOB_DONE_CHANNEL_PREFIX = "sinas:job:done:"
 DLQ_KEY = "sinas:queue:dlq"
+# How many dead-lettered entries the DLQ cap (QUEUE_DLQ_MAX_ENTRIES) dropped.
+DLQ_DROPPED_KEY = "sinas:queue:dlq:dropped"
 # How many runs of a function job failed so far. Kept apart from arq's
 # job_try, which shared-pool deferrals advance too: a deferral is not a
 # failure and must never use up a job's retries.
@@ -31,6 +33,34 @@ JOB_FAILURES_PREFIX = "sinas:job:failures:"
 # Held while a dead-lettered job is being requeued (one requeue at a time).
 DLQ_REQUEUE_LOCK_PREFIX = "sinas:queue:dlq:requeue:"
 JOB_TTL = 86400  # 24 hours
+
+
+async def push_dead_letter(redis, entry: str) -> int:
+    """Add an entry (JSON) to the dead-letter queue, newest first, and keep
+    the queue within QUEUE_DLQ_MAX_ENTRIES by dropping the oldest entries.
+
+    The push and the trim run in one MULTI, so the length LPUSH reports is
+    exactly what this trim cuts back from: concurrent pushes count every
+    dropped entry once. Returns how many entries were dropped."""
+    cap = settings.queue_dlq_max_entries
+    if cap <= 0:
+        await redis.lpush(DLQ_KEY, entry)
+        return 0
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.lpush(DLQ_KEY, entry)
+        pipe.ltrim(DLQ_KEY, 0, cap - 1)
+        length, _ = await pipe.execute()
+    dropped = max(0, int(length) - cap)
+    if dropped:
+        try:
+            await redis.incrby(DLQ_DROPPED_KEY, dropped)
+        except Exception:
+            logger.warning("Could not count the dropped DLQ entries", exc_info=True)
+        logger.warning(
+            f"Dead-letter queue is at its cap of {cap} (QUEUE_DLQ_MAX_ENTRIES); "
+            f"dropped the oldest {dropped} entr{'y' if dropped == 1 else 'ies'}"
+        )
+    return dropped
 
 
 class QueueService:
@@ -544,8 +574,9 @@ class QueueService:
         agents_pending = await redis.zcard(AGENT_QUEUE)
         sub_agents_pending = await redis.zcard(SUB_AGENT_QUEUE)
 
-        # DLQ size
+        # DLQ size, and how many entries its cap dropped
         dlq_size = await redis.llen(DLQ_KEY)
+        dlq_dropped = int(await redis.get(DLQ_DROPPED_KEY) or 0)
 
         # Job status counts via SCAN
         status_counts: dict[str, int] = {}
@@ -579,7 +610,11 @@ class QueueService:
                 "failed": status_counts.get("failed", 0),
                 "cancelled": status_counts.get("cancelled", 0),
             },
-            "dlq": {"size": dlq_size},
+            "dlq": {
+                "size": dlq_size,
+                "dropped": dlq_dropped,
+                "max_entries": settings.queue_dlq_max_entries,
+            },
         }
 
     async def get_jobs_list(
@@ -942,10 +977,11 @@ class QueueService:
         return {"status": "cancelled", "job_id": job_id}
 
     async def flush_dlq(self) -> dict[str, Any]:
-        """Remove all entries from the dead letter queue."""
+        """Remove all entries from the dead letter queue (and reset the count
+        of entries its cap dropped)."""
         redis = await get_redis()
         size = await redis.llen(DLQ_KEY)
-        await redis.delete(DLQ_KEY)
+        await redis.delete(DLQ_KEY, DLQ_DROPPED_KEY)
         logger.info(f"Flushed {size} DLQ entries")
         return {"flushed": size}
 

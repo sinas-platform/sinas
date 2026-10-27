@@ -245,8 +245,11 @@ async def note_injection(chat_id: str) -> None:
     from app.core.redis import get_redis
 
     redis = await get_redis()
-    await redis.incr(f"{_INJECTED_PREFIX}{chat_id}")
-    await redis.expire(f"{_INJECTED_PREFIX}{chat_id}", INTERRUPT_TTL * 6)
+    # One MULTI: never a counter without its TTL.
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.incr(f"{_INJECTED_PREFIX}{chat_id}")
+        pipe.expire(f"{_INJECTED_PREFIX}{chat_id}", INTERRUPT_TTL * 6)
+        await pipe.execute()
 
 
 async def take_injections(chat_id: str) -> int:

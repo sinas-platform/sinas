@@ -117,8 +117,11 @@ async def add_session_grant(chat_id: str, tool_name: str) -> None:
 
     redis = await get_redis()
     key = f"{_GRANT_PREFIX}{chat_id}"
-    await redis.sadd(key, tool_name)
-    await redis.expire(key, _GRANT_TTL)
+    # One MULTI: never a grant set without its TTL.
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.sadd(key, tool_name)
+        pipe.expire(key, _GRANT_TTL)
+        await pipe.execute()
 
 
 # ---------------------------------------------------------------------------
