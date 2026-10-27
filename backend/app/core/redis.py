@@ -68,7 +68,18 @@ def _annotate_without_arguments(self: Any, exception: Exception, number: int, co
 
 # Keys whose name ends in a secret or personal value: an OAuth/SSO state or
 # one-time code, an email (rate limits). In error text only their prefix.
-_KEYS_WITH_SECRET_NAMES = ("connector_oauth_state:", "sso_state:", "sso_code:", "sinas:ratelimit:")
+# Key families named by ids only (job, execution, chat, channel, worker,
+# pipeline, webhook-hash, instance/period): shown in full in error text.
+# Anything else, including the keys named after a secret or personal value
+# (connector_oauth_state:<state>, sso_state:<state>, sso_code:<one-time
+# code>, sinas:ratelimit:<...:email>) and any key added later, shows only
+# its prefix. An allowlist, so a new secret-named key can't leak by default.
+_ID_NAMED_KEY_PREFIXES = (
+    "arq:job:", "arq:in-progress:", "arq:result:", "arq:retry:", "arq:abort",
+    "sinas:queue:", "sinas:job:", "sinas:stream:", "sinas:worker:", "sinas:shared:",
+    "sinas:sandbox:", "sinas:pipeline:", "sinas:dedup:", "sinas:bgjob:", "sinas:chat:",
+    "sinas:setup-link-hint", "chat:", "usage:",
+)
 
 
 def _text(value: Any) -> str:
@@ -76,13 +87,16 @@ def _text(value: Any) -> str:
 
 
 def _key_for_error(key: str) -> str:
-    """A key name for an error message: as is (ids only: arq:job:<id>,
-    sinas:stream:<channel>, chat:...:<chat id>), except a key named after
-    a secret or personal value, which keeps only its prefix."""
-    for prefix in _KEYS_WITH_SECRET_NAMES:
-        if key.startswith(prefix):
-            return f"{prefix}…"
-    return key[:200]
+    """A key name for an error message: in full for an id-named key family
+    (_ID_NAMED_KEY_PREFIXES), else only its prefix: "sso_code:…",
+    "sinas:ratelimit:…", or "…" for a key without one."""
+    if key.startswith(_ID_NAMED_KEY_PREFIXES):
+        return key[:200]
+    segments = key.split(":")
+    if len(segments) < 2:
+        return "…"
+    keep = 2 if segments[0] == "sinas" and len(segments) > 2 else 1
+    return ":".join(segments[:keep]) + ":…"
 
 
 def _install_pipeline_error_annotation() -> None:
