@@ -973,12 +973,16 @@ class QueueService:
                         continue
                     enqueued = data.get("enqueued_at", 0)
                     if enqueued and enqueued < cutoff:
-                        job_id = data.get("job_id") or key.decode().replace(JOB_STATUS_PREFIX, "")
+                        # The shared client decodes responses (str keys);
+                        # bytes only from a client that doesn't.
+                        if isinstance(key, bytes):
+                            key = key.decode()
+                        job_id = data.get("job_id") or key.removeprefix(JOB_STATUS_PREFIX)
                         try:
                             await self.cancel_job(job_id)
                             cancelled += 1
                         except Exception:
-                            pass
+                            logger.warning(f"Could not cancel stuck job {job_id}", exc_info=True)
             if cursor == 0:
                 break
 
