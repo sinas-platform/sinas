@@ -316,14 +316,19 @@ class FunctionExecutor:
 
     @staticmethod
     def _already_finished(execution: Optional[Execution]) -> Optional[tuple[Any]]:
-        """None when the execution may run (no row yet, or PENDING, RUNNING
-        or AWAITING_INPUT). For one that already reached a final state:
+        """None when the execution may run (no row yet, PENDING or RUNNING).
+        For one that already ran:
         COMPLETED → a 1-tuple with its stored output, the run's result;
+        AWAITING_INPUT → a 1-tuple with the awaiting-input payload: the run
+        paused for input, and only resume_execution may continue it (a
+        re-delivered queue job running it from the start would repeat its
+        side effects and orphan the paused run);
         FAILED → a FunctionExecutionError marked recorded (its bookkeeping
         was done when it ended), dead-lettered again only if it was then;
         CANCELLED → ExecutionAlreadyCancelled."""
         if execution is None or execution.status not in (
             ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED,
+            ExecutionStatus.AWAITING_INPUT,
         ):
             return None
         execution_id = execution.execution_id
@@ -332,6 +337,13 @@ class FunctionExecutor:
         )
         if execution.status is ExecutionStatus.COMPLETED:
             return (execution.output_data,)
+        if execution.status is ExecutionStatus.AWAITING_INPUT:
+            # What the paused run returned (execute_function, below).
+            return ({
+                "status": "awaiting_input",
+                "execution_id": execution_id,
+                "prompt": execution.input_prompt,
+            },)
         if execution.status is ExecutionStatus.CANCELLED:
             raise ExecutionAlreadyCancelled(f"Execution {execution_id} was cancelled")
         err = FunctionExecutionError(execution.error or f"Execution {execution_id} already failed")
