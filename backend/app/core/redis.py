@@ -42,6 +42,38 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def _annotate_without_arguments(self: Any, exception: Exception, number: int, command: Any) -> None:
+    """redis-py's Pipeline.annotate_exception, minus the arguments.
+
+    redis-py prefixes an error from a pipeline (and every arq enqueue,
+    finish and start is one) with the whole command: "Command # 1 (SET
+    arq:job:<id> <pickled job, user token included> PX ...) of pipeline
+    caused error: ...". That text travels wherever str(e) goes: logs, the
+    Redis job status, a sub-agent's tool result (chat history, the LLM
+    provider, spans), the DLQ. Keep the command name only."""
+    try:
+        name = command[0]
+        name = name.decode(errors="replace") if isinstance(name, bytes) else str(name)
+    except Exception:
+        name = "?"
+    detail = exception.args[0] if exception.args else ""
+    exception.args = (f"Command # {number} ({name}) of pipeline caused error: {detail}",) + exception.args[1:]
+
+
+def _install_pipeline_error_annotation() -> None:
+    """Applied once, at import: every Redis client in the process (the
+    shared one, create_redis_client's, arq's pools) builds its pipelines from
+    these classes."""
+    import redis.asyncio.client as async_client
+    import redis.client as sync_client
+
+    async_client.Pipeline.annotate_exception = _annotate_without_arguments  # type: ignore[method-assign]
+    sync_client.Pipeline.annotate_exception = _annotate_without_arguments  # type: ignore[method-assign]
+
+
+_install_pipeline_error_annotation()
+
 _redis_client: Redis | None = None
 _arq_pool: ArqRedis | None = None
 
