@@ -293,8 +293,15 @@ class TestThirdReview:
         from app.queue import arq_worker
 
         monkeypatch.setattr(arq_worker, "_redis_full_since", {})
-        arq_worker._redis_full_since["j"] = (0.0, 1.0)  # long ago
+        import time
+
+        now = time.monotonic()
+        gap = arq_worker.REDIS_FULL_EPISODE_GAP_SECONDS
+        arq_worker._redis_full_since["j"] = (now - 3 * gap, now - 2 * gap)  # an old episode
         assert arq_worker._redis_full_for("j") < 1
+        # within an episode the clock keeps running
+        arq_worker._redis_full_since["k"] = (now - 900, now - 10)
+        assert arq_worker._redis_full_for("k") >= 900
 
     async def test_an_agent_turn_gives_up_with_a_recorded_error(self, monkeypatch):
         from datetime import datetime, timedelta, timezone
