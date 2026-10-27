@@ -36,7 +36,7 @@ spec:
             - --maxmemory
             - {{ .Values.redis.maxmemory | quote }}
             - --maxmemory-policy
-            - {{ .Values.redis.maxmemoryPolicy | default "allkeys-lru" | quote }}
+            - {{ .Values.redis.maxmemoryPolicy | default "noeviction" | quote }}
           ports:
             - containerPort: 6379
           livenessProbe:

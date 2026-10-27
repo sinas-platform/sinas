@@ -41,13 +41,24 @@ jobs:
           grep -q "name: redis$" /tmp/default.yaml
           grep -A1 "name: REDIS_URL" /tmp/default.yaml | grep -q '"redis://redis:6379/0"'
           ! grep -q -e 'REDIS_PASSWORD' -e 'REDIS_SSL_CA_CERTS' -e 'redis-ca' /tmp/default.yaml || exit 1
-          grep -A1 -- "--maxmemory-policy" /tmp/default.yaml | grep -q 'allkeys-lru'
+          # Redis holds state, not cache: never evict by default
+          grep -A1 -- "--maxmemory-policy" /tmp/default.yaml | grep -q '"noeviction"'
+          # ...but the policy stays overridable
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set redis.maxmemoryPolicy=allkeys-lru \
+            | grep -A1 -- "--maxmemory-policy" | grep -q '"allkeys-lru"'
           # Every arq queue has a consumer in the split profile
           for cls in WorkerSettings AgentWorkerSettings SubAgentWorkerSettings PipelineWorkerSettings; do
             grep -q "\"app.queue.worker.$cls\"" /tmp/default.yaml || { echo "no Deployment runs $cls"; exit 1; }
           done
           grep -q "name: queue-agent-sub$" /tmp/default.yaml
           grep -q "name: queue-pipeline$" /tmp/default.yaml
+          # ...run by SinasWorker (survives a full Redis), not arq's CLI
+          ! grep -q '"-m", "arq"' /tmp/default.yaml || exit 1
+          test "$(grep -c '"app.queue.arq_worker"' /tmp/default.yaml)" -eq 4
           # sub-agent routing stays on while its worker exists
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/default.yaml || exit 1
 
@@ -79,6 +90,8 @@ jobs:
             --set queueAgentSub.enabled=false \
             > /tmp/lite-nosub.yaml
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/lite-nosub.yaml || exit 1
+          # the lite profile inherits noeviction
+          grep -A1 -- "--maxmemory-policy" /tmp/lite-nosub.yaml | grep -q '"noeviction"'
 
       - name: helm template (upgrade with --reuse-values from 0.4.0)
         # --reuse-values renders the new templates against the OLD release's
@@ -102,6 +115,8 @@ jobs:
           grep -A1 "name: QUEUE_PIPELINE_CONCURRENCY" /tmp/upgrade.yaml | grep -q '"50"'
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade.yaml || exit 1
           grep -A1 "name: REDIS_URL" /tmp/upgrade.yaml | grep -q '"redis://redis:6379/0"'
+          # 0.4.0 values have no maxmemoryPolicy: the upgrade gets noeviction
+          grep -A1 -- "--maxmemory-policy" /tmp/upgrade.yaml | grep -q '"noeviction"'
           helm template ci /tmp/oldvals/sinas -f /tmp/oldvals/values-lite-0.4.0.yaml \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
@@ -109,6 +124,7 @@ jobs:
             > /tmp/upgrade-lite.yaml
           ! grep -q -e "name: queue-pipeline$" -e "name: queue-agent-sub$" /tmp/upgrade-lite.yaml || exit 1
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade-lite.yaml || exit 1
+          grep -A1 -- "--maxmemory-policy" /tmp/upgrade-lite.yaml | grep -q '"noeviction"'
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |

@@ -49,7 +49,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-256mb} --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-noeviction}
 
   postgres:
     image: postgres:16-alpine
@@ -200,7 +200,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: python -m arq app.queue.worker.WorkerSettings
+    command: python -m app.queue.arq_worker app.queue.worker.WorkerSettings
     deploy:
       replicas: ${QUEUE_WORKER_REPLICAS:-2}
 
@@ -232,7 +232,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: python -m arq app.queue.worker.AgentWorkerSettings
+    command: python -m app.queue.arq_worker app.queue.worker.AgentWorkerSettings
     deploy:
       replicas: ${QUEUE_AGENT_REPLICAS:-2}
 
@@ -267,7 +267,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: python -m arq app.queue.worker.SubAgentWorkerSettings
+    command: python -m app.queue.arq_worker app.queue.worker.SubAgentWorkerSettings
     deploy:
       replicas: ${QUEUE_AGENT_SUB_REPLICAS:-2}
 
@@ -299,7 +299,7 @@ services:
         condition: service_healthy
       pgbouncer:
         condition: service_healthy
-    command: python -m arq app.queue.worker.PipelineWorkerSettings
+    command: python -m app.queue.arq_worker app.queue.worker.PipelineWorkerSettings
     deploy:
       replicas: ${QUEUE_PIPELINE_REPLICAS:-1}
 

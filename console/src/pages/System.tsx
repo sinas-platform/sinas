@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { clickHouseFeature } from '../lib/clickhouse';
+import { redisMemoryLabel, redisPolicyNote, type RedisMemory } from '../lib/redisMemory';
 import { ClickHouseDisabledNote } from '../components/ClickHouseNotice';
 import { RetentionPanel } from '../components/RetentionPanel';
 import { useState, Fragment, type ReactNode } from 'react';
@@ -263,6 +264,7 @@ export function System() {
   const infoWarnings = warnings.filter((w: any) => w.level === 'info');
 
   const host = systemHealthWithStats?.host || systemHealth?.host || {};
+  const redisMemory: RedisMemory | null = systemHealth?.redis ?? null;
   // Merge: use fast services list, overlay stats when available
   const fastServices = systemHealth?.services || [];
   const statsServices = systemHealthWithStats?.services || [];
@@ -390,6 +392,21 @@ export function System() {
               <span className="text-sm text-gray-400">Shared containers</span>
               <span className="text-sm font-semibold">{sharedCount} running</span>
             </div>
+            {redisMemory && (
+              <div title={redisPolicyNote(redisMemory.policy)}>
+                {redisMemory.percent !== null ? (
+                  <ResourceBar value={redisMemory.percent} label="Redis memory" unit="%" />
+                ) : null}
+                <div className="flex justify-between items-center mt-1">
+                  <span className="text-xs text-gray-500">{redisMemoryLabel(redisMemory)}</span>
+                  <span
+                    className={`text-xs font-mono ${redisMemory.policy === 'noeviction' ? 'text-gray-500' : 'text-yellow-400'}`}
+                  >
+                    {redisMemory.policy}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

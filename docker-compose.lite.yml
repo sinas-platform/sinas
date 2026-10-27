@@ -38,7 +38,7 @@ services:
     image: redis:7-alpine
     container_name: sinas-lite-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-128mb} --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory ${REDIS_MAXMEMORY:-128mb} --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-noeviction}
     volumes:
       - redis_data:/data
     healthcheck:

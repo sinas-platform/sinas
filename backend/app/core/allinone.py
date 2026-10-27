@@ -14,7 +14,7 @@ Constraints (enforced by deployment, documented here):
 import asyncio
 import logging
 
-from arq.worker import Worker, create_worker
+from app.queue.arq_worker import SinasWorker as Worker, create_worker
 
 from app.core.config import settings
 

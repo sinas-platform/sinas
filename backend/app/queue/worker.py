@@ -8,21 +8,23 @@ import uuid
 from typing import Any, Optional
 
 from arq import func
+from arq.constants import expires_extra_ms, job_key_prefix
 from arq.cron import cron
 from arq.worker import Retry
 
 from app.core.config import settings
-from app.core.redis import create_redis_client, get_redis_settings
+from app.core.redis import create_redis_client, get_redis_settings, is_redis_oom
 from app.core.telemetry import traced_job
 from app.schemas.spec.function import MAX_FUNCTION_RETRIES
 from app.services.shared_admission import SharedPoolSaturated
 from app.services.queue_service import (
-    DLQ_KEY,
     JOB_FAILURES_PREFIX,
     JOB_RESULT_PREFIX,
     JOB_STATUS_PREFIX,
     JOB_TTL,
     JOB_DONE_CHANNEL_PREFIX,
+    push_dead_letter,
+    startup_redis_checks,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,37 @@ def _retry_backoff(attempt: int) -> float:
     return delay + random.uniform(0, delay * 0.2)
 
 
+async def _keep_job_key_alive(redis, job_id: str, defer_seconds: float) -> Optional[bool]:
+    """Push out the expiry of arq's job record before deferring the job.
+
+    arq sets the TTL of `arq:job:<id>` once, at enqueue (expected start +
+    1 day), and a `Retry` leaves it alone. A job deferred again and again
+    (shared-pool saturation with a long or unlimited window) outlives it, and
+    its next run is dropped as "expired" before this code runs: no failure
+    recorded, no dead letter, the execution PENDING forever. So on every
+    deferral the record gets what arq gives a fresh enqueue: the delay to
+    the next run plus 1 day.
+
+    True: extended. False: the record is already gone, so the re-run would
+    be dropped (the caller dead-letters the job instead). None: Redis error;
+    best effort, the caller defers anyway.
+    """
+    try:
+        return bool(
+            await redis.pexpire(
+                f"{job_key_prefix}{job_id}", int(defer_seconds * 1000) + expires_extra_ms
+            )
+        )
+    except Exception:
+        logger.warning(f"Could not extend the queue record of job {job_id}", exc_info=True)
+        return None
+
+
+class JobRecordLost(RuntimeError):
+    """A deferral found arq's record of the job gone; the job was
+    dead-lettered instead of deferred (a re-run would never start)."""
+
+
 async def _execution_cancelled(execution_id: str) -> bool:
     """Was the execution cancelled (queue API, batch cancel) while its job
     waited for a retry or a pool slot? Best effort: on error, run it."""
@@ -79,6 +112,47 @@ async def _execution_cancelled(execution_id: str) -> bool:
 
 
 async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
+    """Run a function job (`_run_function_job`); defer it when Redis is full.
+
+    A write Redis refuses for memory (its "running" status before the run,
+    a status or result after it) must not end the job: arq would finish it
+    as failed, and on a full Redis SinasWorker then takes it off the queue,
+    leaving the execution PENDING for good with nothing recorded. So such a
+    refusal defers the job instead (Retry, not counted as an attempt). A
+    re-run of an execution that finished meanwhile does nothing: the engine
+    returns its stored outcome (`ExecutionEngine._already_finished`)."""
+    try:
+        return await _run_function_job(ctx, **kwargs)
+    except Retry:
+        raise
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        from app.queue.arq_worker import RedisFullTooLong, defer_job_redis_full
+
+        redis = ctx.get("redis") or create_redis_client()
+        try:
+            await defer_job_redis_full(
+                redis, ctx.get("job_id") or kwargs["job_id"], f"Function job {kwargs['job_id']}",
+            )
+        except RedisFullTooLong as too_long:
+            # Out of patience: the execution fails, on record (the database
+            # still takes writes), instead of staying PENDING.
+            from app.services.execution_engine import executor
+
+            await executor.record_failure(
+                execution_id=kwargs["execution_id"],
+                error=str(too_long),
+                user_id=kwargs["user_id"],
+                trigger_id=kwargs["trigger_id"],
+                function_namespace=kwargs["function_namespace"],
+                function_name=kwargs["function_name"],
+                callback_url=kwargs.get("callback_url"),
+            )
+            raise
+
+
+async def _run_function_job(ctx: dict, **kwargs: Any) -> Any:
     """
     Execute a function in the worker process.
 
@@ -106,6 +180,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
 
     from app.services.execution_engine import (
         INFRASTRUCTURE,
+        ExecutionAlreadyCancelled,
         ExecutionRetryScheduled,
         dead_letter_note,
         executor,
@@ -199,6 +274,8 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         re-run never hinges on these writes: Redis may be what just failed
         (a lost count only means an extra attempt, bounded by arq's cap)."""
         defer = _retry_backoff(attempt)
+        if await _keep_job_key_alive(redis, job_id, defer) is False:
+            await dead_letter_lost_record(error, kind)
         detail = (
             f"attempt {attempt} of {max_attempts} failed, retrying in {defer:.0f}s: {error}"
         )
@@ -232,6 +309,16 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             callback_url=callback_url,
         )
 
+    async def dead_letter_lost_record(error: str, error_type: str) -> None:
+        """The job must be deferred, but arq's record of it is gone (it
+        expired or was evicted), so a re-run would be dropped unseen. Fail
+        it now, into the dead-letter queue, from which it can be requeued."""
+        error = f"{error} (not deferred: the job's queue record expired from Redis)"
+        logger.error(f"Function job {job_id} failed: {error}")
+        await record_failure(f"{error}{dead_letter_note(failed_attempts + 1)}")
+        await fail_job(error, dead_letter=True, error_type=error_type)
+        raise JobRecordLost(error)
+
     async def fail_job(error: str, *, dead_letter: bool, error_type: str) -> None:
         """Terminal failure: final status, notify waiters, dead-letter."""
         attempts = failed_attempts + 1
@@ -253,8 +340,8 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         await redis.delete(failures_key)
         if dead_letter:
             # Full kwargs, so POST /queue/dlq/{job_id}/retry can requeue it
-            await redis.lpush(
-                DLQ_KEY,
+            await push_dead_letter(
+                redis,
                 json.dumps({
                     "job_id": job_id,
                     "function": fn_label,
@@ -353,6 +440,12 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         window = settings.queue_saturation_timeout_seconds
         if window <= 0 or elapsed < window:
             defer = min(2 ** deferrals, 30) + random.uniform(0, 2)
+            if await _keep_job_key_alive(redis, job_id, defer) is False:
+                record_error(_fn_span, e)
+                completed = True
+                await dead_letter_lost_record(
+                    f"{e} (pool saturated for {elapsed:.0f}s)", "saturation"
+                )
             await redis.set(
                 f"{JOB_STATUS_PREFIX}{job_id}",
                 json.dumps({
@@ -402,7 +495,31 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         completed = True
         raise
 
+    except ExecutionAlreadyCancelled:
+        # A re-delivered job of an execution cancelled meanwhile: report it
+        # as what it is, not as a failure.
+        completed = True
+        logger.info(f"Function job {job_id}: its execution was cancelled; not running it")
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps({**base_fields, "status": "cancelled"}),
+            ex=JOB_TTL,
+        )
+        await redis.publish(
+            f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+            json.dumps({"status": "cancelled", "job_id": job_id}),
+        )
+        await redis.delete(failures_key)
+        return None
+
     except Exception as e:
+        if is_redis_oom(e):
+            # One of this job's own Redis writes was refused (Redis full),
+            # not a failure of the run: no failure bookkeeping here. The
+            # wrapper defers the job; a run that already finished is a
+            # no-op when it comes again (the engine checks the row first).
+            completed = True
+            raise
         record_error(_fn_span, e)
         logger.error(f"Function job {job_id} failed: {e}")
 
@@ -456,6 +573,7 @@ async def function_worker_startup(ctx: dict) -> None:
     init_telemetry("queue-worker")
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], "queue-worker")
 
     # Discover shared worker containers (created by scheduler).
     # Retry a few times — the scheduler may still be starting up.
@@ -517,6 +635,7 @@ async def _agent_worker_startup(ctx: dict, process: str) -> None:
     init_telemetry(process)
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], process)
 
     # Eagerly import heavy modules so first job doesn't pay import cost
     from app.services.message_service import MessageService  # noqa: F401
@@ -567,16 +686,46 @@ async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
         logger.error(f"Pipeline run job: user {user_id} not found, dropping run")
         return {"status": "failed", "error": f"User {user_id} not found"}
 
-    return await pipeline_runner.run_pipeline(
-        pipeline_id,
-        kwargs.get("run_input"),
-        run_id=kwargs.get("run_id"),
-        trigger_type=kwargs.get("trigger_type", "API"),
-        trigger_id=kwargs.get("trigger_id"),
-        user_id=user_id,
-        user_token=token,
-        sync=False,
-    )
+    try:
+        return await pipeline_runner.run_pipeline(
+            pipeline_id,
+            kwargs.get("run_input"),
+            run_id=kwargs.get("run_id"),
+            trigger_type=kwargs.get("trigger_type", "API"),
+            trigger_id=kwargs.get("trigger_id"),
+            user_id=user_id,
+            user_token=token,
+            sync=False,
+        )
+    except Exception as e:
+        # Redis full before the run record existed (the single-flight lock
+        # is the run's first write): nothing ran and nothing would show it,
+        # so defer instead of failing (max_tries=1: the counter is reset).
+        # Once the record exists, a failure is recorded on it as usual.
+        if not is_redis_oom(e) or await _pipeline_run_recorded(kwargs.get("run_id")):
+            raise
+        from app.queue.arq_worker import defer_job_redis_full
+
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Pipeline run job {kwargs['job_id']}",
+        )
+
+
+async def _pipeline_run_recorded(run_id: Optional[str]) -> bool:
+    if not run_id:
+        return True  # can't tell: treat as started
+    from sqlalchemy import select as _select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.pipeline import PipelineRun
+
+    async with AsyncSessionLocal() as db:
+        found = (
+            await db.execute(_select(PipelineRun.id).where(PipelineRun.run_id == run_id))
+        ).first()
+    return found is not None
 
 
 @traced_job("pipeline.fire")
@@ -584,13 +733,27 @@ async def execute_pipeline_fire_job(ctx: dict, **kwargs: Any) -> Any:
     """Expand a trigger firing into per-scope run jobs (perUser fan-out)."""
     from app.services import pipeline_runner
 
-    job_ids = await pipeline_runner.fire_pipeline(
-        kwargs["namespace"],
-        kwargs["name"],
-        kwargs.get("run_input"),
-        trigger_type=kwargs.get("trigger_type", "API"),
-        trigger_id=kwargs.get("trigger_id"),
-    )
+    try:
+        job_ids = await pipeline_runner.fire_pipeline(
+            kwargs["namespace"],
+            kwargs["name"],
+            kwargs.get("run_input"),
+            trigger_type=kwargs.get("trigger_type", "API"),
+            trigger_id=kwargs.get("trigger_id"),
+            # Run ids derive from this fire's id: a re-run after Redis was
+            # full mid fan-out enqueues only the runs still missing.
+            fire_id=ctx.get("job_id") or kwargs["job_id"],
+        )
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        from app.queue.arq_worker import defer_job_redis_full
+
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Pipeline fire job {kwargs['job_id']}",
+        )
     return {"runs": len(job_ids), "job_ids": job_ids}
 
 
@@ -605,6 +768,7 @@ async def pipeline_worker_startup(ctx: dict) -> None:
     init_telemetry("queue-pipeline")
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], "queue-pipeline")
 
     # Eagerly import the runner so the first job doesn't pay import cost
     from app.services import pipeline_runner  # noqa: F401
@@ -664,14 +828,22 @@ async def execute_background_code_job(ctx: dict, **kwargs: Any) -> None:
     """A run_in_background sandbox run: executes, then either completes the
     suspended round (wait=true) or delivers the result into the chat. Runs in
     the trace context it was enqueued with (`traced_job`)."""
+    from app.queue.arq_worker import RedisFullBeforeStart, defer_job_redis_full
     from app.services.chat_wakeups import run_background_code_job
 
-    await run_background_code_job(
-        job_id=kwargs["job_id"], chat_id=kwargs["chat_id"], user_id=kwargs["user_id"],
-        code=kwargs["code"], description=kwargs.get("description") or "background run",
-        tool_call_id=kwargs.get("tool_call_id"), pending_completion_id=kwargs.get("pending_completion_id"),
-        api_key_id=kwargs.get("api_key_id"),
-    )
+    try:
+        await run_background_code_job(
+            job_id=kwargs["job_id"], chat_id=kwargs["chat_id"], user_id=kwargs["user_id"],
+            code=kwargs["code"], description=kwargs.get("description") or "background run",
+            tool_call_id=kwargs.get("tool_call_id"), pending_completion_id=kwargs.get("pending_completion_id"),
+            api_key_id=kwargs.get("api_key_id"),
+        )
+    except RedisFullBeforeStart:
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Background job {kwargs['job_id']}",
+        )
 
 
 def _background_job_timeout() -> int:
@@ -797,6 +969,12 @@ class AgentWorkerSettings:
         func(execute_agent_delegate_resume_job, timeout=agent_function_timeout()),
         func(chat_retention_run_job, timeout=_retention_job_timeout(), max_tries=1),
     ]
+    # On a full Redis (maxmemory, noeviction) none of these is deferred
+    # (defer_job_redis_full): a tick whose enqueue or writes are refused is
+    # simply skipped, and the next tick does the same work. (The non-cron
+    # functions above are covered: the agent jobs defer before their turn
+    # starts; chat_retention_run_job writes nothing to Redis itself, and
+    # SinasWorker keeps arq's own refused writes from losing it.)
     # Deferred-round expiry sweep: minutely, deduplicated across workers
     # (arq cron unique=True). Runs here — not on the sub-agent worker — so
     # exactly one worker class owns it.
@@ -839,7 +1017,7 @@ class PipelineWorkerSettings:
     pipeline runs never starve function workers (and vice versa). High
     concurrency: runs mostly await child executions and HTTP.
 
-        python -m arq app.queue.worker.PipelineWorkerSettings
+        python -m app.queue.arq_worker app.queue.worker.PipelineWorkerSettings
     """
 
     functions = [execute_pipeline_run_job, execute_pipeline_fire_job]
@@ -860,7 +1038,7 @@ class SubAgentWorkerSettings:
     calls (depth > 0) land here so parents blocked on children can never
     starve them of worker slots. Run as its own process:
 
-        python -m arq app.queue.worker.SubAgentWorkerSettings
+        python -m app.queue.arq_worker app.queue.worker.SubAgentWorkerSettings
     """
 
     functions = [

@@ -231,6 +231,9 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `QUEUE_SATURATION_TIMEOUT_SECONDS` | `21600` | How long a queued function job may wait for a shared-pool slot (deferred retries with backoff) before failing (the job is then dead-lettered). Bulk ingest drains through this window; `0` = wait forever. Waiting never counts as a failed attempt. |
 | `QUEUE_MAX_RETRIES` | `3` | Retries of a function job whose infrastructure failed before the code ran (no worker, container/pod start failure, database unreachable), before it is dead-lettered. The function's own failures retry only per `max_retries` on the function. |
 | `QUEUE_RETRY_DELAY` | `10` | First retry delay of a failed function job, in seconds; doubles per failed attempt, capped at 5 minutes, plus jitter. |
+| `QUEUE_DLQ_MAX_ENTRIES` | `10000` | Most entries the dead-letter queue keeps. Past it the oldest are dropped; each drop is logged and counted (`dlq.dropped` in the queue stats, a warning on the System page). Entries hold the job's full input. `0` = no cap. |
+| `QUEUE_REDIS_FULL_MAX_WAIT_SECONDS` | `3600` | How long a job that keeps finding Redis full (at `maxmemory`) as it starts is put back in the queue, counted from its first refused write (per worker process). Past it, the job fails with a recorded error: a function execution becomes FAILED, an agent turn gets an error message in the chat (and a parent delegation waiting on it is told). `0` = wait for as long as it takes. |
+| `STREAM_RELAY_MAX_ENTRIES` | `20000` | Roughly how many events one turn's stream relay keeps in Redis (`XADD MAXLEN ~`), about 2.4 MB at ~120 bytes per event. A live client reads far closer to the head than that. A client that reconnects and replays a longer turn from its start misses the oldest events; a client resuming from its last event id misses nothing. `0` = no cap. |
 | `WORKER_MEMORY_LIMIT` | `1g` | Memory limit per shared worker container (Docker size string). |
 | `QUEUE_AGENT_SUB_REPLICAS` | `2` | Sub-agent queue worker replicas (delegated agent jobs) |
 | `QUEUE_AGENT_SUB_CONCURRENCY` | `5` | Concurrent jobs per sub-agent worker |
@@ -258,6 +261,8 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `REDIS_PASSWORD` | — | AUTH password. Overrides the URL's and is used verbatim, so it needs no encoding. |
 | `REDIS_USERNAME` | — | ACL username. Overrides the URL's. |
 | `REDIS_SSL_CA_CERTS` | — | Path to a PEM file with the CA(s) the server certificate is verified against, e.g. the Memorystore server CA. Empty means the system trust store. |
+| `REDIS_MAXMEMORY` | `256mb` (`128mb` lite) | Docker Compose only: memory limit of the bundled Redis. |
+| `REDIS_MAXMEMORY_POLICY` | `noeviction` | Docker Compose only: what the bundled Redis does at `REDIS_MAXMEMORY`. `noeviction` refuses writes (errors you can see) rather than dropping queued jobs, locks or the dead-letter queue; it was `allkeys-lru` before 0.5.0. |
 | `REDIS_SSL_CHECK_HOSTNAME` | _(auto)_ | Also match the server certificate to the host name. Unset means automatic: on without `REDIS_SSL_CA_CERTS` (system trust store), off with it (a private CA such as Memorystore's, reached by IP). A `?ssl_check_hostname=` flag on `REDIS_URL` applies when this is unset. |
 
 Every Sinas process (API, queue workers, scheduler, CDC worker) uses these

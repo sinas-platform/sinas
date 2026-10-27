@@ -32,7 +32,9 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 10
       redis:
         image: redis:7-alpine
-        ports: ['6379:6379']
+        # Not 6379: tests that fill Redis (CONFIG SET maxmemory) refuse to
+        # touch a Redis on the default port (tests/unit/redis_oom.py).
+        ports: ['6390:6379']
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 3s --health-retries 10
@@ -48,7 +50,7 @@ jobs:
       DATABASE_NAME: sinas_ci
       TEST_DATABASE_URL: postgresql+asyncpg://postgres:ci@127.0.0.1:5432/sinas_ci
       TEST_DATABASE_PORT: "5432"
-      REDIS_URL: redis://127.0.0.1:6379/0
+      REDIS_URL: redis://127.0.0.1:6390/0
       SECRET_KEY: ci-secret
       DEBUG: "true"
     steps:

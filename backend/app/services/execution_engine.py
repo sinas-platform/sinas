@@ -6,7 +6,7 @@ import logging
 import time
 import traceback
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 import jsonschema
@@ -42,6 +42,13 @@ class FunctionExecutionError(Exception):
     dead_letter = False
     # The engine recorded the failure itself (row FAILED, callback, batch).
     recorded = False
+
+
+class ExecutionAlreadyCancelled(FunctionExecutionError):
+    """A re-delivered job of an execution that was cancelled: not run; the
+    queue reports it as cancelled, not failed."""
+
+    recorded = True
 
 
 # The two kinds of failed attempt, each with its own retry budget.
@@ -307,6 +314,45 @@ class FunctionExecutor:
         self.functions_cache[cache_key] = function
         return function
 
+    @staticmethod
+    def _already_finished(execution: Optional[Execution]) -> Optional[tuple[Any]]:
+        """None when the execution may run (no row yet, PENDING or RUNNING).
+        For one that already ran:
+        COMPLETED → a 1-tuple with its stored output, the run's result;
+        AWAITING_INPUT → a 1-tuple with the awaiting-input payload: the run
+        paused for input, and only resume_execution may continue it (a
+        re-delivered queue job running it from the start would repeat its
+        side effects and orphan the paused run);
+        FAILED → a FunctionExecutionError marked recorded (its bookkeeping
+        was done when it ended), dead-lettered again only if it was then;
+        CANCELLED → ExecutionAlreadyCancelled."""
+        if execution is None or execution.status not in (
+            ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED,
+            ExecutionStatus.AWAITING_INPUT,
+        ):
+            return None
+        execution_id = execution.execution_id
+        logger.warning(
+            f"Execution {execution_id} is already {execution.status.value}; not running it again"
+        )
+        if execution.status is ExecutionStatus.COMPLETED:
+            return (execution.output_data,)
+        if execution.status is ExecutionStatus.AWAITING_INPUT:
+            # What the paused run returned (execute_function, below).
+            return ({
+                "status": "awaiting_input",
+                "execution_id": execution_id,
+                "prompt": execution.input_prompt,
+            },)
+        if execution.status is ExecutionStatus.CANCELLED:
+            raise ExecutionAlreadyCancelled(f"Execution {execution_id} was cancelled")
+        err = FunctionExecutionError(execution.error or f"Execution {execution_id} already failed")
+        err.recorded = True
+        # Its job went to the DLQ then (the note says so) but the entry may
+        # not have been written (Redis full): write it now.
+        err.dead_letter = "moved to the dead-letter queue" in (execution.error or "")
+        raise err
+
     async def execute_function(
         self,
         function_namespace: str,
@@ -398,6 +444,15 @@ class FunctionExecutor:
                     select(Execution).where(Execution.execution_id == execution_id)
                 )
                 execution = result.scalar_one_or_none()
+
+                # A finished execution never runs again, whatever re-delivers
+                # its job: a function may have side effects. (A queue job is
+                # re-run when its finish could not be recorded, e.g. Redis
+                # full at that moment.) Inside this try, so a database blip
+                # here is retried like any other before the run.
+                finished = self._already_finished(execution)
+                if finished is not None:
+                    return finished[0]
 
                 if not execution:
                     # Create new execution record

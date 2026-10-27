@@ -31,7 +31,7 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from arq.connections import ArqRedis, RedisSettings, create_pool
@@ -41,6 +41,76 @@ from redis.asyncio.connection import URL_QUERY_ARGUMENT_PARSERS
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _annotate_without_arguments(self: Any, exception: Exception, number: int, command: Any) -> None:
+    """redis-py's Pipeline.annotate_exception, minus the arguments.
+
+    redis-py prefixes an error from a pipeline (and every arq enqueue,
+    finish and start is one) with the whole command: "Command # 1 (SET
+    arq:job:<id> <pickled job, user token included> PX ...) of pipeline
+    caused error: ...". That text travels wherever str(e) goes: logs, the
+    Redis job status, a sub-agent's tool result (chat history, the LLM
+    provider, spans), the DLQ. Keep the command name and the key it names
+    (`_key_for_error`), never the values."""
+    parts = [_text(part) for part in list(command)[:2]]
+    if not parts:
+        parts = ["?"]
+    if parts[0].upper() in ("EVAL", "EVALSHA", "FCALL"):
+        parts = parts[:1]  # [1] is the script or function, not a key
+    elif len(parts) == 2:
+        parts[1] = _key_for_error(parts[1])
+    detail = exception.args[0] if exception.args else ""
+    exception.args = (
+        f"Command # {number} ({' '.join(parts)}) of pipeline caused error: {detail}",
+    ) + exception.args[1:]
+
+
+# Keys whose name ends in a secret or personal value: an OAuth/SSO state or
+# one-time code, an email (rate limits). In error text only their prefix.
+# Key families named by ids only (job, execution, chat, channel, worker,
+# pipeline, webhook-hash, instance/period): shown in full in error text.
+# Anything else, including the keys named after a secret or personal value
+# (connector_oauth_state:<state>, sso_state:<state>, sso_code:<one-time
+# code>, sinas:ratelimit:<...:email>) and any key added later, shows only
+# its prefix. An allowlist, so a new secret-named key can't leak by default.
+_ID_NAMED_KEY_PREFIXES = (
+    "arq:job:", "arq:in-progress:", "arq:result:", "arq:retry:", "arq:abort",
+    "sinas:queue:", "sinas:job:", "sinas:stream:", "sinas:worker:", "sinas:shared:",
+    "sinas:sandbox:", "sinas:pipeline:", "sinas:dedup:", "sinas:bgjob:", "sinas:chat:",
+    "sinas:setup-link-hint", "chat:", "usage:",
+)
+
+
+def _text(value: Any) -> str:
+    return value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+
+
+def _key_for_error(key: str) -> str:
+    """A key name for an error message: in full for an id-named key family
+    (_ID_NAMED_KEY_PREFIXES), else only its prefix: "sso_code:…",
+    "sinas:ratelimit:…", or "…" for a key without one."""
+    if key.startswith(_ID_NAMED_KEY_PREFIXES):
+        return key[:200]
+    segments = key.split(":")
+    if len(segments) < 2:
+        return "…"
+    keep = 2 if segments[0] == "sinas" and len(segments) > 2 else 1
+    return ":".join(segments[:keep]) + ":…"
+
+
+def _install_pipeline_error_annotation() -> None:
+    """Applied once, at import: every Redis client in the process (the
+    shared one, create_redis_client's, arq's pools) builds its pipelines from
+    these classes."""
+    import redis.asyncio.client as async_client
+    import redis.client as sync_client
+
+    async_client.Pipeline.annotate_exception = _annotate_without_arguments  # type: ignore[method-assign]
+    sync_client.Pipeline.annotate_exception = _annotate_without_arguments  # type: ignore[method-assign]
+
+
+_install_pipeline_error_annotation()
 
 _redis_client: Redis | None = None
 _arq_pool: ArqRedis | None = None
@@ -297,3 +367,94 @@ async def close_redis() -> None:
         await _redis_client.aclose()
         _redis_client = None
     logger.info("Redis connections closed")
+
+
+async def warn_if_redis_nearly_full(redis: Any, process: str) -> Optional[float]:
+    """Log a warning when Redis memory is at 90% of maxmemory or more (an
+    error once it is full and refuses writes). Returns the percentage (None:
+    no maxmemory, or INFO unreadable). Never raises."""
+    try:
+        memory = await redis.info("memory")
+    except Exception:
+        logger.warning(f"{process}: could not read Redis memory info", exc_info=True)
+        return None
+    used = int(memory.get("used_memory") or 0)
+    maxmemory = int(memory.get("maxmemory") or 0)
+    if not maxmemory:
+        return None
+    percent = round(used / maxmemory * 100, 1)
+    policy = memory.get("maxmemory_policy")
+    if percent >= 100 and policy == "noeviction":
+        logger.error(
+            f"{process}: Redis is FULL ({percent}% of maxmemory, policy noeviction): it refuses "
+            "writes, so jobs can't start or finish and requests that write fail with 503 "
+            "redis_out_of_memory. Raise maxmemory (Helm: redis.maxmemory; Compose: "
+            "REDIS_MAXMEMORY) or free memory."
+        )
+    elif percent >= 90:
+        logger.warning(
+            f"{process}: Redis memory at {percent}% of maxmemory (policy {policy}); "
+            "raise maxmemory before it fills up."
+        )
+    return percent
+
+
+REDIS_OOM_DETAIL = (
+    "Redis is out of memory (maxmemory reached) and refuses writes, so this "
+    "request could not be completed. Stored data is kept; an operator must "
+    "raise Redis' maxmemory (Helm: redis.maxmemory; Compose: REDIS_MAXMEMORY)."
+)
+
+
+def install_redis_oom_handler(app: Any, *, openai_format: bool = False) -> None:
+    """Answer a request that hit a full Redis with a 503 that says so.
+
+    The in-cluster Redis runs maxmemory-policy noeviction: at maxmemory it
+    refuses writes ("OOM command not allowed") instead of evicting queued
+    jobs or locks. Without this a refused write is an anonymous 500."""
+    from fastapi.responses import JSONResponse
+    from redis.exceptions import ResponseError
+
+    async def _handler(request: Any, exc: ResponseError) -> JSONResponse:
+        if not is_redis_oom(exc):
+            raise exc  # any other Redis error: a 500, as before
+        logger.error(f"Redis is full: {redis_oom_summary(exc)} ({request.method} {request.url.path})")
+        if openai_format:
+            body: dict[str, Any] = {
+                "error": {
+                    "message": REDIS_OOM_DETAIL,
+                    "type": "server_error",
+                    "param": None,
+                    "code": "redis_out_of_memory",
+                }
+            }
+        else:
+            body = {"detail": REDIS_OOM_DETAIL, "code": "redis_out_of_memory"}
+        return JSONResponse(body, status_code=503, headers={"Retry-After": "30"})
+
+    app.add_exception_handler(ResponseError, _handler)
+
+
+def is_redis_oom(exc: BaseException) -> bool:
+    """A write Redis refused at maxmemory. redis-py raises OutOfMemoryError
+    for a plain command; inside a Lua script Redis 6.2 reports it as a
+    script error ("Error running script ... -OOM command not allowed")."""
+    from redis.exceptions import OutOfMemoryError, ResponseError
+
+    return isinstance(exc, OutOfMemoryError) or (
+        isinstance(exc, ResponseError) and "OOM command not allowed" in str(exc)
+    )
+
+
+def redis_oom_summary(exc: BaseException) -> str:
+    """What was refused, for a log line: the command name, never the
+    arguments. redis-py's pipeline errors quote the whole command ("Command
+    # 1 (SET arq:result:<id> <pickled job, tokens and all> PX ...)")."""
+    import re
+
+    match = re.match(r"Command # \d+ \((\S+)", str(exc))
+    if match:
+        return f"{match.group(1).upper()} refused: out of memory (maxmemory reached)"
+    if "script" in str(exc).lower():
+        return "a write in a Lua script refused: out of memory (maxmemory reached)"
+    return "write refused: out of memory (maxmemory reached)"

@@ -132,8 +132,13 @@ async def with_heartbeat(aiter, interval: int = HEARTBEAT_INTERVAL):
             yield {"event": "ping", "data": ""}
         except StopAsyncIteration:
             break
-        except StopAsyncIteration:
-            return
+        except Exception as e:
+            # The response has started: Starlette would only report a
+            # "handled exception" RuntimeError (app/core/streaming.py).
+            from app.core.streaming import log_stream_error
+
+            log_stream_error("SSE stream", e)
+            raise
 
 
 # `done` payload for a stream that ends because its round is parked on the user.

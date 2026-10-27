@@ -13,6 +13,7 @@ from opentelemetry import trace
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.redis import is_redis_oom, redis_oom_summary
 from app.core.telemetry import attached, extract_trace_context, otel_attr, traced_job
 from app.models.execution import Execution, ExecutionStatus
 from app.providers.tracking import collect_usage
@@ -172,6 +173,91 @@ def _in_enqueued_context(
             await job(ctx, **kwargs)
 
     return run
+
+
+async def _mark_running(
+    ctx: dict,
+    redis: Any,
+    job_id: str,
+    base_fields: dict[str, Any],
+    *,
+    chat_id: str,
+    user_token: str,
+    execution_id: Optional[str] = None,
+    parent_delegation_id: Optional[str] = None,
+    parent_tool_call_id: Optional[str] = None,
+) -> None:
+    """The job's first write: its "running" status. Refused because Redis is
+    full, the turn has not started, so the job is deferred (and may run
+    again despite max_tries=1) instead of failing: arq would finish it, and
+    on a full Redis drop it, without a trace in the chat. Past
+    QUEUE_REDIS_FULL_MAX_WAIT_SECONDS the turn ends with a recorded error
+    instead (`_turn_never_started`)."""
+    try:
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps({**base_fields, "status": "running"}),
+            ex=JOB_TTL,
+        )
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        from app.queue.arq_worker import RedisFullTooLong, defer_job_redis_full
+
+        try:
+            await defer_job_redis_full(
+                redis, ctx.get("job_id") or job_id, f"Agent job {job_id}",
+            )
+        except RedisFullTooLong as too_long:
+            await _turn_never_started(
+                too_long, chat_id=chat_id, user_token=user_token, execution_id=execution_id,
+                parent_delegation_id=parent_delegation_id, parent_tool_call_id=parent_tool_call_id,
+            )
+            raise
+
+
+async def _turn_never_started(
+    error: Exception,
+    *,
+    chat_id: str,
+    user_token: str,
+    execution_id: Optional[str],
+    parent_delegation_id: Optional[str],
+    parent_tool_call_id: Optional[str],
+) -> None:
+    """Record a turn that gave up waiting for Redis, where Redis isn't
+    needed: the error in the chat, the batch Execution row, and the
+    suspended parent this turn was a delegation of (each best effort)."""
+    await _persist_turn_error(chat_id, error)
+    if execution_id:
+        try:
+            await _terminate_execution_row(execution_id, ExecutionStatus.FAILED, error=str(error))
+        except Exception:
+            logger.exception(f"Could not fail execution {execution_id}")
+    if parent_delegation_id and parent_tool_call_id:
+        from app.services.delegation import on_child_complete
+
+        try:
+            await on_child_complete(
+                parent_delegation_id,
+                parent_tool_call_id,
+                json.dumps({**_failure_fields(error), "chat_id": chat_id}),
+                user_token=user_token,
+            )
+        except Exception:
+            logger.exception(f"Could not report to pending delegation {parent_delegation_id}")
+
+
+async def _unless_redis_full(write: Awaitable[Any], what: str) -> None:
+    """Await a Redis write on a failure path; when Redis is full, log it and
+    go on, so the rest of the failure bookkeeping (the chat's error message,
+    the Execution row, the parent delegation) still happens."""
+    try:
+        await write
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        logger.error(f"{what} not written: Redis is full ({redis_oom_summary(e)})")
 
 
 async def _ping_loop(channel_id: str, ttl: int | None = None) -> None:
@@ -372,10 +458,10 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     }
 
     # Update status to running
-    await redis.set(
-        f"{JOB_STATUS_PREFIX}{job_id}",
-        json.dumps({**base_fields, "status": "running"}),
-        ex=JOB_TTL,
+    await _mark_running(
+        ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token,
+        execution_id=execution_id, parent_delegation_id=pending_delegation_id,
+        parent_tool_call_id=parent_tool_call_id,
     )
 
     # Determine stream TTL (keep_alive chats get 24h TTL)
@@ -493,15 +579,25 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
             logger.error(f"Agent message job {job_id} failed: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
 
+            if is_redis_oom(e):
+                # Redis is full: the stream and status below can't be
+                # written, so leave the failure in the chat itself.
+                await _persist_turn_error(chat_id, e)
+
             # Publish error to stream (a failed turn streamed its own already)
             if _failed_turn is None:
-                await stream_relay.publish_failure(channel_id, e)
+                await _unless_redis_full(
+                    stream_relay.publish_failure(channel_id, e), f"agent job {job_id}: error event"
+                )
 
             # Update status
-            await redis.set(
-                f"{JOB_STATUS_PREFIX}{job_id}",
-                json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
-                ex=JOB_TTL,
+            await _unless_redis_full(
+                redis.set(
+                    f"{JOB_STATUS_PREFIX}{job_id}",
+                    json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
+                    ex=JOB_TTL,
+                ),
+                f"agent job {job_id}: failed status",
             )
 
             if execution_id:
@@ -633,11 +729,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         "enqueued_at": existing.get("enqueued_at"),
     }
 
-    await redis.set(
-        f"{JOB_STATUS_PREFIX}{job_id}",
-        json.dumps({**base_fields, "status": "running"}),
-        ex=JOB_TTL,
-    )
+    await _mark_running(ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token)
 
     # Determine stream TTL (keep_alive chats get 24h TTL)
     stream_ttl = kwargs.get("stream_ttl")
@@ -783,12 +875,17 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         logger.error(f"Traceback: {traceback.format_exc()}")
 
         await _persist_turn_error(chat_id, e)
-        await stream_relay.publish_failure(channel_id, e)
+        await _unless_redis_full(
+            stream_relay.publish_failure(channel_id, e), f"agent resume job {job_id}: error event"
+        )
 
-        await redis.set(
-            f"{JOB_STATUS_PREFIX}{job_id}",
-            json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
-            ex=JOB_TTL,
+        await _unless_redis_full(
+            redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
+                ex=JOB_TTL,
+            ),
+            f"agent resume job {job_id}: failed status",
         )
 
         completed = True
@@ -866,10 +963,10 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         "type": "delegate_resume",
         "chat_id": chat_id,
     }
-    await redis.set(
-        f"{JOB_STATUS_PREFIX}{job_id}",
-        json.dumps({**base_fields, "status": "running"}),
-        ex=JOB_TTL,
+    await _mark_running(
+        ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token,
+        execution_id=execution_id, parent_delegation_id=parent_pending_delegation_id,
+        parent_tool_call_id=parent_tool_call_id,
     )
 
     stream_ttl = context.get("stream_ttl")
@@ -1020,11 +1117,16 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         logger.error(f"Delegate-resume job {job_id} failed: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         await _persist_turn_error(chat_id, e)
-        await stream_relay.publish_failure(channel_id, e)
-        await redis.set(
-            f"{JOB_STATUS_PREFIX}{job_id}",
-            json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
-            ex=JOB_TTL,
+        await _unless_redis_full(
+            stream_relay.publish_failure(channel_id, e), f"delegate-resume job {job_id}: error event"
+        )
+        await _unless_redis_full(
+            redis.set(
+                f"{JOB_STATUS_PREFIX}{job_id}",
+                json.dumps({**base_fields, "status": "failed", **_failure_fields(e)}),
+                ex=JOB_TTL,
+            ),
+            f"delegate-resume job {job_id}: failed status",
         )
         if execution_id:
             await _terminate_execution_row(

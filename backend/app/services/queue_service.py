@@ -24,6 +24,8 @@ PIPELINE_QUEUE = "sinas:queue:pipelines"
 JOB_RESULT_PREFIX = "sinas:job:result:"
 JOB_DONE_CHANNEL_PREFIX = "sinas:job:done:"
 DLQ_KEY = "sinas:queue:dlq"
+# How many dead-lettered entries the DLQ cap (QUEUE_DLQ_MAX_ENTRIES) dropped.
+DLQ_DROPPED_KEY = "sinas:queue:dlq:dropped"
 # How many runs of a function job failed so far. Kept apart from arq's
 # job_try, which shared-pool deferrals advance too: a deferral is not a
 # failure and must never use up a job's retries.
@@ -31,6 +33,85 @@ JOB_FAILURES_PREFIX = "sinas:job:failures:"
 # Held while a dead-lettered job is being requeued (one requeue at a time).
 DLQ_REQUEUE_LOCK_PREFIX = "sinas:queue:dlq:requeue:"
 JOB_TTL = 86400  # 24 hours
+
+
+async def push_dead_letter(redis, entry: str) -> int:
+    """Add an entry (JSON) to the dead-letter queue, newest first, and keep
+    the queue within QUEUE_DLQ_MAX_ENTRIES by dropping the oldest entries.
+
+    The push and the trim run in one MULTI, so the length LPUSH reports is
+    exactly what this trim cuts back from: concurrent pushes count every
+    dropped entry once. Returns how many entries were dropped."""
+    cap = settings.queue_dlq_max_entries
+    if cap <= 0:
+        await redis.lpush(DLQ_KEY, entry)
+        return 0
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.lpush(DLQ_KEY, entry)
+        pipe.ltrim(DLQ_KEY, 0, cap - 1)
+        length, _ = await pipe.execute()
+    dropped = max(0, int(length) - cap)
+    if dropped:
+        try:
+            await redis.incrby(DLQ_DROPPED_KEY, dropped)
+        except Exception:
+            logger.warning("Could not count the dropped DLQ entries", exc_info=True)
+        logger.warning(
+            f"Dead-letter queue is at its cap of {cap} (QUEUE_DLQ_MAX_ENTRIES); "
+            f"dropped the oldest {dropped} entr{'y' if dropped == 1 else 'ies'}"
+        )
+    return dropped
+
+
+# LLEN and LTRIM as one script: atomic, so with several processes starting
+# at once each counts exactly what its own trim removed. A script that only
+# reads and trims runs on a full Redis (6.2 and 7.x), where a MULTI doesn't.
+_TRIM_DLQ_SCRIPT = """
+local n = redis.call('LLEN', KEYS[1])
+local cap = tonumber(ARGV[1])
+if n > cap then
+  redis.call('LTRIM', KEYS[1], 0, cap - 1)
+  return {n, n - cap}
+end
+return {n, 0}
+"""
+
+
+async def trim_dead_letter_queue(redis) -> int:
+    """Cut the dead-letter queue back to QUEUE_DLQ_MAX_ENTRIES (oldest go).
+
+    `push_dead_letter` trims as it pushes, but at maxmemory Redis refuses
+    the push, and with it the whole MULTI: a DLQ grown before the cap
+    existed (pre-0.5.0) would never shrink on a full Redis. Every worker and
+    the scheduler run this once at startup. Returns how many entries this
+    call dropped."""
+    cap = settings.queue_dlq_max_entries
+    if cap <= 0:
+        return 0
+    length, dropped = (int(v) for v in await redis.eval(_TRIM_DLQ_SCRIPT, 1, DLQ_KEY, cap))
+    if dropped:
+        try:
+            await redis.incrby(DLQ_DROPPED_KEY, dropped)
+        except Exception:
+            logger.warning("Could not count the dropped DLQ entries", exc_info=True)
+        logger.warning(
+            f"Dead-letter queue held {length} entries, over its cap of {cap} "
+            f"(QUEUE_DLQ_MAX_ENTRIES); dropped the oldest {dropped}"
+        )
+    return dropped
+
+
+async def startup_redis_checks(redis, process: str) -> None:
+    """Run by every queue worker and the scheduler as it starts: trim the
+    DLQ to its cap, and say loudly when Redis is (nearly) full, the state
+    an upgrade from an allkeys-lru Redis can start in. Never raises."""
+    from app.core.redis import warn_if_redis_nearly_full
+
+    try:
+        await trim_dead_letter_queue(redis)
+    except Exception:
+        logger.warning(f"{process}: could not trim the dead-letter queue", exc_info=True)
+    await warn_if_redis_nearly_full(redis, process)
 
 
 class QueueService:
@@ -129,19 +210,28 @@ class QueueService:
         trigger_type: str,
         trigger_id: Optional[str],
         user_id: str,
+        dedup_key: Optional[str] = None,
     ) -> str:
-        """Enqueue one pipeline run for one user scope. Returns the job id.
+        """Enqueue one pipeline run for one user scope. Returns the run id.
 
         The worker mints the run user's JWT itself — no tokens in job payloads.
+
+        `dedup_key`: derive the job and run ids from it, so enqueueing the
+        same key again (a pipeline fire job re-run after Redis was full)
+        is refused by arq instead of starting the run twice.
         """
         pool = await get_arq_pool()
-        job_id = str(uuid.uuid4())
-        # Pre-allocate the RUN id and return that, not the job id: callers
-        # poll GET /pipelines/runs/{run_id} with what we hand back, and the
-        # job id never appears in pipeline_runs. (The run row itself is
-        # created when the worker starts executing.)
-        run_id = str(uuid.uuid4())
-        await pool.enqueue_job(
+        if dedup_key:
+            job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sinas:pipeline-run-job:{dedup_key}"))
+            run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sinas:pipeline-run:{dedup_key}"))
+        else:
+            job_id = str(uuid.uuid4())
+            # Pre-allocate the RUN id and return that, not the job id: callers
+            # poll GET /pipelines/runs/{run_id} with what we hand back, and the
+            # job id never appears in pipeline_runs. (The run row itself is
+            # created when the worker starts executing.)
+            run_id = str(uuid.uuid4())
+        job = await pool.enqueue_job(
             "execute_pipeline_run_job",
             job_id=job_id,
             run_id=run_id,
@@ -154,7 +244,11 @@ class QueueService:
             _job_id=job_id,
             _queue_name=PIPELINE_QUEUE,
         )
-        logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
+        if job is None:
+            # Only with a dedup_key: this run was enqueued already.
+            logger.info(f"Pipeline run job {job_id} (run={run_id}) already queued; not enqueued again")
+        else:
+            logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
         return run_id
 
     async def enqueue_pipeline_fire(
@@ -544,8 +638,9 @@ class QueueService:
         agents_pending = await redis.zcard(AGENT_QUEUE)
         sub_agents_pending = await redis.zcard(SUB_AGENT_QUEUE)
 
-        # DLQ size
+        # DLQ size, and how many entries its cap dropped
         dlq_size = await redis.llen(DLQ_KEY)
+        dlq_dropped = int(await redis.get(DLQ_DROPPED_KEY) or 0)
 
         # Job status counts via SCAN
         status_counts: dict[str, int] = {}
@@ -579,7 +674,11 @@ class QueueService:
                 "failed": status_counts.get("failed", 0),
                 "cancelled": status_counts.get("cancelled", 0),
             },
-            "dlq": {"size": dlq_size},
+            "dlq": {
+                "size": dlq_size,
+                "dropped": dlq_dropped,
+                "max_entries": settings.queue_dlq_max_entries,
+            },
         }
 
     async def get_jobs_list(
@@ -942,10 +1041,11 @@ class QueueService:
         return {"status": "cancelled", "job_id": job_id}
 
     async def flush_dlq(self) -> dict[str, Any]:
-        """Remove all entries from the dead letter queue."""
+        """Remove all entries from the dead letter queue (and reset the count
+        of entries its cap dropped)."""
         redis = await get_redis()
         size = await redis.llen(DLQ_KEY)
-        await redis.delete(DLQ_KEY)
+        await redis.delete(DLQ_KEY, DLQ_DROPPED_KEY)
         logger.info(f"Flushed {size} DLQ entries")
         return {"flushed": size}
 
@@ -973,12 +1073,16 @@ class QueueService:
                         continue
                     enqueued = data.get("enqueued_at", 0)
                     if enqueued and enqueued < cutoff:
-                        job_id = data.get("job_id") or key.decode().replace(JOB_STATUS_PREFIX, "")
+                        # The shared client decodes responses (str keys);
+                        # bytes only from a client that doesn't.
+                        if isinstance(key, bytes):
+                            key = key.decode()
+                        job_id = data.get("job_id") or key.removeprefix(JOB_STATUS_PREFIX)
                         try:
                             await self.cancel_job(job_id)
                             cancelled += 1
                         except Exception:
-                            pass
+                            logger.warning(f"Could not cancel stuck job {job_id}", exc_info=True)
             if cursor == 0:
                 break
 

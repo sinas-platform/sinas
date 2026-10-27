@@ -83,6 +83,17 @@ docker compose exec postgres psql -U postgres -d sinas -c "VACUUM (ANALYZE) llm_
 
 Use your own database user and name if you changed `DATABASE_USER` or `DATABASE_NAME`; on Kubernetes or an external database, run the same statement with your usual client. Autovacuum would get there eventually, but running it yourself keeps usage queries fast straight away. It takes no locks that block reads or writes.
 
+0.5.0 runs the bundled Redis with `maxmemory-policy noeviction` instead of `allkeys-lru` (Compose and the Helm chart, including the lite profiles). Redis holds Sinas' queues, locks, stream relays and dead-letter queue, not a cache: under memory pressure `allkeys-lru` could silently drop queued jobs or locks. With `noeviction`, a Redis that reaches `maxmemory` (`REDIS_MAXMEMORY`, 256mb; 128mb for the lite profile) evicts nothing and refuses writes instead. While it is full, anything that has to write fails, visibly: API requests answer 503 with `"code": "redis_out_of_memory"`, queued jobs wait in the queue (a job that finds Redis full as it starts is put back), agent turns in progress end with an error in the chat, and the workers keep running and log that Redis is full. The System page shows Redis memory and warns from 75% of `maxmemory`. See [When Redis is full](/getting-started/kubernetes#when-redis-is-full). Everything Sinas writes to Redis now expires or is bounded, so a normal install stays far below the limit. To keep the old behaviour, set `REDIS_MAXMEMORY_POLICY=allkeys-lru` in `.env` (Helm: `redis.maxmemoryPolicy`).
+
+**Before upgrading, check Redis memory.** A busy install under `allkeys-lru` can sit at `maxmemory`; switched to `noeviction` with its data kept (the new policy applies when `docker compose up -d` recreates the Redis container), it would be full from the first write:
+
+```bash
+docker compose exec redis redis-cli INFO memory | grep -E 'used_memory:|maxmemory:'
+docker compose exec redis redis-cli INFO stats | grep evicted_keys
+```
+
+If `used_memory` is near `maxmemory`, or `evicted_keys` is above 0, raise `REDIS_MAXMEMORY` in `.env` (Helm: `redis.maxmemory`) in the same upgrade. Workers and the scheduler also log a warning at startup when Redis is at 90% of `maxmemory` or more, and an error when it is full.
+
 0.5.0's `docker-compose.yml` also adds a `proxy` network between Caddy, the backend and the console, with the fixed subnet `10.254.253.0/24` (see [Client IPs](#client-ips-behind-caddy) below). `docker compose up -d` creates it. If that subnet is already in use on your host or network, set `SINAS_PROXY_SUBNET`, `SINAS_PROXY_IP_RANGE`, `SINAS_CADDY_IP` and `FORWARDED_ALLOW_IPS` in `.env` first.
 
 ## Client IPs behind Caddy

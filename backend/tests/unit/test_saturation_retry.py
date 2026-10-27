@@ -29,6 +29,29 @@ async def _saturated(depth, execution_id):
     yield  # pragma: no cover
 
 
+class _FakePipeline:
+    """Queues commands, then runs them in order on the fake (MULTI/EXEC)."""
+
+    def __init__(self, redis):
+        self.redis, self.calls = redis, []
+
+    def __getattr__(self, name):
+        def queue(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return self
+
+        return queue
+
+    async def execute(self):
+        return [await getattr(self.redis, n)(*a, **k) for n, a, k in self.calls]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
 class _FakeRedis:
     def __init__(self):
         self.store: dict = {}
@@ -50,6 +73,25 @@ class _FakeRedis:
 
     async def lpush(self, key, value):
         self.lists.setdefault(key, []).insert(0, value)
+        return len(self.lists[key])
+
+    async def ltrim(self, key, start, end):
+        self.lists[key] = self.lists.get(key, [])[start : end + 1]
+
+    async def incrby(self, key, n):
+        self.store[key] = int(self.store.get(key) or 0) + n
+        return self.store[key]
+
+    def pipeline(self, transaction=True):
+        return _FakePipeline(self)
+
+    # arq's job record (arq:job:<id>), whose expiry a deferral pushes out;
+    # it exists unless a test says it expired.
+    job_record_exists = True
+
+    async def pexpire(self, key, ms):
+        self.store[f"pexpire:{key}"] = ms
+        return 1 if self.job_record_exists else 0
 
 
 @pytest.fixture(autouse=True)
