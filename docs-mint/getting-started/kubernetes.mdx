@@ -414,8 +414,8 @@ until memory is freed or `maxmemory` is raised:
   status or result write is refused; when it runs again, an execution that
   already finished, or paused for input, is not run a second time.
   Queued jobs run once Redis has memory again. A job still finding Redis
-  full `QUEUE_REDIS_FULL_MAX_WAIT_SECONDS` (default 1 hour) after it was
-  queued fails with a recorded error instead: a FAILED execution, or an
+  full `QUEUE_REDIS_FULL_MAX_WAIT_SECONDS` (default 1 hour) after its first
+  refused write fails with a recorded error instead: a FAILED execution, or an
   error message in the chat.
 - **Agent turns in progress** end with an error: their stream events can't
   be written, so the turn records the error in the chat instead. A client

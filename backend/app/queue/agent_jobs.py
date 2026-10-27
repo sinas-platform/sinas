@@ -207,7 +207,6 @@ async def _mark_running(
         try:
             await defer_job_redis_full(
                 redis, ctx.get("job_id") or job_id, f"Agent job {job_id}",
-                enqueued_at=ctx.get("enqueue_time"),
             )
         except RedisFullTooLong as too_long:
             await _turn_never_started(

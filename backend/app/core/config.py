@@ -329,9 +329,10 @@ class Settings(BaseSettings):
     # so an unbounded DLQ grows until Redis runs out of memory. 0 = no cap.
     queue_dlq_max_entries: int = 10000
     # A queued job that keeps finding Redis full (maxmemory, noeviction) as
-    # it starts is deferred, up to this long after it was enqueued; then it
-    # fails with a recorded error (an agent turn: an error in the chat; a
-    # function execution: FAILED). 0 = wait for as long as it takes.
+    # it starts is deferred, for up to this long after its first refused
+    # write (counted per worker process); then it fails with a recorded
+    # error (an agent turn: an error in the chat; a function execution:
+    # FAILED). 0 = wait for as long as it takes.
     queue_redis_full_max_wait_seconds: int = 3600
     # How often an idle worker checks its queue for new jobs (seconds). arq's
     # default, 0.5, added up to half a second before a queued job started: an

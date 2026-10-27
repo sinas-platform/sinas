@@ -254,25 +254,47 @@ class TestThirdReview:
             )
         assert retry_key_prefix + row.execution_id in redis.deleted
 
-    async def test_a_function_job_gives_up_after_the_max_wait(self, db, test_user, sandbox, monkeypatch):
+    async def test_the_max_wait_counts_from_the_first_refusal(self, db, test_user, sandbox, monkeypatch):
+        """A job queued hours ago (scheduled ahead, or waiting for a pool
+        slot) that hits its first refused write is deferred, not failed;
+        one that has kept finding Redis full past the max wait gives up."""
         from datetime import datetime, timedelta, timezone
 
-        from app.queue import worker
+        from app.queue import arq_worker, worker
         from app.queue.arq_worker import RedisFullTooLong
 
         monkeypatch.setattr(settings, "queue_redis_full_max_wait_seconds", 3600)
+        monkeypatch.setattr(arq_worker, "_redis_full_since", {})
         fn = await _function(db, test_user)
         row = await _pending_row(db, test_user, fn)
         fake = sandbox(ExecutionResult.from_wire({"result": 1, "status": "completed"}))
         ctx = {
-            "redis": _FullRedis(), "job_try": 9,
+            "redis": _FullRedis(), "job_try": 9, "job_id": row.execution_id,
             "enqueue_time": datetime.now(timezone.utc) - timedelta(hours=2),
         }
+
+        with pytest.raises(Retry):  # first refusal: defer, whatever the job's age
+            await worker.execute_function_job(ctx, **_kwargs(fn, row, test_user))
+        await db.refresh(row)
+        assert row.status == ExecutionStatus.PENDING
+
+        # ...and some 61 minutes of refusals later (deferred all along):
+        first, last = arq_worker._redis_full_since[row.execution_id]
+        arq_worker._redis_full_since[row.execution_id] = (first - 3660, last)
         with pytest.raises(RedisFullTooLong):
             await worker.execute_function_job(ctx, **_kwargs(fn, row, test_user))
         assert fake.calls == 0
         await db.refresh(row)
         assert row.status == ExecutionStatus.FAILED and "Redis was full" in row.error
+
+    async def test_a_new_episode_restarts_the_clock(self, monkeypatch):
+        """Refusals separated by a gap (Redis had memory in between) are
+        separate episodes: an old episode doesn't count against a new one."""
+        from app.queue import arq_worker
+
+        monkeypatch.setattr(arq_worker, "_redis_full_since", {})
+        arq_worker._redis_full_since["j"] = (0.0, 1.0)  # long ago
+        assert arq_worker._redis_full_for("j") < 1
 
     async def test_an_agent_turn_gives_up_with_a_recorded_error(self, monkeypatch):
         from datetime import datetime, timedelta, timezone
@@ -296,6 +318,15 @@ class TestThirdReview:
         monkeypatch.setattr("app.services.delegation.on_child_complete", report)
         ctx = {"job_id": "j", "enqueue_time": datetime.now(timezone.utc) - timedelta(hours=2)}
 
+        # Queued 2h ago, first refusal: deferred, nothing recorded.
+        monkeypatch.setattr(arq_worker, "_redis_full_since", {})
+        with pytest.raises(Retry):
+            await agent_jobs._mark_running(ctx, _FullRedis(), "j", {}, chat_id="chat-1", user_token="t")
+        assert recorded == {}
+
+        # Refused for over an hour: the turn ends, on record.
+        first, last = arq_worker._redis_full_since["j"]
+        arq_worker._redis_full_since["j"] = (first - 3700, last)
         with pytest.raises(RedisFullTooLong):
             await agent_jobs._mark_running(
                 ctx, _FullRedis(), "j", {}, chat_id="chat-1", user_token="t",
@@ -364,6 +395,14 @@ def test_error_text_keeps_the_key_but_not_secrets_or_values():
     assert "(INCR sinas:ratelimit:…)" in annotate("INCR", "sinas:ratelimit:login:email:a@b.c")
     assert "(EVAL)" in annotate("EVAL", "return redis.call('GET', KEYS[1])", 1, "k")
     assert "(MULTI)" in annotate("MULTI")
+    # An allowlist: a key family nobody listed shows only its prefix.
+    assert "(SET newthing:…)" in annotate("SET", "newthing:SECRET-TOKEN", "v")
+    assert "(SET sinas:newthing:…)" in annotate("SET", "sinas:newthing:SECRET-TOKEN", "v")
+    assert "(GET …)" in annotate("GET", "SECRET-BARE-KEY")
+    assert "SECRET" not in annotate("SET", "newthing:a:SECRET", "v")
+    for key in ("arq:in-progress:j1", "sinas:job:status:e1", "sinas:stream:c1", "usage:i:2026-10:total",
+                "sinas:queue:dlq", "chat:loop-lock:c1", "sinas:pipeline:lock:p:u"):
+        assert f"(SET {key})" in annotate("SET", key, "v"), key
 
 
 class TestOtherJobs:
@@ -463,7 +502,7 @@ class TestRefusedCommandErrorsHaveNoArguments:
                 pipe.set("k", json.dumps({"input_data": "SECRET-INPUT"}))
                 await pipe.execute()
         assert is_redis_oom(exc.value) and "SECRET" not in str(exc.value)
-        assert "(SET k)" in str(exc.value)
+        assert "(SET …)" in str(exc.value)  # "k" is no known id-named key
 
 
 async def _run_worker(worker, seconds):

@@ -53,7 +53,6 @@ import logging
 import random
 import sys
 import time
-from datetime import datetime, timezone
 from typing import Any, NoReturn, Optional
 
 from arq.constants import (
@@ -233,13 +232,37 @@ class RedisFullTooLong(RuntimeError):
     deferred, and its caller records it as failed."""
 
 
+# job id → (monotonic time of its first refused write, of its latest), for
+# the jobs this process deferred because Redis was full. In process memory:
+# nothing can be written to Redis then. A job that moves between worker
+# replicas starts a clock on each (the wait is still bounded per replica).
+_redis_full_since: dict[str, tuple[float, float]] = {}
+# A refusal this long after the job's previous one starts a new episode
+# (Redis had memory in between; the job ran on or waited elsewhere).
+REDIS_FULL_EPISODE_GAP_SECONDS = 600.0
+_REDIS_FULL_TRACKED_MAX = 10_000
+
+
+def _redis_full_for(job_id: str) -> float:
+    """Record a refused write for `job_id`; seconds since the first one of
+    this episode."""
+    now = time.monotonic()
+    first, last = _redis_full_since.get(job_id, (now, now))
+    if now - last > REDIS_FULL_EPISODE_GAP_SECONDS:
+        first = now
+    _redis_full_since[job_id] = (first, now)
+    if len(_redis_full_since) > _REDIS_FULL_TRACKED_MAX:
+        for stale in [k for k, (_, seen) in _redis_full_since.items() if now - seen > REDIS_FULL_EPISODE_GAP_SECONDS]:
+            del _redis_full_since[stale]
+    return now - first
+
+
 async def defer_job_redis_full(
     redis: Any,
     job_id: str,
     what: str,
     *,
     reset_tries: bool = True,
-    enqueued_at: Optional[datetime] = None,
 ) -> NoReturn:
     """Defer a job that could not start because Redis is full: raise arq's
     Retry, so it stays queued instead of being finished as failed (and, on
@@ -255,23 +278,25 @@ async def defer_job_redis_full(
     large budget, after which arq gives up silently. Sinas counts real
     failures itself.
 
-    `enqueued_at` (arq's ctx["enqueue_time"]): past
-    QUEUE_REDIS_FULL_MAX_WAIT_SECONDS since then, raise RedisFullTooLong
-    instead, so a job doesn't wait (and extend its record a day at a time)
-    forever."""
+    Past QUEUE_REDIS_FULL_MAX_WAIT_SECONDS of refusals, raise
+    RedisFullTooLong instead, so a job doesn't wait (and extend its record a
+    day at a time) forever. The clock starts at the job's first refused
+    write (`_redis_full_for`), not when it was queued: a job scheduled
+    hours ahead, or waiting hours for a shared-pool slot, still gets the
+    whole wait when Redis fills up."""
     from app.core.config import settings
 
     max_wait = settings.queue_redis_full_max_wait_seconds
-    if enqueued_at is not None and max_wait > 0:
-        waited = (datetime.now(timezone.utc) - enqueued_at).total_seconds()
-        if waited > max_wait:
-            logger.error(
-                f"{what}: Redis has been full for the {waited:.0f}s since it was queued "
-                f"(QUEUE_REDIS_FULL_MAX_WAIT_SECONDS={max_wait}); giving up on it"
-            )
-            raise RedisFullTooLong(
-                f"Redis was full (out of memory) for more than {max_wait}s; the job could not run"
-            )
+    waited = _redis_full_for(job_id)
+    if max_wait > 0 and waited > max_wait:
+        _redis_full_since.pop(job_id, None)
+        logger.error(
+            f"{what}: Redis has refused its writes for {waited:.0f}s "
+            f"(QUEUE_REDIS_FULL_MAX_WAIT_SECONDS={max_wait}); giving up on it"
+        )
+        raise RedisFullTooLong(
+            f"Redis was full (out of memory) for more than {max_wait}s; the job could not run"
+        )
     defer = random.uniform(*REDIS_FULL_DEFER_SECONDS)
     try:
         await redis.pexpire(job_key_prefix + job_id, int(defer * 1000) + expires_extra_ms)

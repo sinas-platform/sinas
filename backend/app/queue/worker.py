@@ -134,7 +134,6 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         try:
             await defer_job_redis_full(
                 redis, ctx.get("job_id") or kwargs["job_id"], f"Function job {kwargs['job_id']}",
-                enqueued_at=ctx.get("enqueue_time"),
             )
         except RedisFullTooLong as too_long:
             # Out of patience: the execution fails, on record (the database
@@ -711,7 +710,6 @@ async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
             ctx.get("redis") or create_redis_client(),
             ctx.get("job_id") or kwargs["job_id"],
             f"Pipeline run job {kwargs['job_id']}",
-            enqueued_at=ctx.get("enqueue_time"),
         )
 
 
@@ -755,7 +753,6 @@ async def execute_pipeline_fire_job(ctx: dict, **kwargs: Any) -> Any:
             ctx.get("redis") or create_redis_client(),
             ctx.get("job_id") or kwargs["job_id"],
             f"Pipeline fire job {kwargs['job_id']}",
-            enqueued_at=ctx.get("enqueue_time"),
         )
     return {"runs": len(job_ids), "job_ids": job_ids}
 
@@ -846,7 +843,6 @@ async def execute_background_code_job(ctx: dict, **kwargs: Any) -> None:
             ctx.get("redis") or create_redis_client(),
             ctx.get("job_id") or kwargs["job_id"],
             f"Background job {kwargs['job_id']}",
-            enqueued_at=ctx.get("enqueue_time"),
         )
 
 
