@@ -63,6 +63,50 @@ async def push_dead_letter(redis, entry: str) -> int:
     return dropped
 
 
+async def trim_dead_letter_queue(redis) -> int:
+    """Cut the dead-letter queue back to QUEUE_DLQ_MAX_ENTRIES (oldest go).
+
+    `push_dead_letter` trims as it pushes, but at maxmemory Redis refuses
+    the push, and with it the whole MULTI: a DLQ grown before the cap
+    existed (pre-0.5.0) would never shrink on a full Redis. LLEN and LTRIM
+    are never refused for memory (outside MULTI), so every worker and the
+    scheduler run this once at startup. Returns how many entries were dropped."""
+    cap = settings.queue_dlq_max_entries
+    if cap <= 0:
+        return 0
+    # Not MULTI: Redis 6.2 refuses every command queued in a transaction
+    # while it is over maxmemory. Without it the drop count is approximate
+    # if entries arrive in between (only at startup, so rarely).
+    length = int(await redis.llen(DLQ_KEY))
+    if length <= cap:
+        return 0
+    await redis.ltrim(DLQ_KEY, 0, cap - 1)
+    dropped = length - cap
+    if dropped:
+        try:
+            await redis.incrby(DLQ_DROPPED_KEY, dropped)
+        except Exception:
+            logger.warning("Could not count the dropped DLQ entries", exc_info=True)
+        logger.warning(
+            f"Dead-letter queue held {length} entries, over its cap of {cap} "
+            f"(QUEUE_DLQ_MAX_ENTRIES); dropped the oldest {dropped}"
+        )
+    return dropped
+
+
+async def startup_redis_checks(redis, process: str) -> None:
+    """Run by every queue worker and the scheduler as it starts: trim the
+    DLQ to its cap, and say loudly when Redis is (nearly) full, the state
+    an upgrade from an allkeys-lru Redis can start in. Never raises."""
+    from app.core.redis import warn_if_redis_nearly_full
+
+    try:
+        await trim_dead_letter_queue(redis)
+    except Exception:
+        logger.warning(f"{process}: could not trim the dead-letter queue", exc_info=True)
+    await warn_if_redis_nearly_full(redis, process)
+
+
 class QueueService:
     """Service for enqueuing and tracking jobs."""
 

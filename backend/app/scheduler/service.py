@@ -176,6 +176,9 @@ async def run(stop_event: asyncio.Event) -> None:
     redis = await get_redis()
     await redis.ping()
     print("✅ Redis connection established")
+    from app.services.queue_service import startup_redis_checks
+
+    await startup_redis_checks(redis, "scheduler")
 
     # --- Declarative config apply ---
     if settings.config_file and settings.auto_apply_config:

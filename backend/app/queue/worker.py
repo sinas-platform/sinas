@@ -24,6 +24,7 @@ from app.services.queue_service import (
     JOB_TTL,
     JOB_DONE_CHANNEL_PREFIX,
     push_dead_letter,
+    startup_redis_checks,
 )
 
 logger = logging.getLogger(__name__)
@@ -506,6 +507,7 @@ async def function_worker_startup(ctx: dict) -> None:
     init_telemetry("queue-worker")
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], "queue-worker")
 
     # Discover shared worker containers (created by scheduler).
     # Retry a few times — the scheduler may still be starting up.
@@ -567,6 +569,7 @@ async def _agent_worker_startup(ctx: dict, process: str) -> None:
     init_telemetry(process)
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], process)
 
     # Eagerly import heavy modules so first job doesn't pay import cost
     from app.services.message_service import MessageService  # noqa: F401
@@ -655,6 +658,7 @@ async def pipeline_worker_startup(ctx: dict) -> None:
     init_telemetry("queue-pipeline")
 
     ctx["redis"] = create_redis_client()
+    await startup_redis_checks(ctx["redis"], "queue-pipeline")
 
     # Eagerly import the runner so the first job doesn't pay import cost
     from app.services import pipeline_runner  # noqa: F401
@@ -889,7 +893,7 @@ class PipelineWorkerSettings:
     pipeline runs never starve function workers (and vice versa). High
     concurrency: runs mostly await child executions and HTTP.
 
-        python -m arq app.queue.worker.PipelineWorkerSettings
+        python -m app.queue.arq_worker app.queue.worker.PipelineWorkerSettings
     """
 
     functions = [execute_pipeline_run_job, execute_pipeline_fire_job]
@@ -910,7 +914,7 @@ class SubAgentWorkerSettings:
     calls (depth > 0) land here so parents blocked on children can never
     starve them of worker slots. Run as its own process:
 
-        python -m arq app.queue.worker.SubAgentWorkerSettings
+        python -m app.queue.arq_worker app.queue.worker.SubAgentWorkerSettings
     """
 
     functions = [
