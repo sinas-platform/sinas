@@ -338,7 +338,12 @@ class Settings(BaseSettings):
     # replaying a turn from its start (reconnect with last_id=0) misses the
     # oldest events of a turn longer than this; a client resuming from its
     # last id misses nothing unless it fell that far behind. 0 = no cap.
-    stream_relay_max_entries: int = 100000
+    # 20000: an event takes ~120 bytes, so a capped stream holds ~2.4 MB,
+    # small next to the bundled Redis' 256mb (128mb lite) even with a few
+    # long turns at once; a live relay reads 100 events per XREAD and stays
+    # within a few hundred of the head, and 20000 events is a very long turn
+    # (tens of thousands of streamed tokens plus its tool events).
+    stream_relay_max_entries: int = 20000
 
     # Pipeline runs (see ADR 2026-07-28-pipelines-triggers-and-linear-steps).
     # Runs are await-heavy orchestration → high concurrency is cheap.

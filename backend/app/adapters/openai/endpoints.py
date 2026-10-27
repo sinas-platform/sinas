@@ -14,6 +14,7 @@ from app.core.auth import get_current_user_with_permissions, set_permission_used
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal, get_db
 from app.core.permissions import check_permission
+from app.core.streaming import logged_stream
 from app.models.agent import Agent
 from app.models.chat import Chat
 from app.models.llm_provider import LLMProvider
@@ -394,7 +395,7 @@ async def _agent_stream(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
-        generate(),
+        logged_stream(generate(), "OpenAI adapter stream"),
         media_type="text/event-stream",
         headers={"X-Chat-ID": response_chat_id},
     )
@@ -529,7 +530,7 @@ async def _passthrough_stream(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
-        generate(),
+        logged_stream(generate(), "OpenAI adapter stream"),
         media_type="text/event-stream",
     )
 
