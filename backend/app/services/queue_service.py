@@ -63,25 +63,32 @@ async def push_dead_letter(redis, entry: str) -> int:
     return dropped
 
 
+# LLEN and LTRIM as one script: atomic, so with several processes starting
+# at once each counts exactly what its own trim removed. A script that only
+# reads and trims runs on a full Redis (6.2 and 7.x), where a MULTI doesn't.
+_TRIM_DLQ_SCRIPT = """
+local n = redis.call('LLEN', KEYS[1])
+local cap = tonumber(ARGV[1])
+if n > cap then
+  redis.call('LTRIM', KEYS[1], 0, cap - 1)
+  return {n, n - cap}
+end
+return {n, 0}
+"""
+
+
 async def trim_dead_letter_queue(redis) -> int:
     """Cut the dead-letter queue back to QUEUE_DLQ_MAX_ENTRIES (oldest go).
 
     `push_dead_letter` trims as it pushes, but at maxmemory Redis refuses
     the push, and with it the whole MULTI: a DLQ grown before the cap
-    existed (pre-0.5.0) would never shrink on a full Redis. LLEN and LTRIM
-    are never refused for memory (outside MULTI), so every worker and the
-    scheduler run this once at startup. Returns how many entries were dropped."""
+    existed (pre-0.5.0) would never shrink on a full Redis. Every worker and
+    the scheduler run this once at startup. Returns how many entries this
+    call dropped."""
     cap = settings.queue_dlq_max_entries
     if cap <= 0:
         return 0
-    # Not MULTI: Redis 6.2 refuses every command queued in a transaction
-    # while it is over maxmemory. Without it the drop count is approximate
-    # if entries arrive in between (only at startup, so rarely).
-    length = int(await redis.llen(DLQ_KEY))
-    if length <= cap:
-        return 0
-    await redis.ltrim(DLQ_KEY, 0, cap - 1)
-    dropped = length - cap
+    length, dropped = (int(v) for v in await redis.eval(_TRIM_DLQ_SCRIPT, 1, DLQ_KEY, cap))
     if dropped:
         try:
             await redis.incrby(DLQ_DROPPED_KEY, dropped)
