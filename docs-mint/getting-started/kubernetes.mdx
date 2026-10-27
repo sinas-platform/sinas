@@ -403,22 +403,28 @@ until memory is freed or `maxmemory` is raised:
   memory, instead of a generic 500. Signing in (its rate limiter) and
   sending messages need writes, so they fail this way. Reads keep working:
   an admin who is signed in can still open the System page.
-- **Queue workers keep running.** They log that Redis is full (at most every
-  30 seconds) and back off. New jobs can't start, because the worker can't
-  mark them in progress, so they wait in the queue and run once Redis has
-  memory again.
-- **Jobs already running** usually fail, because their own status writes
-  are refused. The worker still takes a finished job off the queue, so it
-  is not run a second time (its arq result is not stored), and a function
-  execution that already finished is never run again.
-- **Agent turns in progress** stop: their stream events can't be written.
-  A client following the stream gets nothing more and gives up after its
-  idle timeout (2 minutes).
+- **Queue workers keep running.** When a write in their own loop is
+  refused (a health record, a periodic job's enqueue, a finished job's
+  result) they log it, at most every 30 seconds, and pause polling for 1 to 5
+  seconds. Jobs mostly can't start, because the worker can't mark them in
+  progress; they wait in the queue.
+- **Jobs that start anyway** (deletes and expiries free a little memory now
+  and then) and find their first write refused are put back in the queue,
+  not failed. A function job also goes back to the queue when a later
+  status or result write is refused; when it runs again, an execution that
+  already finished is not run a second time: its stored result is used.
+  Queued jobs run once Redis has memory again.
+- **Agent turns in progress** end with an error: their stream events can't
+  be written, so the turn records the error in the chat instead. A client
+  following the stream gets nothing more and gives up after its idle
+  timeout (2 minutes). A pipeline run that had started records its failure
+  on the run.
 - **Periodic jobs** (the approval-expiry sweep, MCP task polling, wakeups)
   that fall due while Redis is full are skipped; the next due run goes ahead.
-- Workers and the scheduler that **start** on a full Redis log an error
-  saying so, trim a dead-letter queue over its cap (trimming is allowed
-  on a full Redis), and wait.
+- Workers and the scheduler that **start** while Redis is at 90% of
+  `maxmemory` or more log a warning (an error once it is full), trim a
+  dead-letter queue over its cap (trimming works on a full Redis), and
+  carry on.
 
 The System page (`GET /api/v1/system/health`, field `redis`) shows Redis
 memory against `maxmemory`, its eviction policy, and how many keys it
