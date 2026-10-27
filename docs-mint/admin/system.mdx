@@ -260,6 +260,7 @@ ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 | `QUEUE_RETRY_DELAY` | 10 | First retry delay in seconds; doubles per failed attempt, capped at 5 minutes, plus jitter |
 | `QUEUE_POLL_DELAY` | 0.05 | Seconds between an idle worker's checks for new jobs |
 | `QUEUE_DLQ_MAX_ENTRIES` | 10000 | Most entries the dead letter queue keeps; older ones are dropped and counted. `0` = no cap |
+| `QUEUE_REDIS_FULL_MAX_WAIT_SECONDS` | 3600 | How long a job that keeps finding Redis full is put back in the queue before it fails with a recorded error. `0` = no limit |
 | `STREAM_RELAY_MAX_ENTRIES` | 20000 | Roughly how many events one turn's stream relay keeps in Redis (about 2.4 MB). `0` = no cap |
 
 **Packages:**

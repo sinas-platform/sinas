@@ -128,12 +128,29 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
     except Exception as e:
         if not is_redis_oom(e):
             raise
-        from app.queue.arq_worker import defer_job_redis_full
+        from app.queue.arq_worker import RedisFullTooLong, defer_job_redis_full
 
         redis = ctx.get("redis") or create_redis_client()
-        await defer_job_redis_full(
-            redis, ctx.get("job_id") or kwargs["job_id"], f"Function job {kwargs['job_id']}"
-        )
+        try:
+            await defer_job_redis_full(
+                redis, ctx.get("job_id") or kwargs["job_id"], f"Function job {kwargs['job_id']}",
+                enqueued_at=ctx.get("enqueue_time"),
+            )
+        except RedisFullTooLong as too_long:
+            # Out of patience: the execution fails, on record (the database
+            # still takes writes), instead of staying PENDING.
+            from app.services.execution_engine import executor
+
+            await executor.record_failure(
+                execution_id=kwargs["execution_id"],
+                error=str(too_long),
+                user_id=kwargs["user_id"],
+                trigger_id=kwargs["trigger_id"],
+                function_namespace=kwargs["function_namespace"],
+                function_name=kwargs["function_name"],
+                callback_url=kwargs.get("callback_url"),
+            )
+            raise
 
 
 async def _run_function_job(ctx: dict, **kwargs: Any) -> Any:
@@ -694,7 +711,7 @@ async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
             ctx.get("redis") or create_redis_client(),
             ctx.get("job_id") or kwargs["job_id"],
             f"Pipeline run job {kwargs['job_id']}",
-            reset_tries=True,
+            enqueued_at=ctx.get("enqueue_time"),
         )
 
 
@@ -718,13 +735,28 @@ async def execute_pipeline_fire_job(ctx: dict, **kwargs: Any) -> Any:
     """Expand a trigger firing into per-scope run jobs (perUser fan-out)."""
     from app.services import pipeline_runner
 
-    job_ids = await pipeline_runner.fire_pipeline(
-        kwargs["namespace"],
-        kwargs["name"],
-        kwargs.get("run_input"),
-        trigger_type=kwargs.get("trigger_type", "API"),
-        trigger_id=kwargs.get("trigger_id"),
-    )
+    try:
+        job_ids = await pipeline_runner.fire_pipeline(
+            kwargs["namespace"],
+            kwargs["name"],
+            kwargs.get("run_input"),
+            trigger_type=kwargs.get("trigger_type", "API"),
+            trigger_id=kwargs.get("trigger_id"),
+            # Run ids derive from this fire's id: a re-run after Redis was
+            # full mid fan-out enqueues only the runs still missing.
+            fire_id=ctx.get("job_id") or kwargs["job_id"],
+        )
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        from app.queue.arq_worker import defer_job_redis_full
+
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Pipeline fire job {kwargs['job_id']}",
+            enqueued_at=ctx.get("enqueue_time"),
+        )
     return {"runs": len(job_ids), "job_ids": job_ids}
 
 
@@ -814,6 +846,7 @@ async def execute_background_code_job(ctx: dict, **kwargs: Any) -> None:
             ctx.get("redis") or create_redis_client(),
             ctx.get("job_id") or kwargs["job_id"],
             f"Background job {kwargs['job_id']}",
+            enqueued_at=ctx.get("enqueue_time"),
         )
 
 
@@ -940,6 +973,12 @@ class AgentWorkerSettings:
         func(execute_agent_delegate_resume_job, timeout=agent_function_timeout()),
         func(chat_retention_run_job, timeout=_retention_job_timeout(), max_tries=1),
     ]
+    # On a full Redis (maxmemory, noeviction) none of these is deferred
+    # (defer_job_redis_full): a tick whose enqueue or writes are refused is
+    # simply skipped, and the next tick does the same work. (The non-cron
+    # functions above are covered: the agent jobs defer before their turn
+    # starts; chat_retention_run_job writes nothing to Redis itself, and
+    # SinasWorker keeps arq's own refused writes from losing it.)
     # Deferred-round expiry sweep: minutely, deduplicated across workers
     # (arq cron unique=True). Runs here — not on the sub-agent worker — so
     # exactly one worker class owns it.

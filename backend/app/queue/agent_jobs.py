@@ -175,11 +175,24 @@ def _in_enqueued_context(
     return run
 
 
-async def _mark_running(ctx: dict, redis: Any, job_id: str, base_fields: dict[str, Any]) -> None:
+async def _mark_running(
+    ctx: dict,
+    redis: Any,
+    job_id: str,
+    base_fields: dict[str, Any],
+    *,
+    chat_id: str,
+    user_token: str,
+    execution_id: Optional[str] = None,
+    parent_delegation_id: Optional[str] = None,
+    parent_tool_call_id: Optional[str] = None,
+) -> None:
     """The job's first write: its "running" status. Refused because Redis is
     full, the turn has not started, so the job is deferred (and may run
     again despite max_tries=1) instead of failing: arq would finish it, and
-    on a full Redis drop it, without a trace in the chat."""
+    on a full Redis drop it, without a trace in the chat. Past
+    QUEUE_REDIS_FULL_MAX_WAIT_SECONDS the turn ends with a recorded error
+    instead (`_turn_never_started`)."""
     try:
         await redis.set(
             f"{JOB_STATUS_PREFIX}{job_id}",
@@ -189,11 +202,51 @@ async def _mark_running(ctx: dict, redis: Any, job_id: str, base_fields: dict[st
     except Exception as e:
         if not is_redis_oom(e):
             raise
-        from app.queue.arq_worker import defer_job_redis_full
+        from app.queue.arq_worker import RedisFullTooLong, defer_job_redis_full
 
-        await defer_job_redis_full(
-            redis, ctx.get("job_id") or job_id, f"Agent job {job_id}", reset_tries=True
-        )
+        try:
+            await defer_job_redis_full(
+                redis, ctx.get("job_id") or job_id, f"Agent job {job_id}",
+                enqueued_at=ctx.get("enqueue_time"),
+            )
+        except RedisFullTooLong as too_long:
+            await _turn_never_started(
+                too_long, chat_id=chat_id, user_token=user_token, execution_id=execution_id,
+                parent_delegation_id=parent_delegation_id, parent_tool_call_id=parent_tool_call_id,
+            )
+            raise
+
+
+async def _turn_never_started(
+    error: Exception,
+    *,
+    chat_id: str,
+    user_token: str,
+    execution_id: Optional[str],
+    parent_delegation_id: Optional[str],
+    parent_tool_call_id: Optional[str],
+) -> None:
+    """Record a turn that gave up waiting for Redis, where Redis isn't
+    needed: the error in the chat, the batch Execution row, and the
+    suspended parent this turn was a delegation of (each best effort)."""
+    await _persist_turn_error(chat_id, error)
+    if execution_id:
+        try:
+            await _terminate_execution_row(execution_id, ExecutionStatus.FAILED, error=str(error))
+        except Exception:
+            logger.exception(f"Could not fail execution {execution_id}")
+    if parent_delegation_id and parent_tool_call_id:
+        from app.services.delegation import on_child_complete
+
+        try:
+            await on_child_complete(
+                parent_delegation_id,
+                parent_tool_call_id,
+                json.dumps({**_failure_fields(error), "chat_id": chat_id}),
+                user_token=user_token,
+            )
+        except Exception:
+            logger.exception(f"Could not report to pending delegation {parent_delegation_id}")
 
 
 async def _unless_redis_full(write: Awaitable[Any], what: str) -> None:
@@ -406,7 +459,11 @@ async def execute_agent_message_job(ctx: dict, **kwargs: Any) -> None:
     }
 
     # Update status to running
-    await _mark_running(ctx, redis, job_id, base_fields)
+    await _mark_running(
+        ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token,
+        execution_id=execution_id, parent_delegation_id=pending_delegation_id,
+        parent_tool_call_id=parent_tool_call_id,
+    )
 
     # Determine stream TTL (keep_alive chats get 24h TTL)
     stream_ttl = kwargs.get("stream_ttl")
@@ -673,7 +730,7 @@ async def execute_agent_resume_job(ctx: dict, **kwargs: Any) -> None:
         "enqueued_at": existing.get("enqueued_at"),
     }
 
-    await _mark_running(ctx, redis, job_id, base_fields)
+    await _mark_running(ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token)
 
     # Determine stream TTL (keep_alive chats get 24h TTL)
     stream_ttl = kwargs.get("stream_ttl")
@@ -907,7 +964,11 @@ async def execute_agent_delegate_resume_job(ctx: dict, **kwargs: Any) -> None:
         "type": "delegate_resume",
         "chat_id": chat_id,
     }
-    await _mark_running(ctx, redis, job_id, base_fields)
+    await _mark_running(
+        ctx, redis, job_id, base_fields, chat_id=chat_id, user_token=user_token,
+        execution_id=execution_id, parent_delegation_id=parent_pending_delegation_id,
+        parent_tool_call_id=parent_tool_call_id,
+    )
 
     stream_ttl = context.get("stream_ttl")
     ping_task = asyncio.create_task(_ping_loop(channel_id, ttl=stream_ttl))

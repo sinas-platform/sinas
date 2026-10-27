@@ -916,12 +916,17 @@ async def fire_pipeline(
     *,
     trigger_type: str,
     trigger_id: Optional[str],
+    fire_id: Optional[str] = None,
 ) -> list[str]:
     """Expand a trigger firing into queued run(s). Returns enqueued run job ids.
 
     Shared pipelines → one run as the pipeline owner. perUser pipelines → one
     run per connected user, each executing as that user (the run job mints the
     user's JWT worker-side, so tokens never sit in Redis job payloads).
+
+    `fire_id` (the fire job's id): each run's ids derive from it and the
+    user, so firing again with the same id (the fire job re-run after Redis
+    was full mid fan-out) enqueues only the runs that are missing.
     """
     from app.services.queue_service import queue_service
 
@@ -944,6 +949,7 @@ async def fire_pipeline(
                 trigger_type=trigger_type,
                 trigger_id=trigger_id,
                 user_id=uid,
+                dedup_key=f"{fire_id}:{uid}" if fire_id else None,
             )
             job_ids.append(job_id)
 

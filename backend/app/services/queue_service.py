@@ -210,19 +210,28 @@ class QueueService:
         trigger_type: str,
         trigger_id: Optional[str],
         user_id: str,
+        dedup_key: Optional[str] = None,
     ) -> str:
-        """Enqueue one pipeline run for one user scope. Returns the job id.
+        """Enqueue one pipeline run for one user scope. Returns the run id.
 
         The worker mints the run user's JWT itself — no tokens in job payloads.
+
+        `dedup_key`: derive the job and run ids from it, so enqueueing the
+        same key again (a pipeline fire job re-run after Redis was full)
+        is refused by arq instead of starting the run twice.
         """
         pool = await get_arq_pool()
-        job_id = str(uuid.uuid4())
-        # Pre-allocate the RUN id and return that, not the job id: callers
-        # poll GET /pipelines/runs/{run_id} with what we hand back, and the
-        # job id never appears in pipeline_runs. (The run row itself is
-        # created when the worker starts executing.)
-        run_id = str(uuid.uuid4())
-        await pool.enqueue_job(
+        if dedup_key:
+            job_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sinas:pipeline-run-job:{dedup_key}"))
+            run_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"sinas:pipeline-run:{dedup_key}"))
+        else:
+            job_id = str(uuid.uuid4())
+            # Pre-allocate the RUN id and return that, not the job id: callers
+            # poll GET /pipelines/runs/{run_id} with what we hand back, and the
+            # job id never appears in pipeline_runs. (The run row itself is
+            # created when the worker starts executing.)
+            run_id = str(uuid.uuid4())
+        job = await pool.enqueue_job(
             "execute_pipeline_run_job",
             job_id=job_id,
             run_id=run_id,
@@ -235,7 +244,11 @@ class QueueService:
             _job_id=job_id,
             _queue_name=PIPELINE_QUEUE,
         )
-        logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
+        if job is None:
+            # Only with a dedup_key: this run was enqueued already.
+            logger.info(f"Pipeline run job {job_id} (run={run_id}) already queued; not enqueued again")
+        else:
+            logger.info(f"Enqueued pipeline run job {job_id} (run={run_id}, pipeline={pipeline_id})")
         return run_id
 
     async def enqueue_pipeline_fire(

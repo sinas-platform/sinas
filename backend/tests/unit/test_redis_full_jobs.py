@@ -210,13 +210,169 @@ class TestFunctionJobs:
         assert _dlq(redis) == []
 
 
+@pytest.mark.usefixtures("use_test_db")
+class TestThirdReview:
+    async def test_a_paused_run_is_not_rerun_after_a_refused_result(self, db, test_user, sandbox):
+        """The run pauses for input (row AWAITING_INPUT, committed), then the
+        worker's result SET is refused and the job defers. The re-run must
+        not start the function again (side effects twice, and an orphaned
+        paused run): only resume_execution continues it."""
+        from app.queue import worker
+        from app.services.queue_service import JOB_RESULT_PREFIX
+
+        fn = await _function(db, test_user)
+        row = await _pending_row(db, test_user, fn)
+        fake = sandbox(ExecutionResult.from_wire({
+            "status": "awaiting_input", "prompt": "Which one?", "container_name": "c-1",
+        }))
+        redis = _FullRedis(refuse=JOB_RESULT_PREFIX)
+        kwargs = _kwargs(fn, row, test_user)
+
+        with pytest.raises(Retry):
+            await worker.execute_function_job({"redis": redis, "job_try": 1}, **kwargs)
+        assert fake.calls == 1
+        await db.refresh(row)
+        assert row.status == ExecutionStatus.AWAITING_INPUT
+
+        redis.refuse = ""
+        result = await worker.execute_function_job({"redis": redis, "job_try": 2}, **kwargs)
+        assert fake.calls == 1  # not run again
+        assert result == {"status": "awaiting_input", "execution_id": row.execution_id, "prompt": "Which one?"}
+        await db.refresh(row)
+        assert row.status == ExecutionStatus.AWAITING_INPUT
+
+    async def test_deferrals_never_use_up_arqs_tries(self, db, test_user, sandbox):
+        from app.queue import worker
+
+        fn = await _function(db, test_user)
+        row = await _pending_row(db, test_user, fn)
+        sandbox(ExecutionResult.from_wire({"result": 1, "status": "completed"}))
+        redis = _FullRedis()
+        with pytest.raises(Retry):
+            await worker.execute_function_job(
+                {"redis": redis, "job_try": 500, "job_id": row.execution_id}, **_kwargs(fn, row, test_user)
+            )
+        assert retry_key_prefix + row.execution_id in redis.deleted
+
+    async def test_a_function_job_gives_up_after_the_max_wait(self, db, test_user, sandbox, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        from app.queue import worker
+        from app.queue.arq_worker import RedisFullTooLong
+
+        monkeypatch.setattr(settings, "queue_redis_full_max_wait_seconds", 3600)
+        fn = await _function(db, test_user)
+        row = await _pending_row(db, test_user, fn)
+        fake = sandbox(ExecutionResult.from_wire({"result": 1, "status": "completed"}))
+        ctx = {
+            "redis": _FullRedis(), "job_try": 9,
+            "enqueue_time": datetime.now(timezone.utc) - timedelta(hours=2),
+        }
+        with pytest.raises(RedisFullTooLong):
+            await worker.execute_function_job(ctx, **_kwargs(fn, row, test_user))
+        assert fake.calls == 0
+        await db.refresh(row)
+        assert row.status == ExecutionStatus.FAILED and "Redis was full" in row.error
+
+    async def test_an_agent_turn_gives_up_with_a_recorded_error(self, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        from app.queue import agent_jobs
+        from app.queue.arq_worker import RedisFullTooLong
+
+        recorded = {}
+
+        async def persist(chat_id, error):
+            recorded["chat"] = (chat_id, str(error))
+
+        async def terminate(execution_id, status, **kw):
+            recorded["execution"] = (execution_id, status)
+
+        async def report(delegation_id, tool_call_id, content, user_token=None):
+            recorded["parent"] = (delegation_id, tool_call_id, json.loads(content))
+
+        monkeypatch.setattr(agent_jobs, "_persist_turn_error", persist)
+        monkeypatch.setattr(agent_jobs, "_terminate_execution_row", terminate)
+        monkeypatch.setattr("app.services.delegation.on_child_complete", report)
+        ctx = {"job_id": "j", "enqueue_time": datetime.now(timezone.utc) - timedelta(hours=2)}
+
+        with pytest.raises(RedisFullTooLong):
+            await agent_jobs._mark_running(
+                ctx, _FullRedis(), "j", {}, chat_id="chat-1", user_token="t",
+                execution_id="ex-1", parent_delegation_id="pd-1", parent_tool_call_id="tc-1",
+            )
+        assert recorded["chat"][0] == "chat-1" and "Redis was full" in recorded["chat"][1]
+        assert recorded["execution"] == ("ex-1", ExecutionStatus.FAILED)
+        assert recorded["parent"][:2] == ("pd-1", "tc-1")
+        assert recorded["parent"][2]["chat_id"] == "chat-1"
+
+
+async def test_a_refired_pipeline_enqueues_each_run_once():
+    """A fire job re-run after Redis was full mid fan-out: the runs it had
+    already enqueued are not enqueued again (ids derive from the fire)."""
+    from app.services.queue_service import PIPELINE_QUEUE, queue_service
+
+    redis = await get_redis()
+    first = await queue_service.enqueue_pipeline_run(
+        "p", {}, "manual", None, "u1", dedup_key="fire-1:u1"
+    )
+    again = await queue_service.enqueue_pipeline_run(
+        "p", {}, "manual", None, "u1", dedup_key="fire-1:u1"
+    )
+    other = await queue_service.enqueue_pipeline_run(
+        "p", {}, "manual", None, "u2", dedup_key="fire-1:u2"
+    )
+    assert first == again != other
+    assert await redis.zcard(PIPELINE_QUEUE) == 2
+
+
+async def test_the_fire_job_defers_on_a_full_redis(monkeypatch):
+    from app.queue import worker
+    from app.services import pipeline_runner
+
+    seen = {}
+
+    async def refused(*args, **kwargs):
+        seen.update(kwargs)
+        raise OutOfMemoryError(_OOM)
+
+    monkeypatch.setattr(pipeline_runner, "fire_pipeline", refused)
+    ctx = {"redis": _FullRedis(), "job_id": "fire-9"}
+    with pytest.raises(Retry):
+        await worker.execute_pipeline_fire_job(ctx, job_id="fire-9", namespace="n", name="p")
+    assert seen["fire_id"] == "fire-9"
+    assert retry_key_prefix + "fire-9" in ctx["redis"].deleted
+
+
+def test_error_text_keeps_the_key_but_not_secrets_or_values():
+    from redis.exceptions import ResponseError
+
+    from app.core.redis import _annotate_without_arguments
+
+    def annotate(*command):
+        exc = ResponseError("WRONGTYPE Operation against a key holding the wrong kind of value")
+        _annotate_without_arguments(None, exc, 1, command)
+        return str(exc)
+
+    assert annotate("SET", "chat:tool-grant:abc", "SECRET-VALUE").startswith(
+        "Command # 1 (SET chat:tool-grant:abc) of pipeline caused error: WRONGTYPE"
+    )
+    assert "SECRET" not in annotate(b"SET", b"arq:job:1", b"\x80SECRET-pickle")
+    assert "(SET sso_code:…)" in annotate("SET", "sso_code:ONE-TIME-CODE", "{}")
+    assert "ONE-TIME" not in annotate("SET", "sso_code:ONE-TIME-CODE", "{}")
+    assert "(SET connector_oauth_state:…)" in annotate("SET", "connector_oauth_state:STATE", "x")
+    assert "(INCR sinas:ratelimit:…)" in annotate("INCR", "sinas:ratelimit:login:email:a@b.c")
+    assert "(EVAL)" in annotate("EVAL", "return redis.call('GET', KEYS[1])", 1, "k")
+    assert "(MULTI)" in annotate("MULTI")
+
+
 class TestOtherJobs:
     async def test_agent_job_defers_and_resets_its_tries(self):
         from app.queue.agent_jobs import _mark_running
 
         redis = _FullRedis()
         with pytest.raises(Retry):
-            await _mark_running({"job_id": "j1"}, redis, "j1", {"chat_id": "c"})
+            await _mark_running({"job_id": "j1"}, redis, "j1", {"chat_id": "c"}, chat_id="c", user_token="t")
         assert retry_key_prefix + "j1" in redis.deleted  # max_tries=1 queue: re-run allowed
         assert f"pexpire:{job_key_prefix}j1" in redis.store
 
@@ -307,7 +463,7 @@ class TestRefusedCommandErrorsHaveNoArguments:
                 pipe.set("k", json.dumps({"input_data": "SECRET-INPUT"}))
                 await pipe.execute()
         assert is_redis_oom(exc.value) and "SECRET" not in str(exc.value)
-        assert "(SET)" in str(exc.value)
+        assert "(SET k)" in str(exc.value)
 
 
 async def _run_worker(worker, seconds):

@@ -53,6 +53,7 @@ import logging
 import random
 import sys
 import time
+from datetime import datetime, timezone
 from typing import Any, NoReturn, Optional
 
 from arq.constants import (
@@ -226,17 +227,51 @@ class RedisFullBeforeStart(Exception):
 REDIS_FULL_DEFER_SECONDS = (5.0, 15.0)
 
 
-async def defer_job_redis_full(redis: Any, job_id: str, what: str, *, reset_tries: bool = False) -> NoReturn:
+class RedisFullTooLong(RuntimeError):
+    """A job kept finding Redis full for longer than
+    QUEUE_REDIS_FULL_MAX_WAIT_SECONDS since it was enqueued: it is no longer
+    deferred, and its caller records it as failed."""
+
+
+async def defer_job_redis_full(
+    redis: Any,
+    job_id: str,
+    what: str,
+    *,
+    reset_tries: bool = True,
+    enqueued_at: Optional[datetime] = None,
+) -> NoReturn:
     """Defer a job that could not start because Redis is full: raise arq's
     Retry, so it stays queued instead of being finished as failed (and, on
     a full Redis, dropped). Call it only before the job did anything that
-    must not happen twice.
+    must not happen twice (or, for function jobs, where the engine's guard
+    makes a re-run a no-op).
 
     The job record's expiry is pushed out first (PEXPIRE is never refused),
-    as every deferral does (worker._keep_job_key_alive). `reset_tries`: for
-    a queue with max_tries=1 (agents, pipelines), drop the arq:retry counter
-    (DEL is never refused) so the re-run isn't refused as "max retries
-    exceeded"; this attempt never started."""
+    as every deferral does (worker._keep_job_key_alive). `reset_tries`: drop
+    the arq:retry counter (DEL is never refused), so these deferrals never
+    use up arq's try budget: max_tries=1 (agents, pipelines) would refuse the
+    re-run, and a long Redis outage could exhaust even a function job's
+    large budget, after which arq gives up silently. Sinas counts real
+    failures itself.
+
+    `enqueued_at` (arq's ctx["enqueue_time"]): past
+    QUEUE_REDIS_FULL_MAX_WAIT_SECONDS since then, raise RedisFullTooLong
+    instead, so a job doesn't wait (and extend its record a day at a time)
+    forever."""
+    from app.core.config import settings
+
+    max_wait = settings.queue_redis_full_max_wait_seconds
+    if enqueued_at is not None and max_wait > 0:
+        waited = (datetime.now(timezone.utc) - enqueued_at).total_seconds()
+        if waited > max_wait:
+            logger.error(
+                f"{what}: Redis has been full for the {waited:.0f}s since it was queued "
+                f"(QUEUE_REDIS_FULL_MAX_WAIT_SECONDS={max_wait}); giving up on it"
+            )
+            raise RedisFullTooLong(
+                f"Redis was full (out of memory) for more than {max_wait}s; the job could not run"
+            )
     defer = random.uniform(*REDIS_FULL_DEFER_SECONDS)
     try:
         await redis.pexpire(job_key_prefix + job_id, int(defer * 1000) + expires_extra_ms)
