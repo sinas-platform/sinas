@@ -546,6 +546,23 @@ async def run_pipeline(
             raise ValueError(f"Pipeline {pipeline.namespace}/{pipeline.name} is inactive")
         db.expunge(pipeline)
 
+        # A run id that already has a record ran already: the run job came
+        # again (a re-fire's deterministic ids, a re-delivery). Report that
+        # run; don't take the lock or run it twice.
+        existing = (
+            await db.execute(select(PipelineRun).where(PipelineRun.run_id == run_id))
+        ).scalar_one_or_none() if run_id else None
+        if existing is not None:
+            logger.info(f"Pipeline run {run_id} already exists ({existing.status}); not running it again")
+            return {
+                "run_id": run_id,
+                "status": existing.status,
+                "output": existing.output,
+                "error": existing.error,
+                "steps": existing.steps or [],
+                "duration_ms": existing.duration_ms or 0,
+            }
+
     label = f"{pipeline.namespace}/{pipeline.name}"
     # Queued runs arrive with a pre-allocated id (the one their enqueue
     # response promised); sync runs mint their own.
@@ -579,23 +596,33 @@ async def run_pipeline(
 
     started = _now()
     t0 = time.monotonic()
-    cursor_before = await _read_cursor(pipeline, user_id)
+    try:
+        cursor_before = await _read_cursor(pipeline, user_id)
 
-    # Create the run record up front (it doubles as the dead-letter record).
-    async with AsyncSessionLocal() as db:
-        db.add(PipelineRun(
-            pipeline_id=pipeline.id,
-            run_id=run_id,
-            user_id=user_id,
-            trigger_type=TriggerType(trigger_type),
-            trigger_id=trigger_id,
-            status="running",
-            input=run_input,
-            steps=[],
-            cursor_before=cursor_before,
-            started_at=started,
-        ))
-        await db.commit()
+        # Create the run record up front (it doubles as the dead-letter record).
+        async with AsyncSessionLocal() as db:
+            db.add(PipelineRun(
+                pipeline_id=pipeline.id,
+                run_id=run_id,
+                user_id=user_id,
+                trigger_type=TriggerType(trigger_type),
+                trigger_id=trigger_id,
+                status="running",
+                input=run_input,
+                steps=[],
+                cursor_before=cursor_before,
+                started_at=started,
+            ))
+            await db.commit()
+    except BaseException:
+        # Not started (e.g. a duplicate run_id that raced the check above):
+        # don't leave a single-concurrency pipeline locked until the TTL.
+        if use_lock:
+            try:
+                await redis.eval(_RELEASE_LUA, 1, lock_key, run_id)
+            except Exception:
+                logger.warning(f"Pipeline {label}: could not release the lock of run {run_id}", exc_info=True)
+        raise
 
     context: dict[str, Any] = {
         "input": run_input or {},
