@@ -297,3 +297,50 @@ async def close_redis() -> None:
         await _redis_client.aclose()
         _redis_client = None
     logger.info("Redis connections closed")
+
+
+REDIS_OOM_DETAIL = (
+    "Redis is out of memory (maxmemory reached) and refuses writes, so this "
+    "request could not be completed. Nothing was dropped; an operator must "
+    "raise Redis' maxmemory (Helm: redis.maxmemory; Compose: REDIS_MAXMEMORY)."
+)
+
+
+def install_redis_oom_handler(app: Any, *, openai_format: bool = False) -> None:
+    """Answer a request that hit a full Redis with a 503 that says so.
+
+    The in-cluster Redis runs maxmemory-policy noeviction: at maxmemory it
+    refuses writes ("OOM command not allowed") instead of evicting queued
+    jobs or locks. Without this a refused write is an anonymous 500."""
+    from fastapi.responses import JSONResponse
+    from redis.exceptions import ResponseError
+
+    async def _handler(request: Any, exc: ResponseError) -> JSONResponse:
+        if not is_redis_oom(exc):
+            raise exc  # any other Redis error: a 500, as before
+        logger.error(f"Redis refused a write, out of memory: {exc} ({request.url.path})")
+        if openai_format:
+            body: dict[str, Any] = {
+                "error": {
+                    "message": REDIS_OOM_DETAIL,
+                    "type": "server_error",
+                    "param": None,
+                    "code": "redis_out_of_memory",
+                }
+            }
+        else:
+            body = {"detail": REDIS_OOM_DETAIL, "code": "redis_out_of_memory"}
+        return JSONResponse(body, status_code=503, headers={"Retry-After": "30"})
+
+    app.add_exception_handler(ResponseError, _handler)
+
+
+def is_redis_oom(exc: BaseException) -> bool:
+    """A write Redis refused at maxmemory. redis-py raises OutOfMemoryError
+    for a plain command; inside a Lua script Redis 6.2 reports it as a
+    script error ("Error running script ... -OOM command not allowed")."""
+    from redis.exceptions import OutOfMemoryError, ResponseError
+
+    return isinstance(exc, OutOfMemoryError) or (
+        isinstance(exc, ResponseError) and "OOM command not allowed" in str(exc)
+    )

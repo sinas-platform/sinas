@@ -179,9 +179,10 @@ Returns a comprehensive health report:
 
 - **`services`** — All Docker Compose containers with status, health, uptime, CPU %, and memory usage. Infrastructure containers (redis, postgres, pgbouncer) are listed first, followed by application containers sorted alphabetically. Sandbox and shared worker containers are included.
 - **`host`** — Host-level CPU, memory, and disk usage (read from `/proc` on Linux).
+- **`redis`** — Redis memory (`used_bytes`, `maxmemory_bytes`, `percent`), its `policy` (`maxmemory-policy`), and since it started the keys it evicted (`evicted_keys`) and the writes it refused for lack of memory (`oom_errors`). `null` when Redis can't be read. With the default `noeviction` policy a full Redis refuses writes instead of dropping queued jobs or locks; a request whose write is refused answers 503 with `"code": "redis_out_of_memory"`.
 - **`warnings`** — Auto-generated alerts at three levels:
-  - `critical` — No queue workers running, or infrastructure services (redis, postgres, pgbouncer) down
-  - `warning` — Non-infrastructure services down, unhealthy containers, DLQ items, queue backlog >50, disk/memory >90%
+  - `critical` — No queue workers running, infrastructure services (redis, postgres, pgbouncer) down, Redis memory at 90% of `maxmemory` or more, or Redis refused writes
+  - `warning` — Non-infrastructure services down, unhealthy containers, DLQ items or entries dropped by the DLQ cap, queue backlog >50, disk/memory >90%, Redis memory at 75% of `maxmemory`, a Redis policy other than `noeviction`, evicted Redis keys
   - `info` — Disk/memory >75%
 
 **Container restart:**
@@ -258,6 +259,8 @@ ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 | `QUEUE_MAX_RETRIES` | 3 | Retries of a function job whose infrastructure failed before the code ran, before it is dead-lettered |
 | `QUEUE_RETRY_DELAY` | 10 | First retry delay in seconds; doubles per failed attempt, capped at 5 minutes, plus jitter |
 | `QUEUE_POLL_DELAY` | 0.05 | Seconds between an idle worker's checks for new jobs |
+| `QUEUE_DLQ_MAX_ENTRIES` | 10000 | Most entries the dead letter queue keeps; older ones are dropped and counted. `0` = no cap |
+| `STREAM_RELAY_MAX_ENTRIES` | 100000 | Roughly how many events one turn's stream relay keeps in Redis. `0` = no cap |
 
 **Packages:**
 

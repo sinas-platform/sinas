@@ -177,15 +177,90 @@ def _get_host_resources() -> dict:
     return result
 
 
+async def _redis_memory() -> dict[str, Any] | None:
+    """Redis memory against its maxmemory, its eviction policy, and what it
+    evicted or refused since it started. None when Redis can't be read.
+
+    INFO is allowed on managed Redis (Memorystore, ElastiCache), where
+    CONFIG GET is not; errorstats needs Redis 6.2 (absent: no OOM count)."""
+    from app.core.redis import get_redis
+
+    try:
+        redis = await get_redis()
+        memory = await redis.info("memory")
+        stats = await redis.info("stats")
+    except Exception as e:
+        logger.warning(f"Could not read Redis memory info: {e}")
+        return None
+    try:
+        errorstats = await redis.info("errorstats")
+    except Exception:
+        errorstats = {}
+
+    used = int(memory.get("used_memory") or 0)
+    maxmemory = int(memory.get("maxmemory") or 0)  # 0 = no limit
+    oom = errorstats.get("errorstat_OOM")
+    return {
+        "used_bytes": used,
+        "maxmemory_bytes": maxmemory or None,
+        "percent": round(used / maxmemory * 100, 1) if maxmemory else None,
+        "policy": memory.get("maxmemory_policy"),
+        "evicted_keys": int(stats.get("evicted_keys") or 0),
+        "oom_errors": int(oom.get("count", 0)) if isinstance(oom, dict) else None,
+    }
+
+
+def _redis_warnings(redis_memory: dict[str, Any] | None) -> list[dict]:
+    """At maxmemory a noeviction Redis refuses writes (requests and jobs
+    fail with OOM errors); any other policy silently drops state."""
+    if not redis_memory:
+        return []
+    warnings = []
+    percent = redis_memory.get("percent")
+    policy = redis_memory.get("policy")
+    if percent is not None and percent >= 75:
+        consequence = (
+            "writes fail when it is full" if policy == "noeviction"
+            else "it evicts keys when full"
+        )
+        warnings.append({
+            "level": "critical" if percent >= 90 else "warning",
+            "message": f"Redis memory at {percent}% of maxmemory ({consequence})",
+        })
+    if redis_memory.get("oom_errors"):
+        warnings.append({
+            "level": "critical",
+            "message": (
+                f"Redis refused {redis_memory['oom_errors']} write(s) for lack of memory "
+                "since it started; raise its maxmemory"
+            ),
+        })
+    if policy and policy != "noeviction":
+        warnings.append({
+            "level": "warning",
+            "message": (
+                f"Redis maxmemory-policy is {policy}: under memory pressure it can drop "
+                "queued jobs, locks and the dead-letter queue. Use noeviction."
+            ),
+        })
+    if redis_memory.get("evicted_keys"):
+        warnings.append({
+            "level": "warning",
+            "message": f"Redis has evicted {redis_memory['evicted_keys']} key(s) since it started",
+        })
+    return warnings
+
+
 def _generate_warnings(
     services: list[dict],
     queue_workers: list[dict],
     dlq_size: int,
     queue_stats: dict,
     host: dict,
+    redis_memory: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Generate health warnings from system state."""
-    warnings = []
+    warnings = _redis_warnings(redis_memory)
 
     # Critical: no queue workers
     fn_workers = [w for w in queue_workers if w.get("queue") == "functions"]
@@ -229,6 +304,15 @@ def _generate_warnings(
         warnings.append({
             "level": "warning",
             "message": f"Dead letter queue has {dlq_size} item{'s' if dlq_size != 1 else ''}",
+        })
+    dlq_dropped = queue_stats.get("dlq", {}).get("dropped", 0)
+    if dlq_dropped:
+        warnings.append({
+            "level": "warning",
+            "message": (
+                f"{dlq_dropped} dead-lettered job(s) were dropped: the dead letter queue "
+                f"is capped at {queue_stats['dlq'].get('max_entries')} (QUEUE_DLQ_MAX_ENTRIES)"
+            ),
         })
 
     # Warning: queue backlog
@@ -362,12 +446,17 @@ async def get_system_health(
     except Exception as e:
         logger.warning(f"Failed to get queue stats for health check: {e}")
 
-    warnings = _generate_warnings(services, queue_workers, dlq_size, queue_stats, host)
+    redis_memory = await _redis_memory()
+
+    warnings = _generate_warnings(
+        services, queue_workers, dlq_size, queue_stats, host, redis_memory
+    )
 
     return HealthResponse(
         warnings=warnings,
         services=services,
         host=host,
+        redis=redis_memory,
         deployment=deployment,
         executors={
             "sandbox": settings.sandbox_executor,

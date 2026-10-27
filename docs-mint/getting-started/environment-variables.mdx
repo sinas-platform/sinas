@@ -260,6 +260,8 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `REDIS_PASSWORD` | — | AUTH password. Overrides the URL's and is used verbatim, so it needs no encoding. |
 | `REDIS_USERNAME` | — | ACL username. Overrides the URL's. |
 | `REDIS_SSL_CA_CERTS` | — | Path to a PEM file with the CA(s) the server certificate is verified against, e.g. the Memorystore server CA. Empty means the system trust store. |
+| `REDIS_MAXMEMORY` | `256mb` (`128mb` lite) | Docker Compose only: memory limit of the bundled Redis. |
+| `REDIS_MAXMEMORY_POLICY` | `noeviction` | Docker Compose only: what the bundled Redis does at `REDIS_MAXMEMORY`. `noeviction` refuses writes (errors you can see) rather than dropping queued jobs, locks or the dead-letter queue; it was `allkeys-lru` before 0.5.0. |
 | `REDIS_SSL_CHECK_HOSTNAME` | _(auto)_ | Also match the server certificate to the host name. Unset means automatic: on without `REDIS_SSL_CA_CERTS` (system trust store), off with it (a private CA such as Memorystore's, reached by IP). A `?ssl_check_hostname=` flag on `REDIS_URL` applies when this is unset. |
 
 Every Sinas process (API, queue workers, scheduler, CDC worker) uses these

@@ -245,6 +245,14 @@ for _api in (app, management_app):
     install_error_handler(_api)
 install_error_handler(adapters_openai_app, openai_format=True)
 
+# A write refused by a full Redis (noeviction) answers 503 with what to do
+# rather than an anonymous 500 (app/core/redis.py).
+from app.core.redis import install_redis_oom_handler
+
+for _api in (app, management_app):
+    install_redis_oom_handler(_api)
+install_redis_oom_handler(adapters_openai_app, openai_format=True)
+
 # Console SPA served from this process (lite profile — replaces the console
 # container). app.frontend() is only consulted when no API route matched, so
 # the runtime routes above keep priority; the console owning exactly the /ui

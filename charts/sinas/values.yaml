@@ -140,12 +140,13 @@ postgres:
 redis:
   maxmemory: "256mb"
   ## Eviction policy of the in-cluster Redis. Redis holds the job queues,
-  ## locks, stream relays and auth/metering state — almost nothing in it is
-  ## a cache, so "noeviction" (writes fail loudly at maxmemory instead of
-  ## queued jobs or locks being silently dropped) is the safe choice for
-  ## production; size maxmemory so it is never reached. Kept at the
-  ## historical "allkeys-lru" by default for compatibility.
-  maxmemoryPolicy: "allkeys-lru"
+  ## locks, stream relays and auth/metering state; almost nothing in it is
+  ## a cache. With "noeviction" a full Redis refuses writes (OOM errors that
+  ## surface as failed requests and jobs, and on the System page) instead of
+  ## silently dropping queued jobs, locks or the dead-letter queue, as
+  ## "allkeys-lru" (the default before 0.5.0) did. Size maxmemory so it is
+  ## never reached; the System page shows Redis memory against it.
+  maxmemoryPolicy: "noeviction"
   storage: 1Gi
   resources:
     requests:

@@ -277,7 +277,7 @@ redis:
 | `redis.external.tls.caSecret` / `caSecretKey` | — / `ca.crt` | Secret holding the server CA (PEM). |
 | `redis.external.tls.caConfigMap` / `caConfigMapKey` | — / `ca.crt` | The same, from a ConfigMap (a CA certificate isn't secret). Set one of the two, not both. |
 | `redis.external.tls.checkHostname` | _(auto)_ | Also match the certificate to `host`. Unset means automatic. Without a CA it's on: the system trust store would otherwise accept any publicly issued certificate. With `caSecret`/`caConfigMap` it's off, which suits Memorystore, reached by IP and verified against its own per-instance CA. Set `true` or `false` to override. |
-| `redis.maxmemoryPolicy` | `allkeys-lru` | Eviction policy of the **in-cluster** Redis. See below. |
+| `redis.maxmemoryPolicy` | `noeviction` | Eviction policy of the **in-cluster** Redis (`allkeys-lru` before 0.5.0). See below. |
 
 The certificate is always verified; the chart has no option to skip
 verification. Without a CA, the image's system trust store is used, and
@@ -367,7 +367,7 @@ Almost nothing Sinas keeps in Redis is a cache:
 
 | Policy | What happens at `maxmemory` |
 |---|---|
-| `noeviction` (**recommended**) | Writes fail with an out-of-memory error. Nothing is lost silently; you see the errors and add memory. |
+| `noeviction` (**recommended**, the in-cluster default) | Writes fail with an out-of-memory error. Nothing is lost silently; you see the errors and add memory. See [When Redis is full](#when-redis-is-full). |
 | `volatile-lru` (Memorystore default) | Evicts keys that have a TTL. These include queued job payloads (the job is dropped as "expired"), the in-progress markers (a job can run twice), the chat and pipeline locks (two agent loops on one chat), and OAuth state. |
 | `allkeys-lru` | All of the above, plus whole queues, the dead-letter queue and metering counters. |
 
@@ -380,14 +380,38 @@ gcloud redis instances update sinas-redis --region=europe-west4 \
 
 Size the instance so it never gets near the limit, and alert on memory
 usage (`redis.googleapis.com/stats/memory/usage_ratio`). The main growth
-comes from job status and result keys (24 hours of job volume), streams of
-long agent runs, and the dead-letter queue, which grows until an admin
-empties it.
+comes from job status and result keys (24 hours of job volume), the
+streams of running and recently finished agent turns, and the dead-letter
+queue. Everything Sinas writes either expires or is bounded: the
+dead-letter queue keeps its newest `QUEUE_DLQ_MAX_ENTRIES` entries (10000)
+and one turn's stream about `STREAM_RELAY_MAX_ENTRIES` events (100000); see
+[Environment variables](/getting-started/environment-variables#scaling).
 
-The in-cluster Redis defaults to `allkeys-lru` for backwards compatibility,
-which carries the same risk under memory pressure. Set
-`redis.maxmemoryPolicy: noeviction` and give `redis.maxmemory` headroom for
-production.
+The in-cluster Redis uses `noeviction` too (`redis.maxmemoryPolicy`, since
+0.5.0; it was `allkeys-lru` before). Give `redis.maxmemory` (256mb, 128mb in
+the lite profile) headroom for your load; you can still set another policy.
+
+#### When Redis is full
+
+With `noeviction`, a Redis at `maxmemory` refuses writes and keeps
+everything it has:
+
+- An API request whose write is refused answers **503** with
+  `"code": "redis_out_of_memory"` and a message saying to raise Redis'
+  memory, instead of a generic 500.
+- Jobs that can't write their state fail with the Redis error
+  `OOM command not allowed when used memory > 'maxmemory'` in the worker
+  logs. Queued jobs stay queued.
+- Reads and deletes keep working, so an admin who is signed in can still
+  open the System page. Signing in (its rate limiter), new agent turns and
+  their streams need writes and fail until memory is freed or raised.
+
+The System page (`GET /api/v1/system/health`, field `redis`) shows Redis
+memory against `maxmemory`, its eviction policy, and how many keys it
+evicted and writes it refused since it started. It warns at 75% of `maxmemory`, critically
+at 90%, on any refused write, on a policy other than `noeviction`, and when
+the dead-letter queue cap dropped entries. Managed Redis reports the same
+through `INFO`, which Memorystore allows.
 
 ### Docker Compose
 
