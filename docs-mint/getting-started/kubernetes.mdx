@@ -367,7 +367,7 @@ Almost nothing Sinas keeps in Redis is a cache:
 
 | Policy | What happens at `maxmemory` |
 |---|---|
-| `noeviction` (**recommended**, the in-cluster default) | Writes fail with an out-of-memory error. Nothing is lost silently; you see the errors and add memory. See [When Redis is full](#when-redis-is-full). |
+| `noeviction` (**recommended**, the in-cluster default) | Writes fail with an out-of-memory error and nothing is evicted. Stored jobs and locks are kept; work that has to write fails, visibly, until you add memory. See [When Redis is full](#when-redis-is-full). |
 | `volatile-lru` (Memorystore default) | Evicts keys that have a TTL. These include queued job payloads (the job is dropped as "expired"), the in-progress markers (a job can run twice), the chat and pipeline locks (two agent loops on one chat), and OAuth state. |
 | `allkeys-lru` | All of the above, plus whole queues, the dead-letter queue and metering counters. |
 
@@ -384,7 +384,7 @@ comes from job status and result keys (24 hours of job volume), the
 streams of running and recently finished agent turns, and the dead-letter
 queue. Everything Sinas writes either expires or is bounded: the
 dead-letter queue keeps its newest `QUEUE_DLQ_MAX_ENTRIES` entries (10000)
-and one turn's stream about `STREAM_RELAY_MAX_ENTRIES` events (100000); see
+and one turn's stream about `STREAM_RELAY_MAX_ENTRIES` events (20000); see
 [Environment variables](/getting-started/environment-variables#scaling).
 
 The in-cluster Redis uses `noeviction` too (`redis.maxmemoryPolicy`, since
@@ -393,25 +393,54 @@ the lite profile) headroom for your load; you can still set another policy.
 
 #### When Redis is full
 
-With `noeviction`, a Redis at `maxmemory` refuses writes and keeps
-everything it has:
+With `noeviction`, a Redis at `maxmemory` refuses every write that would
+need more memory. It evicts nothing, so whatever is stored stays: queued
+jobs, locks, the dead-letter queue. Work that has to write fails, loudly,
+until memory is freed or `maxmemory` is raised:
 
-- An API request whose write is refused answers **503** with
+- **API requests** whose write is refused answer **503** with
   `"code": "redis_out_of_memory"` and a message saying to raise Redis'
-  memory, instead of a generic 500.
-- Jobs that can't write their state fail with the Redis error
-  `OOM command not allowed when used memory > 'maxmemory'` in the worker
-  logs. Queued jobs stay queued.
-- Reads and deletes keep working, so an admin who is signed in can still
-  open the System page. Signing in (its rate limiter), new agent turns and
-  their streams need writes and fail until memory is freed or raised.
+  memory, instead of a generic 500. Signing in (its rate limiter) and
+  sending messages need writes, so they fail this way. Reads keep working:
+  an admin who is signed in can still open the System page.
+- **Queue workers keep running.** They log that Redis is full (at most every
+  30 seconds) and back off. New jobs can't start, because the worker can't
+  mark them in progress, so they wait in the queue and run once Redis has
+  memory again.
+- **Jobs already running** usually fail, because their own status writes
+  are refused. The worker still takes a finished job off the queue, so it
+  is not run a second time (its arq result is not stored), and a function
+  execution that already finished is never run again.
+- **Agent turns in progress** stop: their stream events can't be written.
+  A client following the stream gets nothing more and gives up after its
+  idle timeout (2 minutes).
+- **Periodic jobs** (the approval-expiry sweep, MCP task polling, wakeups)
+  that fall due while Redis is full are skipped; the next due run goes ahead.
+- Workers and the scheduler that **start** on a full Redis log an error
+  saying so, trim a dead-letter queue over its cap (trimming is allowed
+  on a full Redis), and wait.
 
 The System page (`GET /api/v1/system/health`, field `redis`) shows Redis
 memory against `maxmemory`, its eviction policy, and how many keys it
-evicted and writes it refused since it started. It warns at 75% of `maxmemory`, critically
-at 90%, on any refused write, on a policy other than `noeviction`, and when
-the dead-letter queue cap dropped entries. Managed Redis reports the same
-through `INFO`, which Memorystore allows.
+evicted and writes it refused since it started. It warns at 75% of
+`maxmemory`, critically at 90%, on any refused write, on a policy other
+than `noeviction`, and when the dead-letter queue cap dropped entries.
+Managed Redis reports the same through `INFO`, which Memorystore allows.
+
+#### Before upgrading to 0.5.0
+
+A Redis that ran `allkeys-lru` (the default before 0.5.0) on a busy install
+can sit at `maxmemory`, evicting as it goes. Switched to `noeviction` with
+its data kept, it is full from the first write. Check first:
+
+```bash
+kubectl exec -n <namespace> sts/redis -- redis-cli INFO memory | grep -E 'used_memory:|maxmemory:'
+kubectl exec -n <namespace> sts/redis -- redis-cli INFO stats | grep evicted_keys
+```
+
+If `used_memory` is near `maxmemory`, or `evicted_keys` is above 0, raise
+`redis.maxmemory` (and the pod's memory request) in the same upgrade.
+
 
 ### Docker Compose
 

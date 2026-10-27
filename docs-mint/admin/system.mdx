@@ -129,12 +129,12 @@ POST /api/v1/queue/dlq/flush             # Drop all entries
 ```yaml
 # docker-compose.yml
 queue-worker:
-  command: python -m arq app.queue.worker.WorkerSettings
+  command: python -m app.queue.arq_worker app.queue.worker.WorkerSettings
   deploy:
     replicas: ${QUEUE_WORKER_REPLICAS:-2}
 
 queue-agent:
-  command: python -m arq app.queue.worker.AgentWorkerSettings
+  command: python -m app.queue.arq_worker app.queue.worker.AgentWorkerSettings
   deploy:
     replicas: ${QUEUE_AGENT_REPLICAS:-2}
 ```
@@ -260,7 +260,7 @@ ALLOWED_PACKAGES=requests,pandas,numpy,redis,boto3
 | `QUEUE_RETRY_DELAY` | 10 | First retry delay in seconds; doubles per failed attempt, capped at 5 minutes, plus jitter |
 | `QUEUE_POLL_DELAY` | 0.05 | Seconds between an idle worker's checks for new jobs |
 | `QUEUE_DLQ_MAX_ENTRIES` | 10000 | Most entries the dead letter queue keeps; older ones are dropped and counted. `0` = no cap |
-| `STREAM_RELAY_MAX_ENTRIES` | 100000 | Roughly how many events one turn's stream relay keeps in Redis. `0` = no cap |
+| `STREAM_RELAY_MAX_ENTRIES` | 20000 | Roughly how many events one turn's stream relay keeps in Redis (about 2.4 MB). `0` = no cap |
 
 **Packages:**
 

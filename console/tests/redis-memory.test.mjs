@@ -28,6 +28,7 @@ test('used against maxmemory, or no limit', () => {
 
 test('policy note: noeviction refuses writes, anything else drops state', () => {
   assert.match(m.redisPolicyNote('noeviction'), /refuses writes/);
+  assert.match(m.redisPolicyNote('noeviction'), /fail until/);
   assert.match(m.redisPolicyNote('allkeys-lru'), /can be lost/);
   assert.match(m.redisPolicyNote('volatile-lru'), /noeviction/);
   assert.equal(m.redisPolicyNote(null), '');

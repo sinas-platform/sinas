@@ -36,6 +36,6 @@ export function redisMemoryLabel(redis: RedisMemory): string {
 /** What a full Redis does under its policy, for the policy line's tooltip. */
 export function redisPolicyNote(policy: string | null): string {
   if (!policy) return '';
-  if (policy === 'noeviction') return 'When full, Redis refuses writes; nothing is dropped.';
+  if (policy === 'noeviction') return 'When full, Redis refuses writes: nothing stored is evicted, but requests and jobs that need to write fail until it has memory again.';
   return 'When full, Redis evicts keys: queued jobs, locks and the dead letter queue can be lost. Use noeviction.';
 }
