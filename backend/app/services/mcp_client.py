@@ -51,6 +51,7 @@ from pydantic import ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.secret_refs import describe_secret_ref, secret_ref_name
 from app.models.mcp_server import McpServer
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,15 @@ BlobStore = Callable[[str, bytes, str], Awaitable[Optional[str]]]
 
 class McpClientError(Exception):
     """A call that could not be made (auth unresolvable, unreachable server,
-    transport failure). The message is safe to show to the model."""
+    transport failure). The message is safe to show to the model.
+
+    `detail` may say more, for the server's editors (the console's
+    connection test) and the logs; it defaults to the message.
+    """
+
+    def __init__(self, message: str, detail: Optional[str] = None):
+        super().__init__(message)
+        self.detail = detail or message
 
 
 # --------------------------------------------------------------- tasks (protocol)
@@ -236,13 +245,23 @@ async def resolve_headers(db: AsyncSession, server: McpServer, user_id: Optional
     auth_type = auth.get("type", "none")
     if auth_type == "none":
         return headers
-    secret_name = auth.get("secret")
+    secret_name = secret_ref_name(auth.get("secret"))
     if not secret_name:
         raise McpClientError(f"MCP server '{server.namespace}/{server.name}': auth.secret is not set")
     value = await connector_service._resolve_secret_value(db, secret_name, user_id)
     if value is None:
+        # Which secret is for the server's editors and the logs; the model
+        # and the chat get a fixed message (the reference may be a pasted
+        # credential).
+        detail = (
+            f"MCP server '{server.namespace}/{server.name}': "
+            f"{describe_secret_ref(secret_name)} not found"
+        )
+        logger.warning(detail)
         raise McpClientError(
-            f"MCP server '{server.namespace}/{server.name}': secret '{secret_name}' not found"
+            f"MCP server '{server.namespace}/{server.name}': its credentials are not set up, "
+            "so the call was not made. Ask an administrator to check the server's auth secret.",
+            detail=detail,
         )
     if auth_type == "bearer":
         headers["Authorization"] = f"Bearer {value}"

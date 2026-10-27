@@ -26,6 +26,7 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.redis import get_redis
+from app.core.secret_refs import secret_ref_name
 from app.models.connector import Connector
 from app.models.database_connection import DatabaseConnection
 from app.models.execution import TriggerType
@@ -490,7 +491,7 @@ async def reset_user_failure_state(
             refs.update(
                 f"{c.namespace}/{c.name}"
                 for c in connectors
-                if (c.auth or {}).get("secret") == secret_name
+                if secret_ref_name((c.auth or {}).get("secret")) == secret_name
             )
         if not refs:
             return
@@ -876,7 +877,7 @@ async def enumerate_connected_users(db, pipeline: Pipeline) -> list[str]:
         )
         user_ids = [str(r[0]) for r in rows.all()]
     elif auth_type in ("bearer", "basic", "api_key", "oauth2_client_credentials"):
-        secret_name = (connector.auth or {}).get("secret")
+        secret_name = secret_ref_name((connector.auth or {}).get("secret"))
         if not secret_name:
             return []
         rows = await db.execute(

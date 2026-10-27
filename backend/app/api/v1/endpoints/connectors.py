@@ -523,7 +523,11 @@ async def test_operation(
             elapsed_ms=result.get("elapsed_ms", 0),
         )
     except ConnectorAuthError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Which secret is missing (never a value, nor a reference shaped like
+        # one) is for those who may edit the connector; readers get what an
+        # agent gets.
+        editor = connector.can_user_access(str(user_id), permissions, "update")
+        raise HTTPException(status_code=400, detail=e.detail if editor else str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

@@ -9,12 +9,14 @@ secret variables fill in, and what connectors and pipelines resolve.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any, Optional
 
 from sqlalchemy import select
 
 from app.core.encryption import encryption_service
+from app.core.secret_refs import SECRET_NAME_PATTERN
 from app.models.secret import Secret
 from app.schemas.spec.secret import SecretSpec
 from app.services.resources.base import (
@@ -89,6 +91,24 @@ class SecretApplier(ResourceApplier[SecretSpec]):
         if ctx.origin == "package" and row.managed_by is None:
             return "write"
         return ownership_decision(row.managed_by, ctx, row.config_name)
+
+    async def check_new_references(
+        self, spec: SecretSpec, ctx: ApplyContext, current: Optional[SecretSpec]
+    ) -> None:
+        # New secrets get the REST name rule, so a `{{ NAME }}` reference can
+        # always name them. On create only: rows config created before the
+        # rule keep working, and can still be updated. Restoring a deleted
+        # one from history recreates that row, under its old name.
+        if (
+            current is None
+            and ctx.restore_resource_id is None
+            and not re.match(SECRET_NAME_PATTERN, spec.name)
+        ):
+            raise ApplierError(
+                f"Secret name '{spec.name}' is not allowed: use letters, digits and _, "
+                "not starting with a digit (e.g. GITHUB_TOKEN)."
+            )
+        await super().check_new_references(spec, ctx, current)
 
     async def check_references(self, spec: SecretSpec, ctx: ApplyContext) -> None:
         # Runs on create (no reference fields to change on update). A package

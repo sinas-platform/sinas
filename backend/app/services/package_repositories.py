@@ -27,6 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.secret_refs import describe_secret_ref, secret_ref_name
 from app.models.package import Package
 from app.models.package_repository import PackageRepository
 
@@ -118,10 +119,12 @@ async def _auth_headers(db: AsyncSession, repository: PackageRepository) -> dict
         return {}
     from app.services.connector_service import connector_service
 
-    secret = auth.get("secret")
+    secret = secret_ref_name(auth.get("secret"))
     value = await connector_service._resolve_secret_value(db, secret, None) if secret else None
     if value is None:
-        raise RepositoryError(f"Secret '{secret}' for repository '{repository.name}' not found")
+        raise RepositoryError(
+            f"The {describe_secret_ref(secret)} for repository '{repository.name}' was not found"
+        )
     if kind == "bearer":
         return {"Authorization": f"Bearer {value}"}
     return {auth.get("header") or "X-Api-Key": value}

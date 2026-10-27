@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 
+from app.core.secret_refs import secret_ref_name
 from app.schemas.spec.base import SpecModel
 
 DEFAULT_SCOPES = ["openid", "email", "profile"]
@@ -159,6 +160,12 @@ class IdentityProviderSpec(SpecModel):
                 if data.get(field) == "":
                     data[field] = None
         return data
+
+    @field_validator("client_secret", mode="before")
+    @classmethod
+    def _client_secret_name(cls, value: Any) -> Any:
+        # A Secret reference: `{{ NAME }}` is stored as `NAME`.
+        return secret_ref_name(value) or None
 
     @field_validator("issuer")
     @classmethod

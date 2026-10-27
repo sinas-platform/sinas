@@ -247,7 +247,9 @@ async def client_secret(db: AsyncSession, provider: IdentityProvider) -> Optiona
 
     value = await connector_service._resolve_secret_value(db, provider.client_secret, None)
     if value is None:
-        logger.warning(f"SSO {provider.name}: shared secret '{provider.client_secret}' not found")
+        from app.core.secret_refs import describe_secret_ref
+
+        logger.warning(f"SSO {provider.name}: shared {describe_secret_ref(provider.client_secret)} not found")
         raise SsoError("Single sign-on isn't fully set up (its client secret is missing). Tell an administrator.")
     return value
 

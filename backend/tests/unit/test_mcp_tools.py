@@ -639,8 +639,9 @@ class TestAuth:
         stranger = User(email=f"stranger-{_uid()}@example.com")
         db.add(stranger)
         await db.flush()
-        with pytest.raises(mcp_client.McpClientError, match="not found"):
+        with pytest.raises(mcp_client.McpClientError) as refused:
             await mcp_client.list_tools(db, server, str(stranger.id))
+        assert "not found" in refused.value.detail
         # ...and that refusal poisons nobody else's entry.
         await mcp_client.list_tools(db, server, str(test_user.id))
         assert fake_mcp.transport_opens == 2
@@ -663,7 +664,8 @@ class TestAuth:
     async def test_a_missing_secret_refuses_rather_than_sends_unauthenticated(
         self, db, fake_mcp, test_user
     ):
-        server = _server(test_user, auth={"type": "bearer", "secret": "NOPE_" + _uid()})
+        name = "NOPE_" + _uid()
+        server = _server(test_user, auth={"type": "bearer", "secret": name})
         db.add(server)
         await db.flush()
         await db.refresh(server)
@@ -673,7 +675,9 @@ class TestAuth:
         result = await McpToolConverter().execute_tool(
             db, "mcp_x", {"text": "x"}, str(test_user.id), _tool_def(server, "echo")["function"]["_metadata"]
         )
-        assert "not found" in result["error"] and "secret" in result["error"]
+        # A fixed message for the model: which secret is for the server's editors.
+        assert "not set up" in result["error"] and "secret" in result["error"]
+        assert name not in result["error"]
         assert fake_mcp.seen_headers == []  # nothing ever went out
 
 

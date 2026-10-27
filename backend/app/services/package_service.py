@@ -1129,12 +1129,18 @@ class PackageService:
             # For secret type: check if secret already exists in DB
             if var_type == "secret" and value is None:
                 from app.models.secret import Secret
+                # The shared one: that is what the package fills in, and
+                # what its resources resolve. (A name-only lookup matched
+                # other users' private secrets too, and raised once two of
+                # them shared the name.)
                 existing_secret = await self.db.execute(
-                    select(Secret).where(Secret.name == name)
+                    select(Secret.id).where(Secret.name == name, Secret.visibility == "shared")
                 )
-                if existing_secret.scalar_one_or_none():
-                    # Secret already exists, skip — don't require re-entry
-                    resolved[name] = f"{{{{{{{{name}}}}}}}}"  # keep original reference
+                if existing_secret.first() is not None:
+                    # Secret already exists, skip — don't require re-entry.
+                    # Same reference as a freshly written one (this produced
+                    # the literal `{{{{name}}}}`, naming no secret at all).
+                    resolved[name] = f"{{{{{name}}}}}"
                     stored_values[name] = "***"
                     continue
 
@@ -1254,11 +1260,15 @@ class PackageService:
             return False
 
         elif resource_type == "secrets":
+            from app.core.secret_refs import secret_ref_name
             from app.models.secret import Secret
+            # The value is a secret reference (`NAME` or `{{ NAME }}`). Any
+            # secret by that name counts, as before; several (a shared one and
+            # private ones) must not raise MultipleResultsFound.
             result = await self.db.execute(
-                select(Secret).where(Secret.name == value)
+                select(Secret.id).where(Secret.name == secret_ref_name(value)).limit(1)
             )
-            return result.scalar_one_or_none() is not None
+            return result.first() is not None
 
         elif resource_type == "roles":
             from app.models.user import Role
