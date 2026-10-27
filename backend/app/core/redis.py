@@ -51,14 +51,38 @@ def _annotate_without_arguments(self: Any, exception: Exception, number: int, co
     arq:job:<id> <pickled job, user token included> PX ...) of pipeline
     caused error: ...". That text travels wherever str(e) goes: logs, the
     Redis job status, a sub-agent's tool result (chat history, the LLM
-    provider, spans), the DLQ. Keep the command name only."""
-    try:
-        name = command[0]
-        name = name.decode(errors="replace") if isinstance(name, bytes) else str(name)
-    except Exception:
-        name = "?"
+    provider, spans), the DLQ. Keep the command name and the key it names
+    (`_key_for_error`), never the values."""
+    parts = [_text(part) for part in list(command)[:2]]
+    if not parts:
+        parts = ["?"]
+    if parts[0].upper() in ("EVAL", "EVALSHA", "FCALL"):
+        parts = parts[:1]  # [1] is the script or function, not a key
+    elif len(parts) == 2:
+        parts[1] = _key_for_error(parts[1])
     detail = exception.args[0] if exception.args else ""
-    exception.args = (f"Command # {number} ({name}) of pipeline caused error: {detail}",) + exception.args[1:]
+    exception.args = (
+        f"Command # {number} ({' '.join(parts)}) of pipeline caused error: {detail}",
+    ) + exception.args[1:]
+
+
+# Keys whose name ends in a secret or personal value: an OAuth/SSO state or
+# one-time code, an email (rate limits). In error text only their prefix.
+_KEYS_WITH_SECRET_NAMES = ("connector_oauth_state:", "sso_state:", "sso_code:", "sinas:ratelimit:")
+
+
+def _text(value: Any) -> str:
+    return value.decode(errors="replace") if isinstance(value, bytes) else str(value)
+
+
+def _key_for_error(key: str) -> str:
+    """A key name for an error message: as is (ids only: arq:job:<id>,
+    sinas:stream:<channel>, chat:...:<chat id>), except a key named after
+    a secret or personal value, which keeps only its prefix."""
+    for prefix in _KEYS_WITH_SECRET_NAMES:
+        if key.startswith(prefix):
+            return f"{prefix}…"
+    return key[:200]
 
 
 def _install_pipeline_error_annotation() -> None:
