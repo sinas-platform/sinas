@@ -254,7 +254,19 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `DATABASE_PORT` | `5432` | PostgreSQL port |
 | `DATABASE_NAME` | `sinas` | Database name |
 | `DATABASE_URL` | _(built from above)_ | Full connection string (overrides individual vars) |
-| `REDIS_URL` | `redis://redis:6379/0` | Redis connection string |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection string. `rediss://` turns on TLS. Credentials in the URL must be URL-encoded (`@` → `%40`). |
+| `REDIS_PASSWORD` | — | AUTH password. Overrides the URL's and is used verbatim, so it needs no encoding. |
+| `REDIS_USERNAME` | — | ACL username. Overrides the URL's. |
+| `REDIS_SSL_CA_CERTS` | — | Path to a PEM file with the CA(s) the server certificate is verified against, e.g. the Memorystore server CA. Empty means the system trust store. |
+| `REDIS_SSL_CHECK_HOSTNAME` | _(auto)_ | Also match the server certificate to the host name. Unset means automatic: on without `REDIS_SSL_CA_CERTS` (system trust store), off with it (a private CA such as Memorystore's, reached by IP). A `?ssl_check_hostname=` flag on `REDIS_URL` applies when this is unset. |
+
+Every Sinas process (API, queue workers, scheduler, CDC worker) uses these
+settings for all its Redis connections. A managed Redis needs version 6.2 or
+newer (or Valkey), a single non-cluster endpoint, and `maxmemory-policy`
+set to `noeviction`. See
+[External Redis](/getting-started/kubernetes#external-redis-memorystore-elasticache-azure-cache).
+For TLS with Docker Compose, set `REDIS_URL=rediss://host:6378/0` and
+`REDIS_SSL_CA_CERTS`, and mount the CA file into the containers.
 
 ## ClickHouse (Optional)
 

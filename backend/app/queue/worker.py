@@ -12,7 +12,7 @@ from arq.cron import cron
 from arq.worker import Retry
 
 from app.core.config import settings
-from app.core.redis import get_redis_settings
+from app.core.redis import create_redis_client, get_redis_settings
 from app.core.telemetry import traced_job
 from app.schemas.spec.function import MAX_FUNCTION_RETRIES
 from app.services.shared_admission import SharedPoolSaturated
@@ -130,7 +130,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
 
     bind_credential_context(kwargs.get("credential_context"))
 
-    redis: Redis = ctx.get("redis") or Redis.from_url(settings.redis_url, decode_responses=True)
+    redis: Redis = ctx.get("redis") or create_redis_client()
 
     # Restore trace context from the enqueue side
     from opentelemetry import context as otel_context
@@ -452,12 +452,10 @@ async def function_worker_startup(ctx: dict) -> None:
     Initializes Redis, discovers existing shared worker containers (created
     by the backend), and starts the per-user container cleanup task.
     """
-    from redis.asyncio import Redis
-
     from app.core.telemetry import init_telemetry
     init_telemetry("queue-worker")
 
-    ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
+    ctx["redis"] = create_redis_client()
 
     # Discover shared worker containers (created by scheduler).
     # Retry a few times — the scheduler may still be starting up.
@@ -515,12 +513,10 @@ async def _agent_worker_startup(ctx: dict, process: str) -> None:
     """Initializes Redis and eagerly imports app modules to avoid cold-start
     latency on the first job.
     """
-    from redis.asyncio import Redis
-
     from app.core.telemetry import init_telemetry
     init_telemetry(process)
 
-    ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
+    ctx["redis"] = create_redis_client()
 
     # Eagerly import heavy modules so first job doesn't pay import cost
     from app.services.message_service import MessageService  # noqa: F401
@@ -605,12 +601,10 @@ async def pipeline_worker_startup(ctx: dict) -> None:
     agent executions and HTTP), so this worker runs many jobs concurrently and
     needs no container discovery.
     """
-    from redis.asyncio import Redis
-
     from app.core.telemetry import init_telemetry
     init_telemetry("queue-pipeline")
 
-    ctx["redis"] = Redis.from_url(settings.redis_url, decode_responses=True)
+    ctx["redis"] = create_redis_client()
 
     # Eagerly import the runner so the first job doesn't pay import cost
     from app.services import pipeline_runner  # noqa: F401

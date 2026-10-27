@@ -10,7 +10,9 @@
 # no warm trusted pool — set executor.trusted to k8s_shared to bring it back.
 #
 # For fleet hosting, also point postgres.external.host at a shared cluster
-# (database per tenant) and clickhouse at shared services.
+# (database per tenant) and clickhouse at shared services. redis.external.*
+# (e.g. Memorystore) replaces the redis pod the same way; give each tenant
+# its own instance, or at least its own database index, never a shared db.
 
 allInOne: true
 

@@ -289,6 +289,20 @@ class Settings(BaseSettings):
 
     # Redis & Queue
     redis_url: str = "redis://redis:6379/0"
+    # External/managed Redis (app/core/redis.py). rediss:// in redis_url
+    # turns TLS on. redis_password overrides the URL's password and is used
+    # verbatim (no URL encoding needed); redis_username likewise. Every
+    # Redis client (API, arq workers, scheduler, CDC) honours all of these.
+    redis_password: Optional[str] = None
+    redis_username: Optional[str] = None
+    # PEM bundle of CAs to verify the server certificate against (e.g. the
+    # Memorystore server CA). Empty = the system trust store.
+    redis_ssl_ca_certs: Optional[str] = None
+    # Also match the certificate to the host name. None = auto: on with the
+    # system trust store (else any publicly issued certificate passes), off
+    # with a private CA (Memorystore: reached by IP, own per-instance CA).
+    # A ?ssl_check_hostname= flag on redis_url applies when this is None.
+    redis_ssl_check_hostname: Optional[bool] = None
     queue_function_concurrency: int = 10
     queue_agent_concurrency: int = 5
     queue_agent_sub_concurrency: int = 5  # concurrency of the sub-agent queue worker
@@ -325,6 +339,15 @@ class Settings(BaseSettings):
     # past it the response is truncated (X-Truncated: true) and carries the
     # cursor for the rest. Bounds the memory one request can take.
     chats_unpaginated_max: int = 10000
+
+    @field_validator("redis_ssl_check_hostname", mode="before")
+    @classmethod
+    def _blank_check_hostname_is_auto(cls, v: object) -> object:
+        # REDIS_SSL_CHECK_HOSTNAME= (set but empty, e.g. from a compose
+        # ${VAR:-} passthrough) means "auto", not a bool parse error.
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
     @field_validator("chats_unpaginated_max")
     @classmethod
