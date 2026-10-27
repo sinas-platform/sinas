@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Optional
 
 from arq import func
+from arq.constants import expires_extra_ms, job_key_prefix
 from arq.cron import cron
 from arq.worker import Retry
 
@@ -55,6 +56,37 @@ def _retry_backoff(attempt: int) -> float:
     base = max(1, settings.queue_retry_delay)
     delay = min(base * 2 ** (attempt - 1), RETRY_BACKOFF_CAP_SECONDS)
     return delay + random.uniform(0, delay * 0.2)
+
+
+async def _keep_job_key_alive(redis, job_id: str, defer_seconds: float) -> Optional[bool]:
+    """Push out the expiry of arq's job record before deferring the job.
+
+    arq sets the TTL of `arq:job:<id>` once, at enqueue (expected start +
+    1 day), and a `Retry` leaves it alone. A job deferred again and again
+    (shared-pool saturation with a long or unlimited window) outlives it, and
+    its next run is dropped as "expired" before this code runs: no failure
+    recorded, no dead letter, the execution PENDING forever. So on every
+    deferral the record gets what arq gives a fresh enqueue: the delay to
+    the next run plus 1 day.
+
+    True: extended. False: the record is already gone, so the re-run would
+    be dropped (the caller dead-letters the job instead). None: Redis error;
+    best effort, the caller defers anyway.
+    """
+    try:
+        return bool(
+            await redis.pexpire(
+                f"{job_key_prefix}{job_id}", int(defer_seconds * 1000) + expires_extra_ms
+            )
+        )
+    except Exception:
+        logger.warning(f"Could not extend the queue record of job {job_id}", exc_info=True)
+        return None
+
+
+class JobRecordLost(RuntimeError):
+    """A deferral found arq's record of the job gone; the job was
+    dead-lettered instead of deferred (a re-run would never start)."""
 
 
 async def _execution_cancelled(execution_id: str) -> bool:
@@ -199,6 +231,8 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         re-run never hinges on these writes: Redis may be what just failed
         (a lost count only means an extra attempt, bounded by arq's cap)."""
         defer = _retry_backoff(attempt)
+        if await _keep_job_key_alive(redis, job_id, defer) is False:
+            await dead_letter_lost_record(error, kind)
         detail = (
             f"attempt {attempt} of {max_attempts} failed, retrying in {defer:.0f}s: {error}"
         )
@@ -231,6 +265,16 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
             function_name=function_name,
             callback_url=callback_url,
         )
+
+    async def dead_letter_lost_record(error: str, error_type: str) -> None:
+        """The job must be deferred, but arq's record of it is gone (it
+        expired or was evicted), so a re-run would be dropped unseen. Fail
+        it now, into the dead-letter queue, from which it can be requeued."""
+        error = f"{error} (not deferred: the job's queue record expired from Redis)"
+        logger.error(f"Function job {job_id} failed: {error}")
+        await record_failure(f"{error}{dead_letter_note(failed_attempts + 1)}")
+        await fail_job(error, dead_letter=True, error_type=error_type)
+        raise JobRecordLost(error)
 
     async def fail_job(error: str, *, dead_letter: bool, error_type: str) -> None:
         """Terminal failure: final status, notify waiters, dead-letter."""
@@ -353,6 +397,12 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         window = settings.queue_saturation_timeout_seconds
         if window <= 0 or elapsed < window:
             defer = min(2 ** deferrals, 30) + random.uniform(0, 2)
+            if await _keep_job_key_alive(redis, job_id, defer) is False:
+                record_error(_fn_span, e)
+                completed = True
+                await dead_letter_lost_record(
+                    f"{e} (pool saturated for {elapsed:.0f}s)", "saturation"
+                )
             await redis.set(
                 f"{JOB_STATUS_PREFIX}{job_id}",
                 json.dumps({

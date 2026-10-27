@@ -69,6 +69,14 @@ class _FakeRedis:
     async def lpush(self, key, value):
         self.lists.setdefault(key, []).insert(0, value)
 
+    # arq's job record (arq:job:<id>), whose expiry a deferral pushes out;
+    # it exists unless a test says it expired.
+    job_record_exists = True
+
+    async def pexpire(self, key, ms):
+        self.store[f"pexpire:{key}"] = ms
+        return 1 if self.job_record_exists else 0
+
 
 class _FakeSandbox:
     """A sandbox executor whose runs have the given outcomes in turn (the
