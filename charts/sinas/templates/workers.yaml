@@ -26,7 +26,7 @@ spec:
         - name: queue-worker
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "-m", "arq", "app.queue.worker.WorkerSettings"]
+          command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.WorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_FUNCTION_CONCURRENCY
@@ -67,7 +67,7 @@ spec:
         - name: queue-agent
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "-m", "arq", "app.queue.worker.AgentWorkerSettings"]
+          command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.AgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_AGENT_CONCURRENCY
@@ -117,7 +117,7 @@ spec:
         - name: queue-agent-sub
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "-m", "arq", "app.queue.worker.SubAgentWorkerSettings"]
+          command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.SubAgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_AGENT_SUB_CONCURRENCY
@@ -163,7 +163,7 @@ spec:
         - name: queue-pipeline
           image: {{ .Values.image.registry }}/backend:{{ include "sinas.imageTag" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "-m", "arq", "app.queue.worker.PipelineWorkerSettings"]
+          command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.PipelineWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
             - name: QUEUE_PIPELINE_CONCURRENCY

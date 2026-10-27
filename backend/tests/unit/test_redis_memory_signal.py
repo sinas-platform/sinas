@@ -150,26 +150,10 @@ async def test_handler_answers_oom_and_leaves_other_redis_errors(openai_format):
         assert (await c.get("/other")).status_code == 500
 
 
-@pytest.fixture
-async def full_redis():
-    """The test Redis at its maxmemory under noeviction (restored after)."""
-    redis = await get_redis()
-    before = {  # one name per CONFIG GET: several need Redis 7
-        **await redis.config_get("maxmemory"),
-        **await redis.config_get("maxmemory-policy"),
-    }
-    await redis.config_set("maxmemory-policy", "noeviction")
-    await redis.config_set("maxmemory", 1)  # 1 byte: every write is refused
-    try:
-        yield redis
-    finally:
-        await redis.config_set("maxmemory", before["maxmemory"])
-        await redis.config_set("maxmemory-policy", before["maxmemory-policy"])
-
-
-async def test_a_refused_write_answers_503(client, test_user, full_redis):
+async def test_a_refused_write_answers_503(client, test_user, fill_redis):
     """Login counts the request in Redis first (the rate limiter); a full
     Redis refuses that write. The caller gets 503 and what to do."""
+    fill_redis.fill()
     with patch("app.api.runtime.endpoints.authentication.create_otp_session") as create:
         create.return_value = AsyncMock(id=uuid.uuid4())
         resp = await client.post("/auth/login", json={"email": test_user.email})

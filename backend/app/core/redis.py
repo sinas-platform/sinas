@@ -31,7 +31,7 @@ import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from arq.connections import ArqRedis, RedisSettings, create_pool
@@ -299,9 +299,39 @@ async def close_redis() -> None:
     logger.info("Redis connections closed")
 
 
+async def warn_if_redis_nearly_full(redis: Any, process: str) -> Optional[float]:
+    """Log a warning when Redis memory is at 90% of maxmemory or more (an
+    error once it is full and refuses writes). Returns the percentage (None:
+    no maxmemory, or INFO unreadable). Never raises."""
+    try:
+        memory = await redis.info("memory")
+    except Exception:
+        logger.warning(f"{process}: could not read Redis memory info", exc_info=True)
+        return None
+    used = int(memory.get("used_memory") or 0)
+    maxmemory = int(memory.get("maxmemory") or 0)
+    if not maxmemory:
+        return None
+    percent = round(used / maxmemory * 100, 1)
+    policy = memory.get("maxmemory_policy")
+    if percent >= 100 and policy == "noeviction":
+        logger.error(
+            f"{process}: Redis is FULL ({percent}% of maxmemory, policy noeviction): it refuses "
+            "writes, so jobs can't start or finish and requests that write fail with 503 "
+            "redis_out_of_memory. Raise maxmemory (Helm: redis.maxmemory; Compose: "
+            "REDIS_MAXMEMORY) or free memory."
+        )
+    elif percent >= 90:
+        logger.warning(
+            f"{process}: Redis memory at {percent}% of maxmemory (policy {policy}); "
+            "raise maxmemory before it fills up."
+        )
+    return percent
+
+
 REDIS_OOM_DETAIL = (
     "Redis is out of memory (maxmemory reached) and refuses writes, so this "
-    "request could not be completed. Nothing was dropped; an operator must "
+    "request could not be completed. Stored data is kept; an operator must "
     "raise Redis' maxmemory (Helm: redis.maxmemory; Compose: REDIS_MAXMEMORY)."
 )
 
@@ -318,7 +348,7 @@ def install_redis_oom_handler(app: Any, *, openai_format: bool = False) -> None:
     async def _handler(request: Any, exc: ResponseError) -> JSONResponse:
         if not is_redis_oom(exc):
             raise exc  # any other Redis error: a 500, as before
-        logger.error(f"Redis refused a write, out of memory: {exc} ({request.url.path})")
+        logger.error(f"Redis is full: {redis_oom_summary(exc)} ({request.method} {request.url.path})")
         if openai_format:
             body: dict[str, Any] = {
                 "error": {
@@ -344,3 +374,17 @@ def is_redis_oom(exc: BaseException) -> bool:
     return isinstance(exc, OutOfMemoryError) or (
         isinstance(exc, ResponseError) and "OOM command not allowed" in str(exc)
     )
+
+
+def redis_oom_summary(exc: BaseException) -> str:
+    """What was refused, for a log line: the command name, never the
+    arguments. redis-py's pipeline errors quote the whole command ("Command
+    # 1 (SET arq:result:<id> <pickled job, tokens and all> PX ...)")."""
+    import re
+
+    match = re.match(r"Command # \d+ \((\S+)", str(exc))
+    if match:
+        return f"{match.group(1).upper()} refused: out of memory (maxmemory reached)"
+    if "script" in str(exc).lower():
+        return "a write in a Lua script refused: out of memory (maxmemory reached)"
+    return "write refused: out of memory (maxmemory reached)"

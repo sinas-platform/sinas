@@ -307,6 +307,35 @@ class FunctionExecutor:
         self.functions_cache[cache_key] = function
         return function
 
+    async def _finished_execution(self, execution_id: str) -> tuple[bool, Any]:
+        """(False, None) when the execution may run (no row yet, or PENDING,
+        RUNNING or AWAITING_INPUT). For one that already reached a final state:
+        COMPLETED → (True, its stored output), returned as the run's result;
+        FAILED / CANCELLED → a FunctionExecutionError marked recorded (its
+        bookkeeping was done when it ended), never dead-lettered."""
+        async with AsyncSessionLocal() as db:
+            row = (
+                await db.execute(
+                    select(Execution.status, Execution.output_data, Execution.error).where(
+                        Execution.execution_id == execution_id
+                    )
+                )
+            ).first()
+        if row is None or row.status not in (
+            ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED,
+        ):
+            return False, None
+        logger.warning(
+            f"Execution {execution_id} is already {row.status.value}; not running it again"
+        )
+        if row.status is ExecutionStatus.COMPLETED:
+            return True, row.output_data
+        err = FunctionExecutionError(
+            row.error or f"Execution {execution_id} already {row.status.value.lower()}"
+        )
+        err.recorded = True
+        raise err
+
     async def execute_function(
         self,
         function_namespace: str,
@@ -352,6 +381,13 @@ class FunctionExecutor:
                 "Function execution is disabled on this deployment "
                 "(CODE_EXECUTION_ENABLED=false)."
             )
+        # A finished execution never runs again, whatever re-delivers its
+        # job: a function may have side effects. (A queue job is re-run when
+        # its finish could not be recorded, e.g. Redis full at that moment.)
+        finished, output = await self._finished_execution(execution_id)
+        if finished:
+            return output
+
         # Metering leaf: one op per function execution, whatever triggered it
         from app.services import metering
 

@@ -56,6 +56,9 @@ jobs:
           done
           grep -q "name: queue-agent-sub$" /tmp/default.yaml
           grep -q "name: queue-pipeline$" /tmp/default.yaml
+          # ...run by SinasWorker (survives a full Redis), not arq's CLI
+          ! grep -q '"-m", "arq"' /tmp/default.yaml || exit 1
+          test "$(grep -c '"app.queue.arq_worker"' /tmp/default.yaml)" -eq 4
           # sub-agent routing stays on while its worker exists
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/default.yaml || exit 1
 

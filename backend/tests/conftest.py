@@ -185,3 +185,12 @@ def make_token(user: User) -> str:
 def auth_headers(user: User) -> dict[str, str]:
     """Return Authorization headers for a user."""
     return {"Authorization": f"Bearer {make_token(user)}"}
+
+
+@pytest.fixture
+def fill_redis(request):
+    """Fill the test Redis to its maxmemory under noeviction; restored after.
+    Skips unless REDIS_URL is a throwaway local Redis (tests/unit/redis_oom.py)."""
+    from tests.unit.redis_oom import make_filler
+
+    return make_filler(request)
