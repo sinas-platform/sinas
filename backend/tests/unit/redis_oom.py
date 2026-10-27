@@ -38,10 +38,18 @@ class RedisFiller:
             **self.client.config_get("maxmemory-policy"),
         }
 
-    def fill(self) -> None:
-        """Every write that can grow memory is refused from now on."""
+    def fill(self, below_used: int = 0) -> None:
+        """Every write that can grow memory is refused from now on. With
+        `below_used`, maxmemory goes that many bytes under current use
+        instead of to 1 byte: Redis is full, but deletes and expiries free
+        enough now and then for a few writes to get through, as in a real
+        Redis at its limit."""
         self.client.config_set("maxmemory-policy", "noeviction")
-        self.client.config_set("maxmemory", 1)
+        if below_used:
+            used = int(self.client.info("memory")["used_memory"])
+            self.client.config_set("maxmemory", max(1, used - below_used))
+        else:
+            self.client.config_set("maxmemory", 1)
 
     def release(self) -> None:
         self.client.config_set("maxmemory", self.before["maxmemory"])

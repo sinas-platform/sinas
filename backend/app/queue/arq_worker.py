@@ -26,14 +26,23 @@ out-of-memory error (`is_redis_oom`); anything else propagates as before:
   any command queued in a transaction while full). DEL, ZREM and PEXPIRE
   never grow memory, so a full Redis accepts them. The job's result is lost
   (logged); the job is not re-run. A deferral (`Retry`) that can't be
-  recorded leaves the in-progress marker to expire, after which the job runs
-  again, as the deferral asked, just later.
+  recorded releases the job (DEL of its in-progress marker): it stays
+  queued and runs again after the backoff;
+- a job whose start-of-run INCR is refused releases its in-progress marker
+  too, instead of waiting out its TTL.
+
+The jobs themselves must not turn "Redis is full" into "finished": a job
+whose own first write (its "running" status) is refused raises Retry via
+`defer_job_redis_full` (app/queue/worker.py, agent_jobs.py), and a function
+job defers on any refused write (the engine's guard makes a re-run of a
+finished execution a no-op).
 
 What still doesn't work while Redis is full: anything that must write. Jobs
-can't start (arq's in-progress PSETEX is refused; arq treats that as "taken
-by another worker" and the job stays queued), enqueues fail, and so do the
-job's own status writes. Nothing queued is lost, and the worker is still
-there when memory is freed or raised.
+mostly can't start (arq's in-progress PSETEX is refused; arq treats that as
+"taken by another worker", and that refusal never reaches this class, so
+it causes no backoff), enqueues fail, and so do the jobs' own writes.
+Queued jobs stay queued, and the worker is still there when memory is
+freed or raised.
 
 Run a worker with `python -m app.queue.arq_worker app.queue.worker.WorkerSettings`
 (the chart and the compose files do) instead of `python -m arq ...`, whose
@@ -44,10 +53,16 @@ import logging
 import random
 import sys
 import time
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 
-from arq.constants import abort_jobs_ss, in_progress_key_prefix, job_key_prefix, retry_key_prefix
-from arq.worker import Worker
+from arq.constants import (
+    abort_jobs_ss,
+    expires_extra_ms,
+    in_progress_key_prefix,
+    job_key_prefix,
+    retry_key_prefix,
+)
+from arq.worker import Retry, Worker
 
 from app.core.redis import is_redis_oom, redis_oom_summary
 
@@ -143,14 +158,32 @@ class SinasWorker(Worker):
                 raise
             self._redis_full(f"finishing job {job_id}", e)
         if not finish:
-            # A Retry/re-queue whose new score (ZINCRBY) was refused: the
-            # in-progress marker stays until it expires, then the job runs
-            # again, as the deferral asked, only later.
-            logger.warning(f"Job {job_id}: its deferral could not be recorded; it re-runs once its in-progress marker expires")
+            # A deferral (Retry) whose new score (ZINCRBY) was refused. Let
+            # the job go instead (DEL is never refused): it is still queued,
+            # at its old score, and runs again once the poll loop's backoff
+            # ends: sooner than the deferral asked, never lost.
+            if keep_in_progress is None:
+                await self.pool.delete(in_progress_key_prefix + job_id)
+            logger.warning(f"Job {job_id}: its deferral could not be recorded (Redis full); it stays queued")
             return
         # Take it off the queue without the result: never run a finished job twice.
         await self._dequeue_without_result(job_id, keep_in_progress)
         logger.error(f"Job {job_id} finished, but Redis was full: its arq result was not stored (the job is not re-run)")
+
+    async def run_job(self, job_id: str, score: int) -> None:
+        try:
+            await super().run_job(job_id, score)
+        except Exception as e:
+            # Only what arq writes before the job runs can get here (its
+            # start-of-run MULTI: INCR arq:retry); refusals in finish_job
+            # and finish_failed_job are handled there. The job never ran:
+            # drop its in-progress marker so it is picked up again once the
+            # backoff ends, instead of waiting out the marker's TTL (the
+            # longest job timeout).
+            if not is_redis_oom(e):
+                raise
+            self._redis_full(f"starting job {job_id}", e)
+            await self.pool.delete(in_progress_key_prefix + job_id)
 
     async def finish_failed_job(self, job_id: str, result_data: Optional[bytes]) -> None:
         try:
@@ -184,6 +217,37 @@ class SinasWorker(Worker):
             await pipe.execute()
 
 
+class RedisFullBeforeStart(Exception):
+    """Raised by job code whose first write was refused (Redis full) before
+    it did anything; the job's entry point defers it (defer_job_redis_full)."""
+
+
+# Delay before a job that found Redis full before it started runs again.
+REDIS_FULL_DEFER_SECONDS = (5.0, 15.0)
+
+
+async def defer_job_redis_full(redis: Any, job_id: str, what: str, *, reset_tries: bool = False) -> NoReturn:
+    """Defer a job that could not start because Redis is full: raise arq's
+    Retry, so it stays queued instead of being finished as failed (and, on
+    a full Redis, dropped). Call it only before the job did anything that
+    must not happen twice.
+
+    The job record's expiry is pushed out first (PEXPIRE is never refused),
+    as every deferral does (worker._keep_job_key_alive). `reset_tries`: for
+    a queue with max_tries=1 (agents, pipelines), drop the arq:retry counter
+    (DEL is never refused) so the re-run isn't refused as "max retries
+    exceeded"; this attempt never started."""
+    defer = random.uniform(*REDIS_FULL_DEFER_SECONDS)
+    try:
+        await redis.pexpire(job_key_prefix + job_id, int(defer * 1000) + expires_extra_ms)
+        if reset_tries:
+            await redis.delete(retry_key_prefix + job_id)
+    except Exception:
+        logger.warning(f"{what}: could not prepare its deferral", exc_info=True)
+    logger.warning(f"{what}: Redis is full, so it did not start; retrying in {defer:.0f}s")
+    raise Retry(defer=defer)
+
+
 def create_worker(settings_cls: Any, **kwargs: Any) -> SinasWorker:
     """arq's create_worker, building a SinasWorker."""
     from arq.worker import get_kwargs
@@ -201,13 +265,23 @@ def main(argv: Optional[list[str]] = None) -> None:
     from arq.logs import default_log_config
     from arq.utils import import_string
 
-    args = sys.argv[1:] if argv is None else argv
-    if len(args) != 1:
-        sys.exit("usage: python -m app.queue.arq_worker app.queue.worker.<WorkerSettings>")
+    import argparse
+
+    from arq.worker import check_health
+
+    parser = argparse.ArgumentParser(prog="python -m app.queue.arq_worker")
+    parser.add_argument("worker_settings", help="e.g. app.queue.worker.WorkerSettings")
+    parser.add_argument("--burst", action="store_true", help="exit once no jobs are queued")
+    parser.add_argument("--check", action="store_true", help="run arq's health check and exit")
+    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+
     sys.path.append(os.getcwd())  # as arq's CLI does
-    settings_cls = import_string(args[0])
-    logging.config.dictConfig(default_log_config(verbose=False))
-    create_worker(settings_cls).run()
+    settings_cls = import_string(args.worker_settings)
+    logging.config.dictConfig(default_log_config(verbose=args.verbose))
+    if args.check:
+        sys.exit(check_health(settings_cls))
+    create_worker(settings_cls, **({"burst": True} if args.burst else {})).run()
 
 
 if __name__ == "__main__":

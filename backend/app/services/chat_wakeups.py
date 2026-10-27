@@ -605,7 +605,16 @@ async def run_background_code_job(
         data.update(fields)
         await redis.set(f"{BG_JOB_PREFIX}{job_id}", json.dumps(data, default=str), ex=BG_JOB_TTL)
 
-    await set_status(status="running", started_at=_now().isoformat())
+    try:
+        await set_status(status="running", started_at=_now().isoformat())
+    except Exception as e:
+        from app.core.redis import is_redis_oom
+
+        if is_redis_oom(e):  # Redis full before anything ran: the job is deferred
+            from app.queue.arq_worker import RedisFullBeforeStart
+
+            raise RedisFullBeforeStart(f"Background job {job_id}") from e
+        raise
 
     async def report(status: str, result: dict[str, Any]) -> None:
         await set_status(status=status, finished_at=_now().isoformat(), result=result)

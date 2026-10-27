@@ -49,6 +49,12 @@ def is_transient_infra_error(exc: BaseException) -> bool:
     from redis.exceptions import TimeoutError as RedisTimeoutError
     from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 
+    from app.core.redis import is_redis_oom
+
+    # A full Redis (maxmemory, noeviction) refusing a write before the code
+    # ran, e.g. the shared-pool admission gate: retried like an outage.
+    if is_redis_oom(exc):
+        return True
     if isinstance(
         exc,
         (OSError, RedisConnectionError, RedisTimeoutError, OperationalError, InterfaceError),

@@ -13,7 +13,7 @@ from arq.cron import cron
 from arq.worker import Retry
 
 from app.core.config import settings
-from app.core.redis import create_redis_client, get_redis_settings
+from app.core.redis import create_redis_client, get_redis_settings, is_redis_oom
 from app.core.telemetry import traced_job
 from app.schemas.spec.function import MAX_FUNCTION_RETRIES
 from app.services.shared_admission import SharedPoolSaturated
@@ -112,6 +112,31 @@ async def _execution_cancelled(execution_id: str) -> bool:
 
 
 async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
+    """Run a function job (`_run_function_job`); defer it when Redis is full.
+
+    A write Redis refuses for memory (its "running" status before the run,
+    a status or result after it) must not end the job: arq would finish it
+    as failed, and on a full Redis SinasWorker then takes it off the queue,
+    leaving the execution PENDING for good with nothing recorded. So such a
+    refusal defers the job instead (Retry, not counted as an attempt). A
+    re-run of an execution that finished meanwhile does nothing: the engine
+    returns its stored outcome (`ExecutionEngine._already_finished`)."""
+    try:
+        return await _run_function_job(ctx, **kwargs)
+    except Retry:
+        raise
+    except Exception as e:
+        if not is_redis_oom(e):
+            raise
+        from app.queue.arq_worker import defer_job_redis_full
+
+        redis = ctx.get("redis") or create_redis_client()
+        await defer_job_redis_full(
+            redis, ctx.get("job_id") or kwargs["job_id"], f"Function job {kwargs['job_id']}"
+        )
+
+
+async def _run_function_job(ctx: dict, **kwargs: Any) -> Any:
     """
     Execute a function in the worker process.
 
@@ -139,6 +164,7 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
 
     from app.services.execution_engine import (
         INFRASTRUCTURE,
+        ExecutionAlreadyCancelled,
         ExecutionRetryScheduled,
         dead_letter_note,
         executor,
@@ -453,7 +479,31 @@ async def execute_function_job(ctx: dict, **kwargs: Any) -> Any:
         completed = True
         raise
 
+    except ExecutionAlreadyCancelled:
+        # A re-delivered job of an execution cancelled meanwhile: report it
+        # as what it is, not as a failure.
+        completed = True
+        logger.info(f"Function job {job_id}: its execution was cancelled; not running it")
+        await redis.set(
+            f"{JOB_STATUS_PREFIX}{job_id}",
+            json.dumps({**base_fields, "status": "cancelled"}),
+            ex=JOB_TTL,
+        )
+        await redis.publish(
+            f"{JOB_DONE_CHANNEL_PREFIX}{execution_id}",
+            json.dumps({"status": "cancelled", "job_id": job_id}),
+        )
+        await redis.delete(failures_key)
+        return None
+
     except Exception as e:
+        if is_redis_oom(e):
+            # One of this job's own Redis writes was refused (Redis full),
+            # not a failure of the run: no failure bookkeeping here. The
+            # wrapper defers the job; a run that already finished is a
+            # no-op when it comes again (the engine checks the row first).
+            completed = True
+            raise
         record_error(_fn_span, e)
         logger.error(f"Function job {job_id} failed: {e}")
 
@@ -620,16 +670,47 @@ async def execute_pipeline_run_job(ctx: dict, **kwargs: Any) -> Any:
         logger.error(f"Pipeline run job: user {user_id} not found, dropping run")
         return {"status": "failed", "error": f"User {user_id} not found"}
 
-    return await pipeline_runner.run_pipeline(
-        pipeline_id,
-        kwargs.get("run_input"),
-        run_id=kwargs.get("run_id"),
-        trigger_type=kwargs.get("trigger_type", "API"),
-        trigger_id=kwargs.get("trigger_id"),
-        user_id=user_id,
-        user_token=token,
-        sync=False,
-    )
+    try:
+        return await pipeline_runner.run_pipeline(
+            pipeline_id,
+            kwargs.get("run_input"),
+            run_id=kwargs.get("run_id"),
+            trigger_type=kwargs.get("trigger_type", "API"),
+            trigger_id=kwargs.get("trigger_id"),
+            user_id=user_id,
+            user_token=token,
+            sync=False,
+        )
+    except Exception as e:
+        # Redis full before the run record existed (the single-flight lock
+        # is the run's first write): nothing ran and nothing would show it,
+        # so defer instead of failing (max_tries=1: the counter is reset).
+        # Once the record exists, a failure is recorded on it as usual.
+        if not is_redis_oom(e) or await _pipeline_run_recorded(kwargs.get("run_id")):
+            raise
+        from app.queue.arq_worker import defer_job_redis_full
+
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Pipeline run job {kwargs['job_id']}",
+            reset_tries=True,
+        )
+
+
+async def _pipeline_run_recorded(run_id: Optional[str]) -> bool:
+    if not run_id:
+        return True  # can't tell: treat as started
+    from sqlalchemy import select as _select
+
+    from app.core.database import AsyncSessionLocal
+    from app.models.pipeline import PipelineRun
+
+    async with AsyncSessionLocal() as db:
+        found = (
+            await db.execute(_select(PipelineRun.id).where(PipelineRun.run_id == run_id))
+        ).first()
+    return found is not None
 
 
 @traced_job("pipeline.fire")
@@ -718,14 +799,22 @@ async def execute_background_code_job(ctx: dict, **kwargs: Any) -> None:
     """A run_in_background sandbox run: executes, then either completes the
     suspended round (wait=true) or delivers the result into the chat. Runs in
     the trace context it was enqueued with (`traced_job`)."""
+    from app.queue.arq_worker import RedisFullBeforeStart, defer_job_redis_full
     from app.services.chat_wakeups import run_background_code_job
 
-    await run_background_code_job(
-        job_id=kwargs["job_id"], chat_id=kwargs["chat_id"], user_id=kwargs["user_id"],
-        code=kwargs["code"], description=kwargs.get("description") or "background run",
-        tool_call_id=kwargs.get("tool_call_id"), pending_completion_id=kwargs.get("pending_completion_id"),
-        api_key_id=kwargs.get("api_key_id"),
-    )
+    try:
+        await run_background_code_job(
+            job_id=kwargs["job_id"], chat_id=kwargs["chat_id"], user_id=kwargs["user_id"],
+            code=kwargs["code"], description=kwargs.get("description") or "background run",
+            tool_call_id=kwargs.get("tool_call_id"), pending_completion_id=kwargs.get("pending_completion_id"),
+            api_key_id=kwargs.get("api_key_id"),
+        )
+    except RedisFullBeforeStart:
+        await defer_job_redis_full(
+            ctx.get("redis") or create_redis_client(),
+            ctx.get("job_id") or kwargs["job_id"],
+            f"Background job {kwargs['job_id']}",
+        )
 
 
 def _background_job_timeout() -> int:

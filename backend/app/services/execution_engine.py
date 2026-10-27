@@ -6,7 +6,7 @@ import logging
 import time
 import traceback
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 import jsonschema
@@ -42,6 +42,13 @@ class FunctionExecutionError(Exception):
     dead_letter = False
     # The engine recorded the failure itself (row FAILED, callback, batch).
     recorded = False
+
+
+class ExecutionAlreadyCancelled(FunctionExecutionError):
+    """A re-delivered job of an execution that was cancelled: not run; the
+    queue reports it as cancelled, not failed."""
+
+    recorded = True
 
 
 # The two kinds of failed attempt, each with its own retry budget.
@@ -307,33 +314,31 @@ class FunctionExecutor:
         self.functions_cache[cache_key] = function
         return function
 
-    async def _finished_execution(self, execution_id: str) -> tuple[bool, Any]:
-        """(False, None) when the execution may run (no row yet, or PENDING,
-        RUNNING or AWAITING_INPUT). For one that already reached a final state:
-        COMPLETED → (True, its stored output), returned as the run's result;
-        FAILED / CANCELLED → a FunctionExecutionError marked recorded (its
-        bookkeeping was done when it ended), never dead-lettered."""
-        async with AsyncSessionLocal() as db:
-            row = (
-                await db.execute(
-                    select(Execution.status, Execution.output_data, Execution.error).where(
-                        Execution.execution_id == execution_id
-                    )
-                )
-            ).first()
-        if row is None or row.status not in (
+    @staticmethod
+    def _already_finished(execution: Optional[Execution]) -> Optional[tuple[Any]]:
+        """None when the execution may run (no row yet, or PENDING, RUNNING
+        or AWAITING_INPUT). For one that already reached a final state:
+        COMPLETED → a 1-tuple with its stored output, the run's result;
+        FAILED → a FunctionExecutionError marked recorded (its bookkeeping
+        was done when it ended), dead-lettered again only if it was then;
+        CANCELLED → ExecutionAlreadyCancelled."""
+        if execution is None or execution.status not in (
             ExecutionStatus.COMPLETED, ExecutionStatus.FAILED, ExecutionStatus.CANCELLED,
         ):
-            return False, None
+            return None
+        execution_id = execution.execution_id
         logger.warning(
-            f"Execution {execution_id} is already {row.status.value}; not running it again"
+            f"Execution {execution_id} is already {execution.status.value}; not running it again"
         )
-        if row.status is ExecutionStatus.COMPLETED:
-            return True, row.output_data
-        err = FunctionExecutionError(
-            row.error or f"Execution {execution_id} already {row.status.value.lower()}"
-        )
+        if execution.status is ExecutionStatus.COMPLETED:
+            return (execution.output_data,)
+        if execution.status is ExecutionStatus.CANCELLED:
+            raise ExecutionAlreadyCancelled(f"Execution {execution_id} was cancelled")
+        err = FunctionExecutionError(execution.error or f"Execution {execution_id} already failed")
         err.recorded = True
+        # Its job went to the DLQ then (the note says so) but the entry may
+        # not have been written (Redis full): write it now.
+        err.dead_letter = "moved to the dead-letter queue" in (execution.error or "")
         raise err
 
     async def execute_function(
@@ -381,13 +386,6 @@ class FunctionExecutor:
                 "Function execution is disabled on this deployment "
                 "(CODE_EXECUTION_ENABLED=false)."
             )
-        # A finished execution never runs again, whatever re-delivers its
-        # job: a function may have side effects. (A queue job is re-run when
-        # its finish could not be recorded, e.g. Redis full at that moment.)
-        finished, output = await self._finished_execution(execution_id)
-        if finished:
-            return output
-
         # Metering leaf: one op per function execution, whatever triggered it
         from app.services import metering
 
@@ -434,6 +432,15 @@ class FunctionExecutor:
                     select(Execution).where(Execution.execution_id == execution_id)
                 )
                 execution = result.scalar_one_or_none()
+
+                # A finished execution never runs again, whatever re-delivers
+                # its job: a function may have side effects. (A queue job is
+                # re-run when its finish could not be recorded, e.g. Redis
+                # full at that moment.) Inside this try, so a database blip
+                # here is retried like any other before the run.
+                finished = self._already_finished(execution)
+                if finished is not None:
+                    return finished[0]
 
                 if not execution:
                     # Create new execution record
