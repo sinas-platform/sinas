@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "node --test tests/pipeline-steps-model.test.mjs tests/clickhouse.test.mjs tests/setup-link.test.mjs tests/chat-pages.test.mjs tests/retention.test.mjs tests/package-dependencies.test.mjs tests/tool-approvals.test.mjs tests/chat-pending.test.mjs tests/chat-stream.test.mjs tests/config-apply.test.mjs tests/usage.test.mjs tests/attribution.test.mjs tests/api-key-edit.test.mjs tests/wildcard-refs.test.mjs tests/llm-errors.test.mjs",
+    "test": "node --test tests/pipeline-steps-model.test.mjs tests/clickhouse.test.mjs tests/setup-link.test.mjs tests/chat-pages.test.mjs tests/retention.test.mjs tests/package-dependencies.test.mjs tests/tool-approvals.test.mjs tests/chat-pending.test.mjs tests/chat-stream.test.mjs tests/config-apply.test.mjs tests/usage.test.mjs tests/attribution.test.mjs tests/api-key-edit.test.mjs tests/wildcard-refs.test.mjs tests/llm-errors.test.mjs tests/database-triggers.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -48,6 +48,9 @@ async def get_info(db: AsyncSession = Depends(get_db)) -> InfoResponse:
             # Master toggle for all user-code execution — the console greys
             # out function execution and the codeExecution tool when false.
             "code_execution": settings.code_execution_enabled,
+            # False when CDC_ENABLED=false: database triggers never fire, and
+            # the console shows them as "Disabled — CDC off", not "Inactive".
+            "cdc": settings.cdc_enabled,
         },
         services=await published_services(db),
     )

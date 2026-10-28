@@ -73,3 +73,19 @@ jobs:
           ! grep -q 'headersSecret' /tmp/otel.yaml
           # and nothing OTel is rendered while it is off
           ! grep -q 'OTEL_' /tmp/compact.yaml
+
+      - name: helm template (CDC disabled)
+        run: |
+          helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set features.cdc=false \
+            > /tmp/no-cdc.yaml
+          # `! grep` doesn't fail a bash -e step unless it is the last command
+          if grep -q "name: cdc-worker" /tmp/no-cdc.yaml; then
+            echo "cdc-worker rendered with features.cdc=false" >&2
+            exit 1
+          fi
+          # the backend must know, so the API refuses instead of going inert
+          grep -A1 'name: CDC_ENABLED' /tmp/no-cdc.yaml | grep -q '"false"'
