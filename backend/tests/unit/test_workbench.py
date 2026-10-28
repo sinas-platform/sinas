@@ -71,6 +71,18 @@ async def _make_collection(db: AsyncSession, owner: User, name: str, **kwargs) -
     return coll
 
 
+async def _agent_on(db: AsyncSession, chat: Chat):
+    """Attach a fresh agent to the chat, as if the agent were running it."""
+    from app.models.agent import Agent
+
+    agent = Agent(namespace="ns", name=f"agent-{uuid.uuid4().hex[:6]}", system_prompt="x")
+    db.add(agent)
+    await db.flush()
+    chat.agent_id = agent.id
+    await db.flush()
+    return agent
+
+
 # ---------------------------------------------------------------------------
 # The fence
 # ---------------------------------------------------------------------------
@@ -163,6 +175,134 @@ class TestWorkbenchTools:
 
         result = await tools.execute_tool(db, chat, uid, "workbench_list", {})
         assert result.get("count", len(result.get("files", []))) >= 1
+
+    @pytest.mark.asyncio
+    async def test_versions_record_the_acting_agent(self, db, chat, test_user):
+        """An agent writes as the user: uploaded_by stays the person, and the
+        version says it was an agent (and which)."""
+        from app.models.agent import Agent
+
+        agent = Agent(namespace="ns", name="writer", system_prompt="x")
+        db.add(agent)
+        await db.flush()
+        chat.agent_id = agent.id
+        await db.flush()
+
+        tools = WorkbenchTools()
+        uid = str(test_user.id)
+        await tools.execute_tool(db, chat, uid, "workbench_write", {"filename": "a.txt", "content": "one"})
+        await tools.execute_tool(
+            db, chat, uid, "workbench_edit", {"filename": "a.txt", "old_string": "one", "new_string": "two"}
+        )
+
+        versions = (
+            await db.execute(select(FileVersion).order_by(FileVersion.version_number))
+        ).scalars().all()
+        assert [v.actor_type for v in versions] == ["agent", "agent"]
+        assert {v.agent_id for v in versions} == {agent.id}
+        assert {v.uploaded_by for v in versions} == {test_user.id}
+
+    @pytest.mark.asyncio
+    async def test_versions_without_an_agent_are_user_writes(self, db, chat, test_user):
+        await WorkbenchTools().execute_tool(
+            db, chat, str(test_user.id), "workbench_write", {"filename": "a.txt", "content": "one"}
+        )
+        version = (await db.execute(select(FileVersion))).scalar_one()
+        assert version.actor_type == "user" and version.agent_id is None
+
+    @pytest.mark.asyncio
+    async def test_promote_records_the_acting_agent(self, db, chat, test_user):
+        """Promote is how an agent's file lands in a real collection: the
+        target's version names the agent too."""
+        await _grant(db, test_user, "sinas.collections/*/*.upload:own")
+        target = await _make_collection(db, test_user, f"tgt-{uuid.uuid4().hex[:6]}")
+        agent = await _agent_on(db, chat)
+        tools = WorkbenchTools()
+        uid = str(test_user.id)
+
+        await tools.execute_tool(db, chat, uid, "workbench_write", {"filename": "r.md", "content": "# R\n"})
+        result = await tools.execute_tool(
+            db, chat, uid, "workbench_promote", {"filename": "r.md", "collection": f"test/{target.name}"}
+        )
+        assert "error" not in result, result
+
+        version = (
+            await db.execute(
+                select(FileVersion).join(File).where(File.collection_id == target.id)
+            )
+        ).scalar_one()
+        assert version.actor_type == "agent" and version.agent_id == agent.id
+        assert version.uploaded_by == test_user.id
+
+    @pytest.mark.asyncio
+    async def test_collection_tool_write_records_the_chats_agent(
+        self, db, chat, test_user, monkeypatch
+    ):
+        """execute_single_tool hands the chat's agent to the collection tools."""
+        import contextlib
+        import json
+
+        from app.services import tool_execution
+        from app.services.message_service import MessageService
+
+        await _grant(db, test_user, "sinas.collections/*/*.upload:own")
+        target = await _make_collection(db, test_user, f"tgt-{uuid.uuid4().hex[:6]}")
+        agent = await _agent_on(db, chat)
+
+        # The executor opens its own session; hand it the test's.
+        @contextlib.asynccontextmanager
+        async def _same_session():
+            yield db
+
+        monkeypatch.setattr(tool_execution, "AsyncSessionLocal", _same_session)
+        svc = MessageService(db)
+        tool = {
+            "type": "function",
+            "function": {
+                "name": "write_file_target",
+                "_metadata": {
+                    "collection_ref": f"test/{target.name}",
+                    "tool_type": "collection_write_file",
+                },
+            },
+        }
+        _, _, content = await tool_execution.execute_single_tool(
+            {"id": "call_w", "type": "function",
+             "function": {"name": "write_file_target",
+                          "arguments": json.dumps({"filename": "n.txt", "content": "hi"})}},
+            str(chat.id), str(test_user.id), "tok", [tool],
+            svc.function_converter, svc.query_converter, svc.skill_converter,
+            svc.component_converter, svc.collection_converter,
+            svc.create_chat_with_agent,
+        )
+        assert "error" not in json.loads(content), content
+
+        version = (
+            await db.execute(
+                select(FileVersion).join(File).where(File.collection_id == target.id)
+            )
+        ).scalar_one()
+        assert version.actor_type == "agent" and version.agent_id == agent.id
+
+    @pytest.mark.asyncio
+    async def test_versions_api_reports_the_actor(self, db, chat, client, test_user):
+        await _grant(
+            db, test_user,
+            "sinas.collections/*/*.upload:own", "sinas.collections/*/*.list:own",
+        )
+        target = await _make_collection(db, test_user, f"tgt-{uuid.uuid4().hex[:6]}")
+        agent = await _agent_on(db, chat)
+        await CollectionToolConverter().execute_tool(
+            db, "write_file_target", {"filename": "n.txt", "content": "hi"}, str(test_user.id),
+            {"collection_ref": f"test/{target.name}", "tool_type": "collection_write_file"},
+            agent_id=str(agent.id),
+        )
+
+        resp = await client.get(f"/files/test/{target.name}", headers=auth_headers(test_user))
+        assert resp.status_code == 200, resp.text
+        (version,) = resp.json()[0]["versions"]
+        assert version["actor_type"] == "agent"
+        assert version["agent_id"] == str(agent.id)
 
     @pytest.mark.asyncio
     async def test_path_traversal_rejected(self, db, chat, test_user):
