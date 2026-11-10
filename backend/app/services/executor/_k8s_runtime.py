@@ -88,6 +88,26 @@ def _k8s_quantity(docker_size: str) -> str:
     return s
 
 
+def _apply_scheduling(spec: dict[str, Any]) -> None:
+    """Apply the configured placement (k8s_sandbox_node_selector /
+    _tolerations / _affinity) verbatim to a runtime pod spec.
+
+    Shared by the single-use sandbox pods and the warm trusted-worker pods
+    (`k8s_shared_trusted`): both are created by the platform at runtime, so
+    both must land where the chart's scheduling says, e.g. on a node pool
+    that the cluster's admission policy allows.
+    """
+    node_selector = json.loads(settings.k8s_sandbox_node_selector)
+    if node_selector:
+        spec["nodeSelector"] = node_selector
+    tolerations = json.loads(settings.k8s_sandbox_tolerations)
+    if tolerations:
+        spec["tolerations"] = tolerations
+    affinity = json.loads(settings.k8s_sandbox_affinity)
+    if affinity:
+        spec["affinity"] = affinity
+
+
 def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any]:
     """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`."""
     spec: dict[str, Any] = {
@@ -148,15 +168,7 @@ def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any
         # handed (see k8s_sandbox_* settings docs in config.py).
         labels["app.kubernetes.io/instance"] = settings.k8s_release_name
 
-    node_selector = json.loads(settings.k8s_sandbox_node_selector)
-    if node_selector:
-        spec["nodeSelector"] = node_selector
-    tolerations = json.loads(settings.k8s_sandbox_tolerations)
-    if tolerations:
-        spec["tolerations"] = tolerations
-    affinity = json.loads(settings.k8s_sandbox_affinity)
-    if affinity:
-        spec["affinity"] = affinity
+    _apply_scheduling(spec)
 
     return {
         "apiVersion": "v1",

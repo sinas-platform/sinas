@@ -22,9 +22,10 @@ spec:
         app.kubernetes.io/component: redis
     spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.redis) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: redis
-          image: redis:7-alpine
+          image: {{ include "sinas.image.redis" . }}
           {{- with (.Values.redis).resources }}
           resources:
             {{- toYaml . | nindent 12 }}

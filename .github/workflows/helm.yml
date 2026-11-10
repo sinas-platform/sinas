@@ -62,6 +62,55 @@ jobs:
           # sub-agent routing stays on while its worker exists
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/default.yaml || exit 1
 
+      - name: helm template (digest-pinned images from a private mirror)
+        # Clusters that enforce image signing/attestation admit only images
+        # from an allowed registry, referenced by digest. Set every per-image
+        # override and assert nothing escapes: no pod image, and no image the
+        # backend creates pods from at runtime, outside the mirror or without
+        # a digest; every pod (and the sandbox SA) gets the pull secrets;
+        # runtime pods inherit the chart's scheduling.
+        run: |
+          M=mirror.example.com/sinas
+          D=@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          OVR=(--set domain=ci.example.com
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci
+            --set postgres.password=ci --set clickhouse.password=ci
+            --set "backend.image=$M/backend:0.5.0$D" --set "console.image=$M/console$D"
+            --set "lite.image=$M/lite$D" --set "executor.image=$M/executor:0.5.0$D"
+            --set "postgres.image=$M/postgres$D" --set "redis.image=$M/redis$D"
+            --set "pgbouncer.image=$M/pgbouncer$D" --set "clickhouse.image=$M/clickhouse$D"
+            --set "imagePullSecrets[0]=mirror-pull" --set "imagePullSecrets[1].name=mirror-pull-2"
+            --set scheduling.nodeSelector.pool=restricted)
+          helm lint charts/sinas "${OVR[@]}"
+          helm template ci charts/sinas "${OVR[@]}" > /tmp/digest.yaml
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${OVR[@]}" > /tmp/digest-lite.yaml
+          for f in /tmp/digest.yaml /tmp/digest-lite.yaml; do
+            echo "== $f"
+            grep -E '^\s+image:' "$f" | sort | uniq -c
+            # every container image is in the mirror and digest-pinned
+            ! grep -E '^\s+image:' "$f" | grep -v -E "image: $M/[a-z]+(:[^@ ]+)?@sha256:[0-9a-f]{64}$" || exit 1
+            # ...and so is the image runtime pods are created from
+            test "$(grep -A1 -E 'name: (K8S_SANDBOX_IMAGE|FUNCTION_CONTAINER_IMAGE)$' "$f" | grep -c "value: \"$M/executor:0.5.0$D\"")" \
+              -eq "$(grep -c -E 'name: (K8S_SANDBOX_IMAGE|FUNCTION_CONTAINER_IMAGE)$' "$f")"
+            # every pod template, and the sandbox SA, carries both pull secrets
+            pods=$(grep -c -E '^kind: (Deployment|StatefulSet)$' "$f")
+            test "$(grep -A2 -E '^      imagePullSecrets:$' "$f" | grep -c 'name: mirror-pull-2')" -eq "$pods"
+            grep -A8 'name: ci-sandbox$' "$f" | grep -q 'name: mirror-pull$'
+            # runtime pods inherit the global scheduling default
+            grep -A1 'name: K8S_SANDBOX_NODE_SELECTOR$' "$f" | grep -q 'restricted'
+          done
+          grep -q "image: $M/lite@" /tmp/digest-lite.yaml
+          test "$(grep -c "image: $M/backend:0.5.0@" /tmp/digest.yaml)" -eq 7
+          # defaults: no overrides render the built-in refs, pgbouncer pinned
+          grep -q 'image: edoburu/pgbouncer:v1.26.1-p0$' /tmp/default.yaml
+          ! grep -q -e 'imagePullSecrets' -e 'K8S_SANDBOX_NODE_SELECTOR' /tmp/default.yaml || exit 1
+          # a map-shaped override is a render error, not a silent default
+          ! helm template ci charts/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set backend.image.repository=x > /dev/null 2>&1
+
       - name: helm template (sub-agent worker disabled)
         run: |
           helm template ci charts/sinas \
@@ -117,6 +166,9 @@ jobs:
           grep -A1 "name: REDIS_URL" /tmp/upgrade.yaml | grep -q '"redis://redis:6379/0"'
           # 0.4.0 values have no maxmemoryPolicy: the upgrade gets noeviction
           grep -A1 -- "--maxmemory-policy" /tmp/upgrade.yaml | grep -q '"noeviction"'
+          # ...nor per-image overrides: the built-in image refs render
+          grep -q 'image: edoburu/pgbouncer:v1.26.1-p0$' /tmp/upgrade.yaml
+          grep -q 'image: ghcr.io/sinas-platform/sinas/backend:' /tmp/upgrade.yaml
           helm template ci /tmp/oldvals/sinas -f /tmp/oldvals/values-lite-0.4.0.yaml \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \

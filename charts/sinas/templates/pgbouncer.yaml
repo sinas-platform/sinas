@@ -18,9 +18,10 @@ spec:
         app.kubernetes.io/component: pgbouncer
     spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.pgbouncer) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: pgbouncer
-          image: edoburu/pgbouncer:latest
+          image: {{ include "sinas.image.pgbouncer" . }}
           {{- with (.Values.pgbouncer).resources }}
           resources:
             {{- toYaml . | nindent 12 }}

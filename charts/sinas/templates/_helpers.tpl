@@ -43,12 +43,100 @@ images only built on tags, an ImagePullBackOff).
 {{- end }}
 
 {{/*
-Image pull secret reference — shared by all sinas deployments.
+Image references. Every image the chart runs has an optional full-reference
+override (backend.image, console.image, lite.image, executor.image,
+postgres.image, redis.image, pgbouncer.image, clickhouse.image) that wins when
+set, e.g. "mirror.example.com/sinas/backend@sha256:<digest>" or
+"mirror.example.com/sinas/backend:0.5.0@sha256:<digest>". Empty keeps the
+built-in default below, so an install without overrides renders exactly as
+before. All reads are paren-safe: `helm upgrade --reuse-values` from a release
+whose values predate these keys must still render.
+
+Call with: (dict "ref" <override> "default" <default ref> "key" "<values key>")
+*/}}
+{{- define "sinas.imageRef" -}}
+{{- $ref := .ref | default "" }}
+{{- if not (kindIs "string" $ref) }}
+{{- fail (printf "%s must be a full image reference string, e.g. registry.example.com/path/name@sha256:<digest> (got a %s)" .key (kindOf $ref)) }}
+{{- end }}
+{{- if regexMatch "\\s" $ref }}
+{{- fail (printf "%s must not contain whitespace: %q" .key $ref) }}
+{{- end }}
+{{- $ref | default .default -}}
+{{- end }}
+
+{{/* Sinas backend image: backend Deployment, every queue worker, scheduler
+     and cdc-worker. With allInOne the backend pod runs the separate `lite`
+     image (backend + console build) instead, overridable by lite.image. */}}
+{{- define "sinas.image.backend" -}}
+{{- if .Values.allInOne -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.lite).image) "default" (printf "%s/lite:%s" .Values.image.registry (include "sinas.imageTag" .)) "key" "lite.image") -}}
+{{- else -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.backend).image) "default" (printf "%s/backend:%s" .Values.image.registry (include "sinas.imageTag" .)) "key" "backend.image") -}}
+{{- end -}}
+{{- end }}
+
+{{- define "sinas.image.console" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.console).image) "default" (printf "%s/console:%s" .Values.image.registry (include "sinas.imageTag" .)) "key" "console.image") -}}
+{{- end }}
+
+{{/* Runtime-only: the backend creates sandbox and warm trusted-worker pods
+     from this image (K8S_SANDBOX_IMAGE); no chart template runs it. */}}
+{{- define "sinas.image.executor" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.executor).image) "default" (printf "%s/executor:%s" .Values.image.registry (include "sinas.imageTag" .)) "key" "executor.image") -}}
+{{- end }}
+
+{{- define "sinas.image.postgres" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.postgres).image) "default" "postgres:16-alpine" "key" "postgres.image") -}}
+{{- end }}
+
+{{- define "sinas.image.redis" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.redis).image) "default" "redis:7-alpine" "key" "redis.image") -}}
+{{- end }}
+
+{{/* Pinned release (was the floating `latest`); bump deliberately. The image
+     must ship pg_isready (the probes use it). */}}
+{{- define "sinas.image.pgbouncer" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.pgbouncer).image) "default" "edoburu/pgbouncer:v1.26.1-p0" "key" "pgbouncer.image") -}}
+{{- end }}
+
+{{- define "sinas.image.clickhouse" -}}
+{{- include "sinas.imageRef" (dict "ref" ((.Values.clickhouse).image) "default" "clickhouse/clickhouse-server:24-alpine" "key" "clickhouse.image") -}}
+{{- end }}
+
+{{/*
+Image pull secret names: the chart-managed `<release>-pull-secret` (when
+registry.username is set) plus every pre-created Secret in the global
+imagePullSecrets list (entries may be names or {name: ...} maps). Applied to
+every pod the chart renders AND to the sandbox ServiceAccount, which the
+backend's runtime pods (sandbox + warm trusted workers) run as.
+*/}}
+{{- define "sinas.imagePullSecretNames" -}}
+{{- $names := list }}
+{{- if and .Values.registry .Values.registry.username }}
+{{- $names = append $names (printf "%s-pull-secret" .Release.Name) }}
+{{- end }}
+{{- range (.Values.imagePullSecrets | default list) }}
+{{- $n := . }}
+{{- if kindIs "map" . }}{{ $n = .name }}{{ end }}
+{{- if not $n }}
+{{- fail "imagePullSecrets entries must be Secret names or {name: <secret>} maps" }}
+{{- end }}
+{{- $names = append $names (toString $n) }}
+{{- end }}
+{{- uniq $names | toJson -}}
+{{- end }}
+
+{{/*
+Image pull secret reference — shared by every pod the chart renders.
 */}}
 {{- define "sinas.imagePullSecrets" -}}
-{{- if and .Values.registry .Values.registry.username }}
+{{- $names := include "sinas.imagePullSecretNames" . | fromJsonArray }}
+{{- if $names }}
 imagePullSecrets:
-  - name: {{ .Release.Name }}-pull-secret
+{{- range $names }}
+  - name: {{ . }}
+{{- end }}
 {{- end }}
 {{- end }}
 
@@ -279,7 +367,7 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ .Values.executor.sandbox | quote }}
 - name: TRUSTED_EXECUTOR
   value: {{ .Values.executor.trusted | quote }}
-{{- $executorImage := .Values.executor.image | default (printf "%s/executor:%s" .Values.image.registry (include "sinas.imageTag" .)) }}
+{{- $executorImage := include "sinas.image.executor" . }}
 - name: FUNCTION_CONTAINER_IMAGE
   value: {{ $executorImage | quote }}
 - name: K8S_SANDBOX_IMAGE
@@ -294,6 +382,34 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ .Values.executor.trustedWorkers | default 2 | quote }}
 - name: K8S_SANDBOX_POD_READY_TIMEOUT
   value: {{ .Values.executor.podReadyTimeout | quote }}
+{{- /* Placement of the pods the backend creates at runtime (sandbox and warm
+       trusted workers): executor.nodeSelector / tolerations / affinity, each
+       falling back to the global scheduling default like the stateless
+       Deployments. Nothing is rendered while both are empty (the backend's
+       own no-op defaults apply), and a variable that extraEnv sets itself is
+       left to extraEnv so the container spec has no duplicate. */}}
+{{- $ex := .Values.executor | default dict }}
+{{- $sched := .Values.scheduling | default dict }}
+{{- $extraNames := list }}
+{{- range (.Values.extraEnv | default list) }}{{- $extraNames = append $extraNames .name }}{{- end }}
+{{- with ($ex.nodeSelector | default $sched.nodeSelector) }}
+{{- if not (has "K8S_SANDBOX_NODE_SELECTOR" $extraNames) }}
+- name: K8S_SANDBOX_NODE_SELECTOR
+  value: {{ toJson . | quote }}
+{{- end }}
+{{- end }}
+{{- with ($ex.tolerations | default $sched.tolerations) }}
+{{- if not (has "K8S_SANDBOX_TOLERATIONS" $extraNames) }}
+- name: K8S_SANDBOX_TOLERATIONS
+  value: {{ toJson . | quote }}
+{{- end }}
+{{- end }}
+{{- with ($ex.affinity | default $sched.affinity) }}
+{{- if not (has "K8S_SANDBOX_AFFINITY" $extraNames) }}
+- name: K8S_SANDBOX_AFFINITY
+  value: {{ toJson . | quote }}
+{{- end }}
+{{- end }}
 - name: POD_NAMESPACE
   valueFrom:
     fieldRef:

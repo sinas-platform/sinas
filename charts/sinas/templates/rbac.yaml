@@ -23,10 +23,10 @@ metadata:
   labels:
     {{- include "sinas.labels" . | nindent 4 }}
 automountServiceAccountToken: false
-{{- if and .Values.registry .Values.registry.username }}
-imagePullSecrets:
-  - name: {{ .Release.Name }}-pull-secret
-{{- end }}
+{{- /* The backend's runtime pods (sandbox + warm trusted workers) run as
+       this SA and inherit its pull secrets: the same list every chart pod
+       gets (registry.* plus imagePullSecrets). */}}
+{{- include "sinas.imagePullSecrets" . }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

@@ -121,18 +121,23 @@ executor:
 
 ## Advanced: per-client node scheduling
 
-These aren't exposed as values in the bundled `charts/sinas` chart — they're
-env vars for operators building their own multi-tenant deployment tooling
-around the k8s_pod executor (e.g. a chart that provisions one release per
-customer). Sinas doesn't decide scheduling policy itself; it just applies
+The pods the backend creates at runtime (single-use sandbox pods and the
+warm trusted-worker pods) are placed by the env vars below. The bundled
+chart sets the first three from `executor.nodeSelector`,
+`executor.tolerations` and `executor.affinity`, each falling back to the
+global `scheduling` default, so runtime pods land on the same nodes as the
+stateless services unless you say otherwise. An `extraEnv` entry with the
+same name takes precedence over the chart's value. Operators building their
+own multi-tenant tooling around the k8s_pod executor can set the env vars
+directly. Sinas doesn't decide scheduling policy itself; it just applies
 whatever it's given, so the same knobs work whether you want every
 customer's sandbox pods spread across dedicated nodes or packed together on
-shared ones — that choice lives entirely in your own tooling, not here.
+shared ones.
 
 | Setting | Default | Description |
 |---|---|---|
 | `K8S_RELEASE_NAME` | _(empty)_ | Stamped as the `app.kubernetes.io/instance` label on sandbox pods, so your own affinity rules have something to match on. No label if unset. |
-| `K8S_SANDBOX_NODE_SELECTOR` | `{}` | JSON-encoded `nodeSelector` applied verbatim to sandbox pods. |
+| `K8S_SANDBOX_NODE_SELECTOR` | `{}` | JSON-encoded `nodeSelector` applied verbatim to sandbox and trusted-worker pods. |
 | `K8S_SANDBOX_TOLERATIONS` | `[]` | JSON-encoded list of `toleration` objects applied verbatim. |
 | `K8S_SANDBOX_AFFINITY` | `{}` | JSON-encoded K8s `affinity` object (`podAffinity` to pack a customer's sandbox pods onto the same node as their other workloads, `podAntiAffinity` to spread them across dedicated nodes, `nodeAffinity`, or any combination) applied verbatim. |
 
@@ -460,6 +465,63 @@ into the backend, worker, scheduler and CDC containers (for example with a
 `docker-compose.override.yml`). See
 [Environment variables](/getting-started/environment-variables#database).
 
+## Digest-pinned installs
+
+Some clusters only admit images from an allowed registry, referenced by
+digest (for example, image signing or attestation enforced at admission).
+For those, mirror every image below into your registry and set each values
+key to its full reference, `registry/path@sha256:<digest>` or
+`registry/path:tag@sha256:<digest>`. Each image has its own digest, so set
+every key; one shared tag is not enough. An empty key keeps the default.
+
+| Image | Default | Purpose | Values key |
+|---|---|---|---|
+| Backend | `<image.registry>/backend:<tag>` | API plus every worker Deployment (`queue-worker`, `queue-agent`, `queue-agent-sub`, `queue-pipeline`, `scheduler`, `cdc-worker`) | `backend.image` |
+| Console | `<image.registry>/console:<tag>` | Console SPA (not rendered with `allInOne`) | `console.image` |
+| Lite | `<image.registry>/lite:<tag>` | The backend pod with `allInOne: true` (backend plus console build); replaces `backend.image` there | `lite.image` |
+| Executor | `<image.registry>/executor:<tag>` | **Runtime only.** The backend creates sandbox pods and warm trusted-worker pods from it; no chart template runs it, so it appears only as the `K8S_SANDBOX_IMAGE` value | `executor.image` |
+| PostgreSQL | `postgres:16-alpine` | In-cluster database (not rendered with `postgres.external.host`) | `postgres.image` |
+| Redis | `redis:7-alpine` | In-cluster Redis (not rendered with `redis.external.host`) | `redis.image` |
+| PgBouncer | `edoburu/pgbouncer:v1.26.1-p0` | Connection pooler, always rendered. A replacement must use the same env-var configuration and include `pg_isready` | `pgbouncer.image` |
+| ClickHouse | `clickhouse/clickhouse-server:24-alpine` | Request and execution logs (not rendered with `clickhouse.enabled: false`) | `clickhouse.image` |
+
+There are no init containers or sidecars. A custom executor image (see
+[Executor image and cold-start latency](#executor-image-and-cold-start-latency))
+goes in `executor.image` the same way.
+
+Pull credentials for the mirror go in `imagePullSecrets`, a list of
+pre-created Secrets. They are attached to every pod the chart renders and to
+the sandbox ServiceAccount, which the runtime pods run as, so those pods get
+them too. Runtime pods also follow `executor.nodeSelector`, `tolerations`
+and `affinity`, falling back to `scheduling`, so they land on nodes your
+policy allows.
+
+```yaml
+imagePullSecrets:
+  - mirror-pull
+backend:
+  image: registry.example.com/sinas/backend@sha256:<digest>
+console:
+  image: registry.example.com/sinas/console@sha256:<digest>
+executor:
+  image: registry.example.com/sinas/executor@sha256:<digest>
+postgres:
+  image: registry.example.com/mirror/postgres@sha256:<digest>
+redis:
+  image: registry.example.com/mirror/redis@sha256:<digest>
+pgbouncer:
+  image: registry.example.com/mirror/pgbouncer@sha256:<digest>
+clickhouse:
+  image: registry.example.com/mirror/clickhouse-server@sha256:<digest>
+```
+
+Resolve a tag to its digest with, for example,
+`crane digest ghcr.io/sinas-platform/sinas/backend:0.5.0` or
+`docker buildx imagetools inspect <ref>`. Use the multi-arch index digest
+unless you mirror a single platform. Check the result with
+`helm template ... | grep -E '^\s+image:|K8S_SANDBOX_IMAGE' -A1`: every
+reference should point at your registry and contain `@sha256:`.
+
 ## Key values
 
 | Value | Default | Description |
@@ -469,9 +531,12 @@ into the backend, worker, scheduler and CDC containers (for example with a
 | `ingress.className` | — | e.g. `nginx`, `traefik`, `alb` |
 | `executor.sandbox` | `k8s_pod` | Sandbox executor; `disabled` for trusted-only deployments |
 | `executor.trusted` | `inprocess` | Trusted executor |
-| `executor.image` | ghcr executor | Image for sandbox pods |
+| `executor.image` | ghcr executor | Image for sandbox and trusted-worker pods ([Digest-pinned installs](#digest-pinned-installs)) |
+| `backend.image`, `console.image`, `lite.image`, `postgres.image`, `redis.image`, `pgbouncer.image`, `clickhouse.image` | built-in refs | Full image reference overrides ([Digest-pinned installs](#digest-pinned-installs)) |
+| `executor.nodeSelector` / `tolerations` / `affinity` | `scheduling.*` | Placement of sandbox and trusted-worker pods |
 | `executor.installDependencies` | `true` | Per-pod `pip install` (set `false` with a baked image) |
 | `registry.username/password` | — | Pull secret for private registries (also attached to sandbox pods) |
+| `imagePullSecrets` | `[]` | Pre-created pull Secrets, attached to every pod and to sandbox pods |
 | `fileStorage.storageClass` | _(emptyDir)_ | RWX storage class for shared file storage on multi-node clusters |
 | `networkPolicy.enabled` | `true` | Namespace isolation + sandbox lockdown |
 | `networkPolicy.ingressNamespace` | _(any)_ | Restrict which namespace may reach backend/console |
