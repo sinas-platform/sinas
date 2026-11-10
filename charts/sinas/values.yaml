@@ -108,6 +108,9 @@ executor:
   ## when unset, like the stateless Deployments; set it here to place them
   ## differently. Rendered as K8S_SANDBOX_NODE_SELECTOR / _TOLERATIONS /
   ## _AFFINITY (an extraEnv entry of the same name takes precedence).
+  ## Running warm trusted workers keep the image/placement/pull secrets they
+  ## were created with: after changing any of these, delete them
+  ## (kubectl delete pod -l sinas.type=trusted-executor) to recreate them.
   ## Their image pull secrets come from the sandbox ServiceAccount, which
   ## carries the same list as every chart pod (see imagePullSecrets).
   nodeSelector: {}

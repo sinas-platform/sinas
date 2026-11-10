@@ -110,6 +110,15 @@ jobs:
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
             --set postgres.password=ci --set clickhouse.password=ci \
             --set backend.image.repository=x > /dev/null 2>&1
+          # ...and so is any other non-string (false, 0, []): only unset or ""
+          # mean the default
+          for bad in false 0 '[]'; do
+            ! helm template ci charts/sinas \
+              --set domain=ci.example.com \
+              --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+              --set postgres.password=ci --set clickhouse.password=ci \
+              --set-json "redis.image=$bad" > /dev/null 2>&1 || exit 1
+          done
 
       - name: helm template (sub-agent worker disabled)
         run: |

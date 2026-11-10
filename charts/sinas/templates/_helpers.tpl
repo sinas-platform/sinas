@@ -55,10 +55,12 @@ whose values predate these keys must still render.
 Call with: (dict "ref" <override> "default" <default ref> "key" "<values key>")
 */}}
 {{- define "sinas.imageRef" -}}
-{{- $ref := .ref | default "" }}
-{{- if not (kindIs "string" $ref) }}
-{{- fail (printf "%s must be a full image reference string, e.g. registry.example.com/path/name@sha256:<digest> (got a %s)" .key (kindOf $ref)) }}
+{{- /* Type-check BEFORE defaulting: only unset (null) or "" mean "use the
+       default"; false, 0, [] or a map are mistakes and fail the render. */}}
+{{- if not (or (kindIs "invalid" .ref) (kindIs "string" .ref)) }}
+{{- fail (printf "%s must be a full image reference string, e.g. registry.example.com/path/name@sha256:<digest> (got %s %v)" .key (kindOf .ref) .ref) }}
 {{- end }}
+{{- $ref := .ref | default "" }}
 {{- if regexMatch "\\s" $ref }}
 {{- fail (printf "%s must not contain whitespace: %q" .key $ref) }}
 {{- end }}

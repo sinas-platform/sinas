@@ -134,6 +134,20 @@ whatever it's given, so the same knobs work whether you want every
 customer's sandbox pods spread across dedicated nodes or packed together on
 shared ones.
 
+<Warning>
+Warm trusted-worker pods are long-lived and are not replaced when the
+configuration changes. A running worker keeps the image, placement and pull
+secrets it was created with, even after an upgrade. Sandbox pods are
+single-use and always pick up the current settings. After changing
+`executor.image`, `executor.nodeSelector`/`tolerations`/`affinity`,
+`scheduling`, or `imagePullSecrets`, delete the trusted workers once the
+upgrade has rolled out. They are recreated on demand with the new settings:
+
+```bash
+kubectl delete pod -n <namespace> -l sinas.type=trusted-executor
+```
+</Warning>
+
 | Setting | Default | Description |
 |---|---|---|
 | `K8S_RELEASE_NAME` | _(empty)_ | Stamped as the `app.kubernetes.io/instance` label on sandbox pods, so your own affinity rules have something to match on. No label if unset. |
@@ -494,7 +508,9 @@ pre-created Secrets. They are attached to every pod the chart renders and to
 the sandbox ServiceAccount, which the runtime pods run as, so those pods get
 them too. Runtime pods also follow `executor.nodeSelector`, `tolerations`
 and `affinity`, falling back to `scheduling`, so they land on nodes your
-policy allows.
+policy allows. When you switch an existing install to the mirror, delete
+the warm trusted-worker pods after the upgrade so they are recreated from it
+(see [per-client node scheduling](#advanced-per-client-node-scheduling)).
 
 ```yaml
 imagePullSecrets:
