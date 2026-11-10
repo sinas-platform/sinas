@@ -30,8 +30,9 @@ spec:
       containers:
         - name: backend
           ## allInOne uses the lite image: backend + the console's built SPA
-          ## (served at /ui by the process itself).
-          image: {{ .Values.image.registry }}/{{ ternary "lite" "backend" (.Values.allInOne | default false) }}:{{ include "sinas.imageTag" . }}
+          ## (served at /ui by the process itself). Overrides: backend.image,
+          ## or lite.image under allInOne.
+          image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - sh

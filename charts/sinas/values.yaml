@@ -1,4 +1,16 @@
-## Image — the sinas backend image (also used by workers, scheduler, cdc).
+## Image — the sinas images: <registry>/{backend,console,lite,executor}:<tag>.
+## backend runs the API and every worker (queue-*, scheduler, cdc-worker).
+##
+## Per-image overrides: every image the chart (or the backend, at runtime)
+## runs also takes an optional FULL reference that wins when set:
+##   backend.image  console.image  lite.image  executor.image
+##   postgres.image  redis.image  pgbouncer.image  clickhouse.image
+## Each accepts "registry/path@sha256:<digest>" or
+## "registry/path:tag@sha256:<digest>" (a plain "registry/path:tag" works
+## too). Empty = the default built from registry/tag (sinas images) or the
+## pinned upstream image (third-party). Different images have different
+## digests, so a digest-pinned install sets each one; see the Kubernetes
+## docs, "Digest-pinned installs", for the full list to mirror.
 image:
   registry: ghcr.io/sinas-platform/sinas
   ## Empty = the chart's appVersion (stamped from the release tag), so a
@@ -29,6 +41,12 @@ ingress:
 ## console build). Pair with values-lite.yaml for the full small-footprint
 ## preset (no ClickHouse, small resource requests).
 allInOne: false
+
+## The all-in-one image (backend + console build), run by the backend pod
+## when allInOne is true. Full reference override; empty =
+## <image.registry>/lite:<tag>. backend.image does not apply under allInOne.
+lite:
+  image: ""
 
 ## Secrets (required — provide via --set or a secrets values file)
 secrets:
@@ -77,10 +95,27 @@ executor:
   ## them into a custom image and set installDependencies: false to skip that
   ## cold-start cost.
   ## Empty = <image.registry>/executor:<image tag or appVersion> — keeps the
-  ## sandbox image in lockstep with the release. Set to pin a custom image.
+  ## sandbox image in lockstep with the release. Set to pin a custom image;
+  ## a full reference, digest-pinned or not, is passed to the pods verbatim.
+  ## Runtime-only: no chart template runs it, the backend creates sandbox
+  ## AND warm trusted-worker pods from it (K8S_SANDBOX_IMAGE), so mirror it
+  ## even though `helm template` shows it only as an env value.
   image: ""
   installDependencies: true
   podReadyTimeout: 120
+  ## Placement of the pods the backend creates at runtime (sandbox + warm
+  ## trusted workers). Each falls back to the global `scheduling` default
+  ## when unset, like the stateless Deployments; set it here to place them
+  ## differently. Rendered as K8S_SANDBOX_NODE_SELECTOR / _TOLERATIONS /
+  ## _AFFINITY (an extraEnv entry of the same name takes precedence).
+  ## Running warm trusted workers keep the image/placement/pull secrets they
+  ## were created with: after changing any of these, delete them
+  ## (kubectl delete pod -l sinas.type=trusted-executor) to recreate them.
+  ## Their image pull secrets come from the sandbox ServiceAccount, which
+  ## carries the same list as every chart pod (see imagePullSecrets).
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
 
 ## System page (console → System) on Kubernetes: the backend lists this
 ## release's pods and, when metrics-server is installed, reads their
@@ -91,18 +126,30 @@ executor:
 systemStats:
   rbac: true
 
-## Pull secret for private registries (applies to sinas images AND sandbox
-## pods, via their ServiceAccounts). Leave username empty for public images.
+## Pull secret for private registries, created by the chart from these
+## credentials. Leave username empty for public images.
 registry:
   server: "ghcr.io"
   username: ""
   password: ""
+
+## Pre-created image pull Secrets (names, or {name: ...} entries), e.g. for a
+## private registry mirror. Together with the registry.* secret above, they
+## are attached to EVERY pod the chart renders (sinas services, postgres,
+## redis, pgbouncer, clickhouse) and to the sandbox ServiceAccount, so the
+## sandbox and trusted-worker pods the backend creates at runtime get them
+## too.
+##   imagePullSecrets:
+##     - mirror-pull
+imagePullSecrets: []
 
 ## PostgreSQL
 postgres:
   user: postgres
   database: sinas
   password: ""  # required — install fails if empty (unless external.existingSecret)
+  ## Full image reference override; empty = postgres:16-alpine.
+  image: ""
   ## External PostgreSQL (Cloud SQL, RDS, ...). Setting external.host skips
   ## the in-cluster postgres pod and its PVC entirely; pgbouncer STAYS
   ## in-cluster and pools against the external instance (managed databases
@@ -138,6 +185,9 @@ postgres:
 
 ## Redis
 redis:
+  ## Full image reference override; empty = redis:7-alpine. Unused with
+  ## redis.external.host.
+  image: ""
   maxmemory: "256mb"
   ## Eviction policy of the in-cluster Redis. Redis holds the job queues,
   ## locks, stream relays and auth/metering state; almost nothing in it is
@@ -204,6 +254,8 @@ clickhouse:
   ## Set false for the compact profile: no ClickHouse pod, request/execution
   ## logging off, log UI empty. Everything else works normally.
   enabled: true
+  ## Full image reference override; empty = clickhouse/clickhouse-server:24-alpine.
+  image: ""
   user: default
   password: ""
   database: sinas
@@ -212,6 +264,10 @@ clickhouse:
 
 ## PGBouncer
 pgbouncer:
+  ## Full image reference override; empty = edoburu/pgbouncer:v1.26.1-p0
+  ## (pinned; earlier charts floated on `latest`). A replacement must use
+  ## the same env-var configuration and ship pg_isready (used by the probes).
+  image: ""
   poolMode: transaction
   maxClientConn: 1000
   defaultPoolSize: 50
@@ -255,7 +311,8 @@ networkPolicy:
 
 ## Scheduling — where the STATELESS workloads run (backend,
 ## console, pgbouncer, queue-worker, queue-agent, queue-agent-sub,
-## queue-pipeline, scheduler, cdc-worker).
+## queue-pipeline, scheduler, cdc-worker), and the pods the backend creates
+## at runtime (sandbox + trusted workers; override with executor.*).
 ## The single biggest cost lever on managed Kubernetes: moving these onto
 ## Spot/preemptible capacity has measured ~70% cheaper on GKE Autopilot,
 ## and they tolerate preemption (they restart and resume).
@@ -289,6 +346,11 @@ scheduling:
 
 ## Backend (FastAPI)
 backend:
+  ## Full image reference override for the backend AND every worker
+  ## Deployment (queue-worker, queue-agent, queue-agent-sub, queue-pipeline,
+  ## scheduler, cdc-worker); empty = <image.registry>/backend:<tag>. Under
+  ## allInOne the backend pod runs lite.image instead.
+  image: ""
   replicas: 1
   ## Proxies trusted to report the client IP (FORWARDED_ALLOW_IPS), which IP
   ## rate limits and request logs use. uvicorn takes the client from
@@ -402,6 +464,9 @@ cdcWorker:
 
 ## Console (React SPA)
 console:
+  ## Full image reference override; empty = <image.registry>/console:<tag>.
+  ## Not rendered under allInOne (the lite image serves the console).
+  image: ""
   resources:
     requests:
       cpu: "25m"

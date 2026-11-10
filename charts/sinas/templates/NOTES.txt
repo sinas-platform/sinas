@@ -7,7 +7,7 @@ Sinas has been deployed to namespace {{ .Release.Namespace }}.
 Executor configuration:
   sandbox (untrusted code):  {{ .Values.executor.sandbox }}
   trusted (shared_pool):     {{ .Values.executor.trusted }}
-  sandbox pod image:         {{ .Values.executor.image }}
+  sandbox pod image:         {{ include "sinas.image.executor" . }}
 
 {{- if eq .Values.executor.sandbox "k8s_pod" }}
 

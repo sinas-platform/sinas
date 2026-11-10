@@ -60,7 +60,7 @@ def _manifest(name: str, image: str, worker_id: str) -> dict[str, Any]:
     single-use pods (activeDeadlineSeconds, restartPolicy=Never). Resources
     mirror the Docker shared workers (1Gi / 1 CPU).
     """
-    from app.services.executor._k8s_runtime import _k8s_quantity
+    from app.services.executor._k8s_runtime import _apply_scheduling, _k8s_quantity
 
     spec: dict[str, Any] = {
         "restartPolicy": "Always",
@@ -104,6 +104,10 @@ def _manifest(name: str, image: str, worker_id: str) -> dict[str, Any]:
     if settings.k8s_sandbox_service_account:
         # The credential-less sandbox SA; automount is off regardless.
         spec["serviceAccountName"] = settings.k8s_sandbox_service_account
+
+    # Same placement as the sandbox pods (nodeSelector / tolerations /
+    # affinity); previously these pods ignored it entirely.
+    _apply_scheduling(spec)
 
     labels = dict(_POD_LABELS)
     if settings.k8s_release_name:

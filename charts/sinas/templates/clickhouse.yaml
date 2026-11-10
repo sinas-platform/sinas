@@ -151,9 +151,10 @@ spec:
       securityContext:
         fsGroup: 101
       {{- with (include "sinas.scheduling" (dict "values" (.Values.clickhouse) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: clickhouse
-          image: clickhouse/clickhouse-server:24-alpine
+          image: {{ include "sinas.image.clickhouse" . }}
           env:
             - name: CLICKHOUSE_DB
               value: {{ .Values.clickhouse.database | quote }}

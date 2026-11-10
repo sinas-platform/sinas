@@ -20,9 +20,10 @@ spec:
         app.kubernetes.io/component: postgres
     spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.postgres) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: {{ include "sinas.image.postgres" . }}
           {{- with (.Values.postgres).resources }}
           resources:
             {{- toYaml . | nindent 12 }}
