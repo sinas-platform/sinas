@@ -63,7 +63,6 @@ jobs:
       TAG: ci
       # The Sinas images' runtime user; runtime pods must report it.
       EXPECT_UID: "10001"
-      ARTIFACTS: ${{ runner.temp }}/k8s-restricted
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -71,6 +70,10 @@ jobs:
 
       - name: Tool versions
         run: |
+          # Logs the later steps assert on (runner.temp is not available in
+          # job-level env).
+          ARTIFACTS="$RUNNER_TEMP/k8s-restricted"
+          echo "ARTIFACTS=$ARTIFACTS" >> "$GITHUB_ENV"
           mkdir -p "$ARTIFACTS"
           if ! command -v kind >/dev/null; then
             curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
