@@ -108,6 +108,11 @@ def _apply_scheduling(spec: dict[str, Any]) -> None:
         spec["affinity"] = affinity
 
 
+def _seccomp_ok(profile: Any) -> bool:
+    """Seccomp profiles the Pod Security Standard "restricted" accepts."""
+    return isinstance(profile, dict) and profile.get("type") in ("RuntimeDefault", "Localhost")
+
+
 def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
     """(pod securityContext, container securityContext) for a runtime pod.
 
@@ -125,13 +130,20 @@ def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
         if v is not None
     }
     pod["runAsNonRoot"] = True
-    pod.setdefault("seccompProfile", {"type": "RuntimeDefault"})
+    # A Localhost profile may be configured; anything else (Unconfined, a
+    # missing type) falls back to RuntimeDefault.
+    if not _seccomp_ok(pod.get("seccompProfile")):
+        pod["seccompProfile"] = {"type": "RuntimeDefault"}
 
     container = {
         k: v
         for k, v in json.loads(settings.k8s_sandbox_container_security_context).items()
         if v is not None
     }
+    # A container-level profile overrides the pod's: keep it only when it is
+    # an allowed one, so the pod-level floor always applies otherwise.
+    if "seccompProfile" in container and not _seccomp_ok(container["seccompProfile"]):
+        del container["seccompProfile"]
     container["allowPrivilegeEscalation"] = False
     container.pop("privileged", None)
     container["capabilities"] = {"drop": ["ALL"]}

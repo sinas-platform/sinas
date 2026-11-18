@@ -215,6 +215,48 @@ def test_runtime_pod_container_floor_cannot_be_relaxed(monkeypatch):
         _assert_restricted(spec)
 
 
+def test_runtime_pod_seccomp_floor_cannot_be_relaxed(monkeypatch):
+    # Unconfined at pod or container level (values that bypassed config
+    # validation) never reaches the pod: the pod keeps RuntimeDefault and
+    # the container drops its override, so the pod-level profile applies.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsUser": 10001, "seccompProfile": {"type": "Unconfined"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"seccompProfile": {"type": "Unconfined"}}',
+    )
+    for spec in _runtime_specs():
+        assert spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        assert "seccompProfile" not in spec["containers"][0]["securityContext"]
+        _assert_restricted(spec)
+
+
+def test_runtime_pod_localhost_seccomp_is_kept(monkeypatch):
+    from app.core.config import settings
+
+    profile = {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"seccompProfile": {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"seccompProfile": {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}}',
+    )
+    for spec in _runtime_specs():
+        assert spec["securityContext"]["seccompProfile"] == profile
+        assert spec["containers"][0]["securityContext"]["seccompProfile"] == profile
+        _assert_restricted(spec)
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -226,6 +268,9 @@ def test_runtime_pod_container_floor_cannot_be_relaxed(monkeypatch):
         ("k8s_sandbox_container_security_context", '{"allowPrivilegeEscalation": true}'),
         ("k8s_sandbox_container_security_context", '{"capabilities": {"add": ["NET_RAW"]}}'),
         ("k8s_sandbox_container_security_context", '{"runAsUser": 0}'),
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {}}'),
+        ("k8s_sandbox_container_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
     ],
 )
 def test_security_context_settings_reject_relaxing_values(monkeypatch, field, value):

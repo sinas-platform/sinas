@@ -583,10 +583,15 @@ capability or sysctl for that, and writes only to `/var/cache/nginx` and
 
 ### Overrides
 
-Two global maps set the defaults, and every component can override them key
-by key. A key set to `null` removes it.
+Two global maps, empty in `values.yaml`, are merged over the built-in
+defaults (shown below), and every component's maps are merged over those,
+top-level key by key. A key set to `null` removes it. Because the built-in
+defaults are always underneath, a partial override, or an upgrade with
+`--reuse-values` from values that predate these keys, keeps the rest of the
+`restricted` context.
 
 ```yaml
+# The built-in defaults, written out:
 podSecurityContext:          # pod level: Sinas pods + runtime pods
   runAsNonRoot: true
   runAsUser: 10001

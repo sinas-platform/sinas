@@ -92,7 +92,7 @@ jobs:
           docker build -q -t "$REG/console:$TAG" console > "$ARTIFACTS/build-console.log" 2>&1 & c=$!
           rc=0
           for p in $b $e $c; do wait $p || rc=1; done
-          if [ $rc -ne 0 ]; then tail -50 "$ARTIFACTS"/build-*.log; exit 1; fi
+          if [ $rc -ne 0 ]; then for f in "$ARTIFACTS"/build-*.log; do echo "== $f"; tail -n 80 "$f"; done; exit 1; fi
           if [ "${{ matrix.profile }}" = lite ]; then
             docker build -q -t "$REG/lite:$TAG" -f backend/Dockerfile.lite \
               --build-arg BASE_IMAGE="$REG/backend:$TAG" --build-arg CONSOLE_IMAGE="$REG/console:$TAG" backend
@@ -231,4 +231,4 @@ jobs:
             kubectl -n "$NS" logs "$p" --all-containers --tail=50 --prefix --previous 2>/dev/null
           done
           helm -n "$NS" get values "$RELEASE" --all | grep -v -i -E 'password|secretkey|encryptionkey'
-          cat "$ARTIFACTS"/*.log "$ARTIFACTS"/*.txt 2>/dev/null | tail -200
+          cat "$ARTIFACTS"/*.log "$ARTIFACTS"/*.txt 2>/dev/null | tail -n 200

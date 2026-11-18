@@ -233,6 +233,21 @@ jobs:
           # their own user
           python .github/scripts/check_pod_security.py /tmp/upgrade.yaml /tmp/upgrade-lite.yaml
           grep -q 'runAsUser: 999$' /tmp/upgrade.yaml
+          # ...also when the upgrade sets a first, partial override: the
+          # built-in defaults stay underneath, a null still removes a key
+          helm template ci /tmp/oldvals/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set podSecurityContext.runAsUser=12345 \
+            --set containerSecurityContext.readOnlyRootFilesystem=false \
+            --set postgres.podSecurityContext.runAsUser=null \
+            > /tmp/upgrade-override.yaml
+          python .github/scripts/check_pod_security.py /tmp/upgrade-override.yaml
+          grep -q 'runAsUser: 12345$' /tmp/upgrade-override.yaml
+          # pgbouncer keeps uid 70, postgres no longer sets one
+          test "$(grep -c 'runAsUser: 70$' /tmp/upgrade.yaml)" -eq 2
+          test "$(grep -c 'runAsUser: 70$' /tmp/upgrade-override.yaml)" -eq 1
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |

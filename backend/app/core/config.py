@@ -7,6 +7,21 @@ from pydantic_settings import BaseSettings
 
 VALID_AUTH_MODES = {"otp", "password", "password+otp"}
 
+# Seccomp profile types the Pod Security Standard "restricted" accepts.
+_ALLOWED_SECCOMP = ("RuntimeDefault", "Localhost")
+
+
+def _check_seccomp_profile(field: str, parsed: dict) -> None:
+    """Refuse a configured seccompProfile that restricted would refuse
+    (Unconfined, or no type); an absent one is fine (a default applies)."""
+    profile = parsed.get("seccompProfile")
+    if profile is None:
+        return
+    if not isinstance(profile, dict) or profile.get("type") not in _ALLOWED_SECCOMP:
+        raise ValueError(
+            f"{field}: seccompProfile must be RuntimeDefault or Localhost, got {profile!r}"
+        )
+
 
 class Settings(BaseSettings):
     # Database - can be set as full URL or individual components
@@ -214,6 +229,7 @@ class Settings(BaseSettings):
                 "k8s_sandbox_pod_security_context: runAsUser 0 (root) is not allowed; "
                 "use a non-zero uid, or null to let the platform pick"
             )
+        _check_seccomp_profile("k8s_sandbox_pod_security_context", parsed)
         return v
 
     @field_validator("k8s_sandbox_container_security_context")
@@ -229,6 +245,10 @@ class Settings(BaseSettings):
             relaxed.append("capabilities.add")
         if parsed.get("runAsUser") == 0 or parsed.get("runAsNonRoot") is False:
             relaxed.append("root user")
+        try:
+            _check_seccomp_profile("seccompProfile", parsed)
+        except ValueError:
+            relaxed.append("seccompProfile")
         if relaxed:
             raise ValueError(
                 "k8s_sandbox_container_security_context cannot relax the sandbox "

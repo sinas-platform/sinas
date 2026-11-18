@@ -184,20 +184,23 @@ Pod Security — securityContexts that satisfy the Pod Security Standard
 "restricted", so every pod is admitted in a namespace labelled
 pod-security.kubernetes.io/enforce=restricted.
 
-Layering (each step: keys of the later map win; a key set to null in a
-per-component map removes it, e.g. to let the platform pick the uid):
-  pod:       podSecurityContext (global)  ⊕  <component>.podSecurityContext
-  container: containerSecurityContext     ⊕  <component>.securityContext
+Layering, top-level key by key; later layers win, and a key set to null in
+any values layer removes it (e.g. runAsUser: null lets the platform pick):
+  pod:       built-in default ⊕ podSecurityContext ⊕ <component>.podSecurityContext
+  container: built-in default ⊕ containerSecurityContext ⊕ <component>.securityContext
 Third-party images (postgres, redis, clickhouse, pgbouncer) run as their
-image's own user: they take the global map WITHOUT its identity keys
-(runAsUser / runAsGroup / fsGroup) and get those from their component map
-(postgres.podSecurityContext etc.), whose chart defaults are the image's
-uid/gid.
+image's own user: they take the pod layers above WITHOUT runAsUser /
+runAsGroup / fsGroup, then their image's identity (imageUser), then their
+component map.
 
---reuse-values safe: a release whose values predate these keys has no
-global or component map at all; the built-in defaults below (identical to
-values.yaml) apply then. A map that IS present is used as given, so
-`podSecurityContext.runAsUser: null` (Helm deletes the key) stays deleted.
+The built-in defaults are always the base and every values map defaults to
+{} in values.yaml, so:
+  - `helm upgrade --reuse-values` from a release whose values predate these
+    keys, even with a first `--set podSecurityContext.x=...`, still gets the
+    full restricted context (a partial map only overrides its own keys);
+  - a null is never swallowed by Helm's coalescing (it deletes a null only
+    where the chart default has the key, and these maps have none), so it
+    reaches the merge below and removes the key.
 */}}
 {{- define "sinas.podSecurityContext.default" -}}
 runAsNonRoot: true
@@ -215,15 +218,16 @@ capabilities:
   drop: ["ALL"]
 {{- end }}
 
-{{/* base ⊕ override as JSON; a null in either drops the key. Builds a new
-     map (never mutates .Values). Call with (dict "base" .. "override" ..). */}}
+{{/* Merge a list of maps (later wins, a null value removes the key) into a
+     new map, as JSON; never mutates .Values. Non-map layers are skipped. */}}
 {{- define "sinas.securityContext.merge" -}}
 {{- $out := dict }}
-{{- range $k, $v := (.base | default dict) }}
-{{- if not (kindIs "invalid" $v) }}{{- $_ := set $out $k $v }}{{- end }}
-{{- end }}
-{{- range $k, $v := (.override | default dict) }}
+{{- range $layer := . }}
+{{- if kindIs "map" $layer }}
+{{- range $k, $v := $layer }}
 {{- if kindIs "invalid" $v }}{{- $_ := unset $out $k }}{{- else }}{{- $_ := set $out $k $v }}{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- toJson $out -}}
 {{- end }}
@@ -232,20 +236,18 @@ capabilities:
 Pod-level securityContext as JSON ({} when nothing applies).
 Call with: (dict "root" . "values" (.Values.backend))
        or: (dict "root" . "values" (.Values.postgres) "imageUser" (dict "runAsUser" 70 ...))
-imageUser marks a third-party image and gives its built-in identity.
+imageUser marks a third-party image and gives its image's identity.
 */}}
 {{- define "sinas.podSecurityContext" -}}
+{{- $base := include "sinas.podSecurityContext.default" . | fromYaml }}
 {{- $global := .root.Values.podSecurityContext }}
-{{- if not (kindIs "map" $global) }}
-{{- $global = include "sinas.podSecurityContext.default" . | fromYaml }}
-{{- end }}
+{{- if not (kindIs "map" $global) }}{{- $global = dict }}{{- end }}
 {{- $component := (.values | default dict).podSecurityContext }}
 {{- if .imageUser }}
-{{- $global = omit $global "runAsUser" "runAsGroup" "fsGroup" }}
-{{- if not (kindIs "map" $component) }}{{- $component = .imageUser }}{{- end }}
+{{- include "sinas.securityContext.merge" (list (omit $base "runAsUser" "runAsGroup" "fsGroup") (omit $global "runAsUser" "runAsGroup" "fsGroup") .imageUser $component) -}}
+{{- else }}
+{{- include "sinas.securityContext.merge" (list $base $global $component) -}}
 {{- end }}
-{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
-{{- include "sinas.securityContext.merge" (dict "base" $global "override" $component) -}}
 {{- end }}
 
 {{/*
@@ -253,13 +255,8 @@ Container-level securityContext as JSON. Applies to every container of the
 pod, init containers included. Call with: (dict "root" . "values" (.Values.backend))
 */}}
 {{- define "sinas.containerSecurityContext" -}}
-{{- $global := .root.Values.containerSecurityContext }}
-{{- if not (kindIs "map" $global) }}
-{{- $global = include "sinas.containerSecurityContext.default" . | fromYaml }}
-{{- end }}
-{{- $component := (.values | default dict).securityContext }}
-{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
-{{- include "sinas.securityContext.merge" (dict "base" $global "override" $component) -}}
+{{- $base := include "sinas.containerSecurityContext.default" . | fromYaml }}
+{{- include "sinas.securityContext.merge" (list $base .root.Values.containerSecurityContext (.values | default dict).securityContext) -}}
 {{- end }}
 
 {{/* Rendered `securityContext:` blocks; empty when the map is empty. Call
