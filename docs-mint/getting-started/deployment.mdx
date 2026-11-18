@@ -75,6 +75,43 @@ The backend applies database migrations on startup. Each migration commits on it
 
 ### Upgrading to 0.5.0
 
+#### Breaking (Docker Compose): update the compose files and Caddyfile together with the images
+
+From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images.** Re-running the installer (`install.sh`) downloads them for the version it installs; otherwise download them from the release before `docker compose pull`.
+
+With the 0.5.0 images and older files:
+
+- **The console is unreachable.** The old `Caddyfile` proxies `console:80`, and the old dev compose maps `51245:80`. Nothing listens there any more.
+- **Code execution fails on Linux.** The backend and workers open the host Docker socket, which is `root:docker 0660` and cannot be opened by uid 10001 (group 0). Docker Desktop's socket is accessible, so it is unaffected. 0.5.0's compose files run the services that use the socket with `user: "0:0"`.
+- **File uploads and other file writes fail.** Earlier versions wrote the `file_storage` volume as root, so uid 10001 cannot write to it. 0.5.0's compose files run the Sinas services as root for this reason too.
+
+The backend, workers and scheduler log an error at startup when the file storage or the Docker socket is not usable this way. The System page shows the same errors as critical warnings.
+
+If you cannot update the files yet, this `docker-compose.override.yml` restores the old behaviour. Remove it once the files are updated.
+
+```yaml
+# docker-compose.override.yml (next to docker-compose.yml)
+services:
+  backend: {user: "0:0"}
+  queue-worker: {user: "0:0"}
+  queue-agent: {user: "0:0"}
+  queue-agent-sub: {user: "0:0"}
+  queue-pipeline: {user: "0:0"}
+  scheduler: {user: "0:0"}
+  cdc-worker: {user: "0:0"}
+  # dev compose only (it publishes the console directly):
+  console:
+    ports: !override
+      - "51245:8080"
+```
+
+For the lite profile, set `user: "0:0"` on its `sinas` service the same way. Two notes on the snippet:
+
+- **Console ports:** a plain `ports:` in an override file is appended to the base file's list rather than replacing it, which would keep the dead `51245:80`. `!override` (Docker Compose 2.24.4 and later) replaces the list.
+- **Caddy:** the production compose has no console port; edit the line in your `Caddyfile` to `reverse_proxy console:8080` instead.
+
+#### Other changes
+
 0.5.0 marks every existing provider batch-API usage row (`source: provider_batch`) as `batch: true`. On an install with many of them this rewrites most of `llm_usage` and leaves dead rows behind. The migration does this in short batches while Sinas keeps serving. Once the upgrade is done, clean up the dead rows and refresh the planner statistics:
 
 ```bash
@@ -96,14 +133,7 @@ If `used_memory` is near `maxmemory`, or `evicted_keys` is above 0, raise `REDIS
 
 0.5.0's `docker-compose.yml` also adds a `proxy` network between Caddy, the backend and the console, with the fixed subnet `10.254.253.0/24` (see [Client IPs](#client-ips-behind-caddy) below). `docker compose up -d` creates it. If that subnet is already in use on your host or network, set `SINAS_PROXY_SUBNET`, `SINAS_PROXY_IP_RANGE`, `SINAS_CADDY_IP` and `FORWARDED_ALLOW_IPS` in `.env` first.
 
-**Update `docker-compose.yml` and `Caddyfile` together with the images.** From 0.5.0 the images run as non-root users: the backend, lite and executor images as uid 10001 (group 0), the console's nginx as uid 101 on port **8080** instead of 80. Two things in the files depend on that:
-
-- The `Caddyfile` proxies the console at `console:8080`. An older Caddyfile still points at `console:80`, and the console stops answering on port 51245.
-- `docker-compose.yml` (and `docker-compose.lite.yml`) run the Sinas services with `user: "0:0"`, as before: they drive the host Docker daemon through its socket, which only root (or the host's `docker` group) can open, and earlier versions wrote the `file_storage` volume as root. With an older compose file, the 0.5.0 images run as uid 10001 and code execution fails on the socket.
-
-Re-running the installer downloads both files for the version it installs. Otherwise, download them from the release before `docker compose pull`. The executor image, which sandbox and shared-worker containers run, runs as uid 10001 in every case; it needs nothing from you.
-
-To run the Compose services that do not use the Docker socket without root (the lite profile without `docker-compose.lite.exec.yml`, or `queue-pipeline` and `cdc-worker`), make the file volume group-writable once, then set `user: "10001:0"` for them in a `docker-compose.override.yml`:
+Once on 0.5.0's files, to run the Compose services that do not use the Docker socket without root (the lite profile without `docker-compose.lite.exec.yml`, or `queue-pipeline` and `cdc-worker`), make the file volume group-writable once, then set `user: "10001:0"` for them in a `docker-compose.override.yml`:
 
 ```bash
 docker compose exec backend sh -c 'chgrp -R 0 /var/sinas/files && chmod -R g+rwX /var/sinas/files'

@@ -180,6 +180,10 @@ async def run(stop_event: asyncio.Event) -> None:
 
     await startup_redis_checks(redis, "scheduler")
 
+    from app.core.runtime_checks import log_runtime_problems
+
+    log_runtime_problems("scheduler")
+
     # --- Declarative config apply ---
     if settings.config_file and settings.auto_apply_config:
         logger.info(f"🔧 AUTO_APPLY_CONFIG enabled, applying config from {settings.config_file}...")

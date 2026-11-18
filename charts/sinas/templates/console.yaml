@@ -68,7 +68,10 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: console
   ports:
-    ## The console container listens on 8080 (unprivileged nginx).
-    - port: 80
+    ## The console container listens on 8080 (unprivileged nginx). Anything
+    ## routing to the pod port directly (an OpenShift Route's targetPort, a
+    ## custom Gateway/Ingress resource) needs 8080 or the port name `http`.
+    - name: http
+      port: 80
       targetPort: 8080
 {{- end }}

@@ -7,21 +7,6 @@ from pydantic_settings import BaseSettings
 
 VALID_AUTH_MODES = {"otp", "password", "password+otp"}
 
-# Seccomp profile types the Pod Security Standard "restricted" accepts.
-_ALLOWED_SECCOMP = ("RuntimeDefault", "Localhost")
-
-
-def _check_seccomp_profile(field: str, parsed: dict) -> None:
-    """Refuse a configured seccompProfile that restricted would refuse
-    (Unconfined, or no type); an absent one is fine (a default applies)."""
-    profile = parsed.get("seccompProfile")
-    if profile is None:
-        return
-    if not isinstance(profile, dict) or profile.get("type") not in _ALLOWED_SECCOMP:
-        raise ValueError(
-            f"{field}: seccompProfile must be RuntimeDefault or Localhost, got {profile!r}"
-        )
-
 
 class Settings(BaseSettings):
     # Database - can be set as full URL or individual components
@@ -180,8 +165,10 @@ class Settings(BaseSettings):
     # containerSecurityContext values. A null (or absent) runAsUser /
     # runAsGroup / fsGroup leaves the choice to the platform (e.g. an
     # OpenShift SCC). A hardening floor is applied on top and cannot be
-    # relaxed here: runAsNonRoot, a seccomp profile (RuntimeDefault unless
-    # one is given), no privilege escalation, all capabilities dropped.
+    # relaxed here: runAsNonRoot, a seccomp profile (RuntimeDefault unless a
+    # valid one is given), no privilege escalation, every capability dropped
+    # but NET_BIND_SERVICE, and no unsafe sysctls, procMount, SELinux or
+    # AppArmor settings (app.core.pod_security has the rules).
     # Installing dependencies into the pods (k8s_sandbox_install_dependencies)
     # needs group 0: the executor image's install paths are group-0 writable.
     k8s_sandbox_pod_security_context: str = (
@@ -219,40 +206,27 @@ class Settings(BaseSettings):
         # Runs after the JSON-object check above. runAsNonRoot is always set
         # on the pods, so a root identity would make every runtime pod fail
         # to start: refuse it at startup instead.
-        parsed = json.loads(v)
-        if parsed.get("runAsNonRoot") is False:
+        from app.core.pod_security import pod_violations
+
+        violations = pod_violations(json.loads(v))
+        if violations:
             raise ValueError(
-                "k8s_sandbox_pod_security_context: runAsNonRoot cannot be disabled"
+                "k8s_sandbox_pod_security_context would break Pod Security "
+                f"'restricted' ({'; '.join(violations)}); use a non-zero uid, or "
+                "null to let the platform pick"
             )
-        if parsed.get("runAsUser") == 0:
-            raise ValueError(
-                "k8s_sandbox_pod_security_context: runAsUser 0 (root) is not allowed; "
-                "use a non-zero uid, or null to let the platform pick"
-            )
-        _check_seccomp_profile("k8s_sandbox_pod_security_context", parsed)
         return v
 
     @field_validator("k8s_sandbox_container_security_context")
     @classmethod
     def _validate_k8s_container_security_context(cls, v: str) -> str:
-        parsed = json.loads(v)
-        relaxed = []
-        if parsed.get("privileged"):
-            relaxed.append("privileged")
-        if parsed.get("allowPrivilegeEscalation"):
-            relaxed.append("allowPrivilegeEscalation")
-        if (parsed.get("capabilities") or {}).get("add"):
-            relaxed.append("capabilities.add")
-        if parsed.get("runAsUser") == 0 or parsed.get("runAsNonRoot") is False:
-            relaxed.append("root user")
-        try:
-            _check_seccomp_profile("seccompProfile", parsed)
-        except ValueError:
-            relaxed.append("seccompProfile")
-        if relaxed:
+        from app.core.pod_security import container_violations
+
+        violations = container_violations(json.loads(v))
+        if violations:
             raise ValueError(
                 "k8s_sandbox_container_security_context cannot relax the sandbox "
-                f"hardening ({', '.join(relaxed)})"
+                f"hardening ({'; '.join(violations)})"
             )
         return v
 

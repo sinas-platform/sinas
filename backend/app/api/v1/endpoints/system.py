@@ -262,6 +262,13 @@ def _generate_warnings(
     """Generate health warnings from system state."""
     warnings = _redis_warnings(redis_memory)
 
+    # Non-root permission problems of this process (file storage, Docker
+    # socket), as logged at startup.
+    from app.core.runtime_checks import runtime_problems
+
+    for problem in runtime_problems():
+        warnings.append({"level": "critical", "message": problem})
+
     # Critical: no queue workers
     fn_workers = [w for w in queue_workers if w.get("queue") == "functions"]
     agent_workers = [w for w in queue_workers if w.get("queue") == "agents"]

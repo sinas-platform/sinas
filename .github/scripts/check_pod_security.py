@@ -34,6 +34,29 @@ SAFE_SYSCTLS = {
     "net.ipv4.tcp_keepalive_intvl", "net.ipv4.tcp_keepalive_probes",
 }
 POD_KINDS = {"Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob"}
+SELINUX_TYPES = {"", "container_t", "container_init_t", "container_kvm_t", "container_engine_t"}
+
+
+def profile_ok(profile) -> bool:
+    """seccomp/AppArmor profile restricted accepts: RuntimeDefault, or
+    Localhost naming its profile."""
+    if not isinstance(profile, dict):
+        return False
+    if profile.get("type") == "RuntimeDefault":
+        return True
+    return profile.get("type") == "Localhost" and bool(profile.get("localhostProfile"))
+
+
+def common_violations(name: str, sc: dict) -> list[str]:
+    out = []
+    if "appArmorProfile" in sc and not profile_ok(sc["appArmorProfile"]):
+        out.append(f"{name}: appArmorProfile {sc['appArmorProfile']} not allowed")
+    if "seccompProfile" in sc and not profile_ok(sc["seccompProfile"]):
+        out.append(f"{name}: seccompProfile {sc['seccompProfile']} not allowed")
+    se = sc.get("seLinuxOptions")
+    if se is not None and ((se.get("type") or "") not in SELINUX_TYPES or se.get("user") or se.get("role")):
+        out.append(f"{name}: seLinuxOptions {se} not allowed")
+    return out
 
 
 def pod_spec(doc: dict) -> dict | None:
@@ -65,8 +88,7 @@ def violations(spec: dict) -> list[str]:
     for s in psc.get("sysctls") or []:
         if s.get("name") not in SAFE_SYSCTLS:
             out.append(f"unsafe sysctl {s.get('name')}")
-    if (psc.get("seccompProfile") or {}).get("type") == "Unconfined":
-        out.append("pod seccompProfile Unconfined")
+    out += common_violations("pod", psc)
     if (psc.get("windowsOptions") or {}).get("hostProcess"):
         out.append("pod windowsOptions.hostProcess")
 
@@ -77,7 +99,7 @@ def violations(spec: dict) -> list[str]:
             out.append(f"volume {v.get('name')}: type {sorted(types - ALLOWED_VOLUMES)} not allowed")
 
     pod_nonroot = psc.get("runAsNonRoot")
-    pod_seccomp = (psc.get("seccompProfile") or {}).get("type")
+    pod_seccomp = psc.get("seccompProfile")
     if psc.get("runAsUser") == 0:
         out.append("pod runAsUser: 0")
     if pod_nonroot is False:
@@ -86,6 +108,7 @@ def violations(spec: dict) -> list[str]:
     for role, c in containers:
         name = f"{role} {c.get('name')}"
         sc = c.get("securityContext") or {}
+        out += common_violations(name, sc)
         if sc.get("privileged"):
             out.append(f"{name}: privileged")
         if (sc.get("windowsOptions") or {}).get("hostProcess"):
@@ -102,8 +125,7 @@ def violations(spec: dict) -> list[str]:
             out.append(f"{name}: runAsNonRoot must be true (pod or container)")
         if sc.get("runAsUser") == 0:
             out.append(f"{name}: runAsUser: 0")
-        seccomp = (sc.get("seccompProfile") or {}).get("type") or pod_seccomp
-        if seccomp not in ("RuntimeDefault", "Localhost"):
+        if not profile_ok(sc.get("seccompProfile") or pod_seccomp):
             out.append(f"{name}: seccompProfile must be RuntimeDefault or Localhost (pod or container)")
         caps = sc.get("capabilities") or {}
         if "ALL" not in (caps.get("drop") or []):

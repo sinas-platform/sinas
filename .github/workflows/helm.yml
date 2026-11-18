@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
@@ -59,6 +59,28 @@ jobs:
           ! python $CHECK /tmp/psa-bad.yaml > /dev/null || exit 1
           helm template ci charts/sinas "${BASE[@]}" --set redis.podSecurityContext.runAsUser=0 > /tmp/psa-bad2.yaml
           ! python $CHECK /tmp/psa-bad2.yaml > /dev/null || exit 1
+          # overrides deep-merge: adding a capability keeps drop: [ALL], a
+          # nested seccompProfile key keeps its siblings, the runtime pods'
+          # container context likewise
+          helm template ci charts/sinas "${BASE[@]}" \
+            --set 'console.securityContext.capabilities.add[0]=NET_BIND_SERVICE' \
+            --set 'executor.securityContext.capabilities.add[0]=NET_BIND_SERVICE' \
+            --set backend.podSecurityContext.seccompProfile.type=Localhost \
+            --set backend.podSecurityContext.seccompProfile.localhostProfile=profiles/sinas.json \
+            > /tmp/psa-deep.yaml
+          python $CHECK /tmp/psa-deep.yaml
+          python - <<'EOF'
+          import json, yaml
+          docs = {(d["kind"], d["metadata"]["name"]): d for d in yaml.safe_load_all(open("/tmp/psa-deep.yaml")) if d}
+          console = docs[("Deployment", "console")]["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+          assert console["capabilities"] == {"add": ["NET_BIND_SERVICE"], "drop": ["ALL"]}, console
+          backend = docs[("Deployment", "backend")]["spec"]["template"]["spec"]
+          assert backend["securityContext"]["seccompProfile"] == {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}
+          env = {e["name"]: e.get("value") for e in backend["containers"][0]["env"]}
+          runtime = json.loads(env["K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT"])
+          assert runtime["capabilities"] == {"add": ["NET_BIND_SERVICE"], "drop": ["ALL"]}, runtime
+          print("deep merge ok")
+          EOF
 
       - name: helm lint
         run: |

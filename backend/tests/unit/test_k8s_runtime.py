@@ -271,6 +271,15 @@ def test_runtime_pod_localhost_seccomp_is_kept(monkeypatch):
         ("k8s_sandbox_pod_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
         ("k8s_sandbox_pod_security_context", '{"seccompProfile": {}}'),
         ("k8s_sandbox_container_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
+        # Localhost must name its profile
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {"type": "Localhost"}}'),
+        ("k8s_sandbox_container_security_context", '{"procMount": "Unmasked"}'),
+        ("k8s_sandbox_pod_security_context", '{"sysctls": [{"name": "kernel.msgmax", "value": "1"}]}'),
+        ("k8s_sandbox_pod_security_context", '{"seLinuxOptions": {"type": "spc_t"}}'),
+        ("k8s_sandbox_container_security_context", '{"seLinuxOptions": {"user": "system_u"}}'),
+        ("k8s_sandbox_pod_security_context", '{"appArmorProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_container_security_context", '{"appArmorProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_container_security_context", '{"windowsOptions": {"hostProcess": true}}'),
     ],
 )
 def test_security_context_settings_reject_relaxing_values(monkeypatch, field, value):
@@ -281,6 +290,55 @@ def test_security_context_settings_reject_relaxing_values(monkeypatch, field, va
     monkeypatch.setenv(field.upper(), value)
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_security_context_settings_accept_what_restricted_allows(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.setenv(
+        "K8S_SANDBOX_POD_SECURITY_CONTEXT",
+        '{"runAsUser": 10001, "sysctls": [{"name": "net.ipv4.ping_group_range", "value": "0 1"}],'
+        ' "seLinuxOptions": {"type": "container_t", "level": "s0:c1,c2"},'
+        ' "appArmorProfile": {"type": "RuntimeDefault"},'
+        ' "seccompProfile": {"type": "Localhost", "localhostProfile": "p.json"}}',
+    )
+    monkeypatch.setenv(
+        "K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT",
+        '{"allowPrivilegeEscalation": false, "procMount": "Default",'
+        ' "capabilities": {"drop": ["ALL"], "add": ["NET_BIND_SERVICE"]}}',
+    )
+    Settings()
+
+
+def test_runtime_pod_floor_strips_restricted_violations(monkeypatch):
+    # Values that bypassed config validation: every restricted violation is
+    # removed from the pods, allowed values pass through.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsUser": 0, "sysctls": [{"name": "kernel.msgmax", "value": "1"},'
+        ' {"name": "net.ipv4.tcp_syncookies", "value": "1"}],'
+        ' "seLinuxOptions": {"type": "spc_t"}, "appArmorProfile": {"type": "Unconfined"},'
+        ' "seccompProfile": {"type": "Localhost"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"procMount": "Unmasked", "windowsOptions": {"hostProcess": true},'
+        ' "capabilities": {"add": ["NET_BIND_SERVICE", "SYS_ADMIN"]}}',
+    )
+    for spec in _runtime_specs():
+        pod = spec["securityContext"]
+        ctr = spec["containers"][0]["securityContext"]
+        assert "runAsUser" not in pod
+        assert pod["sysctls"] == [{"name": "net.ipv4.tcp_syncookies", "value": "1"}]
+        assert "seLinuxOptions" not in pod and "appArmorProfile" not in pod
+        assert pod["seccompProfile"] == {"type": "RuntimeDefault"}  # Localhost without a profile
+        assert "procMount" not in ctr and "windowsOptions" not in ctr
+        assert ctr["capabilities"] == {"drop": ["ALL"], "add": ["NET_BIND_SERVICE"]}
+        _assert_restricted(spec)
 
 
 def test_security_context_settings_accept_chart_values(monkeypatch):

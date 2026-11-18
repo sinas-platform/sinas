@@ -1,11 +1,18 @@
-# Stage 1: Build the frontend
-# Debian-based (glibc), not alpine: the musl build of rollup's native parser
-# currently fails `vite build` with "Code is nested too deeply" on
-# react-dom. Only this stage changes; the image ships nginx:alpine below.
+# Stage 1: Build the frontend — reproducibly, from package-lock.json.
+# Debian-based (glibc) rather than alpine: rollup ships a native parser per
+# libc, and its musl build is the one that regressed in 4.68.6 ("Code is
+# nested too deeply" on react-dom). The lockfile pins rollup anyway; glibc
+# keeps a future lockfile bump from tripping over the musl build alone.
+# Only this stage; the image ships nginx:alpine below.
 FROM node:20-slim AS builder
 
-# Set to "true" to use a locally built @sinas/sdk instead of npm
+# Set to "true" to use a locally built @sinas/sdk (sinas-sdk.tgz in the build
+# context) instead of the published SINAS_SDK_VERSION.
 ARG USE_LOCAL_PACKAGES=false
+# Exact published @sinas/sdk to build against; the CI console-build job pins
+# the same version (SINAS_SDK_VERSION in .github/workflows/ci.yml, which
+# checks the two agree). Bump both on SDK releases.
+ARG SINAS_SDK_VERSION=0.7.0
 
 # Backend URL baked into the build (skips the same-origin auto-detect fallback)
 ARG VITE_API_URL
@@ -13,21 +20,21 @@ ENV VITE_API_URL=$VITE_API_URL
 
 WORKDIR /app
 
-# Copy package.json only (lockfile has file: paths that get rewritten)
-COPY package.json ./
-
+COPY package.json package-lock.json ./
+COPY scripts ./scripts
 # Copy local packages (only used when USE_LOCAL_PACKAGES=true)
 COPY sinas-sdk.tgz* ./
 
-# Replace file: deps with either local tarballs or npm latest
-RUN if [ "$USE_LOCAL_PACKAGES" = "true" ]; then \
-      sed -i 's|"file:../../sinas-js"|"file:./sinas-sdk.tgz"|g' package.json; \
-    else \
-      sed -i 's|"file:../../sinas-js"|"latest"|g' package.json; \
-    fi
-
-# Install dependencies
-RUN npm install
+# package.json links @sinas/sdk to a sibling checkout for development; point
+# it at the pinned version (or the tarball), then install exactly the
+# lockfile: every other dependency, vite and rollup included, at the version
+# package-lock.json records (scripts/use-published-sdk.mjs explains why both
+# files are rewritten).
+RUN if [ "$USE_LOCAL_PACKAGES" = "true" ]; then SDK="file:./sinas-sdk.tgz"; else SDK="$SINAS_SDK_VERSION"; fi \
+    && node scripts/use-published-sdk.mjs "$SDK" \
+    && npm install --package-lock-only --no-audit --no-fund \
+    && npm ci --no-audit --no-fund \
+    && npm ls --depth=0 @sinas/sdk vite && npm ls rollup
 
 # Copy source code
 COPY src ./src

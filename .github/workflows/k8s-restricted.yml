@@ -22,8 +22,17 @@ on:
       - 'backend/container_executor.py'
       - 'backend/app/services/executor/**'
       - 'backend/app/core/config.py'
+      - 'backend/app/core/pod_security.py'
+      - 'backend/app/core/runtime_checks.py'
+      - 'backend/app/services/code_execution.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
       - 'console/Dockerfile'
       - 'console/nginx.conf'
+      - 'console/package.json'
+      - 'console/package-lock.json'
+      - 'console/scripts/**'
+      - 'console/src/**'
       - '.github/k8s-restricted/**'
       - '.github/scripts/check_pod_security.py'
       - '.github/workflows/k8s-restricted.yml'
@@ -66,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
       - name: Tool versions
         run: |
@@ -76,8 +85,10 @@ jobs:
           echo "ARTIFACTS=$ARTIFACTS" >> "$GITHUB_ENV"
           mkdir -p "$ARTIFACTS"
           if ! command -v kind >/dev/null; then
-            curl -fsSLo /usr/local/bin/kind https://kind.sigs.k8s.io/dl/v0.29.0/kind-linux-amd64
-            chmod +x /usr/local/bin/kind
+            # Fallback only (the runner image ships kind): pinned, checksummed.
+            curl -fsSLo "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.29.0/kind-linux-amd64
+            echo "c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284  $RUNNER_TEMP/kind" | sha256sum -c -
+            sudo install -m 0755 "$RUNNER_TEMP/kind" /usr/local/bin/kind
           fi
           kind version; helm version --short; kubectl version --client; docker version --format '{{.Server.Version}}'
 
@@ -173,13 +184,17 @@ jobs:
           if grep -q . "$ARTIFACTS/failedcreate.txt"; then
             cat "$ARTIFACTS/failedcreate.txt"; echo "::error::pods were refused"; exit 1
           fi
-          # ...and every running pod passes "restricted" as re-evaluated now:
-          # a server-side dry run of the enforce label lists any violator.
-          kubectl label --dry-run=server --overwrite namespace "$NS" \
-            pod-security.kubernetes.io/enforce=restricted 2>&1 | tee "$ARTIFACTS/relabel.txt"
-          if grep -i warning "$ARTIFACTS/relabel.txt"; then
-            echo "::error::running pods violate restricted"; exit 1
+          # ...and the namespace really enforces: a pod violating restricted
+          # (root, default capabilities) is refused (server-side dry run), so
+          # every admission above was a real check.
+          if kubectl -n "$NS" run psa-probe --dry-run=server --restart=Never \
+              --image="$REG/backend:$TAG" --image-pull-policy=Never \
+              --overrides='{"spec":{"securityContext":{"runAsUser":0}}}' -- true \
+              > "$ARTIFACTS/psa-probe.txt" 2>&1; then
+            cat "$ARTIFACTS/psa-probe.txt"; echo "::error::a violating pod was admitted"; exit 1
           fi
+          cat "$ARTIFACTS/psa-probe.txt"
+          grep -q 'violates PodSecurity "restricted' "$ARTIFACTS/psa-probe.txt"
 
       - name: Assert pod identities
         run: |
@@ -208,15 +223,32 @@ jobs:
             > "$ARTIFACTS/sandbox-pods.txt" 2>&1 &
           WATCH=$!
           sleep 3
-          SINAS_URL=http://127.0.0.1:18000 SINAS_EMAIL=admin@example.com \
+          SINAS_URL=http://127.0.0.1:18000 SINAS_EMAIL=admin@example.com SINAS_RELEASE="$RELEASE" \
             SINAS_PASSWORD="$SUPERADMIN_PASSWORD" \
             python3 .github/k8s-restricted/smoke.py
           kill $WATCH || true
           echo "sandbox pods created:"; sort -u "$ARTIFACTS/sandbox-pods.txt"
           grep -q 'pod/sinas-sbx-' "$ARTIFACTS/sandbox-pods.txt" || { echo "::error::no sandbox pod was created"; exit 1; }
           # Nothing refused at runtime either (sandbox/trusted pods are
-          # created directly: a refusal would fail the function above).
-          kubectl -n "$NS" get events --field-selector reason=FailedCreate -o wide | tee -a "$ARTIFACTS/failedcreate.txt"
+          # created directly: a refusal would also fail the function above).
+          kubectl -n "$NS" get events --field-selector reason=FailedCreate -o wide > "$ARTIFACTS/failedcreate-runtime.txt"
+          if grep -q . "$ARTIFACTS/failedcreate-runtime.txt"; then
+            cat "$ARTIFACTS/failedcreate-runtime.txt"; echo "::error::pods were refused at runtime"; exit 1
+          fi
+
+      - name: Report container restarts
+        # Not a failure: a startup-order restart (e.g. a worker that came up
+        # before the backend finished migrating) is recovered by Kubernetes.
+        # Printed so a NEW cause shows up in the log of a green run.
+        if: always()
+        run: |
+          set +e
+          kubectl -n "$NS" get pods -o custom-columns='POD:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount'
+          for p in $(kubectl -n "$NS" get pods -o jsonpath='{range .items[?(@.status.containerStatuses[0].restartCount>0)]}{.metadata.name}{"\n"}{end}'); do
+            echo "===== $p (previous container, last 40 lines)"
+            kubectl -n "$NS" logs "$p" --all-containers --previous --tail=40 --prefix
+            kubectl -n "$NS" get pod "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}: {.lastState.terminated.reason} exit={.lastState.terminated.exitCode}{"\n"}{end}'
+          done
 
       - name: Diagnostics
         if: failure()

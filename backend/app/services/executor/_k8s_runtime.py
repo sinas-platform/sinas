@@ -108,11 +108,6 @@ def _apply_scheduling(spec: dict[str, Any]) -> None:
         spec["affinity"] = affinity
 
 
-def _seccomp_ok(profile: Any) -> bool:
-    """Seccomp profiles the Pod Security Standard "restricted" accepts."""
-    return isinstance(profile, dict) and profile.get("type") in ("RuntimeDefault", "Localhost")
-
-
 def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
     """(pod securityContext, container securityContext) for a runtime pod.
 
@@ -120,39 +115,21 @@ def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
     The configured values (k8s_sandbox_pod_security_context /
     _container_security_context, rendered by the chart) set the identity —
     runAsUser / runAsGroup / fsGroup, null meaning "let the platform pick" —
-    and the hardening floor below is applied on top, so both pods always
-    satisfy the Pod Security Standard "restricted": non-root, a seccomp
-    profile, no privilege escalation, every capability dropped.
+    and the Pod Security "restricted" floor is applied on top
+    (app.core.pod_security): non-root, an allowed seccomp profile, no
+    privilege escalation, every capability dropped but NET_BIND_SERVICE,
+    no unsafe sysctls / procMount / SELinux / AppArmor relaxations.
     """
-    pod = {
-        k: v
-        for k, v in json.loads(settings.k8s_sandbox_pod_security_context).items()
-        if v is not None
-    }
-    pod["runAsNonRoot"] = True
-    # A Localhost profile may be configured; anything else (Unconfined, a
-    # missing type) falls back to RuntimeDefault.
-    if not _seccomp_ok(pod.get("seccompProfile")):
-        pod["seccompProfile"] = {"type": "RuntimeDefault"}
+    from app.core.pod_security import harden_container, harden_pod
 
-    container = {
-        k: v
-        for k, v in json.loads(settings.k8s_sandbox_container_security_context).items()
-        if v is not None
-    }
-    # A container-level profile overrides the pod's: keep it only when it is
-    # an allowed one, so the pod-level floor always applies otherwise.
-    if "seccompProfile" in container and not _seccomp_ok(container["seccompProfile"]):
-        del container["seccompProfile"]
-    container["allowPrivilegeEscalation"] = False
-    container.pop("privileged", None)
-    container["capabilities"] = {"drop": ["ALL"]}
+    pod = harden_pod(json.loads(settings.k8s_sandbox_pod_security_context))
+    container = harden_container(json.loads(settings.k8s_sandbox_container_security_context))
     return pod, container
 
 
 def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any]:
-    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`,
-    minus the root-only capabilities: the pod runs as a non-root user
+    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`
+    (every capability dropped), and runs as a non-root user
     (`_security_contexts`), as the Pod Security Standard "restricted"
     requires."""
     pod_sc, container_sc = _security_contexts()

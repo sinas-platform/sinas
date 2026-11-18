@@ -27,6 +27,7 @@ EMAIL = os.environ["SINAS_EMAIL"]
 PASSWORD = os.environ["SINAS_PASSWORD"]
 EXPECT_UID = int(os.environ.get("EXPECT_UID", "10001"))
 NS = "k8s_ci"
+RELEASE = os.environ.get("SINAS_RELEASE", "sinas")
 
 _token: str | None = None
 
@@ -75,16 +76,23 @@ def check_login():
 # creation, as the non-root user, into the executor image's group-writable
 # site-packages.
 WHOAMI = '''
-import os, tempfile
+import os, socket, tempfile
 
 def handler(input, context):
-    out = {"uid": os.getuid(), "gid": os.getgid(), "home": os.environ.get("HOME")}
+    out = {
+        "uid": os.getuid(),
+        "gid": os.getgid(),
+        "home": os.environ.get("HOME"),
+        # the pod it ran in: sinas-sbx-<execution> / sinas-trusted-worker-<n>
+        "hostname": socket.gethostname(),
+    }
     with tempfile.NamedTemporaryFile(dir="/tmp") as f:
         f.write(b"ok")
     out["tmp_writable"] = True
     if input.get("import_dependency"):
         import six
         out["six"] = six.__version__
+        out["six_file"] = six.__file__
     return out
 '''
 
@@ -128,7 +136,12 @@ def check_sandbox_function_runs_in_restricted_pod():
     assert result["uid"] == EXPECT_UID, result
     assert result["gid"] == 0, result
     assert result["tmp_writable"] is True, result
+    # ran in a single-use sandbox pod, not in-process or in a trusted worker
+    assert result["hostname"].startswith("sinas-sbx-"), result
+    # installed into the image's (group-writable) system site-packages, not
+    # pip's --user fallback under $HOME
     assert result.get("six"), result
+    assert result["six_file"].startswith("/usr/local/"), result
 
 
 def check_trusted_function_runs_in_restricted_pod():
@@ -136,6 +149,8 @@ def check_trusted_function_runs_in_restricted_pod():
     result = _execute("whoami_trusted", {})
     assert result["uid"] == EXPECT_UID, result
     assert result["gid"] == 0, result
+    # ran in a warm trusted-worker pod (k8s_shared), not in-process
+    assert result["hostname"].startswith(f"{RELEASE}-trusted-worker-"), result
 
 
 def main() -> int:

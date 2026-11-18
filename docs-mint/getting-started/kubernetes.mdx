@@ -576,16 +576,21 @@ The Sinas images (backend, lite, executor, console) declare a numeric
 non-root `USER` and are **arbitrary-UID friendly**: every path they write to
 is owned by group 0 and group-writable, so they also run under a uid the
 platform assigns, as long as the group is 0. The console's nginx listens on
-port **8080** inside the container; its Service still exposes port 80
-(`targetPort: 8080`), so ingress and links are unchanged. It needs no
-capability or sysctl for that, and writes only to `/var/cache/nginx` and
-`/tmp` (an `emptyDir` each).
+port **8080** inside the container. Its Service still exposes port 80, named
+`http` (`targetPort: 8080`), so the chart's Ingress and links are unchanged.
+Anything that routes to the console pod's port directly (an OpenShift
+Route's `targetPort`, a Gateway API route or custom resource you maintain)
+must use 8080 or the port name `http`. nginx needs no capability or sysctl
+for this, and writes only to `/var/cache/nginx` and `/tmp` (an `emptyDir`
+each).
 
 ### Overrides
 
-Two global maps, empty in `values.yaml`, are merged over the built-in
-defaults (shown below), and every component's maps are merged over those,
-top-level key by key. A key set to `null` removes it. Because the built-in
+Two global maps, empty in `values.yaml`, are deep-merged over the built-in
+defaults (shown below), and every component's maps over those: nested maps
+such as `capabilities` or `seccompProfile` merge key by key, lists are
+replaced. Adding `capabilities.add: [NET_BIND_SERVICE]` therefore keeps
+`drop: [ALL]`. A key set to `null` removes it. Because the built-in
 defaults are always underneath, a partial override, or an upgrade with
 `--reuse-values` from values that predate these keys, keeps the rest of the
 `restricted` context.
@@ -616,14 +621,23 @@ Components: `backend`, `console`, `queueWorker`, `queueAgent`,
 runtime pods), `postgres`, `redis`, `clickhouse`, `pgbouncer`. The bundled
 third-party images take the global map without its `runAsUser`,
 `runAsGroup` and `fsGroup`; their identity is in their own
-`podSecurityContext` (the table above).
+`podSecurityContext` (the table above). That identity matches the default
+images: a different image for a bundled datastore may run as another user.
+The Debian-based `postgres:16` image, for example, uses uid and gid 999:
+
+```yaml
+postgres:
+  image: registry.example.com/mirror/postgres:16
+  podSecurityContext: {runAsUser: 999, runAsGroup: 999, fsGroup: 999}
+```
 
 The runtime pods' values reach the backend as
 `K8S_SANDBOX_POD_SECURITY_CONTEXT` and
 `K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT` (JSON). The backend always applies
 the `restricted` floor on top (non-root, a seccomp profile, no privilege
-escalation, all capabilities dropped) and refuses to start with values that
-relax it. Installing dependencies into the runtime pods
+escalation, every capability dropped except an optional
+`NET_BIND_SERVICE`, no unsafe sysctls, `procMount`, SELinux or AppArmor
+settings) and refuses to start with values that relax it. Installing dependencies into the runtime pods
 (`executor.installDependencies`) needs group 0, which owns the executor
 image's Python install paths; with another group, bake the dependencies
 into the image instead.
@@ -680,13 +694,26 @@ On upgrade:
   kubectl exec -n <namespace> sts/redis -- chown -R 999:1000 /data
   ```
 
-  Both are harmless where the kubelet would have done it anyway.
+  Both are harmless where the kubelet would have done it anyway. If the file
+  storage is still not writable, the backend, workers and scheduler log an
+  error at startup naming it, and the System page shows a critical warning.
+- **Custom or pinned executor image** (`executor.image`, the backend's
+  `K8S_SANDBOX_IMAGE`). The runtime pods now run as uid 10001 whatever the
+  image says. An image built `FROM` an executor older than 0.5.0 has a
+  root-owned `/usr/local` and no `HOME` for that user, so the per-pod
+  dependency installs (`executor.installDependencies`) fail. Rebuild it
+  `FROM` the 0.5.0 executor (see
+  [Executor image](#executor-image-and-cold-start-latency)), or bake the
+  dependencies in and set `executor.installDependencies: false`.
 - **Console.** The console container listens on 8080; the chart's Service
   maps port 80 to it. Pin `console.image` only to a 0.5.0 or later image:
-  an older one listens on 80 and fails its probes.
+  an older one listens on 80 and fails its probes. Routes or custom
+  resources that target the console pod's port 80 directly (an OpenShift
+  Route `targetPort`, for example) need 8080 or the port name `http`.
 - **Warm trusted workers** keep the root `securityContext` they were created
   with. Delete them after the upgrade so the backend recreates them
-  hardened: `kubectl delete pod -l sinas.type=trusted-executor`.
+  hardened:
+  `kubectl delete pod -n <namespace> -l sinas.type=trusted-executor`.
 - To turn on enforcement, label the namespace after the upgrade has rolled
   out. `kubectl label --dry-run=server --overwrite ns <namespace>
   pod-security.kubernetes.io/enforce=restricted` lists any pod that would

@@ -630,7 +630,6 @@ sys.exit(1)
             "mem_limit": f"{settings.max_function_memory}m",
             "nano_cpus": int(settings.max_function_cpu * 1_000_000_000),
             "cap_drop": ["ALL"],
-            "cap_add": ["CHOWN", "SETUID", "SETGID"],
             "security_opt": ["no-new-privileges:true"],
             "pids_limit": 256,
             "extra_hosts": {"host.docker.internal": "host-gateway"},

@@ -15,7 +15,11 @@ COPY container_executor.py /app/executor.py
 # Non-root runtime user: uid 10001, primary group 0, arbitrary-UID friendly
 # (every path written at runtime is owned by group 0 and group-writable, so a
 # platform-assigned uid with group 0 works too). Writable paths:
-#   /app          the Docker sandbox runtimes create /app/.pip-tmp (pip scratch)
+#   /app/.pip-tmp the Docker sandbox runtimes' pip scratch dir. /app itself
+#                 and /app/executor.py stay root-owned and read-only: user
+#                 code in a pooled container must not be able to replace the
+#                 executor (a writable /app would let it rename over the
+#                 file) for the executions that follow.
 #   /home/sinas   $HOME
 #   /usr/local    DIRECTORIES only: platform dependencies are pip-installed
 #                 into the system Python when a sandbox or trusted-worker
@@ -25,8 +29,8 @@ COPY container_executor.py /app/executor.py
 # /tmp is a tmpfs/emptyDir in every runtime.
 RUN useradd --uid 10001 --gid 0 --no-create-home --home-dir /home/sinas \
         --shell /usr/sbin/nologin sinas \
-    && mkdir -p /home/sinas \
-    && chgrp -R 0 /app /home/sinas && chmod -R g=u /app /home/sinas \
+    && mkdir -p /home/sinas /app/.pip-tmp \
+    && chgrp 0 /home/sinas /app/.pip-tmp && chmod g=u /home/sinas /app/.pip-tmp \
     && find /usr/local -type d -exec chgrp 0 {} + -exec chmod g=u {} +
 USER 10001:0
 

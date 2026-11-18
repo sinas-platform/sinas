@@ -108,6 +108,8 @@ executor:
   ## Installing dependencies into the pods (installDependencies) needs
   ## group 0 (runAsGroup), which owns the executor image's install paths.
   ## Running warm trusted workers keep the context they were created with.
+  ## A custom `image` built FROM an executor older than 0.5.0 has root-owned
+  ## install paths: rebuild it FROM 0.5.0, or set installDependencies: false.
   podSecurityContext: {}
   securityContext: {}
   ## Placement of the pods the backend creates at runtime (sandbox + warm
@@ -117,7 +119,8 @@ executor:
   ## _AFFINITY (an extraEnv entry of the same name takes precedence).
   ## Running warm trusted workers keep the image/placement/pull secrets they
   ## were created with: after changing any of these, delete them
-  ## (kubectl delete pod -l sinas.type=trusted-executor) to recreate them.
+  ## (kubectl delete pod -n <namespace> -l sinas.type=trusted-executor) to
+  ## recreate them.
   ## Their image pull secrets come from the sandbox ServiceAccount, which
   ## carries the same list as every chart pod (see imagePullSecrets).
   nodeSelector: {}
@@ -157,8 +160,10 @@ imagePullSecrets: []
 ## without patching rendered manifests. (readOnlyRootFilesystem is not part
 ## of "restricted" and is not set.)
 ##
-## Both maps below are merged OVER built-in defaults, top-level key by key;
-## a key set to null removes it. Leave them empty for the defaults.
+## Both maps below are deep-merged OVER built-in defaults (nested maps such
+## as capabilities or seccompProfile key by key, lists replaced, so adding
+## capabilities.add: [NET_BIND_SERVICE] keeps drop: [ALL]); a key set to
+## null removes it. Leave them empty for the defaults.
 ##
 ## podSecurityContext: pod-level securityContext of the Sinas pods (backend,
 ## console, queue-worker, queue-agent, queue-agent-sub, queue-pipeline,

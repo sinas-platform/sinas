@@ -110,16 +110,20 @@ jobs:
 
       - name: Point @sinas/sdk at npm (pinned)
         # package.json ships a file:../../sinas-js dev path; CI swaps it for
-        # the pinned published version above. The lockfile must go with it:
-        # it records the file: link, and npm treats that entry as satisfying
-        # an exact-version spec, leaving a dangling symlink instead of
-        # fetching the package (tsc then fails with TS2307).
+        # the pinned published version above, the same way console/Dockerfile
+        # does (scripts/use-published-sdk.mjs: package.json AND the lockfile's
+        # link entries, since npm would otherwise keep a dangling symlink).
+        # The Dockerfile pins the same version; keep them equal.
         run: |
-          sed -i "s|\"file:../../sinas-js\"|\"${SINAS_SDK_VERSION}\"|g" package.json
-          rm -f package-lock.json
+          grep -q "^ARG SINAS_SDK_VERSION=${SINAS_SDK_VERSION}$" Dockerfile \
+            || { echo "::error::console/Dockerfile SINAS_SDK_VERSION differs from ci.yml (${SINAS_SDK_VERSION})"; exit 1; }
+          node scripts/use-published-sdk.mjs "${SINAS_SDK_VERSION}"
 
-      - name: Install
-        run: npm install --no-audit --no-fund
+      - name: Install (exactly package-lock.json)
+        run: |
+          npm install --package-lock-only --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm ls --depth=0 @sinas/sdk vite && npm ls rollup
 
       - name: Build (tsc + vite)
         run: npm run build
