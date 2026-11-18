@@ -39,7 +39,9 @@ git push -u origin release/0.3.0
 # 3. Publish a release candidate. This builds :0.3.0-rc.1 images and a
 #    PRE-release on GitHub with a pinned docker-compose attached.
 git tag 0.3.0-rc.1 && git push origin 0.3.0-rc.1
-#    -> testers run:  IMAGE_TAG=0.3.0-rc.1 docker compose up -d
+#    -> testers re-run the installer with SINAS_VERSION=0.3.0-rc.1, or
+#       `git checkout 0.3.0-rc.1 && docker compose pull && docker compose up -d`
+#       (files and images together; never IMAGE_TAG alone)
 #    Fixes land on release/0.3.0; tag 0.3.0-rc.2, etc., until green.
 
 # 4. Ship. Merge the release branch to main and tag the final version.
@@ -74,11 +76,18 @@ Release — download it and:
 docker compose -f docker-compose-0.3.0.yml up -d   # provide your own .env
 ```
 
-Or, from a repo checkout, pin via the env var the compose file already honors:
+Or, from a repo checkout, check out the same version first: the compose files,
+`Caddyfile` and images change together between versions (0.5.0 moved the console
+to port 8080 and runs the images as non-root), so setting `IMAGE_TAG` alone in an
+older checkout runs new images against old files. Tracking `:latest` (a plain
+`docker compose pull`, or an auto-updater such as Watchtower) has the same problem.
 
 ```bash
-IMAGE_TAG=0.3.0 docker compose up -d          # or 0.3.0-rc.1, dev, edge, …
+git checkout 0.3.0                            # or 0.3.0-rc.1, dev, …
+IMAGE_TAG=0.3.0 docker compose pull && IMAGE_TAG=0.3.0 docker compose up -d
 ```
+
+For installs made with `install.sh`, re-run it with `SINAS_VERSION=<version>`.
 
 ## Building a feature branch on demand (no merge needed)
 
@@ -91,6 +100,7 @@ To test a branch's images before merging (e.g. the k8s work):
 Then consume the images:
 
 ```bash
+git checkout <that branch>                         # files matching the images
 IMAGE_TAG=k8s-test docker compose up -d            # docker-compose
 helm upgrade --install sinas charts/sinas \
   --set image.tag=k8s-test --set executor.image=ghcr.io/sinas-platform/sinas/executor:k8s-test

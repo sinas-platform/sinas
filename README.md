@@ -42,10 +42,13 @@ The installer will:
 
 Once running, open the console at `https://yourdomain.com:51245` and log in with your admin email.
 
-**Update to latest version:**
+**Update:** re-run the installer for the version you want. The compose files, `Caddyfile` and images change together between versions, and the installer updates all of them:
 ```bash
-cd /opt/sinas && docker compose pull && docker compose up -d
+V=0.5.0
+curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/$V/install.sh -o /tmp/sinas-install.sh \
+  && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
 ```
+From a git checkout: `git checkout <tag>`, then `docker compose pull && docker compose up -d`. Don't only bump `IMAGE_TAG` or pull `:latest` (by hand or with an auto-updater such as Watchtower): the images then move without the files. See [docs-mint/getting-started/deployment.mdx](docs-mint/getting-started/deployment.mdx#update).
 
 See [INSTALL.md](INSTALL.md) for the full deployment and configuration reference.
 

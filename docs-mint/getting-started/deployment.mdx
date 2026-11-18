@@ -65,11 +65,29 @@ A missing or invalid answer stops the installer with an error before `.env` is w
 
 ## Update
 
-```bash
-cd /opt/sinas
-docker compose pull
-docker compose up -d
-```
+Update the compose files, the `Caddyfile` and the images **together**: they change together between versions (0.5.0, for example, moved the console to port 8080 and runs the images as non-root, which the 0.5.0 files account for). Either:
+
+- **Re-run the installer** for the version you want. It downloads that version's files and pins its images in `.env`:
+
+  ```bash
+  V=0.5.0
+  curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/$V/install.sh -o /tmp/sinas-install.sh \
+    && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
+  ```
+
+  Without `SINAS_VERSION` it reuses the source saved in `.env` (the update command printed at the end of an install repeats it).
+
+- **Or, in a git checkout**, move the files to the tag first, then pull the images:
+
+  ```bash
+  git fetch --tags && git checkout 0.5.0
+  docker compose pull
+  docker compose up -d
+  ```
+
+  Set `IMAGE_TAG` in `.env` to that same version first. (Unset, it means `:latest`, which matches only a checkout of `main` at the latest release.)
+
+Do not only change `IMAGE_TAG` in an existing install: the files stay at the old version while the images move. For the same reason, tracking `:latest` (an unpinned `IMAGE_TAG` with a plain `docker compose pull`, or an auto-updater such as Watchtower) can pull images that no longer match your files; pin a version and update both together.
 
 The backend applies database migrations on startup. Each migration commits on its own, so a table is locked only for that migration's brief schema change, not for the whole upgrade.
 
@@ -77,7 +95,7 @@ The backend applies database migrations on startup. Each migration commits on it
 
 #### Breaking (Docker Compose): update the compose files and Caddyfile together with the images
 
-From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images.** Re-running the installer (`install.sh`) downloads them for the version it installs; otherwise download them from the release before `docker compose pull`.
+From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images**, as described in [Update](#update): re-run the installer with `SINAS_VERSION=<version>`, or `git checkout <tag>` and then `docker compose pull && docker compose up -d`. Changing only `IMAGE_TAG`, or pulling `:latest` (by hand or with an auto-updater such as Watchtower), moves the images without the files.
 
 With the 0.5.0 images and older files:
 
