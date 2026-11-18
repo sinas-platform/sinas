@@ -48,6 +48,34 @@ def test_unwritable_subdirectory_is_reported(storage):
     assert problem and str(sub) in problem
 
 
+def test_unwritable_nested_directory_is_reported(storage):
+    # <root>/<namespace>/<collection>/<file-id>: only the file-id level is
+    # still root-owned after a partial re-own
+    deep = storage / "ns" / "coll" / "file-1"
+    deep.mkdir(parents=True)
+    deep.chmod(0o555)
+    try:
+        problem = runtime_checks.file_storage_problem()
+        assert problem and str(deep) in problem
+    finally:
+        deep.chmod(0o755)
+
+
+def test_walk_is_bounded(storage, monkeypatch):
+    # Past the depth limit nothing is checked (and nothing is walked).
+    deeper = storage / "a" / "b" / "c" / "d"
+    deeper.mkdir(parents=True)
+    deeper.chmod(0o555)
+    try:
+        assert runtime_checks.file_storage_problem() is None
+        monkeypatch.setattr(runtime_checks, "_WALK_DEPTH", 4)
+        assert str(deeper) in runtime_checks.file_storage_problem()
+        monkeypatch.setattr(runtime_checks, "_WALK_MAX_DIRS", 2)
+        assert runtime_checks.file_storage_problem() is None
+    finally:
+        deeper.chmod(0o755)
+
+
 def test_missing_storage_is_left_to_storage_itself(tmp_path, monkeypatch):
     monkeypatch.setenv("FILE_STORAGE_PATH", str(tmp_path / "nope" / "files"))
     assert runtime_checks.file_storage_problem() is None

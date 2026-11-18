@@ -22,9 +22,12 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _DOCKER_EXECUTORS = {"docker_pool", "docker_ephemeral", "docker_shared"}
-# Subdirectories of the file-storage root checked for writability (the
-# root alone passes when only it was re-owned); bounded to stay cheap.
-_SUBDIR_SAMPLE = 50
+# Files are written under <root>/<namespace>/<collection>/<file-id>/vN, and
+# after a partial re-own only some of those levels may be writable, so the
+# check walks the directories down to the file-id level. Bounded (depth and
+# count) to stay cheap on a large store: a directory is a stat, not a read.
+_WALK_DEPTH = 3
+_WALK_MAX_DIRS = 2000
 
 
 def _identity() -> str:
@@ -39,6 +42,26 @@ def _writable_dir(path: str) -> bool:
     return os.access(path, os.W_OK | os.X_OK)
 
 
+def _first_unwritable_dir(root: str) -> str | None:
+    """The first directory under root (root included, down to _WALK_DEPTH
+    levels, at most _WALK_MAX_DIRS of them) this process cannot write to."""
+    root = root.rstrip("/") or "/"
+    base_depth = root.count(os.sep)
+    seen = 0
+    try:
+        for dirpath, dirnames, _files in os.walk(root, onerror=None):
+            seen += 1
+            if not _writable_dir(dirpath):
+                return dirpath
+            if seen >= _WALK_MAX_DIRS:
+                return None
+            if dirpath.count(os.sep) - base_depth >= _WALK_DEPTH:
+                dirnames[:] = []  # deep enough: don't descend further
+    except OSError:
+        return root
+    return None
+
+
 def file_storage_problem() -> str | None:
     """Why the configured local file storage isn't writable by this
     process, or None. Root can write anywhere, so only non-root checks."""
@@ -49,18 +72,7 @@ def file_storage_problem() -> str | None:
         # Not there (yet): nothing an earlier version could have written;
         # storage creates it on first use and reports its own errors.
         return None
-    where = None if _writable_dir(path) else path
-    if where is None:
-        try:
-            with os.scandir(path) as it:
-                for i, entry in enumerate(it):
-                    if i >= _SUBDIR_SAMPLE:
-                        break
-                    if entry.is_dir(follow_symlinks=False) and not _writable_dir(entry.path):
-                        where = entry.path
-                        break
-        except OSError:
-            where = path
+    where = _first_unwritable_dir(path)
     if where is None:
         return None
     return (
