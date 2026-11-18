@@ -48,7 +48,7 @@ V=0.5.0
 curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/$V/install.sh -o /tmp/sinas-install.sh \
   && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
 ```
-From a git checkout: `git checkout <tag>`, then `docker compose pull && docker compose up -d`. Don't only bump `IMAGE_TAG` or pull `:latest` (by hand or with an auto-updater such as Watchtower): the images then move without the files. See [docs-mint/getting-started/deployment.mdx](docs-mint/getting-started/deployment.mdx#update).
+From a git checkout: `git checkout <tag>`, set `IMAGE_TAG=<tag>` in `.env`, then `docker compose pull && docker compose up -d`. Don't only bump `IMAGE_TAG` or pull `:latest` (by hand or with an auto-updater such as Watchtower): the images then move without the files. See [docs-mint/getting-started/deployment.mdx](docs-mint/getting-started/deployment.mdx#update).
 
 See [INSTALL.md](INSTALL.md) for the full deployment and configuration reference.
 

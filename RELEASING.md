@@ -39,8 +39,9 @@ git push -u origin release/0.3.0
 # 3. Publish a release candidate. This builds :0.3.0-rc.1 images and a
 #    PRE-release on GitHub with a pinned docker-compose attached.
 git tag 0.3.0-rc.1 && git push origin 0.3.0-rc.1
-#    -> testers re-run the installer with SINAS_VERSION=0.3.0-rc.1, or
-#       `git checkout 0.3.0-rc.1 && docker compose pull && docker compose up -d`
+#    -> testers re-run the installer with SINAS_VERSION=0.3.0-rc.1, or, in a
+#       checkout: git checkout 0.3.0-rc.1, set IMAGE_TAG=0.3.0-rc.1 in .env,
+#       then docker compose pull && docker compose up -d
 #       (files and images together; never IMAGE_TAG alone)
 #    Fixes land on release/0.3.0; tag 0.3.0-rc.2, etc., until green.
 

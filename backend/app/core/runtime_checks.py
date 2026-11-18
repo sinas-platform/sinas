@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
+from collections import deque
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -44,21 +47,28 @@ def _writable_dir(path: str) -> bool:
 
 def _first_unwritable_dir(root: str) -> str | None:
     """The first directory under root (root included, down to _WALK_DEPTH
-    levels, at most _WALK_MAX_DIRS of them) this process cannot write to."""
-    root = root.rstrip("/") or "/"
-    base_depth = root.count(os.sep)
-    seen = 0
-    try:
-        for dirpath, dirnames, _files in os.walk(root, onerror=None):
-            seen += 1
-            if not _writable_dir(dirpath):
-                return dirpath
-            if seen >= _WALK_MAX_DIRS:
-                return None
-            if dirpath.count(os.sep) - base_depth >= _WALK_DEPTH:
-                dirnames[:] = []  # deep enough: don't descend further
-    except OSError:
-        return root
+    levels, at most _WALK_MAX_DIRS of them) this process cannot write to.
+
+    Breadth-first over os.scandir, stopping as soon as the budget is spent:
+    unlike os.walk it never lists more of a directory than it needs."""
+    queue: deque[tuple[str, int]] = deque([(root.rstrip("/") or "/", 0)])
+    budget = _WALK_MAX_DIRS
+    while queue:
+        path, depth = queue.popleft()
+        if not _writable_dir(path):
+            return path
+        if depth >= _WALK_DEPTH:
+            continue
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if budget <= 0:
+                        break
+                    if entry.is_dir(follow_symlinks=False):
+                        budget -= 1
+                        queue.append((entry.path, depth + 1))
+        except OSError:
+            return path
     return None
 
 
@@ -125,6 +135,20 @@ def runtime_problems() -> list[str]:
         if problem:
             problems.append(problem)
     return problems
+
+
+_cache_lock = threading.Lock()
+_cache: tuple[float, list[str]] | None = None
+
+
+def cached_runtime_problems(ttl: float = 300.0) -> list[str]:
+    """runtime_problems(), re-checked at most every `ttl` seconds. For the
+    System page, which polls: blocking, so call it from a worker thread."""
+    global _cache
+    with _cache_lock:
+        if _cache is None or time.monotonic() - _cache[0] > ttl:
+            _cache = (time.monotonic(), runtime_problems())
+        return list(_cache[1])
 
 
 def log_runtime_problems(process: str) -> list[str]:

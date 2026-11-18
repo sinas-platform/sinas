@@ -70,7 +70,7 @@ def test_walk_is_bounded(storage, monkeypatch):
         assert runtime_checks.file_storage_problem() is None
         monkeypatch.setattr(runtime_checks, "_WALK_DEPTH", 4)
         assert str(deeper) in runtime_checks.file_storage_problem()
-        monkeypatch.setattr(runtime_checks, "_WALK_MAX_DIRS", 2)
+        monkeypatch.setattr(runtime_checks, "_WALK_MAX_DIRS", 3)
         assert runtime_checks.file_storage_problem() is None
     finally:
         deeper.chmod(0o755)
@@ -145,5 +145,19 @@ def test_problems_surface_as_critical_system_warnings(storage):
     from app.api.v1.endpoints import system as system_endpoint
 
     storage.chmod(0o555)
-    warnings = system_endpoint._generate_warnings([], [{"queue": "functions"}, {"queue": "agents"}], 0, {}, {})
+    problems = runtime_checks.runtime_problems()
+    warnings = system_endpoint._generate_warnings(
+        [], [{"queue": "functions"}, {"queue": "agents"}], 0, {}, {}, None, problems
+    )
     assert any(w["level"] == "critical" and str(storage) in w["message"] for w in warnings)
+
+
+def test_cached_problems_reuse_the_result_between_polls(storage, monkeypatch):
+    calls = []
+    monkeypatch.setattr(runtime_checks, "_cache", None)
+    monkeypatch.setattr(runtime_checks, "runtime_problems", lambda: calls.append(1) or ["x"])
+    assert runtime_checks.cached_runtime_problems(ttl=60) == ["x"]
+    assert runtime_checks.cached_runtime_problems(ttl=60) == ["x"]
+    assert len(calls) == 1
+    assert runtime_checks.cached_runtime_problems(ttl=-1) == ["x"]  # expired
+    assert len(calls) == 2

@@ -258,15 +258,14 @@ def _generate_warnings(
     queue_stats: dict,
     host: dict,
     redis_memory: dict[str, Any] | None = None,
+    runtime_problems: list[str] | None = None,
 ) -> list[dict]:
     """Generate health warnings from system state."""
     warnings = _redis_warnings(redis_memory)
 
     # Non-root permission problems of this process (file storage, Docker
     # socket), as logged at startup.
-    from app.core.runtime_checks import runtime_problems
-
-    for problem in runtime_problems():
+    for problem in runtime_problems or []:
         warnings.append({"level": "critical", "message": problem})
 
     # Critical: no queue workers
@@ -455,8 +454,18 @@ async def get_system_health(
 
     redis_memory = await _redis_memory()
 
+    # Filesystem checks: off the event loop, and cached between the System
+    # page's polls (a large network-mounted store must not slow requests).
+    from app.core.runtime_checks import cached_runtime_problems
+
+    try:
+        runtime_problems = await asyncio.to_thread(cached_runtime_problems)
+    except Exception as e:
+        logger.warning(f"Runtime permission checks failed: {e}")
+        runtime_problems = []
+
     warnings = _generate_warnings(
-        services, queue_workers, dlq_size, queue_stats, host, redis_memory
+        services, queue_workers, dlq_size, queue_stats, host, redis_memory, runtime_problems
     )
 
     return HealthResponse(

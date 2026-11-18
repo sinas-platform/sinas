@@ -95,7 +95,7 @@ The backend applies database migrations on startup. Each migration commits on it
 
 #### Breaking (Docker Compose): update the compose files and Caddyfile together with the images
 
-From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images**, as described in [Update](#update): re-run the installer with `SINAS_VERSION=<version>`, or `git checkout <tag>` and then `docker compose pull && docker compose up -d`. Changing only `IMAGE_TAG`, or pulling `:latest` (by hand or with an auto-updater such as Watchtower), moves the images without the files.
+From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images**, as described in [Update](#update): re-run the installer with `SINAS_VERSION=<version>`, or `git checkout <tag>`, set `IMAGE_TAG=<tag>` in `.env`, then `docker compose pull && docker compose up -d`. Changing only `IMAGE_TAG`, or pulling `:latest` (by hand or with an auto-updater such as Watchtower), moves the images without the files.
 
 With the 0.5.0 images and older files:
 
