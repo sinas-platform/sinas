@@ -3,11 +3,32 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# HOME for the non-root user below; no pip self-update check on installs.
+ENV HOME=/home/sinas \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
 # Copy executor script
 COPY container_executor.py /app/executor.py
+
+# Non-root runtime user: uid 10001, primary group 0, arbitrary-UID friendly
+# (every path written at runtime is owned by group 0 and group-writable, so a
+# platform-assigned uid with group 0 works too). Writable paths:
+#   /app          the Docker sandbox runtimes create /app/.pip-tmp (pip scratch)
+#   /home/sinas   $HOME
+#   /usr/local    DIRECTORIES only: platform dependencies are pip-installed
+#                 into the system Python when a sandbox or trusted-worker
+#                 container starts (and by `FROM executor` + `RUN pip install`
+#                 images), which creates and removes entries in site-packages,
+#                 bin, share, ... Existing files keep their root ownership.
+# /tmp is a tmpfs/emptyDir in every runtime.
+RUN useradd --uid 10001 --gid 0 --no-create-home --home-dir /home/sinas \
+        --shell /usr/sbin/nologin sinas \
+    && mkdir -p /home/sinas \
+    && chgrp -R 0 /app /home/sinas && chmod -R g=u /app /home/sinas \
+    && find /usr/local -type d -exec chgrp 0 {} + -exec chmod g=u {} +
+USER 10001:0
 
 # Run the executor as the main process
 CMD ["python3", "-u", "/app/executor.py"]

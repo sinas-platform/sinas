@@ -96,6 +96,28 @@ If `used_memory` is near `maxmemory`, or `evicted_keys` is above 0, raise `REDIS
 
 0.5.0's `docker-compose.yml` also adds a `proxy` network between Caddy, the backend and the console, with the fixed subnet `10.254.253.0/24` (see [Client IPs](#client-ips-behind-caddy) below). `docker compose up -d` creates it. If that subnet is already in use on your host or network, set `SINAS_PROXY_SUBNET`, `SINAS_PROXY_IP_RANGE`, `SINAS_CADDY_IP` and `FORWARDED_ALLOW_IPS` in `.env` first.
 
+**Update `docker-compose.yml` and `Caddyfile` together with the images.** From 0.5.0 the images run as non-root users: the backend, lite and executor images as uid 10001 (group 0), the console's nginx as uid 101 on port **8080** instead of 80. Two things in the files depend on that:
+
+- The `Caddyfile` proxies the console at `console:8080`. An older Caddyfile still points at `console:80`, and the console stops answering on port 51245.
+- `docker-compose.yml` (and `docker-compose.lite.yml`) run the Sinas services with `user: "0:0"`, as before: they drive the host Docker daemon through its socket, which only root (or the host's `docker` group) can open, and earlier versions wrote the `file_storage` volume as root. With an older compose file, the 0.5.0 images run as uid 10001 and code execution fails on the socket.
+
+Re-running the installer downloads both files for the version it installs. Otherwise, download them from the release before `docker compose pull`. The executor image, which sandbox and shared-worker containers run, runs as uid 10001 in every case; it needs nothing from you.
+
+To run the Compose services that do not use the Docker socket without root (the lite profile without `docker-compose.lite.exec.yml`, or `queue-pipeline` and `cdc-worker`), make the file volume group-writable once, then set `user: "10001:0"` for them in a `docker-compose.override.yml`:
+
+```bash
+docker compose exec backend sh -c 'chgrp -R 0 /var/sinas/files && chmod -R g+rwX /var/sinas/files'
+```
+
+```yaml
+# docker-compose.override.yml
+services:
+  queue-pipeline:
+    user: "10001:0"
+  cdc-worker:
+    user: "10001:0"
+```
+
 ## Client IPs behind Caddy
 
 Login and OTP rate limits count requests per client IP, and request logs record it. Caddy replaces any `X-Forwarded-For` a client sends with the address it sees, and the backend believes that header only on connections from Caddy: Caddy is the only container on the `proxy` network with a fixed address (`SINAS_CADDY_IP`), and `FORWARDED_ALLOW_IPS` trusts that one address. A client that reaches port 8000 directly is counted by its own address, whatever header it sends.

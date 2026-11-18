@@ -108,12 +108,47 @@ def _apply_scheduling(spec: dict[str, Any]) -> None:
         spec["affinity"] = affinity
 
 
+def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
+    """(pod securityContext, container securityContext) for a runtime pod.
+
+    Shared by the single-use sandbox pods and the warm trusted-worker pods.
+    The configured values (k8s_sandbox_pod_security_context /
+    _container_security_context, rendered by the chart) set the identity —
+    runAsUser / runAsGroup / fsGroup, null meaning "let the platform pick" —
+    and the hardening floor below is applied on top, so both pods always
+    satisfy the Pod Security Standard "restricted": non-root, a seccomp
+    profile, no privilege escalation, every capability dropped.
+    """
+    pod = {
+        k: v
+        for k, v in json.loads(settings.k8s_sandbox_pod_security_context).items()
+        if v is not None
+    }
+    pod["runAsNonRoot"] = True
+    pod.setdefault("seccompProfile", {"type": "RuntimeDefault"})
+
+    container = {
+        k: v
+        for k, v in json.loads(settings.k8s_sandbox_container_security_context).items()
+        if v is not None
+    }
+    container["allowPrivilegeEscalation"] = False
+    container.pop("privileged", None)
+    container["capabilities"] = {"drop": ["ALL"]}
+    return pod, container
+
+
 def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any]:
-    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`."""
+    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`,
+    minus the root-only capabilities: the pod runs as a non-root user
+    (`_security_contexts`), as the Pod Security Standard "restricted"
+    requires."""
+    pod_sc, container_sc = _security_contexts()
     spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
         "terminationGracePeriodSeconds": 1,
+        "securityContext": pod_sc,
         # Backstop against leaked pods if the deleting process dies mid-flight.
         "activeDeadlineSeconds": deadline_seconds,
         "containers": [
@@ -139,14 +174,7 @@ def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any
                         ),
                     },
                 },
-                "securityContext": {
-                    "allowPrivilegeEscalation": False,
-                    "capabilities": {
-                        "drop": ["ALL"],
-                        "add": ["CHOWN", "SETUID", "SETGID"],
-                    },
-                    "seccompProfile": {"type": "RuntimeDefault"},
-                },
+                "securityContext": container_sc,
                 "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
             }
         ],

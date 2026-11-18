@@ -1,0 +1,79 @@
+# Values for the kind job in .github/workflows/k8s-restricted.yml: the
+# chart's defaults (including its Pod Security settings, which are what is
+# under test), shrunk to fit one CI runner. Images, secrets and the profile
+# are set on the command line by the workflow.
+ingress:
+  enabled: false
+
+clickhouse:
+  enabled: false
+
+## A real volume for file storage (kind's local-path StorageClass), as in
+## production, instead of the emptyDir default.
+fileStorage:
+  size: 256Mi
+  storageClass: standard
+
+executor:
+  sandbox: "k8s_pod"
+  trusted: "k8s_shared"
+  trustedWorkers: 1
+  podReadyTimeout: 180
+
+postgres:
+  storage: 1Gi
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+
+redis:
+  maxmemory: "64mb"
+  storage: 256Mi
+  resources:
+    requests: {cpu: 10m, memory: 96Mi}
+
+pgbouncer:
+  defaultPoolSize: 10
+  minPoolSize: 1
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+
+backend:
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {cpu: "1", memory: 1Gi}
+
+queueWorker:
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {cpu: "1", memory: 768Mi}
+queueAgent:
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {cpu: "1", memory: 768Mi}
+queueAgentSub:
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {cpu: "1", memory: 768Mi}
+queuePipeline:
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+scheduler:
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+cdcWorker:
+  resources:
+    requests: {cpu: 20m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+console:
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+extraEnv:
+  # Sandbox pods: small requests so they schedule next to everything else.
+  - name: MAX_FUNCTION_CPU
+    value: "0.5"
+  - name: MAX_FUNCTION_MEMORY
+    value: "256"

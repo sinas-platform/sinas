@@ -38,16 +38,26 @@ COPY eslint.config.js ./
 # Build the application
 RUN npm run build
 
-# Stage 2: Serve with Nginx
+# Stage 2: Serve with Nginx, unprivileged
 FROM nginx:alpine
 
 # Copy built files from builder
 COPY --from=builder /app/dist /usr/share/nginx/html/ui
 
-# Copy nginx configuration
+# Copy nginx configuration (listens on 8080: no privileged port)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port
-EXPOSE 80
+# Run as nginx's own uid (101), group 0, arbitrary-UID friendly: drop the
+# `user` directive (only root can switch users), move the pid file to /tmp,
+# and make nginx's temp/cache directory owned by group 0 and group-writable.
+# Writable at runtime: /var/cache/nginx and /tmp (the Helm chart mounts an
+# emptyDir on each). Logs go to stdout/stderr. No sysctl or capability is
+# needed for port 8080.
+RUN sed -i -e '/^user /d' -e 's#^pid .*#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+    && grep -q '^pid /tmp/nginx.pid;' /etc/nginx/nginx.conf \
+    && chown -R 101:0 /var/cache/nginx && chmod -R g=u /var/cache/nginx
+USER 101
+
+EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]

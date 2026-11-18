@@ -158,8 +158,31 @@ class Settings(BaseSettings):
     k8s_sandbox_node_selector: str = "{}"  # JSON object, e.g. {"role": "shared"}
     k8s_sandbox_tolerations: str = "[]"  # JSON list of Toleration dicts
     k8s_sandbox_affinity: str = "{}"  # JSON k8s Affinity object (podAffinity/podAntiAffinity/nodeAffinity)
+    # securityContext of the pods the backend creates (sandbox + warm trusted
+    # workers), JSON-encoded. The defaults satisfy the Kubernetes Pod Security
+    # Standard "restricted", so the pods are admitted in a namespace that
+    # enforces it; the chart renders both from its podSecurityContext /
+    # containerSecurityContext values. A null (or absent) runAsUser /
+    # runAsGroup / fsGroup leaves the choice to the platform (e.g. an
+    # OpenShift SCC). A hardening floor is applied on top and cannot be
+    # relaxed here: runAsNonRoot, a seccomp profile (RuntimeDefault unless
+    # one is given), no privilege escalation, all capabilities dropped.
+    # Installing dependencies into the pods (k8s_sandbox_install_dependencies)
+    # needs group 0: the executor image's install paths are group-0 writable.
+    k8s_sandbox_pod_security_context: str = (
+        '{"runAsNonRoot": true, "runAsUser": 10001, "runAsGroup": 0, '
+        '"fsGroup": 0, "seccompProfile": {"type": "RuntimeDefault"}}'
+    )
+    k8s_sandbox_container_security_context: str = (
+        '{"allowPrivilegeEscalation": false, "capabilities": {"drop": ["ALL"]}}'
+    )
 
-    @field_validator("k8s_sandbox_node_selector", "k8s_sandbox_affinity")
+    @field_validator(
+        "k8s_sandbox_node_selector",
+        "k8s_sandbox_affinity",
+        "k8s_sandbox_pod_security_context",
+        "k8s_sandbox_container_security_context",
+    )
     @classmethod
     def _validate_k8s_json_object(cls, v: str, info: ValidationInfo) -> str:
         # Fail at startup, not on the first sandbox execution: a bad value
@@ -172,6 +195,44 @@ class Settings(BaseSettings):
         if not isinstance(parsed, dict):
             raise ValueError(
                 f"{info.field_name} must be a JSON object, got {type(parsed).__name__}"
+            )
+        return v
+
+    @field_validator("k8s_sandbox_pod_security_context")
+    @classmethod
+    def _validate_k8s_pod_security_context(cls, v: str) -> str:
+        # Runs after the JSON-object check above. runAsNonRoot is always set
+        # on the pods, so a root identity would make every runtime pod fail
+        # to start: refuse it at startup instead.
+        parsed = json.loads(v)
+        if parsed.get("runAsNonRoot") is False:
+            raise ValueError(
+                "k8s_sandbox_pod_security_context: runAsNonRoot cannot be disabled"
+            )
+        if parsed.get("runAsUser") == 0:
+            raise ValueError(
+                "k8s_sandbox_pod_security_context: runAsUser 0 (root) is not allowed; "
+                "use a non-zero uid, or null to let the platform pick"
+            )
+        return v
+
+    @field_validator("k8s_sandbox_container_security_context")
+    @classmethod
+    def _validate_k8s_container_security_context(cls, v: str) -> str:
+        parsed = json.loads(v)
+        relaxed = []
+        if parsed.get("privileged"):
+            relaxed.append("privileged")
+        if parsed.get("allowPrivilegeEscalation"):
+            relaxed.append("allowPrivilegeEscalation")
+        if (parsed.get("capabilities") or {}).get("add"):
+            relaxed.append("capabilities.add")
+        if parsed.get("runAsUser") == 0 or parsed.get("runAsNonRoot") is False:
+            relaxed.append("root user")
+        if relaxed:
+            raise ValueError(
+                "k8s_sandbox_container_security_context cannot relax the sandbox "
+                f"hardening ({', '.join(relaxed)})"
             )
         return v
 

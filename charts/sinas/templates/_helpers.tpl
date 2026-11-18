@@ -180,6 +180,105 @@ affinity:
 {{- end }}
 
 {{/*
+Pod Security — securityContexts that satisfy the Pod Security Standard
+"restricted", so every pod is admitted in a namespace labelled
+pod-security.kubernetes.io/enforce=restricted.
+
+Layering (each step: keys of the later map win; a key set to null in a
+per-component map removes it, e.g. to let the platform pick the uid):
+  pod:       podSecurityContext (global)  ⊕  <component>.podSecurityContext
+  container: containerSecurityContext     ⊕  <component>.securityContext
+Third-party images (postgres, redis, clickhouse, pgbouncer) run as their
+image's own user: they take the global map WITHOUT its identity keys
+(runAsUser / runAsGroup / fsGroup) and get those from their component map
+(postgres.podSecurityContext etc.), whose chart defaults are the image's
+uid/gid.
+
+--reuse-values safe: a release whose values predate these keys has no
+global or component map at all; the built-in defaults below (identical to
+values.yaml) apply then. A map that IS present is used as given, so
+`podSecurityContext.runAsUser: null` (Helm deletes the key) stays deleted.
+*/}}
+{{- define "sinas.podSecurityContext.default" -}}
+runAsNonRoot: true
+runAsUser: 10001
+runAsGroup: 0
+fsGroup: 0
+fsGroupChangePolicy: OnRootMismatch
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{- define "sinas.containerSecurityContext.default" -}}
+allowPrivilegeEscalation: false
+capabilities:
+  drop: ["ALL"]
+{{- end }}
+
+{{/* base ⊕ override as JSON; a null in either drops the key. Builds a new
+     map (never mutates .Values). Call with (dict "base" .. "override" ..). */}}
+{{- define "sinas.securityContext.merge" -}}
+{{- $out := dict }}
+{{- range $k, $v := (.base | default dict) }}
+{{- if not (kindIs "invalid" $v) }}{{- $_ := set $out $k $v }}{{- end }}
+{{- end }}
+{{- range $k, $v := (.override | default dict) }}
+{{- if kindIs "invalid" $v }}{{- $_ := unset $out $k }}{{- else }}{{- $_ := set $out $k $v }}{{- end }}
+{{- end }}
+{{- toJson $out -}}
+{{- end }}
+
+{{/*
+Pod-level securityContext as JSON ({} when nothing applies).
+Call with: (dict "root" . "values" (.Values.backend))
+       or: (dict "root" . "values" (.Values.postgres) "imageUser" (dict "runAsUser" 70 ...))
+imageUser marks a third-party image and gives its built-in identity.
+*/}}
+{{- define "sinas.podSecurityContext" -}}
+{{- $global := .root.Values.podSecurityContext }}
+{{- if not (kindIs "map" $global) }}
+{{- $global = include "sinas.podSecurityContext.default" . | fromYaml }}
+{{- end }}
+{{- $component := (.values | default dict).podSecurityContext }}
+{{- if .imageUser }}
+{{- $global = omit $global "runAsUser" "runAsGroup" "fsGroup" }}
+{{- if not (kindIs "map" $component) }}{{- $component = .imageUser }}{{- end }}
+{{- end }}
+{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
+{{- include "sinas.securityContext.merge" (dict "base" $global "override" $component) -}}
+{{- end }}
+
+{{/*
+Container-level securityContext as JSON. Applies to every container of the
+pod, init containers included. Call with: (dict "root" . "values" (.Values.backend))
+*/}}
+{{- define "sinas.containerSecurityContext" -}}
+{{- $global := .root.Values.containerSecurityContext }}
+{{- if not (kindIs "map" $global) }}
+{{- $global = include "sinas.containerSecurityContext.default" . | fromYaml }}
+{{- end }}
+{{- $component := (.values | default dict).securityContext }}
+{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
+{{- include "sinas.securityContext.merge" (dict "base" $global "override" $component) -}}
+{{- end }}
+
+{{/* Rendered `securityContext:` blocks; empty when the map is empty. Call
+     with the same dict as above, nindent the result. */}}
+{{- define "sinas.podSecurityContextBlock" -}}
+{{- with (include "sinas.podSecurityContext" . | fromJson) }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "sinas.containerSecurityContextBlock" -}}
+{{- with (include "sinas.containerSecurityContext" . | fromJson) }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
 Database password secretKeyRef body — release secret by default, or the
 operator's pre-created secret when postgres.external.existingSecret is set.
 Shared by backendEnv and pgbouncer.
@@ -411,6 +510,19 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: K8S_SANDBOX_AFFINITY
   value: {{ toJson . | quote }}
 {{- end }}
+{{- end }}
+{{- /* securityContext of the runtime pods: the global podSecurityContext /
+       containerSecurityContext with executor.podSecurityContext /
+       executor.securityContext on top, like any chart workload. The backend
+       re-applies the restricted floor (non-root, seccomp, no privilege
+       escalation, all capabilities dropped) and refuses values relaxing it. */}}
+{{- if not (has "K8S_SANDBOX_POD_SECURITY_CONTEXT" $extraNames) }}
+- name: K8S_SANDBOX_POD_SECURITY_CONTEXT
+  value: {{ include "sinas.podSecurityContext" (dict "root" . "values" $ex) | quote }}
+{{- end }}
+{{- if not (has "K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT" $extraNames) }}
+- name: K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT
+  value: {{ include "sinas.containerSecurityContext" (dict "root" . "values" $ex) | quote }}
 {{- end }}
 - name: POD_NAMESPACE
   valueFrom:

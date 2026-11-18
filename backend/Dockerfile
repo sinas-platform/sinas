@@ -52,8 +52,24 @@ COPY . /app/
 # Copy executor script for user containers
 COPY container_executor.py /app/executor.py
 
-# Create directory for logs
-RUN mkdir -p /app/logs
+# Non-root runtime user: uid 10001, primary group 0. Arbitrary-UID friendly
+# (OpenShift-style): every path the app writes to is owned by group 0 and
+# group-writable, so the image also runs under a platform-assigned uid as
+# long as its group is 0. Writable paths:
+#   /app/logs          log directory
+#   /var/sinas/files   file storage (a volume in production; the image copy
+#                      seeds the ownership of a fresh Docker named volume)
+#   /home/sinas        $HOME, for libraries that write config/cache there
+# /tmp is world-writable already. Python bytecode is not written at runtime
+# (PYTHONDONTWRITEBYTECODE=1) and dependencies live in the system Python, so
+# the application code and site-packages stay read-only to this user.
+RUN useradd --uid 10001 --gid 0 --no-create-home --home-dir /home/sinas \
+        --shell /usr/sbin/nologin sinas \
+    && mkdir -p /app/logs /var/sinas/files /home/sinas \
+    && chgrp -R 0 /app/logs /var/sinas/files /home/sinas \
+    && chmod -R g=u /app/logs /var/sinas/files /home/sinas
+ENV HOME=/home/sinas
+USER 10001:0
 
 # Expose the port the app runs on
 EXPOSE 8000

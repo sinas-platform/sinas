@@ -101,6 +101,12 @@ services:
 
   backend:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root, as before 0.5.0: these services drive the host Docker daemon
+    # through its socket (root-equivalent anyway) and share the
+    # file_storage volume, whose files earlier versions wrote as root.
+    # The image itself runs as uid 10001 (group 0), which Kubernetes uses;
+    # see the deployment docs to run Compose without root.
+    user: "0:0"
     restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -174,6 +180,8 @@ services:
 
   queue-worker:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -206,6 +214,8 @@ services:
 
   queue-agent:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -241,6 +251,8 @@ services:
   # starve them (issue #90). Disable routing with AGENT_SUBAGENT_QUEUE=false.
   queue-agent-sub:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -275,6 +287,8 @@ services:
   # function workers. Runs are await-heavy orchestration (high concurrency).
   queue-pipeline:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     volumes:
       - file_storage:/var/sinas/files
@@ -305,6 +319,8 @@ services:
 
   scheduler:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -343,6 +359,8 @@ services:
 
   cdc-worker:
     image: ${IMAGE_REGISTRY:-ghcr.io/sinas-platform/sinas}/backend:${IMAGE_TAG:-latest}
+    # Root: Docker socket + file_storage, see the backend service.
+    user: "0:0"
     restart: unless-stopped
     env_file:
       - .env

@@ -25,7 +25,7 @@ spec:
     - from:
         - podSelector: {}
     {{- if .Values.networkPolicy.ingressNamespace }}
-    ## Ingress controller → backend (8000) and console (80)
+    ## Ingress controller → backend (8000) and console (8080; Service port 80)
     - from:
         - namespaceSelector:
             matchLabels:

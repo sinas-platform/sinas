@@ -15,7 +15,12 @@ FROM ${CONSOLE_IMAGE} AS console
 FROM ${BASE_IMAGE}
 
 # The console image ships its Vite build (base '/ui/') at html/ui.
+# Read-only to the runtime user (root-owned, world-readable), like /app.
 COPY --from=console /usr/share/nginx/html/ui /app/console-dist
+
+# Same non-root runtime user as the backend image (uid 10001, group 0); the
+# writable paths are set up there.
+USER 10001:0
 
 # All-in-one: queue workers, scheduler and CDC run inside the API process.
 # The scheduler/CDC loops are singletons — exactly ONE uvicorn worker.

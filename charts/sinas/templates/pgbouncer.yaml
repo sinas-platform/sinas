@@ -19,9 +19,11 @@ spec:
     spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.pgbouncer) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.pgbouncer) "imageUser" (dict "runAsUser" 70 "runAsGroup" 70 "fsGroup" 70)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: pgbouncer
           image: {{ include "sinas.image.pgbouncer" . }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.pgbouncer)) | trim) }}{{ . | nindent 10 }}{{- end }}
           {{- with (.Values.pgbouncer).resources }}
           resources:
             {{- toYaml . | nindent 12 }}

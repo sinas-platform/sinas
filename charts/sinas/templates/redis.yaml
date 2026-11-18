@@ -23,9 +23,11 @@ spec:
     spec:
       {{- with (include "sinas.scheduling" (dict "values" (.Values.redis) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.redis) "imageUser" (dict "runAsUser" 999 "runAsGroup" 1000 "fsGroup" 1000)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: redis
           image: {{ include "sinas.image.redis" . }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.redis)) | trim) }}{{ . | nindent 10 }}{{- end }}
           {{- with (.Values.redis).resources }}
           resources:
             {{- toYaml . | nindent 12 }}

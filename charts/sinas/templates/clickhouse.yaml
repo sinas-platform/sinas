@@ -148,8 +148,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: clickhouse
     spec:
-      securityContext:
-        fsGroup: 101
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.clickhouse) "imageUser" (dict "runAsUser" 101 "runAsGroup" 101 "fsGroup" 101)) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.clickhouse) "root" . "inherit" false) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
@@ -187,8 +186,7 @@ spec:
               port: 8123
             initialDelaySeconds: 10
             periodSeconds: 5
-          securityContext:
-            allowPrivilegeEscalation: false
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.clickhouse)) | trim) }}{{ . | nindent 10 }}{{- end }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/clickhouse

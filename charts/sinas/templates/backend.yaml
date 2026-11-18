@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: backend
     spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.backend)) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.backend) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- if .Values.smtp.ipv4 }}
@@ -34,6 +35,7 @@ spec:
           ## or lite.image under allInOne.
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.backend)) | trim) }}{{ . | nindent 10 }}{{- end }}
           command:
             - sh
             - -c
