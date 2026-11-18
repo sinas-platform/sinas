@@ -1,5 +1,8 @@
 # Stage 1: Build the frontend
-FROM node:20-alpine AS builder
+# Debian-based (glibc), not alpine: the musl build of rollup's native parser
+# currently fails `vite build` with "Code is nested too deeply" on
+# react-dom. Only this stage changes; the image ships nginx:alpine below.
+FROM node:20-slim AS builder
 
 # Set to "true" to use a locally built @sinas/sdk instead of npm
 ARG USE_LOCAL_PACKAGES=false
