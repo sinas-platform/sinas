@@ -65,15 +65,70 @@ A missing or invalid answer stops the installer with an error before `.env` is w
 
 ## Update
 
-```bash
-cd /opt/sinas
-docker compose pull
-docker compose up -d
-```
+Update the compose files, the `Caddyfile` and the images **together**: they change together between versions (0.5.0, for example, moved the console to port 8080 and runs the images as non-root, which the 0.5.0 files account for). Either:
+
+- **Re-run the installer** for the version you want. It downloads that version's files and pins its images in `.env`:
+
+  ```bash
+  V=0.5.0
+  curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/$V/install.sh -o /tmp/sinas-install.sh \
+    && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
+  ```
+
+  Without `SINAS_VERSION` it reuses the source saved in `.env` (the update command printed at the end of an install repeats it).
+
+- **Or, in a git checkout**, move the files to the tag first, then pull the images:
+
+  ```bash
+  git fetch --tags && git checkout 0.5.0
+  docker compose pull
+  docker compose up -d
+  ```
+
+  Set `IMAGE_TAG` in `.env` to that same version first. (Unset, it means `:latest`, which matches only a checkout of `main` at the latest release.)
+
+Do not only change `IMAGE_TAG` in an existing install: the files stay at the old version while the images move. For the same reason, tracking `:latest` (an unpinned `IMAGE_TAG` with a plain `docker compose pull`, or an auto-updater such as Watchtower) can pull images that no longer match your files; pin a version and update both together.
 
 The backend applies database migrations on startup. Each migration commits on its own, so a table is locked only for that migration's brief schema change, not for the whole upgrade.
 
 ### Upgrading to 0.5.0
+
+#### Breaking (Docker Compose): update the compose files and Caddyfile together with the images
+
+From 0.5.0 the images run as non-root users. The backend, lite and executor images run as uid 10001 (group 0), and the console's nginx runs as uid 101 on port **8080** instead of 80. 0.5.0's `docker-compose.yml`, `docker-compose.lite.yml`, `docker-compose.dev.yml` and `Caddyfile` account for that. **Update them in the same step as the images**, as described in [Update](#update): re-run the installer with `SINAS_VERSION=<version>`, or `git checkout <tag>`, set `IMAGE_TAG=<tag>` in `.env`, then `docker compose pull && docker compose up -d`. Changing only `IMAGE_TAG`, or pulling `:latest` (by hand or with an auto-updater such as Watchtower), moves the images without the files.
+
+With the 0.5.0 images and older files:
+
+- **The console is unreachable.** The old `Caddyfile` proxies `console:80`, and the old dev compose maps `51245:80`. Nothing listens there any more.
+- **Code execution fails on Linux.** The backend and workers open the host Docker socket, which is `root:docker 0660` and cannot be opened by uid 10001 (group 0). Docker Desktop's socket is accessible, so it is unaffected. 0.5.0's compose files run the services that use the socket with `user: "0:0"`.
+- **File uploads and other file writes fail.** Earlier versions wrote the `file_storage` volume as root, so uid 10001 cannot write to it. 0.5.0's compose files run the Sinas services as root for this reason too.
+
+The backend, workers and scheduler log an error at startup when the file storage or the Docker socket is not usable this way. The System page shows the same errors as critical warnings.
+
+If you cannot update the files yet, this `docker-compose.override.yml` restores the old behaviour. Remove it once the files are updated.
+
+```yaml
+# docker-compose.override.yml (next to docker-compose.yml)
+services:
+  backend: {user: "0:0"}
+  queue-worker: {user: "0:0"}
+  queue-agent: {user: "0:0"}
+  queue-agent-sub: {user: "0:0"}
+  queue-pipeline: {user: "0:0"}
+  scheduler: {user: "0:0"}
+  cdc-worker: {user: "0:0"}
+  # dev compose only (it publishes the console directly):
+  console:
+    ports: !override
+      - "51245:8080"
+```
+
+For the lite profile, set `user: "0:0"` on its `sinas` service the same way. Two notes on the snippet:
+
+- **Console ports:** a plain `ports:` in an override file is appended to the base file's list rather than replacing it, which would keep the dead `51245:80`. `!override` (Docker Compose 2.24.4 and later) replaces the list.
+- **Caddy:** the production compose has no console port; edit the line in your `Caddyfile` to `reverse_proxy console:8080` instead.
+
+#### Other changes
 
 0.5.0 marks every existing provider batch-API usage row (`source: provider_batch`) as `batch: true`. On an install with many of them this rewrites most of `llm_usage` and leaves dead rows behind. The migration does this in short batches while Sinas keeps serving. Once the upgrade is done, clean up the dead rows and refresh the planner statistics:
 
@@ -95,6 +150,21 @@ docker compose exec redis redis-cli INFO stats | grep evicted_keys
 If `used_memory` is near `maxmemory`, or `evicted_keys` is above 0, raise `REDIS_MAXMEMORY` in `.env` (Helm: `redis.maxmemory`) in the same upgrade. Workers and the scheduler also log a warning at startup when Redis is at 90% of `maxmemory` or more, and an error when it is full.
 
 0.5.0's `docker-compose.yml` also adds a `proxy` network between Caddy, the backend and the console, with the fixed subnet `10.254.253.0/24` (see [Client IPs](#client-ips-behind-caddy) below). `docker compose up -d` creates it. If that subnet is already in use on your host or network, set `SINAS_PROXY_SUBNET`, `SINAS_PROXY_IP_RANGE`, `SINAS_CADDY_IP` and `FORWARDED_ALLOW_IPS` in `.env` first.
+
+Once on 0.5.0's files, to run the Compose services that do not use the Docker socket without root (the lite profile without `docker-compose.lite.exec.yml`, or `queue-pipeline` and `cdc-worker`), make the file volume group-writable once, then set `user: "10001:0"` for them in a `docker-compose.override.yml`:
+
+```bash
+docker compose exec backend sh -c 'chgrp -R 0 /var/sinas/files && chmod -R g+rwX /var/sinas/files'
+```
+
+```yaml
+# docker-compose.override.yml
+services:
+  queue-pipeline:
+    user: "10001:0"
+  cdc-worker:
+    user: "10001:0"
+```
 
 ## Client IPs behind Caddy
 

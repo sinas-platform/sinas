@@ -55,16 +55,23 @@ def _pod_names() -> list[str]:
 def _manifest(name: str, image: str, worker_id: str) -> dict[str, Any]:
     """Long-lived trusted worker pod.
 
-    Same hardening as the sandbox manifest (non-root-ish, caps dropped,
-    seccomp, no SA token) minus the parts that only make sense for
-    single-use pods (activeDeadlineSeconds, restartPolicy=Never). Resources
-    mirror the Docker shared workers (1Gi / 1 CPU).
+    Same hardening as the sandbox manifest (non-root, every capability
+    dropped, no privilege escalation, seccomp, no SA token: Pod Security
+    "restricted") minus the parts that only make sense for single-use pods
+    (activeDeadlineSeconds, restartPolicy=Never). Resources mirror the
+    Docker shared workers (1Gi / 1 CPU).
     """
-    from app.services.executor._k8s_runtime import _apply_scheduling, _k8s_quantity
+    from app.services.executor._k8s_runtime import (
+        _apply_scheduling,
+        _k8s_quantity,
+        _security_contexts,
+    )
 
+    pod_sc, container_sc = _security_contexts()
     spec: dict[str, Any] = {
         "restartPolicy": "Always",
         "automountServiceAccountToken": False,
+        "securityContext": pod_sc,
         "containers": [
             {
                 "name": "executor",
@@ -86,14 +93,7 @@ def _manifest(name: str, image: str, worker_id: str) -> dict[str, Any]:
                         ),
                     },
                 },
-                "securityContext": {
-                    "allowPrivilegeEscalation": False,
-                    "capabilities": {
-                        "drop": ["ALL"],
-                        "add": ["CHOWN", "SETUID", "SETGID"],
-                    },
-                    "seccompProfile": {"type": "RuntimeDefault"},
-                },
+                "securityContext": container_sc,
                 "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
             }
         ],

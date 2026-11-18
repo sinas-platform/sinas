@@ -81,9 +81,11 @@ kubectl get pods -n sinas -l sinas.type=sandbox-executor -w
 
 ## How sandbox pods are secured
 
-Each execution pod is created with the same hardening as the Docker sandbox:
+Each execution pod is created with the same hardening as the Docker sandbox,
+and satisfies the Pod Security Standard `restricted` (see
+[Pod Security: restricted](#pod-security-restricted)):
 
-- all capabilities dropped (`CHOWN`/`SETUID`/`SETGID` added back), no
+- non-root (uid 10001, group 0 by default), all capabilities dropped, no
   privilege escalation, `RuntimeDefault` seccomp profile
 - memory / CPU / ephemeral-storage limits from `MAX_FUNCTION_*`
 - in-memory `/tmp` (100Mi), single-use, deleted after the execution,
@@ -118,6 +120,11 @@ executor:
   image: registry.example.com/sinas-executor-baked:v1
   installDependencies: false
 ```
+
+The executor image runs as uid 10001, group 0, and its Python install paths
+are group-0 writable, so `RUN pip install` works without switching user, as
+do the per-pod installs. If your Dockerfile needs root for something else
+(`apt-get`), switch back afterwards with `USER 10001:0`.
 
 ## Advanced: per-client node scheduling
 
@@ -538,6 +545,180 @@ unless you mirror a single platform. Check the result with
 `helm template ... | grep -E '^\s+image:|K8S_SANDBOX_IMAGE' -A1`: every
 reference should point at your registry and contain `@sha256:`.
 
+## Pod Security: restricted
+
+Every pod the chart renders, and every pod the backend creates at runtime
+(sandbox pods and warm trusted-worker pods), satisfies the Kubernetes
+[Pod Security Standard](https://kubernetes.io/docs/concepts/security/pod-security-standards/)
+`restricted` by default. The release namespace can enforce it without
+patching rendered manifests:
+
+```bash
+kubectl label namespace sinas \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/warn=restricted
+```
+
+### Defaults
+
+| Pods | User | Pod `securityContext` |
+|---|---|---|
+| backend, console, every worker, sandbox and trusted-worker pods | uid `10001`, group `0` | `runAsNonRoot`, `fsGroup: 0`, `fsGroupChangePolicy: OnRootMismatch`, seccomp `RuntimeDefault` |
+| postgres, pgbouncer | `70`, group `70` | the same, `fsGroup: 70` |
+| redis | `999`, group `1000` | the same, `fsGroup: 1000` |
+| clickhouse | `101`, group `101` | the same, `fsGroup: 101` |
+
+Every container, third-party ones included, gets
+`allowPrivilegeEscalation: false` and `capabilities: {drop: [ALL]}`.
+`readOnlyRootFilesystem` is not set: `restricted` does not require it.
+
+The Sinas images (backend, lite, executor, console) declare a numeric
+non-root `USER` and are **arbitrary-UID friendly**: every path they write to
+is owned by group 0 and group-writable, so they also run under a uid the
+platform assigns, as long as the group is 0. The console's nginx listens on
+port **8080** inside the container. Its Service still exposes port 80, named
+`http` (`targetPort: 8080`), so the chart's Ingress and links are unchanged.
+Anything that routes to the console pod's port directly (an OpenShift
+Route's `targetPort`, a Gateway API route or custom resource you maintain)
+must use 8080 or the port name `http`. nginx needs no capability or sysctl
+for this, and writes only to `/var/cache/nginx` and `/tmp` (an `emptyDir`
+each).
+
+### Overrides
+
+Two global maps, empty in `values.yaml`, are deep-merged over the built-in
+defaults (shown below), and every component's maps over those: nested maps
+such as `capabilities` or `seccompProfile` merge key by key, lists are
+replaced. Adding `capabilities.add: [NET_BIND_SERVICE]` therefore keeps
+`drop: [ALL]`. A key set to `null` removes it. Because the built-in
+defaults are always underneath, a partial override, or an upgrade with
+`--reuse-values` from values that predate these keys, keeps the rest of the
+`restricted` context.
+
+```yaml
+# The built-in defaults, written out:
+podSecurityContext:          # pod level: Sinas pods + runtime pods
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 0
+  fsGroup: 0
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:    # every container, third-party included
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+backend:
+  podSecurityContext:        # merged over podSecurityContext
+    supplementalGroups: [5000]
+  securityContext: {}        # merged over containerSecurityContext
+```
+
+Components: `backend`, `console`, `queueWorker`, `queueAgent`,
+`queueAgentSub`, `queuePipeline`, `scheduler`, `cdcWorker`, `executor` (the
+runtime pods), `postgres`, `redis`, `clickhouse`, `pgbouncer`. The bundled
+third-party images take the global map without its `runAsUser`,
+`runAsGroup` and `fsGroup`; their identity is in their own
+`podSecurityContext` (the table above). That identity matches the default
+images: a different image for a bundled datastore may run as another user.
+The Debian-based `postgres:16` image, for example, uses uid and gid 999:
+
+```yaml
+postgres:
+  image: registry.example.com/mirror/postgres:16
+  podSecurityContext: {runAsUser: 999, runAsGroup: 999, fsGroup: 999}
+```
+
+The runtime pods' values reach the backend as
+`K8S_SANDBOX_POD_SECURITY_CONTEXT` and
+`K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT` (JSON). The backend always applies
+the `restricted` floor on top (non-root, a seccomp profile, no privilege
+escalation, every capability dropped except an optional
+`NET_BIND_SERVICE`, no unsafe sysctls, `procMount`, SELinux or AppArmor
+settings) and refuses to start with values that relax it. Installing dependencies into the runtime pods
+(`executor.installDependencies`) needs group 0, which owns the executor
+image's Python install paths; with another group, bake the dependencies
+into the image instead.
+
+### OpenShift and other platform-assigned uids
+
+Under OpenShift's `restricted-v2` SCC (and similar admission policies), the
+platform assigns the uid from a per-namespace range and rejects a fixed one
+outside it. Leave the identity to the platform:
+
+```yaml
+podSecurityContext:
+  runAsUser: null
+  runAsGroup: null
+  fsGroup: null
+postgres:
+  podSecurityContext: {runAsUser: null, runAsGroup: null, fsGroup: null}
+redis:
+  podSecurityContext: {runAsUser: null, runAsGroup: null, fsGroup: null}
+pgbouncer:
+  podSecurityContext: {runAsUser: null, runAsGroup: null, fsGroup: null}
+clickhouse:
+  podSecurityContext: {runAsUser: null, runAsGroup: null, fsGroup: null}
+```
+
+The Sinas images run unchanged under the assigned uid with group 0. Whether
+the bundled datastores do depends on their upstream images; for production,
+use managed databases (`postgres.external.*`, `redis.external.*`) anyway.
+
+### Upgrading to 0.5.0
+
+Earlier versions ran the Sinas containers, and the bundled Redis, as root.
+On upgrade:
+
+- **File storage.** Files an earlier version wrote to the file-storage
+  volume (`fileStorage.storageClass`) are owned by root. With `fsGroup: 0`
+  and `OnRootMismatch`, the kubelet makes the volume group-0 owned and
+  group-writable on the first mount after the upgrade (one recursive pass;
+  later mounts skip it), so uid 10001 keeps reading and writing them.
+- **Redis.** The bundled Redis now runs as the image's redis user (999),
+  with `fsGroup: 1000`; its data files get the same first-mount pass.
+  PostgreSQL (uid 70), ClickHouse (101) and PgBouncer already ran as their
+  image's user and own their data; PostgreSQL's entrypoint keeps its data
+  directory at `0700` after the pass.
+- **Storage that ignores `fsGroup`.** The first-mount pass needs a volume
+  whose driver applies `fsGroup` (most block-storage CSI drivers do).
+  `hostPath`/local-path volumes (k3s's and kind's default) and many
+  NFS/file-share drivers skip it. There, fix the ownership **before**
+  upgrading, while the old pods still run as root:
+
+  ```bash
+  kubectl exec -n <namespace> deploy/backend -c backend -- \
+    sh -c 'chgrp -R 0 /var/sinas/files && chmod -R g+rwX /var/sinas/files'
+  kubectl exec -n <namespace> sts/redis -- chown -R 999:1000 /data
+  ```
+
+  Both are harmless where the kubelet would have done it anyway. If the file
+  storage is still not writable, the backend, workers and scheduler log an
+  error at startup naming it, and the System page shows a critical warning.
+- **Custom or pinned executor image** (`executor.image`, the backend's
+  `K8S_SANDBOX_IMAGE`). The runtime pods now run as uid 10001 whatever the
+  image says. An image built `FROM` an executor older than 0.5.0 has a
+  root-owned `/usr/local` and no `HOME` for that user, so the per-pod
+  dependency installs (`executor.installDependencies`) fail. Rebuild it
+  `FROM` the 0.5.0 executor (see
+  [Executor image](#executor-image-and-cold-start-latency)), or bake the
+  dependencies in and set `executor.installDependencies: false`.
+- **Console.** The console container listens on 8080; the chart's Service
+  maps port 80 to it. Pin `console.image` only to a 0.5.0 or later image:
+  an older one listens on 80 and fails its probes. Routes or custom
+  resources that target the console pod's port 80 directly (an OpenShift
+  Route `targetPort`, for example) need 8080 or the port name `http`.
+- **Warm trusted workers** keep the root `securityContext` they were created
+  with. Delete them after the upgrade so the backend recreates them
+  hardened:
+  `kubectl delete pod -n <namespace> -l sinas.type=trusted-executor`.
+- To turn on enforcement, label the namespace after the upgrade has rolled
+  out. `kubectl label --dry-run=server --overwrite ns <namespace>
+  pod-security.kubernetes.io/enforce=restricted` lists any pod that would
+  violate it.
+
 ## Key values
 
 | Value | Default | Description |
@@ -551,6 +732,7 @@ reference should point at your registry and contain `@sha256:`.
 | `backend.image`, `console.image`, `lite.image`, `postgres.image`, `redis.image`, `pgbouncer.image`, `clickhouse.image` | built-in refs | Full image reference overrides ([Digest-pinned installs](#digest-pinned-installs)) |
 | `executor.nodeSelector` / `tolerations` / `affinity` | `scheduling.*` | Placement of sandbox and trusted-worker pods |
 | `executor.installDependencies` | `true` | Per-pod `pip install` (set `false` with a baked image) |
+| `podSecurityContext` / `containerSecurityContext` | `restricted`-compliant | Pod and container `securityContext` of every pod, runtime pods included; per component `<component>.podSecurityContext` / `.securityContext` ([Pod Security](#pod-security-restricted)) |
 | `registry.username/password` | — | Pull secret for private registries (also attached to sandbox pods) |
 | `imagePullSecrets` | `[]` | Pre-created pull Secrets, attached to every pod and to sandbox pods |
 | `fileStorage.storageClass` | _(emptyDir)_ | RWX storage class for shared file storage on multi-node clusters |

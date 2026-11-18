@@ -98,8 +98,9 @@ services:
       args:
         USE_LOCAL_PACKAGES: ${USE_LOCAL_PACKAGES:-false}
         VITE_API_URL: ${VITE_API_URL:-}
+    # The console image runs unprivileged nginx on 8080.
     ports:
-      - "51245:80"
+      - "51245:8080"
 
   caddy:
     profiles:

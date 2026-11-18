@@ -103,6 +103,15 @@ executor:
   image: ""
   installDependencies: true
   podReadyTimeout: 120
+  ## securityContext of the runtime pods (sandbox + warm trusted workers),
+  ## merged over the global podSecurityContext / containerSecurityContext.
+  ## Installing dependencies into the pods (installDependencies) needs
+  ## group 0 (runAsGroup), which owns the executor image's install paths.
+  ## Running warm trusted workers keep the context they were created with.
+  ## A custom `image` built FROM an executor older than 0.5.0 has root-owned
+  ## install paths: rebuild it FROM 0.5.0, or set installDependencies: false.
+  podSecurityContext: {}
+  securityContext: {}
   ## Placement of the pods the backend creates at runtime (sandbox + warm
   ## trusted workers). Each falls back to the global `scheduling` default
   ## when unset, like the stateless Deployments; set it here to place them
@@ -110,7 +119,8 @@ executor:
   ## _AFFINITY (an extraEnv entry of the same name takes precedence).
   ## Running warm trusted workers keep the image/placement/pull secrets they
   ## were created with: after changing any of these, delete them
-  ## (kubectl delete pod -l sinas.type=trusted-executor) to recreate them.
+  ## (kubectl delete pod -n <namespace> -l sinas.type=trusted-executor) to
+  ## recreate them.
   ## Their image pull secrets come from the sandbox ServiceAccount, which
   ## carries the same list as every chart pod (see imagePullSecrets).
   nodeSelector: {}
@@ -143,6 +153,63 @@ registry:
 ##     - mirror-pull
 imagePullSecrets: []
 
+## Pod Security — every pod the chart renders, and every pod the backend
+## creates at runtime (sandbox + warm trusted workers), satisfies the
+## Kubernetes Pod Security Standard "restricted" by default, so the release
+## namespace can be labelled pod-security.kubernetes.io/enforce=restricted
+## without patching rendered manifests. (readOnlyRootFilesystem is not part
+## of "restricted" and is not set.)
+##
+## Both maps below are deep-merged OVER built-in defaults (nested maps such
+## as capabilities or seccompProfile key by key, lists replaced, so adding
+## capabilities.add: [NET_BIND_SERVICE] keeps drop: [ALL]); a key set to
+## null removes it. Leave them empty for the defaults.
+##
+## podSecurityContext: pod-level securityContext of the Sinas pods (backend,
+## console, queue-worker, queue-agent, queue-agent-sub, queue-pipeline,
+## scheduler, cdc-worker) and the runtime pods. Built-in default:
+##   runAsNonRoot: true
+##   runAsUser: 10001
+##   runAsGroup: 0
+##   fsGroup: 0
+##   fsGroupChangePolicy: OnRootMismatch
+##   seccompProfile: {type: RuntimeDefault}
+## The Sinas images run as uid 10001, group 0, and are arbitrary-UID
+## friendly: every path they write to is owned by group 0 and
+## group-writable. fsGroup 0 with OnRootMismatch makes an existing
+## file-storage volume written as root by an earlier version group-writable
+## on first mount (a one-time recursive pass).
+##   - Platform-assigned uids (OpenShift restricted-v2 SCC and similar): set
+##     runAsUser, runAsGroup and fsGroup to null; the platform picks them,
+##     with group 0. Do the same in postgres/redis/clickhouse/pgbouncer
+##     .podSecurityContext below, or use external databases.
+## The bundled third-party images (postgres, redis, clickhouse, pgbouncer)
+## take everything here EXCEPT runAsUser/runAsGroup/fsGroup: they run as
+## their image's own user (see their podSecurityContext).
+podSecurityContext: {}
+
+## containerSecurityContext: every container of every pod (init containers
+## included), third-party images too, and the runtime pods' container.
+## Built-in default:
+##   allowPrivilegeEscalation: false
+##   capabilities: {drop: [ALL]}
+containerSecurityContext: {}
+
+## Per-component overrides: <component>.podSecurityContext and
+## <component>.securityContext (container level) are merged over the two
+## global maps above in the same way. Components:
+## backend, console, queueWorker, queueAgent, queueAgentSub, queuePipeline,
+## scheduler, cdcWorker, executor (runtime pods), postgres, redis,
+## clickhouse, pgbouncer. Example — a supplemental group on the backend only:
+##   backend:
+##     podSecurityContext:
+##       supplementalGroups: [5000]
+## The runtime pods' values are rendered into the backend as
+## K8S_SANDBOX_POD_SECURITY_CONTEXT / K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT;
+## the backend always keeps the restricted floor (non-root, seccomp, no
+## privilege escalation, all capabilities dropped) and refuses to start with
+## values that relax it.
+
 ## PostgreSQL
 postgres:
   user: postgres
@@ -150,6 +217,13 @@ postgres:
   password: ""  # required — install fails if empty (unless external.existingSecret)
   ## Full image reference override; empty = postgres:16-alpine.
   image: ""
+  ## Runs as the image's postgres user: the pod layers minus
+  ## runAsUser/runAsGroup/fsGroup, then this map. On an
+  ## existing volume, the entrypoint keeps PGDATA at 0700 after fsGroup's
+  ## first-mount pass.
+  ## Built-in: runAsUser: 70, runAsGroup: 70, fsGroup: 70.
+  podSecurityContext: {}
+  securityContext: {}
   ## External PostgreSQL (Cloud SQL, RDS, ...). Setting external.host skips
   ## the in-cluster postgres pod and its PVC entirely; pgbouncer STAYS
   ## in-cluster and pools against the external instance (managed databases
@@ -188,6 +262,12 @@ redis:
   ## Full image reference override; empty = redis:7-alpine. Unused with
   ## redis.external.host.
   image: ""
+  ## Runs as the image's redis user (uid 999, group 1000); fsGroup makes a
+  ## volume written as root by an earlier chart writable. Merged over the
+  ## global podSecurityContext minus its runAsUser/runAsGroup/fsGroup.
+  ## Built-in: runAsUser: 999, runAsGroup: 1000, fsGroup: 1000.
+  podSecurityContext: {}
+  securityContext: {}
   maxmemory: "256mb"
   ## Eviction policy of the in-cluster Redis. Redis holds the job queues,
   ## locks, stream relays and auth/metering state; almost nothing in it is
@@ -256,6 +336,11 @@ clickhouse:
   enabled: true
   ## Full image reference override; empty = clickhouse/clickhouse-server:24-alpine.
   image: ""
+  ## Runs as the image's clickhouse user. Merged over the global
+  ## podSecurityContext minus its runAsUser/runAsGroup/fsGroup.
+  ## Built-in: runAsUser: 101, runAsGroup: 101, fsGroup: 101.
+  podSecurityContext: {}
+  securityContext: {}
   user: default
   password: ""
   database: sinas
@@ -268,6 +353,11 @@ pgbouncer:
   ## (pinned; earlier charts floated on `latest`). A replacement must use
   ## the same env-var configuration and ship pg_isready (used by the probes).
   image: ""
+  ## Runs as the image's postgres user: the pod layers minus
+  ## runAsUser/runAsGroup/fsGroup, then this map.
+  ## Built-in: runAsUser: 70, runAsGroup: 70, fsGroup: 70.
+  podSecurityContext: {}
+  securityContext: {}
   poolMode: transaction
   maxClientConn: 1000
   defaultPoolSize: 50
@@ -372,6 +462,9 @@ backend:
     - 192.168.0.0/16
     - 100.64.0.0/10
     - fc00::/7
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "300m"
@@ -387,6 +480,9 @@ queueWorker:
   ## Total burst envelope per release ≈ replicas × concurrency × per-execution
   ## memory, bounded by resources.limits.memory — size them together.
   concurrency: 10
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "150m"
@@ -400,6 +496,9 @@ queueAgent:
   replicas: 1
   ## Max concurrent agent jobs per worker (QUEUE_AGENT_CONCURRENCY).
   concurrency: 5
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "150m"
@@ -418,6 +517,9 @@ queueAgentSub:
   replicas: 1
   ## Max concurrent delegated agent jobs per worker (QUEUE_AGENT_SUB_CONCURRENCY).
   concurrency: 5
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "150m"
@@ -434,6 +536,9 @@ queuePipeline:
   replicas: 1
   ## Max concurrent pipeline runs per worker (QUEUE_PIPELINE_CONCURRENCY).
   concurrency: 50
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "50m"
@@ -444,6 +549,9 @@ queuePipeline:
 
 ## Scheduler
 scheduler:
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "50m"
@@ -454,6 +562,9 @@ scheduler:
 
 ## CDC worker
 cdcWorker:
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "50m"
@@ -467,6 +578,9 @@ console:
   ## Full image reference override; empty = <image.registry>/console:<tag>.
   ## Not rendered under allInOne (the lite image serves the console).
   image: ""
+  ## Merged over the global podSecurityContext / containerSecurityContext.
+  podSecurityContext: {}
+  securityContext: {}
   resources:
     requests:
       cpu: "25m"

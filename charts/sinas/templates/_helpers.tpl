@@ -180,6 +180,122 @@ affinity:
 {{- end }}
 
 {{/*
+Pod Security — securityContexts that satisfy the Pod Security Standard
+"restricted", so every pod is admitted in a namespace labelled
+pod-security.kubernetes.io/enforce=restricted.
+
+Layering, deep-merged key by key (nested maps such as capabilities or
+seccompProfile merge too, lists are replaced); later layers win, and a key
+set to null in any values layer removes it (e.g. runAsUser: null lets the
+platform pick):
+  pod:       built-in default ⊕ podSecurityContext ⊕ <component>.podSecurityContext
+  container: built-in default ⊕ containerSecurityContext ⊕ <component>.securityContext
+Third-party images (postgres, redis, clickhouse, pgbouncer) run as their
+image's own user: they take the pod layers above WITHOUT runAsUser /
+runAsGroup / fsGroup, then their image's identity (imageUser), then their
+component map.
+
+The built-in defaults are always the base and every values map defaults to
+{} in values.yaml, so:
+  - `helm upgrade --reuse-values` from a release whose values predate these
+    keys, even with a first `--set podSecurityContext.x=...`, still gets the
+    full restricted context (a partial map only overrides its own keys);
+  - a null is never swallowed by Helm's coalescing (it deletes a null only
+    where the chart default has the key, and these maps have none), so it
+    reaches the merge below and removes the key.
+*/}}
+{{- define "sinas.podSecurityContext.default" -}}
+runAsNonRoot: true
+runAsUser: 10001
+runAsGroup: 0
+fsGroup: 0
+fsGroupChangePolicy: OnRootMismatch
+seccompProfile:
+  type: RuntimeDefault
+{{- end }}
+
+{{- define "sinas.containerSecurityContext.default" -}}
+allowPrivilegeEscalation: false
+capabilities:
+  drop: ["ALL"]
+{{- end }}
+
+{{/* Deep-merge a list of maps (later wins) into a new map, as JSON; never
+     mutates .Values. Nested maps merge key by key (capabilities,
+     seccompProfile, ...), lists and scalars are replaced, a null value
+     removes the key at its level. Non-map layers are skipped. */}}
+{{- define "sinas.securityContext.merge" -}}
+{{- $out := dict }}
+{{- range $layer := . }}
+{{- if kindIs "map" $layer }}
+{{- $out = include "sinas.securityContext.mergeTwo" (dict "base" $out "over" $layer) | fromJson }}
+{{- end }}
+{{- end }}
+{{- toJson $out -}}
+{{- end }}
+
+{{- define "sinas.securityContext.mergeTwo" -}}
+{{- $out := dict }}
+{{- range $k, $v := .base }}{{- $_ := set $out $k $v }}{{- end }}
+{{- range $k, $v := .over }}
+{{- if kindIs "invalid" $v }}
+{{- $_ := unset $out $k }}
+{{- else if and (kindIs "map" $v) (kindIs "map" (get $out $k)) }}
+{{- $_ := set $out $k (include "sinas.securityContext.mergeTwo" (dict "base" (get $out $k) "over" $v) | fromJson) }}
+{{- else if kindIs "map" $v }}
+{{- /* a new nested map: still drop its nulls */}}
+{{- $_ := set $out $k (include "sinas.securityContext.mergeTwo" (dict "base" dict "over" $v) | fromJson) }}
+{{- else }}
+{{- $_ := set $out $k $v }}
+{{- end }}
+{{- end }}
+{{- toJson $out -}}
+{{- end }}
+
+{{/*
+Pod-level securityContext as JSON ({} when nothing applies).
+Call with: (dict "root" . "values" (.Values.backend))
+       or: (dict "root" . "values" (.Values.postgres) "imageUser" (dict "runAsUser" 70 ...))
+imageUser marks a third-party image and gives its image's identity.
+*/}}
+{{- define "sinas.podSecurityContext" -}}
+{{- $base := include "sinas.podSecurityContext.default" . | fromYaml }}
+{{- $global := .root.Values.podSecurityContext }}
+{{- if not (kindIs "map" $global) }}{{- $global = dict }}{{- end }}
+{{- $component := (.values | default dict).podSecurityContext }}
+{{- if .imageUser }}
+{{- include "sinas.securityContext.merge" (list (omit $base "runAsUser" "runAsGroup" "fsGroup") (omit $global "runAsUser" "runAsGroup" "fsGroup") .imageUser $component) -}}
+{{- else }}
+{{- include "sinas.securityContext.merge" (list $base $global $component) -}}
+{{- end }}
+{{- end }}
+
+{{/*
+Container-level securityContext as JSON. Applies to every container of the
+pod, init containers included. Call with: (dict "root" . "values" (.Values.backend))
+*/}}
+{{- define "sinas.containerSecurityContext" -}}
+{{- $base := include "sinas.containerSecurityContext.default" . | fromYaml }}
+{{- include "sinas.securityContext.merge" (list $base .root.Values.containerSecurityContext (.values | default dict).securityContext) -}}
+{{- end }}
+
+{{/* Rendered `securityContext:` blocks; empty when the map is empty. Call
+     with the same dict as above, nindent the result. */}}
+{{- define "sinas.podSecurityContextBlock" -}}
+{{- with (include "sinas.podSecurityContext" . | fromJson) }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "sinas.containerSecurityContextBlock" -}}
+{{- with (include "sinas.containerSecurityContext" . | fromJson) }}
+securityContext:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
 Database password secretKeyRef body — release secret by default, or the
 operator's pre-created secret when postgres.external.existingSecret is set.
 Shared by backendEnv and pgbouncer.
@@ -411,6 +527,19 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: K8S_SANDBOX_AFFINITY
   value: {{ toJson . | quote }}
 {{- end }}
+{{- end }}
+{{- /* securityContext of the runtime pods: the global podSecurityContext /
+       containerSecurityContext with executor.podSecurityContext /
+       executor.securityContext on top, like any chart workload. The backend
+       re-applies the restricted floor (non-root, seccomp, no privilege
+       escalation, all capabilities dropped) and refuses values relaxing it. */}}
+{{- if not (has "K8S_SANDBOX_POD_SECURITY_CONTEXT" $extraNames) }}
+- name: K8S_SANDBOX_POD_SECURITY_CONTEXT
+  value: {{ include "sinas.podSecurityContext" (dict "root" . "values" $ex) | quote }}
+{{- end }}
+{{- if not (has "K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT" $extraNames) }}
+- name: K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT
+  value: {{ include "sinas.containerSecurityContext" (dict "root" . "values" $ex) | quote }}
 {{- end }}
 - name: POD_NAMESPACE
   valueFrom:

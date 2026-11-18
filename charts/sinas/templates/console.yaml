@@ -20,26 +20,42 @@ spec:
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.console) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.console)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: console
           image: {{ include "sinas.image.console" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.console)) | trim) }}{{ . | nindent 10 }}{{- end }}
+          ## nginx runs unprivileged on 8080 (the Service still exposes 80).
           ports:
-            - containerPort: 80
+            - name: http
+              containerPort: 8080
           livenessProbe:
             httpGet:
               path: /health
-              port: 80
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /health
-              port: 80
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:
             {{- toYaml .Values.console.resources | nindent 12 }}
+          ## nginx's writable paths (temp files, pid file); everything else
+          ## is read-only to it.
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
@@ -52,6 +68,10 @@ spec:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: console
   ports:
-    - port: 80
-      targetPort: 80
+    ## The console container listens on 8080 (unprivileged nginx). Anything
+    ## routing to the pod port directly (an OpenShift Route's targetPort, a
+    ## custom Gateway/Ingress resource) needs 8080 or the port name `http`.
+    - name: http
+      port: 80
+      targetPort: 8080
 {{- end }}

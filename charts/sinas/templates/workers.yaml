@@ -22,10 +22,12 @@ spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-worker
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.queueWorker)) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.WorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
@@ -63,10 +65,12 @@ spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgent) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueAgent)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-agent
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.queueAgent)) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.AgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
@@ -113,10 +117,12 @@ spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qs "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qs) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-agent-sub
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" $qs) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.SubAgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
@@ -159,10 +165,12 @@ spec:
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qp "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qp) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: queue-pipeline
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" $qp) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.PipelineWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
@@ -200,10 +208,12 @@ spec:
       serviceAccountName: {{ include "sinas.executorManagerSA" . }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.scheduler) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.scheduler)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: scheduler
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.scheduler)) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.scheduler.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
@@ -240,10 +250,12 @@ spec:
     spec:
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.cdcWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
+      {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.cdcWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
       containers:
         - name: cdc-worker
           image: {{ include "sinas.image.backend" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with (include "sinas.containerSecurityContextBlock" (dict "root" . "values" (.Values.cdcWorker)) | trim) }}{{ . | nindent 10 }}{{- end }}
           command: ["python", "-m", "app.cdc.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}

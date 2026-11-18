@@ -488,7 +488,6 @@ class SharedWorkerManager:
                 mem_limit=settings.worker_memory_limit,
                 nano_cpus=1_000_000_000,  # 1 CPU core
                 cap_drop=["ALL"],  # Drop all capabilities for security
-                cap_add=["CHOWN", "SETUID", "SETGID"],  # Only essential capabilities
                 security_opt=["no-new-privileges:true"],  # Prevent privilege escalation
                 pids_limit=256,  # Prevent fork bombs
                 extra_hosts={"host.docker.internal": "host-gateway"},

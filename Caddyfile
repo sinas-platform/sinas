@@ -17,7 +17,8 @@
 }
 
 {$DOMAIN}:51245 {
-    reverse_proxy console:80
+    # Unprivileged nginx in the console image listens on 8080.
+    reverse_proxy console:8080
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"

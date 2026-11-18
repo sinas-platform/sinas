@@ -26,11 +26,11 @@ def test_pod_manifest_hardening():
     assert spec["activeDeadlineSeconds"] == 600
 
     c = spec["containers"][0]
-    sc = c["securityContext"]
-    assert sc["allowPrivilegeEscalation"] is False
-    assert sc["capabilities"]["drop"] == ["ALL"]
-    assert set(sc["capabilities"]["add"]) == {"CHOWN", "SETUID", "SETGID"}
-    assert sc["seccompProfile"] == {"type": "RuntimeDefault"}
+    _assert_restricted(spec)
+    # The executor image's non-root user (uid 10001, group 0) by default.
+    assert spec["securityContext"]["runAsUser"] == 10001
+    assert spec["securityContext"]["runAsGroup"] == 0
+    assert spec["securityContext"]["fsGroup"] == 0
 
     # Sandbox mode must be set — it is what hard-disables input() in the
     # in-container executor.
@@ -112,3 +112,252 @@ def test_runtime_pods_unconstrained_by_default():
         _manifest("w-0", "img", "0")["spec"],
     ):
         assert not {"nodeSelector", "tolerations", "affinity"} & spec.keys()
+
+
+# --- Pod Security Standard "restricted" ----------------------------------------
+# A namespace labelled pod-security.kubernetes.io/enforce=restricted refuses
+# any pod that runs as root, may escalate privileges, keeps or adds a
+# capability (other than NET_BIND_SERVICE), or has no seccomp profile. The
+# pods the backend creates at runtime must pass it, or code execution breaks
+# on such a cluster. The restricted rules, checked the way admission does:
+
+
+def _assert_restricted(spec):
+    pod_sc = spec.get("securityContext") or {}
+    for c in spec.get("initContainers", []) + spec["containers"]:
+        sc = c.get("securityContext") or {}
+        # runAsNonRoot: true at pod or container level, never disabled
+        assert sc.get("runAsNonRoot", pod_sc.get("runAsNonRoot")) is True
+        # runAsUser, when set, is not 0
+        assert sc.get("runAsUser", pod_sc.get("runAsUser")) != 0
+        # seccomp RuntimeDefault or Localhost at pod or container level
+        profile = sc.get("seccompProfile") or pod_sc.get("seccompProfile") or {}
+        assert profile.get("type") in ("RuntimeDefault", "Localhost")
+        assert sc.get("allowPrivilegeEscalation") is False
+        assert not sc.get("privileged")
+        caps = sc.get("capabilities") or {}
+        assert "ALL" in caps.get("drop", [])
+        assert set(caps.get("add", [])) <= {"NET_BIND_SERVICE"}
+    assert not (spec.get("hostNetwork") or spec.get("hostPID") or spec.get("hostIPC"))
+    for v in spec.get("volumes", []):
+        assert "hostPath" not in v
+
+
+def _runtime_specs():
+    from app.services.executor.k8s_shared_trusted import _manifest
+
+    return (
+        _pod_manifest("n", "img", deadline_seconds=1)["spec"],
+        _manifest("w-0", "img", "0")["spec"],
+    )
+
+
+def test_runtime_pods_are_restricted_by_default():
+    for spec in _runtime_specs():
+        _assert_restricted(spec)
+        # No root-only capabilities are added back (they were before 0.5.0).
+        assert "add" not in spec["containers"][0]["securityContext"]["capabilities"]
+
+
+def test_runtime_pod_identity_is_configurable(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsUser": 1000700000, "runAsGroup": 0, "fsGroup": 1000700000,'
+        ' "supplementalGroups": [5]}',
+    )
+    for spec in _runtime_specs():
+        sc = spec["securityContext"]
+        assert sc["runAsUser"] == 1000700000
+        assert sc["fsGroup"] == 1000700000
+        assert sc["supplementalGroups"] == [5]
+        # The floor is applied even when the configured value omits it.
+        assert sc["runAsNonRoot"] is True
+        assert sc["seccompProfile"] == {"type": "RuntimeDefault"}
+        _assert_restricted(spec)
+
+
+def test_runtime_pod_null_identity_lets_the_platform_pick(monkeypatch):
+    # OpenShift-style: no uid/gid in the spec, the SCC assigns them.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsNonRoot": true, "runAsUser": null, "runAsGroup": null,'
+        ' "fsGroup": null, "seccompProfile": {"type": "RuntimeDefault"}}',
+    )
+    for spec in _runtime_specs():
+        sc = spec["securityContext"]
+        assert not {"runAsUser", "runAsGroup", "fsGroup"} & sc.keys()
+        _assert_restricted(spec)
+
+
+def test_runtime_pod_container_floor_cannot_be_relaxed(monkeypatch):
+    # Even a value that bypassed config validation (assigned at runtime)
+    # cannot re-add capabilities or privilege escalation.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"allowPrivilegeEscalation": true, "privileged": true,'
+        ' "capabilities": {"add": ["SYS_ADMIN"]}, "readOnlyRootFilesystem": false}',
+    )
+    for spec in _runtime_specs():
+        sc = spec["containers"][0]["securityContext"]
+        assert sc["capabilities"] == {"drop": ["ALL"]}
+        assert sc["allowPrivilegeEscalation"] is False
+        assert "privileged" not in sc
+        assert sc["readOnlyRootFilesystem"] is False  # other fields pass through
+        _assert_restricted(spec)
+
+
+def test_runtime_pod_seccomp_floor_cannot_be_relaxed(monkeypatch):
+    # Unconfined at pod or container level (values that bypassed config
+    # validation) never reaches the pod: the pod keeps RuntimeDefault and
+    # the container drops its override, so the pod-level profile applies.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsUser": 10001, "seccompProfile": {"type": "Unconfined"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"seccompProfile": {"type": "Unconfined"}}',
+    )
+    for spec in _runtime_specs():
+        assert spec["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+        assert "seccompProfile" not in spec["containers"][0]["securityContext"]
+        _assert_restricted(spec)
+
+
+def test_runtime_pod_localhost_seccomp_is_kept(monkeypatch):
+    from app.core.config import settings
+
+    profile = {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"seccompProfile": {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"seccompProfile": {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}}',
+    )
+    for spec in _runtime_specs():
+        assert spec["securityContext"]["seccompProfile"] == profile
+        assert spec["containers"][0]["securityContext"]["seccompProfile"] == profile
+        _assert_restricted(spec)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("k8s_sandbox_pod_security_context", '{"runAsUser": 0}'),
+        ("k8s_sandbox_pod_security_context", '{"runAsNonRoot": false}'),
+        ("k8s_sandbox_pod_security_context", "[]"),
+        ("k8s_sandbox_pod_security_context", "not json"),
+        ("k8s_sandbox_container_security_context", '{"privileged": true}'),
+        ("k8s_sandbox_container_security_context", '{"allowPrivilegeEscalation": true}'),
+        ("k8s_sandbox_container_security_context", '{"capabilities": {"add": ["NET_RAW"]}}'),
+        ("k8s_sandbox_container_security_context", '{"runAsUser": 0}'),
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {}}'),
+        ("k8s_sandbox_container_security_context", '{"seccompProfile": {"type": "Unconfined"}}'),
+        # Localhost must name its profile
+        ("k8s_sandbox_pod_security_context", '{"seccompProfile": {"type": "Localhost"}}'),
+        ("k8s_sandbox_container_security_context", '{"procMount": "Unmasked"}'),
+        ("k8s_sandbox_pod_security_context", '{"sysctls": [{"name": "kernel.msgmax", "value": "1"}]}'),
+        ("k8s_sandbox_pod_security_context", '{"seLinuxOptions": {"type": "spc_t"}}'),
+        ("k8s_sandbox_container_security_context", '{"seLinuxOptions": {"user": "system_u"}}'),
+        ("k8s_sandbox_pod_security_context", '{"appArmorProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_container_security_context", '{"appArmorProfile": {"type": "Unconfined"}}'),
+        ("k8s_sandbox_container_security_context", '{"windowsOptions": {"hostProcess": true}}'),
+    ],
+)
+def test_security_context_settings_reject_relaxing_values(monkeypatch, field, value):
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    monkeypatch.setenv(field.upper(), value)
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_security_context_settings_accept_what_restricted_allows(monkeypatch):
+    from app.core.config import Settings
+
+    monkeypatch.setenv(
+        "K8S_SANDBOX_POD_SECURITY_CONTEXT",
+        '{"runAsUser": 10001, "sysctls": [{"name": "net.ipv4.ping_group_range", "value": "0 1"}],'
+        ' "seLinuxOptions": {"type": "container_t", "level": "s0:c1,c2"},'
+        ' "appArmorProfile": {"type": "RuntimeDefault"},'
+        ' "seccompProfile": {"type": "Localhost", "localhostProfile": "p.json"}}',
+    )
+    monkeypatch.setenv(
+        "K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT",
+        '{"allowPrivilegeEscalation": false, "procMount": "Default",'
+        ' "capabilities": {"drop": ["ALL"], "add": ["NET_BIND_SERVICE"]}}',
+    )
+    Settings()
+
+
+def test_runtime_pod_floor_strips_restricted_violations(monkeypatch):
+    # Values that bypassed config validation: every restricted violation is
+    # removed from the pods, allowed values pass through.
+    from app.core.config import settings
+
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_pod_security_context",
+        '{"runAsUser": 0, "sysctls": [{"name": "kernel.msgmax", "value": "1"},'
+        ' {"name": "net.ipv4.tcp_syncookies", "value": "1"}],'
+        ' "seLinuxOptions": {"type": "spc_t"}, "appArmorProfile": {"type": "Unconfined"},'
+        ' "seccompProfile": {"type": "Localhost"}}',
+    )
+    monkeypatch.setattr(
+        settings,
+        "k8s_sandbox_container_security_context",
+        '{"procMount": "Unmasked", "windowsOptions": {"hostProcess": true},'
+        ' "capabilities": {"add": ["NET_BIND_SERVICE", "SYS_ADMIN"]}}',
+    )
+    for spec in _runtime_specs():
+        pod = spec["securityContext"]
+        ctr = spec["containers"][0]["securityContext"]
+        assert "runAsUser" not in pod
+        assert pod["sysctls"] == [{"name": "net.ipv4.tcp_syncookies", "value": "1"}]
+        assert "seLinuxOptions" not in pod and "appArmorProfile" not in pod
+        assert pod["seccompProfile"] == {"type": "RuntimeDefault"}  # Localhost without a profile
+        assert "procMount" not in ctr and "windowsOptions" not in ctr
+        assert ctr["capabilities"] == {"drop": ["ALL"], "add": ["NET_BIND_SERVICE"]}
+        _assert_restricted(spec)
+
+
+def test_security_context_settings_accept_chart_values(monkeypatch):
+    # What the chart renders by default, and with the identity left to the
+    # platform (runAsUser: null in values -> key absent).
+    from app.core.config import Settings
+
+    monkeypatch.setenv(
+        "K8S_SANDBOX_POD_SECURITY_CONTEXT",
+        '{"fsGroup":0,"fsGroupChangePolicy":"OnRootMismatch","runAsGroup":0,'
+        '"runAsNonRoot":true,"runAsUser":10001,"seccompProfile":{"type":"RuntimeDefault"}}',
+    )
+    monkeypatch.setenv(
+        "K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT",
+        '{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}',
+    )
+    Settings()
+    monkeypatch.setenv(
+        "K8S_SANDBOX_POD_SECURITY_CONTEXT",
+        '{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}}',
+    )
+    Settings()

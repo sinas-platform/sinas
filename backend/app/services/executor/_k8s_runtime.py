@@ -108,12 +108,36 @@ def _apply_scheduling(spec: dict[str, Any]) -> None:
         spec["affinity"] = affinity
 
 
+def _security_contexts() -> tuple[dict[str, Any], dict[str, Any]]:
+    """(pod securityContext, container securityContext) for a runtime pod.
+
+    Shared by the single-use sandbox pods and the warm trusted-worker pods.
+    The configured values (k8s_sandbox_pod_security_context /
+    _container_security_context, rendered by the chart) set the identity —
+    runAsUser / runAsGroup / fsGroup, null meaning "let the platform pick" —
+    and the Pod Security "restricted" floor is applied on top
+    (app.core.pod_security): non-root, an allowed seccomp profile, no
+    privilege escalation, every capability dropped but NET_BIND_SERVICE,
+    no unsafe sysctls / procMount / SELinux / AppArmor relaxations.
+    """
+    from app.core.pod_security import harden_container, harden_pod
+
+    pod = harden_pod(json.loads(settings.k8s_sandbox_pod_security_context))
+    container = harden_container(json.loads(settings.k8s_sandbox_container_security_context))
+    return pod, container
+
+
 def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any]:
-    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`."""
+    """Hardened single-use pod. Mirrors `_ephemeral_runtime._run_config`
+    (every capability dropped), and runs as a non-root user
+    (`_security_contexts`), as the Pod Security Standard "restricted"
+    requires."""
+    pod_sc, container_sc = _security_contexts()
     spec: dict[str, Any] = {
         "restartPolicy": "Never",
         "automountServiceAccountToken": False,
         "terminationGracePeriodSeconds": 1,
+        "securityContext": pod_sc,
         # Backstop against leaked pods if the deleting process dies mid-flight.
         "activeDeadlineSeconds": deadline_seconds,
         "containers": [
@@ -139,14 +163,7 @@ def _pod_manifest(name: str, image: str, deadline_seconds: int) -> dict[str, Any
                         ),
                     },
                 },
-                "securityContext": {
-                    "allowPrivilegeEscalation": False,
-                    "capabilities": {
-                        "drop": ["ALL"],
-                        "add": ["CHOWN", "SETUID", "SETGID"],
-                    },
-                    "seccompProfile": {"type": "RuntimeDefault"},
-                },
+                "securityContext": container_sc,
                 "volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}],
             }
         ],

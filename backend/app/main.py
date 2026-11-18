@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
             )
         logger.warning("ENCRYPTION_KEY is not set — encrypted data will not survive restarts")
 
+    # Non-root permission problems (file storage, Docker socket): loud, not
+    # fatal; the System page repeats them as critical warnings.
+    from app.core.runtime_checks import log_runtime_problems
+
+    log_runtime_problems("backend")
+
     # Startup - Redis connection
     from app.core.redis import close_redis, get_redis
 

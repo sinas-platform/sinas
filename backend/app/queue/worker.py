@@ -575,6 +575,10 @@ async def function_worker_startup(ctx: dict) -> None:
     ctx["redis"] = create_redis_client()
     await startup_redis_checks(ctx["redis"], "queue-worker")
 
+    from app.core.runtime_checks import log_runtime_problems
+
+    log_runtime_problems("queue-worker")
+
     # Discover shared worker containers (created by scheduler).
     # Retry a few times — the scheduler may still be starting up.
     # Skipped for non-Docker executors (k8s / single-container).
@@ -636,6 +640,10 @@ async def _agent_worker_startup(ctx: dict, process: str) -> None:
 
     ctx["redis"] = create_redis_client()
     await startup_redis_checks(ctx["redis"], process)
+
+    from app.core.runtime_checks import log_runtime_problems
+
+    log_runtime_problems(process)
 
     # Eagerly import heavy modules so first job doesn't pay import cost
     from app.services.message_service import MessageService  # noqa: F401
@@ -769,6 +777,10 @@ async def pipeline_worker_startup(ctx: dict) -> None:
 
     ctx["redis"] = create_redis_client()
     await startup_redis_checks(ctx["redis"], "queue-pipeline")
+
+    from app.core.runtime_checks import log_runtime_problems
+
+    log_runtime_problems("queue-pipeline")
 
     # Eagerly import the runner so the first job doesn't pay import cost
     from app.services import pipeline_runner  # noqa: F401

@@ -6,9 +6,9 @@ name: Helm Chart Checks
 on:
   push:
     branches: [main, dev]
-    paths: ['charts/**']
+    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/workflows/helm.yml']
   pull_request:
-    paths: ['charts/**']
+    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/workflows/helm.yml']
 
 jobs:
   helm:
@@ -16,7 +16,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Pod Security "restricted" (static check of every pod spec)
+        # Every pod the chart renders, and the securityContext it hands the
+        # backend for runtime pods, must pass the "restricted" rules, so the
+        # namespace can enforce it. The live proof is k8s-restricted.yml.
+        run: |
+          pip install --quiet pyyaml
+          CHECK=.github/scripts/check_pod_security.py
+          BASE=(--set domain=ci.example.com
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci
+            --set postgres.password=ci --set clickhouse.password=ci)
+          helm template ci charts/sinas "${BASE[@]}" > /tmp/psa-default.yaml
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${BASE[@]}" > /tmp/psa-lite.yaml
+          helm template ci charts/sinas "${BASE[@]}" --set clickhouse.enabled=false \
+            --set fileStorage.storageClass=standard > /tmp/psa-compact.yaml
+          # platform-assigned uids (OpenShift-style): identity left unset
+          helm template ci charts/sinas "${BASE[@]}" \
+            --set podSecurityContext.runAsUser=null --set podSecurityContext.runAsGroup=null \
+            --set podSecurityContext.fsGroup=null > /tmp/psa-nouid.yaml
+          python $CHECK /tmp/psa-default.yaml /tmp/psa-lite.yaml /tmp/psa-compact.yaml /tmp/psa-nouid.yaml
+          # every workload is covered: 9 Deployments + 3 StatefulSets
+          grep -q 'ok   StatefulSet/clickhouse' <(python $CHECK /tmp/psa-default.yaml)
+          test "$(python $CHECK /tmp/psa-default.yaml | grep -c '^  ok ')" -eq 12
+          # identities: Sinas images 10001/0, third-party images their own user
+          grep -A8 '^      securityContext:$' /tmp/psa-default.yaml | grep -c 'runAsUser: 10001' | grep -qx 8
+          for u in 70 999 101; do grep -q "runAsUser: $u$" /tmp/psa-default.yaml; done
+          ! grep -q 'runAsUser: 10001' /tmp/psa-nouid.yaml || exit 1
+          grep -q 'runAsUser: 70$' /tmp/psa-nouid.yaml
+          # runtime pods get the same restricted context
+          grep -A1 'name: K8S_SANDBOX_POD_SECURITY_CONTEXT$' /tmp/psa-default.yaml | grep -q '\\"runAsUser\\":10001'
+          # console: unprivileged nginx on 8080 behind Service port 80
+          grep -B2 -A2 'targetPort: 8080' /tmp/psa-default.yaml | grep -q 'port: 80$'
+          # a relaxing override is caught by the check
+          helm template ci charts/sinas "${BASE[@]}" \
+            --set containerSecurityContext.allowPrivilegeEscalation=true > /tmp/psa-bad.yaml
+          ! python $CHECK /tmp/psa-bad.yaml > /dev/null || exit 1
+          helm template ci charts/sinas "${BASE[@]}" --set redis.podSecurityContext.runAsUser=0 > /tmp/psa-bad2.yaml
+          ! python $CHECK /tmp/psa-bad2.yaml > /dev/null || exit 1
+          # overrides deep-merge: adding a capability keeps drop: [ALL], a
+          # nested seccompProfile key keeps its siblings, the runtime pods'
+          # container context likewise
+          helm template ci charts/sinas "${BASE[@]}" \
+            --set 'console.securityContext.capabilities.add[0]=NET_BIND_SERVICE' \
+            --set 'executor.securityContext.capabilities.add[0]=NET_BIND_SERVICE' \
+            --set backend.podSecurityContext.seccompProfile.type=Localhost \
+            --set backend.podSecurityContext.seccompProfile.localhostProfile=profiles/sinas.json \
+            > /tmp/psa-deep.yaml
+          python $CHECK /tmp/psa-deep.yaml
+          python - <<'EOF'
+          import json, yaml
+          docs = {(d["kind"], d["metadata"]["name"]): d for d in yaml.safe_load_all(open("/tmp/psa-deep.yaml")) if d}
+          console = docs[("Deployment", "console")]["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+          assert console["capabilities"] == {"add": ["NET_BIND_SERVICE"], "drop": ["ALL"]}, console
+          backend = docs[("Deployment", "backend")]["spec"]["template"]["spec"]
+          assert backend["securityContext"]["seccompProfile"] == {"type": "Localhost", "localhostProfile": "profiles/sinas.json"}
+          env = {e["name"]: e.get("value") for e in backend["containers"][0]["env"]}
+          runtime = json.loads(env["K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT"])
+          assert runtime["capabilities"] == {"add": ["NET_BIND_SERVICE"], "drop": ["ALL"]}, runtime
+          print("deep merge ok")
+          EOF
 
       - name: helm lint
         run: |
@@ -186,6 +250,26 @@ jobs:
           ! grep -q -e "name: queue-pipeline$" -e "name: queue-agent-sub$" /tmp/upgrade-lite.yaml || exit 1
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade-lite.yaml || exit 1
           grep -A1 -- "--maxmemory-policy" /tmp/upgrade-lite.yaml | grep -q '"noeviction"'
+          # 0.4.0 values have no securityContext keys: the upgrade is still
+          # restricted-compliant (built-in defaults), third-party images as
+          # their own user
+          python .github/scripts/check_pod_security.py /tmp/upgrade.yaml /tmp/upgrade-lite.yaml
+          grep -q 'runAsUser: 999$' /tmp/upgrade.yaml
+          # ...also when the upgrade sets a first, partial override: the
+          # built-in defaults stay underneath, a null still removes a key
+          helm template ci /tmp/oldvals/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set clickhouse.password=ci \
+            --set podSecurityContext.runAsUser=12345 \
+            --set containerSecurityContext.readOnlyRootFilesystem=false \
+            --set postgres.podSecurityContext.runAsUser=null \
+            > /tmp/upgrade-override.yaml
+          python .github/scripts/check_pod_security.py /tmp/upgrade-override.yaml
+          grep -q 'runAsUser: 12345$' /tmp/upgrade-override.yaml
+          # pgbouncer keeps uid 70, postgres no longer sets one
+          test "$(grep -c 'runAsUser: 70$' /tmp/upgrade.yaml)" -eq 2
+          test "$(grep -c 'runAsUser: 70$' /tmp/upgrade-override.yaml)" -eq 1
 
       - name: helm template (compact profile, clickhouse disabled)
         run: |

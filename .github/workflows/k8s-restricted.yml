@@ -1,0 +1,266 @@
+name: Kubernetes (Pod Security restricted)
+
+# Installs the chart into a kind cluster whose release namespace ENFORCES the
+# Pod Security Standard "restricted" and proves the platform works there:
+# every chart pod admitted and Ready, no admission warnings, and a function
+# run in a sandbox pod and in a warm trusted-worker pod (both created by the
+# backend at runtime, both subject to the same admission).
+#
+# Images are built in the job from this checkout and loaded into kind; they
+# are never pushed. The helm.yml static check (check_pod_security.py) catches
+# most regressions earlier; this job is the live proof.
+#
+# Structure, for later extension: one matrix entry per install profile;
+# the end-to-end checks live in .github/k8s-restricted/smoke.py (add
+# check_* functions there); cluster values in .github/k8s-restricted/.
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - 'backend/Dockerfile'
+      - 'backend/Dockerfile.*'
+      - 'backend/container_executor.py'
+      - 'backend/app/services/executor/**'
+      - 'backend/app/core/config.py'
+      - 'backend/app/core/pod_security.py'
+      - 'backend/app/core/runtime_checks.py'
+      - 'backend/app/services/code_execution.py'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'console/Dockerfile'
+      - 'console/nginx.conf'
+      - 'console/package.json'
+      - 'console/package-lock.json'
+      - 'console/scripts/**'
+      - 'console/src/**'
+      - '.github/k8s-restricted/**'
+      - '.github/scripts/check_pod_security.py'
+      - '.github/workflows/k8s-restricted.yml'
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+'
+  workflow_dispatch:
+
+concurrency:
+  group: k8s-restricted-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  restricted:
+    name: restricted (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # split: every worker its own Deployment, console pod, warm
+          # trusted-worker pod.
+          - profile: split
+            values: -f .github/k8s-restricted/values-ci.yaml
+          # lite: the all-in-one backend pod (lite image).
+          - profile: lite
+            values: -f charts/sinas/values-lite.yaml -f .github/k8s-restricted/values-ci.yaml
+    env:
+      NS: sinas
+      RELEASE: sinas
+      # Local-only image names: loaded into kind, never pulled or pushed.
+      REG: localhost/sinas-ci
+      TAG: ci
+      # The Sinas images' runtime user; runtime pods must report it.
+      EXPECT_UID: "10001"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Tool versions
+        run: |
+          # Logs the later steps assert on (runner.temp is not available in
+          # job-level env).
+          ARTIFACTS="$RUNNER_TEMP/k8s-restricted"
+          echo "ARTIFACTS=$ARTIFACTS" >> "$GITHUB_ENV"
+          mkdir -p "$ARTIFACTS"
+          if ! command -v kind >/dev/null; then
+            # Fallback only (the runner image ships kind): pinned, checksummed.
+            curl -fsSLo "$RUNNER_TEMP/kind" https://github.com/kubernetes-sigs/kind/releases/download/v0.29.0/kind-linux-amd64
+            echo "c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284  $RUNNER_TEMP/kind" | sha256sum -c -
+            sudo install -m 0755 "$RUNNER_TEMP/kind" /usr/local/bin/kind
+          fi
+          kind version; helm version --short; kubectl version --client; docker version --format '{{.Server.Version}}'
+
+      - name: Build images
+        # backend, executor and console in parallel; lite after, FROM the
+        # local backend + console images (plain docker build, so FROM sees
+        # them without a registry).
+        run: |
+          set -e
+          docker build -q -t "$REG/backend:$TAG" -f backend/Dockerfile backend > "$ARTIFACTS/build-backend.log" 2>&1 & b=$!
+          docker build -q -t "$REG/executor:$TAG" -f backend/Dockerfile.executor backend > "$ARTIFACTS/build-executor.log" 2>&1 & e=$!
+          docker build -q -t "$REG/console:$TAG" console > "$ARTIFACTS/build-console.log" 2>&1 & c=$!
+          rc=0
+          for p in $b $e $c; do wait $p || rc=1; done
+          if [ $rc -ne 0 ]; then for f in "$ARTIFACTS"/build-*.log; do echo "== $f"; tail -n 80 "$f"; done; exit 1; fi
+          if [ "${{ matrix.profile }}" = lite ]; then
+            docker build -q -t "$REG/lite:$TAG" -f backend/Dockerfile.lite \
+              --build-arg BASE_IMAGE="$REG/backend:$TAG" --build-arg CONSOLE_IMAGE="$REG/console:$TAG" backend
+          fi
+          docker images "$REG/*"
+          # The images' own user, before Kubernetes sets anything.
+          test "$(docker run --rm "$REG/backend:$TAG" id -u)" = 10001
+          test "$(docker run --rm "$REG/executor:$TAG" id -u)" = 10001
+          test "$(docker run --rm --entrypoint id "$REG/console:$TAG" -u)" = 101
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name sinas --wait 180s
+          for img in backend executor console; do kind load docker-image --name sinas "$REG/$img:$TAG"; done
+          if [ "${{ matrix.profile }}" = lite ]; then kind load docker-image --name sinas "$REG/lite:$TAG"; fi
+          kubectl get nodes -o wide
+
+      - name: Create the namespace, enforcing restricted
+        run: |
+          kubectl create namespace "$NS"
+          kubectl label namespace "$NS" \
+            pod-security.kubernetes.io/enforce=restricted \
+            pod-security.kubernetes.io/enforce-version=latest \
+            pod-security.kubernetes.io/warn=restricted \
+            pod-security.kubernetes.io/warn-version=latest \
+            pod-security.kubernetes.io/audit=restricted
+          kubectl get namespace "$NS" --show-labels
+
+      - name: Install the chart
+        run: |
+          SECRET_KEY=$(openssl rand -hex 32)
+          ENC_KEY=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+          SUPERADMIN_PASSWORD=$(openssl rand -hex 16)
+          echo "::add-mask::$SUPERADMIN_PASSWORD"
+          echo "SUPERADMIN_PASSWORD=$SUPERADMIN_PASSWORD" >> "$GITHUB_ENV"
+          # Admission warnings ("would violate PodSecurity ...") arrive on
+          # stderr; keep them to assert on.
+          helm install "$RELEASE" charts/sinas -n "$NS" ${{ matrix.values }} \
+            --set image.registry="$REG" --set image.tag="$TAG" \
+            --set domain=sinas.ci.example.com \
+            --set secrets.secretKey="$SECRET_KEY" --set secrets.encryptionKey="$ENC_KEY" \
+            --set postgres.password="$(openssl rand -hex 16)" \
+            --set superadminEmail=admin@example.com \
+            --set superadminPassword="$SUPERADMIN_PASSWORD" \
+            2>&1 | tee "$ARTIFACTS/helm-install.log"
+          test "${PIPESTATUS[0]}" -eq 0
+
+      - name: Wait for every pod to be Ready
+        run: |
+          for s in $(kubectl -n "$NS" get statefulset,deployment -o name); do
+            kubectl -n "$NS" rollout status "$s" --timeout=600s
+          done
+          # every chart pod Ready (runtime pods carry sinas.type)
+          kubectl -n "$NS" wait --for=condition=Ready pod \
+            -l "app.kubernetes.io/instance=$RELEASE,!sinas.type" --timeout=120s
+          # The warm trusted-worker pods are created by the scheduler at
+          # startup (k8s_shared), not by the chart: wait for them too. (The
+          # lite profile creates them on demand; the smoke test's trusted
+          # function does.)
+          if [ "${{ matrix.profile }}" = split ]; then
+            for i in $(seq 1 60); do
+              kubectl -n "$NS" get pods -l sinas.type=trusted-executor -o name | grep -q . && break
+              sleep 5
+            done
+            kubectl -n "$NS" wait --for=condition=Ready pod -l sinas.type=trusted-executor --timeout=300s
+          fi
+          kubectl -n "$NS" get pods -o wide
+
+      - name: Assert admission was clean
+        run: |
+          set -e
+          # No admission warning on install...
+          if grep -i -E 'podsecurity|would violate' "$ARTIFACTS/helm-install.log"; then
+            echo "::error::Pod Security admission warnings during helm install"; exit 1
+          fi
+          # ...no pod refused by a controller (ReplicaSet/StatefulSet)...
+          kubectl -n "$NS" get events --field-selector reason=FailedCreate -o wide > "$ARTIFACTS/failedcreate.txt"
+          if grep -q . "$ARTIFACTS/failedcreate.txt"; then
+            cat "$ARTIFACTS/failedcreate.txt"; echo "::error::pods were refused"; exit 1
+          fi
+          # ...and the namespace really enforces: a pod violating restricted
+          # (root, default capabilities) is refused (server-side dry run), so
+          # every admission above was a real check.
+          if kubectl -n "$NS" run psa-probe --dry-run=server --restart=Never \
+              --image="$REG/backend:$TAG" --image-pull-policy=Never \
+              --overrides='{"spec":{"securityContext":{"runAsUser":0}}}' -- true \
+              > "$ARTIFACTS/psa-probe.txt" 2>&1; then
+            cat "$ARTIFACTS/psa-probe.txt"; echo "::error::a violating pod was admitted"; exit 1
+          fi
+          cat "$ARTIFACTS/psa-probe.txt"
+          grep -q 'violates PodSecurity "restricted' "$ARTIFACTS/psa-probe.txt"
+
+      - name: Assert pod identities
+        run: |
+          set -e
+          uid() { kubectl -n "$NS" exec "$1" -c "$2" -- id -u; }
+          test "$(uid deploy/backend backend)" = 10001
+          test "$(uid deploy/pgbouncer pgbouncer)" = 70
+          test "$(uid statefulset/postgres postgres)" = 70
+          test "$(uid statefulset/redis redis)" = 999
+          if [ "${{ matrix.profile }}" = split ]; then
+            test "$(uid deploy/console console)" = 10001
+            test "$(uid deploy/queue-worker queue-worker)" = 10001
+            # the console (nginx on 8080) still answers on the Service's port 80
+            kubectl -n "$NS" exec deploy/backend -c backend -- python -c \
+              "import urllib.request; print(urllib.request.urlopen('http://console/health', timeout=10).read())"
+          fi
+          # file storage is writable by the backend's user
+          kubectl -n "$NS" exec deploy/backend -c backend -- sh -c 'touch /var/sinas/files/.ci-write && rm /var/sinas/files/.ci-write'
+
+      - name: Run a function in a sandbox pod and a trusted-worker pod
+        run: |
+          kubectl -n "$NS" port-forward svc/backend 18000:8000 > "$ARTIFACTS/port-forward.log" 2>&1 &
+          echo $! > "$ARTIFACTS/port-forward.pid"
+          # Record every sandbox pod the backend creates during the run.
+          kubectl -n "$NS" get pods -l sinas.type=sandbox-executor --watch -o name \
+            > "$ARTIFACTS/sandbox-pods.txt" 2>&1 &
+          WATCH=$!
+          sleep 3
+          SINAS_URL=http://127.0.0.1:18000 SINAS_EMAIL=admin@example.com SINAS_RELEASE="$RELEASE" \
+            SINAS_PASSWORD="$SUPERADMIN_PASSWORD" \
+            python3 .github/k8s-restricted/smoke.py
+          kill $WATCH || true
+          echo "sandbox pods created:"; sort -u "$ARTIFACTS/sandbox-pods.txt"
+          grep -q 'pod/sinas-sbx-' "$ARTIFACTS/sandbox-pods.txt" || { echo "::error::no sandbox pod was created"; exit 1; }
+          # Nothing refused at runtime either (sandbox/trusted pods are
+          # created directly: a refusal would also fail the function above).
+          kubectl -n "$NS" get events --field-selector reason=FailedCreate -o wide > "$ARTIFACTS/failedcreate-runtime.txt"
+          if grep -q . "$ARTIFACTS/failedcreate-runtime.txt"; then
+            cat "$ARTIFACTS/failedcreate-runtime.txt"; echo "::error::pods were refused at runtime"; exit 1
+          fi
+
+      - name: Report container restarts
+        # Not a failure: a startup-order restart (e.g. a worker that came up
+        # before the backend finished migrating) is recovered by Kubernetes.
+        # Printed so a NEW cause shows up in the log of a green run.
+        if: always()
+        run: |
+          set +e
+          kubectl -n "$NS" get pods -o custom-columns='POD:.metadata.name,RESTARTS:.status.containerStatuses[*].restartCount'
+          for p in $(kubectl -n "$NS" get pods -o jsonpath='{range .items[?(@.status.containerStatuses[0].restartCount>0)]}{.metadata.name}{"\n"}{end}'); do
+            echo "===== $p (previous container, last 40 lines)"
+            kubectl -n "$NS" logs "$p" --all-containers --previous --tail=40 --prefix
+            kubectl -n "$NS" get pod "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}: {.lastState.terminated.reason} exit={.lastState.terminated.exitCode}{"\n"}{end}'
+          done
+
+      - name: Diagnostics
+        if: failure()
+        run: |
+          set +e
+          kubectl get namespace "$NS" --show-labels
+          kubectl -n "$NS" get all,pvc -o wide
+          kubectl -n "$NS" get events --sort-by=.lastTimestamp
+          kubectl -n "$NS" describe pods
+          for p in $(kubectl -n "$NS" get pods -o name); do
+            echo "===== $p"; kubectl -n "$NS" logs "$p" --all-containers --tail=200 --prefix
+            kubectl -n "$NS" logs "$p" --all-containers --tail=50 --prefix --previous 2>/dev/null
+          done
+          helm -n "$NS" get values "$RELEASE" --all | grep -v -i -E 'password|secretkey|encryptionkey'
+          cat "$ARTIFACTS"/*.log "$ARTIFACTS"/*.txt 2>/dev/null | tail -n 200
