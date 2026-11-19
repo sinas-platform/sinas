@@ -326,6 +326,50 @@ class TestKubernetesHealth:
         assert count["count"] == 0 and "K8S_RELEASE_NAME" in count["unavailable_reason"]
         assert k8s_mode.core.calls == [] and k8s_mode.custom.calls == []
 
+    async def test_services_turned_off_skip_the_api(self, client, admin_user, k8s_mode, monkeypatch):
+        """systemStats.rbac=false (SYSTEM_STATS_KUBERNETES=false): no API call
+        at all (there may be no token or RBAC), and no error for the console
+        to show — it hides the panel."""
+        monkeypatch.setattr(settings, "system_stats_kubernetes", False)
+        k8s_mode.core.error = AssertionError("pods must not be listed")
+        k8s_mode.custom.error = AssertionError("metrics must not be read")
+
+        body = await _health(client, admin_user)
+        assert body["deployment"] == "kubernetes"
+        assert body["services_enabled"] is False
+        assert body["services"] == []
+        assert body["services_unavailable_reason"] is None
+        assert body["metrics_unavailable_reason"] is None
+        assert k8s_mode.core.calls == [] and k8s_mode.custom.calls == []
+        # The rest of the page still renders.
+        assert "host" in body and isinstance(body["warnings"], list)
+
+    async def test_code_execution_off_no_api_identity(self, client, admin_user, k8s_mode, monkeypatch):
+        """The chart with features.codeExecution=false and systemStats.rbac=false:
+        executors disabled, no token. Neither the page nor the executor cards
+        touch the Kubernetes API."""
+        monkeypatch.setattr(settings, "code_execution_enabled", False)
+        monkeypatch.setattr(settings, "sandbox_executor", "disabled")
+        monkeypatch.setattr(settings, "trusted_executor", "disabled")
+        monkeypatch.setattr(settings, "system_stats_kubernetes", False)
+
+        body = await _health(client, admin_user)
+        # K8S_RELEASE_NAME alone still marks a Kubernetes deployment.
+        assert body["deployment"] == "kubernetes"
+        assert body["services_enabled"] is False and body["services"] == []
+
+        h = auth_headers(admin_user)
+        stats = (await client.get("/api/v1/containers/stats", headers=h)).json()
+        count = (await client.get("/api/v1/workers/count", headers=h)).json()
+        assert "Code execution is disabled" in stats["unavailable_reason"]
+        assert "Code execution is disabled" in count["unavailable_reason"]
+        assert k8s_mode.core.calls == [] and k8s_mode.custom.calls == []
+
+    async def test_services_on_by_default(self, client, admin_user, k8s_mode):
+        body = await _health(client, admin_user)
+        assert body["services_enabled"] is True
+        assert len(body["services"]) == 4
+
     async def test_restart_rejected_clearly(self, client, admin_user, k8s_mode):
         resp = await client.post(
             "/api/v1/system/containers/backend-abc/restart", headers=auth_headers(admin_user)

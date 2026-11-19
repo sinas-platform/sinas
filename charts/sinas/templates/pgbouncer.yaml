@@ -17,6 +17,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: pgbouncer
     spec:
+      automountServiceAccountToken: false
       {{- with (include "sinas.scheduling" (dict "values" (.Values.pgbouncer) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.imagePullSecrets" . | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.pgbouncer) "imageUser" (dict "runAsUser" 70 "runAsGroup" 70 "fsGroup" 70)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -47,6 +48,22 @@ spec:
               value: {{ .Values.pgbouncer.reservePoolSize | quote }}
             - name: AUTH_TYPE
               value: scram-sha-256
+            {{- /* TLS to an external database (postgres.external.tls): the
+                   image's entrypoint writes these into pgbouncer.ini as
+                   server_tls_sslmode / server_tls_ca_file. Unset = pgbouncer's
+                   default ("prefer"). */}}
+            {{- with (include "sinas.postgresTlsMode" .) }}
+            - name: SERVER_TLS_SSLMODE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if include "sinas.postgresCaEnabled" . }}
+            - name: SERVER_TLS_CA_FILE
+              value: {{ include "sinas.postgresCaPath" . | quote }}
+            {{- end }}
+          {{- with (include "sinas.postgresCaMount" . | trim) }}
+          volumeMounts:
+            {{- . | nindent 12 }}
+          {{- end }}
           ports:
             - containerPort: 5432
           livenessProbe:
@@ -59,6 +76,10 @@ spec:
               command: ["pg_isready", "-h", "localhost", "-p", "5432"]
             initialDelaySeconds: 5
             periodSeconds: 5
+      {{- with (include "sinas.postgresCaVolume" . | trim) }}
+      volumes:
+        {{- . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
