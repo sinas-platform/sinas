@@ -81,8 +81,13 @@ async def _poll_one(batch_id: uuid_lib.UUID) -> None:
             "agent": f"{batch.target_namespace}/{batch.target_name}",
             "source": "provider_batch",
         }
+        # Status and results of a batch already sent: the configured key,
+        # as it was sent with (batches never carry a run credential).
         provider = await create_provider(
-            provider_name=provider_row.name, db=db, usage_context=attribution_context
+            provider_name=provider_row.name,
+            db=db,
+            usage_context=attribution_context,
+            run_credentials=False,
         )
 
         status = await provider.get_batch_status(batch.provider_batch_id)

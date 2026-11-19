@@ -577,7 +577,8 @@ async def prepare_agent_delegation(
     """Resolve a `call_agent_*` target and create (or load) its sub-chat.
 
     A new sub-chat inherits the parent chat's attribution snapshot, so the
-    sub-agent's calls are attributed as the parent's are.
+    sub-agent's calls are attributed as the parent's are, and the parent's
+    run provider credentials (new or resumed sub-chat alike).
 
     Everything `execute_agent_tool` does before enqueueing — shared with the
     suspend-on-delegate path in message_service (issue #90), which enqueues
@@ -601,6 +602,13 @@ async def prepare_agent_delegation(
     child_depth, depth_error = child_depth_or_error()
     if depth_error:
         return {"error": depth_error}
+
+    # A request-only provider credential can't follow the work to a worker.
+    from app.services.provider_credentials import refuse_request_credential_handoff
+
+    handoff_problem = await refuse_request_credential_handoff(db, agent)
+    if handoff_problem:
+        return {"error": "Provider credential can't be delegated", "message": handoff_problem}
 
     # Check user has permission to use this sub-agent
     user_permissions = await get_effective_permissions(db, user_id)
@@ -645,8 +653,17 @@ async def prepare_agent_delegation(
             attribution=await new_chat_attribution(db, user_id, parent_chat_id=parent_chat_id),
         )
         db.add(sub_chat)
-        await db.commit()
-        await db.refresh(sub_chat)
+        await db.flush()
+
+    # The parent's run credentials go with the work it delegates: the
+    # sub-agent's calls present what the parent's do, also on a resumed
+    # sub-chat (the parent's current ones, replacing older copies).
+    if parent_chat_id:
+        from app.services.provider_credentials import inherit
+
+        await inherit(db, parent_chat_id, sub_chat.id)
+    await db.commit()
+    await db.refresh(sub_chat)
 
     return {"agent": agent, "sub_chat": sub_chat, "content": content, "depth": child_depth}
 

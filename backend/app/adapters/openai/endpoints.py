@@ -95,6 +95,81 @@ async def _resolve_model(
     return agent, None, f"{agent.namespace}/{agent.name}"
 
 
+PROVIDER_CREDENTIAL_HEADER = "X-Sinas-Provider-Credential"
+
+
+async def _request_credential(
+    value: str,
+    agent: Optional[Agent],
+    provider: Optional[LLMProvider],
+    permissions: dict,
+    http_request: Request,
+    db: AsyncSession,
+) -> tuple[str, str]:
+    """(provider name, credential) for `X-Sinas-Provider-Credential`: the
+    provider the model resolves to (passthrough), or the agent's provider.
+    The same rules as a chat's `provider_credentials`: 403 without
+    sinas.chats.assign_provider_credential:own, 400 invalid_request when
+    that provider hasn't enabled run credentials or the value is empty."""
+    from app.providers import run_credentials
+    from app.providers.errors import INVALID_REQUEST
+    from app.services import provider_credentials
+
+    provider_credentials.check_assign_permission(permissions, http_request)
+    if provider is None and agent is not None:
+        if agent.llm_provider_id:
+            provider = (
+                await db.execute(
+                    select(LLMProvider).where(
+                        LLMProvider.id == agent.llm_provider_id, LLMProvider.is_active == True
+                    )
+                )
+            ).scalar_one_or_none()
+        else:
+            provider = (
+                await db.execute(
+                    select(LLMProvider).where(
+                        LLMProvider.is_default == True, LLMProvider.is_active == True
+                    )
+                )
+            ).scalar_one_or_none()
+    if provider is None:
+        raise LLMError(
+            INVALID_REQUEST,
+            f"{PROVIDER_CREDENTIAL_HEADER}: the model resolves to no active LLM provider",
+            status=400,
+        )
+    settings = run_credentials.settings_of(provider.config or {}, provider.provider_type)
+    if not settings.enabled:
+        raise LLMError(
+            INVALID_REQUEST,
+            f"{PROVIDER_CREDENTIAL_HEADER}: LLM provider '{provider.name}' does not accept a run "
+            "credential (an admin can enable config.run_credential on it)",
+            status=400,
+        )
+    try:
+        credential = run_credentials.check_credential(value)
+    except ValueError as e:
+        raise LLMError(INVALID_REQUEST, f"{PROVIDER_CREDENTIAL_HEADER}: {e}", status=400) from None
+    return provider.name, credential
+
+
+async def _with_request_credential(iterator, credential: tuple[str, str]):
+    """A streamed body, run with the request's provider credential: the
+    stream makes the turn's LLM calls after the endpoint has returned."""
+    from app.providers.run_credentials import REQUEST_CREDENTIAL
+
+    token = REQUEST_CREDENTIAL.set(credential)
+    try:
+        async for chunk in iterator:
+            yield chunk
+    finally:
+        try:
+            REQUEST_CREDENTIAL.reset(token)
+        except ValueError:  # finalized in another context
+            pass
+
+
 @router.post("/v1/chat/completions")
 async def chat_completions(
     request: ChatCompletionRequest,
@@ -102,33 +177,58 @@ async def chat_completions(
     db: AsyncSession = Depends(get_db),
     current_user_data: tuple = Depends(get_current_user_with_permissions),
     x_chat_id: Optional[str] = Header(None, alias="X-Chat-ID"),
+    x_sinas_provider_credential: Optional[str] = Header(
+        None,
+        alias=PROVIDER_CREDENTIAL_HEADER,
+        description=(
+            "A run credential for this request only (never stored): presented to the LLM "
+            "provider the model resolves to (the agent's provider in agent mode) instead of its "
+            "configured key, or in the header its config.run_credential names. Needs "
+            "sinas.chats.assign_provider_credential:own and a provider that enables "
+            "run_credential."
+        ),
+    ),
 ):
     """OpenAI-compatible chat completions endpoint."""
+    from app.providers.run_credentials import REQUEST_CREDENTIAL
+
     user_id, permissions = current_user_data
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
 
     agent, provider, model_name = await _resolve_model(request.model, db)
 
-    if agent:
-        return await _agent_mode(
-            request=request,
-            http_request=http_request,
-            agent=agent,
-            model_name=model_name,
-            user_id=user_id,
-            permissions=permissions,
-            user_token=user_token,
-            chat_id=x_chat_id,
-            db=db,
+    credential = None
+    if x_sinas_provider_credential is not None:
+        credential = await _request_credential(
+            x_sinas_provider_credential, agent, provider, permissions, http_request, db
         )
-    else:
-        return await _passthrough_mode(
-            request=request,
-            provider=provider,
-            model_name=model_name,
-            user_id=user_id,
-            db=db,
-        )
+    token = REQUEST_CREDENTIAL.set(credential)
+    try:
+        if agent:
+            response = await _agent_mode(
+                request=request,
+                http_request=http_request,
+                agent=agent,
+                model_name=model_name,
+                user_id=user_id,
+                permissions=permissions,
+                user_token=user_token,
+                chat_id=x_chat_id,
+                db=db,
+            )
+        else:
+            response = await _passthrough_mode(
+                request=request,
+                provider=provider,
+                model_name=model_name,
+                user_id=user_id,
+                db=db,
+            )
+    finally:
+        REQUEST_CREDENTIAL.reset(token)
+    if credential is not None and isinstance(response, StreamingResponse):
+        response.body_iterator = _with_request_credential(response.body_iterator, credential)
+    return response
 
 
 async def _agent_mode(

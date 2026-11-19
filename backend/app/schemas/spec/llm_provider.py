@@ -14,7 +14,7 @@ as, for an OpenAI-compatible API of another provider.
 """
 
 import re
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -51,6 +51,9 @@ _CONFIG_NAMES = {
 
 
 class LLMProviderSpec(SpecModel):
+    # run_credential is checked against the provider type (whole_spec_problems).
+    WHOLE_SPEC_FIELDS: ClassVar[frozenset[str]] = frozenset({"config", "provider_type"})
+
     name: str = Field(min_length=1, max_length=100)
     provider_type: str = Field(min_length=1, max_length=50)
     # Write-only. Left out, an existing provider keeps its key.
@@ -98,8 +101,8 @@ class LLMProviderSpec(SpecModel):
     def _request_settings(cls, value: dict[str, Any]) -> dict[str, Any]:
         """`headers` (identity header templates, app/providers/attribution.py)
         and `budget_errors` (budget refusal rules, app/providers/errors.py)
-        are checked like the rest of a spec; other keys are the provider
-        type's own."""
+        are checked like the rest of a spec (`run_credential` too, in
+        `_run_credential`); other keys are the provider type's own."""
         from app.providers.attribution import validate_header_templates
         from app.providers.errors import validate_budget_rules
 
@@ -117,6 +120,37 @@ class LLMProviderSpec(SpecModel):
             else:
                 out.pop("budget_errors")
         return out
+
+    def whole_spec_problems(self) -> list[str]:
+        """`config.run_credential` (per-run credentials,
+        app/providers/run_credentials.py), checked against the provider type
+        (whose own key `header: null` replaces) and the header templates (a
+        header is one or the other)."""
+        from app.providers.run_credentials import SETTINGS_KEY, validate_settings
+
+        config = self.config if isinstance(self.config, dict) else {}
+        try:
+            validate_settings(config.get(SETTINGS_KEY), self.provider_type, config.get("headers"))
+        except ValueError as e:
+            return [str(e)]
+        return []
+
+    @model_validator(mode="after")
+    def _run_credential(self) -> "LLMProviderSpec":
+        from app.providers.run_credentials import SETTINGS_KEY, validate_settings
+
+        problems = self.whole_spec_problems()
+        if problems:
+            raise ValueError(problems[0])
+        if SETTINGS_KEY in self.config:
+            checked = validate_settings(
+                self.config[SETTINGS_KEY], self.provider_type, self.config.get("headers")
+            )
+            if checked is None:
+                self.config.pop(SETTINGS_KEY)
+            else:
+                self.config[SETTINGS_KEY] = checked
+        return self
 
     @field_validator("pricing", "model_aliases")
     @classmethod

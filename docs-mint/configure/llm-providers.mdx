@@ -48,7 +48,7 @@ In the console this is **Price models as** in the provider form's Pricing sectio
 
 **Headers from identity, and budget refusals:**
 
-`config.headers` sends headers built from the identity of each call (the user's custom fields, the agent, the chat, the API key) on every request to the provider, so a gateway in front of it can attribute spend and enforce budgets per customer. `config.budget_errors` teaches Sinas your gateway's budget error, so it surfaces as `budget_exceeded`. See [Attribution and budgets through an LLM gateway](/admin/llm-gateway-attribution).
+`config.headers` sends headers built from the identity of each call (the user's custom fields, the agent, the chat, the API key) on every request to the provider, so a gateway in front of it can attribute spend and enforce budgets per customer. `config.budget_errors` teaches Sinas your gateway's budget error, so it surfaces as `budget_exceeded`. `config.run_credential` lets the service that starts a run give its chat its own key for the provider (`provider_credentials`), presented on every call of the run instead of the configured key or in a header of its own. See [Attribution and budgets through an LLM gateway](/admin/llm-gateway-attribution) and [per-run credentials](/admin/llm-gateway-attribution#per-run-credentials).
 
 ```yaml
 llmProviders:

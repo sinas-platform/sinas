@@ -133,9 +133,47 @@ async def _drop_unrequested_trace_context(request: Any) -> None:
             del request.headers[field]
 
 
+# ── Run credentials ────────────────────────────────────────────────────────
+#
+# A per-run provider credential (app/providers/run_credentials.py) reaches
+# the request as a reference in a private header, and a placeholder in the
+# credential header(s) the SDK builds the request with. This hook, on every
+# guarded client, swaps in the values as the request is sent, over whatever
+# the SDK put there (its own key header included), so the value never sits
+# in an SDK's request options, debug logs or retry state.
+
+#: Names the `RunCredentialHeaders` holder of a request. Never sent.
+RUN_CREDENTIAL_HEADER = "x-sinas-run-credential"
+
+
+class RunCredentialUnavailable(RuntimeError):
+    """A request referred to a run credential that is no longer held."""
+
+
+async def _apply_run_credential(request: Any) -> None:
+    ref = request.headers.get(RUN_CREDENTIAL_HEADER)
+    if ref is None:
+        return
+    del request.headers[RUN_CREDENTIAL_HEADER]
+    from .run_credentials import PLACEHOLDER, holder_for
+
+    holder = holder_for(ref)
+    if holder is None:
+        # Fail closed: never send the placeholder, or the configured key in
+        # its place.
+        raise RunCredentialUnavailable("The run's provider credential is no longer available")
+    for name, value in holder.headers.items():
+        request.headers[name] = value  # replaces every value of that name, any case
+    for name, value in list(request.headers.items()):
+        if value == PLACEHOLDER:
+            raise RunCredentialUnavailable("A provider credential header was not filled in")
+
+
 def guard_trace_context(http_client: H) -> H:
     """`http_client` (an `httpx` or `httpx2` async client), made to send trace
-    context only on requests a provider marked with `CONTEXT_OPT_IN_HEADER`.
+    context only on requests a provider marked with `CONTEXT_OPT_IN_HEADER`,
+    and to fill in a run credential a request refers to
+    (`RUN_CREDENTIAL_HEADER`).
 
     The hook goes last, after any the client already has, so that it sees the
     request as it will be sent. Guarding a client twice adds it once.
@@ -147,10 +185,14 @@ def guard_trace_context(http_client: H) -> H:
     """
     hooks = http_client.event_hooks  # type: ignore[attr-defined]
     request_hooks = list(hooks.get("request", []))
-    if _drop_unrequested_trace_context not in request_hooks:
+    added = [
+        hook for hook in (_apply_run_credential, _drop_unrequested_trace_context)
+        if hook not in request_hooks
+    ]
+    if added:
         http_client.event_hooks = {  # type: ignore[attr-defined]
             **hooks,
-            "request": [*request_hooks, _drop_unrequested_trace_context],
+            "request": [*request_hooks, *added],
         }
     send = http_client.send  # type: ignore[attr-defined]
     if not getattr(send, "_sinas_untraced", False):

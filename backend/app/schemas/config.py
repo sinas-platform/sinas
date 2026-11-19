@@ -98,7 +98,9 @@ class LLMProviderConfig(ConfigModel):
     isDefault: Optional[bool] = None
     # Passthrough for provider-specific config (merged into the DB `config`
     # column, not overwritten). For Azure: api_version, azure_deployment,
-    # max_tokens_param, drop_params, extra_params.
+    # max_tokens_param, drop_params, extra_params. For every type: headers,
+    # budget_errors, propagate_context, run_credential (checked by
+    # LLMProviderSpec).
     config: dict[str, Any] = Field(default_factory=dict)
     isActive: Optional[bool] = None
     # Pricing (docs/design/usage-cost.md): {model: LiteLLM per-token fields},

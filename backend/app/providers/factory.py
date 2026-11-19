@@ -153,6 +153,68 @@ def _build_provider(provider_config: Any, provider_type: str, api_key: Optional[
         )
 
 
+async def _attach_run_credential(
+    db: AsyncSession,
+    provider: BaseLLMProvider,
+    provider_config: Any,
+    provider_type: str,
+    provider_settings: dict[str, Any],
+    usage_context: Optional[dict[str, Any]],
+) -> bool:
+    """Give `provider` the run credential this call presents, if any. True
+    when it has one; raises `provider_credential_required` when the provider
+    requires one and the call has none (or only an expired one)."""
+    from . import run_credentials
+    from .errors import PROVIDER_CREDENTIAL_REQUIRED
+
+    settings = run_credentials.settings_of(provider_settings, provider_type)
+    if not settings.enabled:
+        if settings.required:  # an invalid stored setting that asks for one
+            raise LLMError(
+                PROVIDER_CREDENTIAL_REQUIRED,
+                f"LLM provider '{provider_config.name}' requires a run credential, but its "
+                "run_credential setting is invalid. An admin can fix it under LLM Providers.",
+                provider=provider_config.name,
+            )
+        return False
+
+    credential: Optional[str] = None
+    status = "missing"
+    override = run_credentials.REQUEST_CREDENTIAL.get()
+    if override is not None and override[0] == provider_config.name:
+        credential, status = override[1], "active"
+    else:
+        chat_id = (usage_context or {}).get("chat_id")
+        if chat_id:
+            from app.services.provider_credentials import resolve
+
+            credential, status = await resolve(db, chat_id, provider_config.name)
+
+    if credential is None:
+        if not settings.required:
+            return False
+        if status == "expired":
+            detail = (
+                "the run credential this chat was given for it has expired. Send a new one "
+                "(provider_credentials) with the next message."
+            )
+        else:
+            detail = (
+                "this chat has no run credential for it. Send one (provider_credentials) when "
+                "creating the chat or with a message."
+            )
+        raise LLMError(
+            PROVIDER_CREDENTIAL_REQUIRED,
+            f"LLM provider '{provider_config.name}' requires a run credential, and {detail}",
+            provider=provider_config.name,
+        )
+
+    provider.run_credential = run_credentials.RunCredentialHeaders(
+        run_credentials.credential_headers(settings, provider_type, credential), credential
+    )
+    return True
+
+
 async def create_provider(
     provider_name: Optional[str] = None,
     model: Optional[str] = None,
@@ -160,6 +222,7 @@ async def create_provider(
     usage_context: Optional[dict[str, Any]] = None,
     overrides: Optional[dict[str, Any]] = None,
     config: Optional[Any] = None,
+    run_credentials: bool = True,
 ) -> BaseLLMProvider:
     """
     Create an LLM provider instance from database configuration.
@@ -173,6 +236,10 @@ async def create_provider(
             just unattributed.
         config: The provider's row, when the caller already loaded it (the
             one `provider_name`, or the default, would find). Saves a query.
+        run_credentials: False for a provider that only manages work already
+            sent (a provider batch's status, results, cancellation): it
+            presents the configured key, whatever the provider's
+            run_credential setting (app/providers/run_credentials.py).
 
     Returns:
         BaseLLMProvider instance, wrapped in UsageTrackingProvider so every
@@ -258,6 +325,15 @@ async def create_provider(
         provider.budget_rules = []
     if customer is not None:
         usage_context = {**(usage_context or {}), "customer": customer}
+
+    # The run's own credential for this provider, when it has opted in
+    # (config.run_credential): the request's (the OpenAI-compatible
+    # adapter's header), else the chat's, else — unless required — none, and
+    # the configured key serves the call (app/providers/run_credentials.py).
+    if run_credentials:
+        await _attach_run_credential(
+            db, provider, provider_config, provider_type, provider_settings, usage_context
+        )
 
     # Per-agent behavior overrides (Agent.provider_overrides), applied after
     # construction so they win over the provider-level config.

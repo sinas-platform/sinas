@@ -24,6 +24,8 @@ const HINTS: Record<string, string> = {
   context_length_exceeded: 'The conversation is too long for the model; start a new chat.',
   content_filtered: "The provider's content filter blocked this message.",
   job_timeout: 'The agent ran out of time for this message.',
+  provider_credential_required:
+    "The model provider needs this chat's own credential; the application that started the chat has to send one.",
 };
 
 /** The hint for an error code, if it has one. */
