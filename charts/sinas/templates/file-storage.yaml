@@ -4,6 +4,12 @@
 {{- if not (has $mode (list "ReadWriteOnce" "ReadWriteMany" "ReadWriteOncePod")) }}
 {{- fail (printf "fileStorage.accessMode must be ReadWriteOnce, ReadWriteMany or ReadWriteOncePod (got %q)" $mode) }}
 {{- end }}
+{{- /* ReadWriteOncePod admits ONE pod: the split profile mounts the claim
+       into six (backend, four queue workers, scheduler), so all but one
+       would never start. Only the all-in-one pod can use it. */}}
+{{- if and (eq $mode "ReadWriteOncePod") (not .Values.allInOne) }}
+{{- fail "fileStorage.accessMode=ReadWriteOncePod admits a single pod, but the split profile mounts file storage into the backend, the queue workers and the scheduler: use ReadWriteOnce (one node) or ReadWriteMany" }}
+{{- end }}
 ## Shared persistent volume for user-uploaded files (/var/sinas/files).
 ## Mounted into backend, queue-worker, queue-agent, queue-agent-sub,
 ## queue-pipeline and scheduler.

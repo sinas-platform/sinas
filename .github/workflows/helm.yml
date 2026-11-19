@@ -249,6 +249,14 @@ jobs:
           # a typo in accessMode is a render error
           ! helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=nfs \
             --set fileStorage.accessMode=RWX > /dev/null 2>&1 || exit 1
+          # ReadWriteOncePod admits one pod: refused in the split profile
+          # (six pods mount it), accepted for the all-in-one pod
+          ! helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=fast \
+            --set fileStorage.accessMode=ReadWriteOncePod > /dev/null 2> /tmp/fs-rwop.txt || exit 1
+          grep -q 'admits a single pod' /tmp/fs-rwop.txt
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" \
+            --set fileStorage.storageClass=fast --set fileStorage.accessMode=ReadWriteOncePod \
+            | grep -A1 'accessModes:' | grep -q -- '- ReadWriteOncePod'
 
       - name: helm template (app secrets from an existing Secret)
         run: |

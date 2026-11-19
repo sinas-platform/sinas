@@ -121,7 +121,7 @@ fileStorage:
 | Value | Default | Description |
 |---|---|---|
 | `fileStorage.storageClass` | — | Class of the PVC the chart creates. |
-| `fileStorage.accessMode` | `ReadWriteOnce` | Access mode of that PVC (`ReadWriteOnce`, `ReadWriteMany`, `ReadWriteOncePod`). It can't be changed on an existing PVC: to move to RWX, create a new claim, copy the files, and point `existingClaim` at it. |
+| `fileStorage.accessMode` | `ReadWriteOnce` | Access mode of that PVC: `ReadWriteOnce`, `ReadWriteMany`, or `ReadWriteOncePod` with `allInOne` only (it admits a single pod, and the split profile mounts the volume into six). It can't be changed on an existing PVC: to move to RWX, create a new claim, copy the files, and point `existingClaim` at it. |
 | `fileStorage.size` | `5Gi` | Requested size. |
 | `fileStorage.existingClaim` | — | Mount this PVC instead; wins over `storageClass`. |
 | `fileStorage.allowEphemeral` | `false` | Accept the per-pod `emptyDir` fallback in the split profile. |

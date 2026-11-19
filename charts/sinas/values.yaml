@@ -433,6 +433,7 @@ fileStorage:
   ## Access mode of the PVC the chart creates from storageClass.
   ## ReadWriteOnce is what earlier charts created (a PVC's access modes
   ## can't be changed afterwards); use ReadWriteMany with an RWX class.
+  ## ReadWriteOncePod (one pod only) is accepted with allInOne only.
   accessMode: ReadWriteOnce
   ## Pre-created PVC to mount instead (wins over storageClass), e.g. one
   ## bound to a Filestore / EFS / NFS PersistentVolume.
