@@ -22,6 +22,10 @@ class HealthResponse(BaseModel):
     # not be read in this deployment; the console shows it instead of data.
     services_unavailable_reason: str | None = None
     metrics_unavailable_reason: str | None = None
+    # False when the service list is turned off on purpose (Kubernetes with
+    # SYSTEM_STATS_KUBERNETES=false): `services` is empty, no reason is set,
+    # and the console hides the panel instead of reporting an error.
+    services_enabled: bool = True
 
 
 class ContainerRestartResponse(BaseModel):

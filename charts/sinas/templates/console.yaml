@@ -18,6 +18,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: console
     spec:
+      automountServiceAccountToken: false
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.console) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.console)) | trim) }}{{ . | nindent 6 }}{{- end }}

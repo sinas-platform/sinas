@@ -1,11 +1,15 @@
 import json
 import os
+import ssl
 from typing import Optional
+from urllib.parse import urlencode
 
 from pydantic import ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 VALID_AUTH_MODES = {"otp", "password", "password+otp"}
+# libpq sslmode values (also understood by asyncpg).
+VALID_SSL_MODES = {"disable", "allow", "prefer", "require", "verify-ca", "verify-full"}
 
 
 class Settings(BaseSettings):
@@ -19,6 +23,25 @@ class Settings(BaseSettings):
 
     # Direct postgres connection (bypasses pgbouncer, used for migrations)
     database_direct_host: Optional[str] = None
+    # TLS of the direct connections (migrations, CREATE DATABASE for the
+    # built-in database): a libpq sslmode, and the server CA (PEM path) for
+    # verify-ca / verify-full. Unset = each driver's default ("prefer": TLS
+    # when the server offers it, unverified), as before. The pgbouncer leg is
+    # configured on pgbouncer itself (server_tls_sslmode / server_tls_ca_file).
+    database_direct_sslmode: Optional[str] = None
+    database_direct_sslrootcert: Optional[str] = None
+
+    @field_validator("database_direct_sslmode")
+    @classmethod
+    def _validate_database_direct_sslmode(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        v = v.strip()
+        if v not in VALID_SSL_MODES:
+            raise ValueError(
+                f"DATABASE_DIRECT_SSLMODE must be one of {sorted(VALID_SSL_MODES)}, got {v!r}"
+            )
+        return v
 
     @property
     def get_database_url(self) -> str:
@@ -29,9 +52,36 @@ class Settings(BaseSettings):
 
     @property
     def get_database_direct_url(self) -> str:
-        """Database URL that bypasses pgbouncer (for migrations/DDL)."""
+        """Database URL that bypasses pgbouncer (for migrations/DDL).
+
+        Carries sslmode / sslrootcert as libpq query parameters when
+        DATABASE_DIRECT_SSLMODE is set (psycopg2 hands them to libpq).
+        """
         host = self.database_direct_host or self.database_host
-        return f"postgresql://{self.database_user}:{self.database_password}@{host}:{self.database_port}/{self.database_name}"
+        url = f"postgresql://{self.database_user}:{self.database_password}@{host}:{self.database_port}/{self.database_name}"
+        params = {}
+        if self.database_direct_sslmode:
+            params["sslmode"] = self.database_direct_sslmode
+            if self.database_direct_sslrootcert:
+                params["sslrootcert"] = self.database_direct_sslrootcert
+        return f"{url}?{urlencode(params, safe='/')}" if params else url
+
+    def database_direct_asyncpg_ssl(self) -> str | ssl.SSLContext | None:
+        """`ssl=` for an asyncpg connection that bypasses pgbouncer.
+
+        None (unset) keeps asyncpg's default, as before. With a CA,
+        verify-ca / verify-full become an SSLContext trusting exactly that CA
+        (asyncpg takes no sslrootcert argument); verify-full also checks the
+        host name. Any other mode is passed through as the sslmode string.
+        """
+        mode = self.database_direct_sslmode
+        if not mode:
+            return None
+        if mode in ("verify-ca", "verify-full") and self.database_direct_sslrootcert:
+            ctx = ssl.create_default_context(cafile=self.database_direct_sslrootcert)
+            ctx.check_hostname = mode == "verify-full"
+            return ctx
+        return mode
 
     # ClickHouse
     clickhouse_host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
@@ -280,6 +330,11 @@ class Settings(BaseSettings):
     # SANDBOX_EXECUTOR=disabled for the lightest deployment — no sandbox pool,
     # no per-execution pods, no executor image needed.
     code_execution_enabled: bool = True
+    # System page on Kubernetes: list the release's pods (and their
+    # metrics.k8s.io usage) through the Kubernetes API. False (the chart's
+    # systemStats.rbac=false) skips the API entirely; the System page then
+    # reports the pod list as turned off and the console hides it.
+    system_stats_kubernetes: bool = True
     # builtin_database_enabled=False skips creating the `sinas_data` database
     # and its default DatabaseConnection record on startup. This is about not
     # provisioning a data store the operator never asked for (they bring their

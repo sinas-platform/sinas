@@ -276,6 +276,9 @@ export function System() {
   const servicesUnavailable = systemHealthError
     ? 'Could not load service status.'
     : systemHealth?.services_unavailable_reason;
+  // Turned off on purpose (Helm systemStats.rbac=false: the backend doesn't
+  // read the Kubernetes API) — hide the panel rather than show an error.
+  const servicesEnabled = systemHealth?.services_enabled !== false;
   const metricsUnavailable = systemHealthWithStats?.metrics_unavailable_reason;
 
   return (
@@ -445,7 +448,7 @@ export function System() {
       )}
 
       {/* Services */}
-      {(services.length > 0 || servicesUnavailable) && (
+      {servicesEnabled && (services.length > 0 || servicesUnavailable) && (
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
