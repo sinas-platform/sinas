@@ -448,6 +448,46 @@ async def test_a_sub_agents_chat_inherits_the_parents_credentials(db, gateway):
     (row,) = await _rows(db, sub_chat.id)
     assert encryption.encryption_service.decrypt(row.ciphertext) == rotated
 
+    # The parent removes it; a resumed sub-chat loses it too: required, so
+    # its calls fail closed instead of presenting the removed key.
+    changes = await provider_credentials.parse_request(db, {provider.name: None}, {PERMISSION: True})
+    await provider_credentials.apply_changes(db, parent.id, changes, user.id)
+    await prepare_agent_delegation(
+        db, str(user.id), str(sub_agent.id), {"prompt": "once more", "_chat_id": str(sub_chat.id)},
+        parent_chat_id=parent.id,
+    )
+    assert await _rows(db, sub_chat.id) == []
+    with pytest.raises(LLMError) as caught:
+        await create_provider(provider.name, db=db, usage_context={"chat_id": str(sub_chat.id)})
+    assert caught.value.code == PROVIDER_CREDENTIAL_REQUIRED
+
+
+async def test_a_request_only_credential_is_not_delegated(db, gateway):
+    from app.providers.run_credentials import REQUEST_CREDENTIAL
+    from app.services.tool_execution import prepare_agent_delegation
+
+    user = await _user(db)
+    provider = await _provider(db, {"enabled": True})
+    other = await _provider(db, {"enabled": True})
+    same = await _agent(db, user, provider)
+    elsewhere = await _agent(db, user, other)
+    parent = Chat(user_id=user.id, title="parent")
+    db.add(parent)
+    await db.flush()
+
+    token = REQUEST_CREDENTIAL.set((provider.name, SENTINEL))
+    try:
+        refused = await prepare_agent_delegation(db, str(user.id), str(same.id), {"prompt": "go"}, parent_chat_id=parent.id)
+        allowed = await prepare_agent_delegation(
+            db, str(user.id), str(elsewhere.id), {"prompt": "go"}, parent_chat_id=parent.id
+        )
+    finally:
+        REQUEST_CREDENTIAL.reset(token)
+    assert "error" in refused and "provider_credentials" in refused["message"]
+    assert SENTINEL not in json.dumps(refused)
+    assert "sub_chat" in allowed
+    assert await _rows(db) == []  # stored nowhere
+
 
 # ── the OpenAI-compatible adapter ──────────────────────────────────────────
 

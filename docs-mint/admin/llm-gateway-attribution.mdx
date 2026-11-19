@@ -207,12 +207,12 @@ With `required: false`, a chat without a credential for the provider (or with an
 ```
 
 - Keyed by LLM provider name. `expires_in` is in seconds: 86400 by default, at most 2592000 (30 days).
-- **Bound to the chat.** Every LLM call of the chat presents it: later messages, tool approvals, answers and resumes, queued and background jobs, wakeups, compaction, and the chats of sub-agents it delegates to (they take the parent's credentials, again at every delegation).
+- **Bound to the chat.** Every LLM call of the chat presents it: later messages, tool approvals, answers and resumes, queued and background jobs, wakeups, compaction, and the chats of sub-agents it delegates to (at every delegation, a sub-agent's chat is made to hold exactly the parent's current credentials: rotations and removals included).
 - **Sending it again replaces it** (rotation, or a later expiry). `{"gateway": null}` removes it.
 - **Write-only.** Chat responses show only which providers have one, and until when: `"provider_credentials_set": [{"provider": "gateway", "expires_at": "2026-11-20T10:00:00Z"}]`.
 - Without the permission: 403, nothing stored. An unknown provider, one that hasn't enabled `run_credential`, an empty credential or an `expires_in` out of range: 400 with `{"detail": "invalid_request: ...", "code": "invalid_request", "retryable": false}`, nothing stored.
 
-**The OpenAI-compatible adapter** takes one per request instead: `X-Sinas-Provider-Credential: <credential>` applies to the provider the model resolves to (the agent's provider in agent mode), for that request only, and is never stored. The same permission and opt-in rules apply.
+**The OpenAI-compatible adapter** takes one per request instead: `X-Sinas-Provider-Credential: <credential>` applies to the provider the model resolves to (the agent's provider in agent mode), for that request only, and is never stored. The same permission and opt-in rules apply. Because it is stored nowhere, it covers the LLM calls the request makes itself, not work that continues in a worker: a delegation to a sub-agent on that provider is refused (the agent gets a tool error saying so), and a round that waits on background work continues without it (with `required: true` its calls fail with `provider_credential_required`, otherwise they use the configured key). For agents that delegate or work in the background, give the chat its credential with `provider_credentials` instead.
 
 **Gateway refusals are unchanged**: a spent budget is `budget_exceeded` (402), a key the gateway rejects is `provider_auth_failed`.
 

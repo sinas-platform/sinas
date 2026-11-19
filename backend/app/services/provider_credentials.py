@@ -249,9 +249,10 @@ async def resolve(db: Any, chat_id: Any, provider_name: str) -> tuple[Optional[s
 
 
 async def inherit(db: AsyncSession, parent_chat_id: Any, child_chat_id: Any) -> int:
-    """Copy the parent chat's unexpired credentials onto a sub-agent's chat
-    (each replacing the child's for that provider), so the sub-agent's calls
-    present what the parent's do. Flushed, not committed. Returns how many."""
+    """Make a sub-agent's chat hold exactly the parent chat's unexpired
+    credentials, so the sub-agent's calls present what the parent's do now:
+    a credential the parent rotated is replaced, one it removed (or let
+    expire) is removed. Flushed, not committed. Returns how many it holds."""
     from app.models.chat_provider_credential import ChatProviderCredential
 
     if not parent_chat_id or not child_chat_id:
@@ -265,11 +266,44 @@ async def inherit(db: AsyncSession, parent_chat_id: Any, child_chat_id: Any) -> 
         )
     ).scalars().all()
     child = uuid.UUID(str(child_chat_id))
+    await db.execute(
+        delete(ChatProviderCredential).where(
+            ChatProviderCredential.chat_id == child,
+            ChatProviderCredential.provider_name.notin_([row.provider_name for row in rows]),
+        )
+    )
     for row in rows:
         await _upsert(db, child, row.provider_name, row.ciphertext, row.expires_at, row.set_by)
-    if rows:
-        await db.flush()
+    await db.flush()
     return len(rows)
+
+
+async def refuse_request_credential_handoff(db: AsyncSession, agent: Any) -> Optional[str]:
+    """Why delegating to `agent` must be refused, or None. A credential the
+    OpenAI-compatible adapter got for one request (X-Sinas-Provider-Credential)
+    is stored nowhere, so a sub-agent's job (run by a worker) can't present
+    it: delegating to a sub-agent on that provider is refused outright,
+    rather than its calls failing or falling back to the configured key."""
+    from app.models.llm_provider import LLMProvider
+    from app.providers.run_credentials import REQUEST_CREDENTIAL
+
+    request_credential = REQUEST_CREDENTIAL.get()
+    if request_credential is None:
+        return None
+    if agent.llm_provider_id:
+        stmt = select(LLMProvider.name).where(LLMProvider.id == agent.llm_provider_id)
+    else:
+        stmt = select(LLMProvider.name).where(
+            LLMProvider.is_default == True, LLMProvider.is_active == True  # noqa: E712
+        )
+    name = (await db.execute(stmt)).scalar_one_or_none()
+    if name != request_credential[0]:
+        return None
+    return (
+        f"Sub-agent '{agent.namespace}/{agent.name}' uses LLM provider '{name}', whose credential "
+        "for this run was given for one request only (X-Sinas-Provider-Credential) and can't be "
+        "passed to a sub-agent. Give the chat its credential with provider_credentials instead."
+    )
 
 
 async def delete_expired(db: AsyncSession, now: Optional[datetime] = None) -> int:

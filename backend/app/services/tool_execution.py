@@ -603,6 +603,13 @@ async def prepare_agent_delegation(
     if depth_error:
         return {"error": depth_error}
 
+    # A request-only provider credential can't follow the work to a worker.
+    from app.services.provider_credentials import refuse_request_credential_handoff
+
+    handoff_problem = await refuse_request_credential_handoff(db, agent)
+    if handoff_problem:
+        return {"error": "Provider credential can't be delegated", "message": handoff_problem}
+
     # Check user has permission to use this sub-agent
     user_permissions = await get_effective_permissions(db, user_id)
     agent_perm = f"sinas.agents/{agent.namespace}/{agent.name}.chat:all"
