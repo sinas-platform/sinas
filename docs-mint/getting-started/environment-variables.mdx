@@ -179,6 +179,7 @@ chart provisions this).
 | `K8S_SANDBOX_SERVICE_ACCOUNT` | _(namespace default)_ | ServiceAccount assigned to sandbox pods |
 | `K8S_SANDBOX_POD_READY_TIMEOUT` | `120` | Seconds to wait for a sandbox pod to become ready |
 | `K8S_SANDBOX_INSTALL_DEPENDENCIES` | `true` | `pip install` platform dependencies into each pod; set to `false` when they are baked into `K8S_SANDBOX_IMAGE` |
+| `SYSTEM_STATS_KUBERNETES` | `true` | System page on Kubernetes: list the release's pods (and their CPU/memory) through the Kubernetes API. `false` skips the API and the console hides the Services panel. The Helm chart sets it from `systemStats`. |
 
 ## Sandbox Containers
 
@@ -257,6 +258,9 @@ Used by `SANDBOX_EXECUTOR=docker_pool` (the warm pool).
 | `DATABASE_PORT` | `5432` | PostgreSQL port |
 | `DATABASE_NAME` | `sinas` | Database name |
 | `DATABASE_URL` | _(built from above)_ | Full connection string (overrides individual vars) |
+| `DATABASE_DIRECT_HOST` | `DATABASE_HOST` | PostgreSQL host for connections that bypass PgBouncer: migrations and creating the built-in `sinas_data` database. |
+| `DATABASE_DIRECT_SSLMODE` | — | libpq `sslmode` for those direct connections: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`. Unset keeps each driver's default (`prefer`). Connections through PgBouncer are configured on PgBouncer (`server_tls_sslmode`). |
+| `DATABASE_DIRECT_SSLROOTCERT` | — | Path to the server CA (PEM) for `verify-ca` / `verify-full`. Without it, the drivers look for `~/.postgresql/root.crt`. |
 | `REDIS_URL` | `redis://redis:6379/0` | Redis connection string. `rediss://` turns on TLS. Credentials in the URL must be URL-encoded (`@` → `%40`). |
 | `REDIS_PASSWORD` | — | AUTH password. Overrides the URL's and is used verbatim, so it needs no encoding. |
 | `REDIS_USERNAME` | — | ACL username. Overrides the URL's. |

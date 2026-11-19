@@ -31,6 +31,7 @@ helm install sinas oci://ghcr.io/sinas-platform/charts/sinas --version 0.3.0 \
   --set secrets.encryptionKey=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())") \
   --set postgres.password=$(openssl rand -hex 16) \
   --set clickhouse.password=$(openssl rand -hex 16) \
+  --set fileStorage.storageClass=<storage-class> \
   --set superadminEmail=you@example.com
 ```
 
@@ -57,10 +58,17 @@ helm install sinas ./charts/sinas \
   --set secrets.encryptionKey=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())") \
   --set postgres.password=$(openssl rand -hex 16) \
   --set clickhouse.password=$(openssl rand -hex 16) \
+  --set fileStorage.storageClass=<storage-class> \
   --set superadminEmail=you@example.com
 ```
 
 </details>
+
+`fileStorage.storageClass` is required in this (split) profile: the backend
+and the workers share uploaded files through that volume. On a multi-node
+cluster it has to be a ReadWriteMany class; see [File storage](#file-storage).
+To keep `secrets.*` out of Helm's release record, create them as a Secret
+first; see [Secrets from an existing Secret](#secrets-from-an-existing-secret).
 
 The backend runs database migrations on startup; first boot takes a minute.
 
@@ -77,6 +85,102 @@ Watch sandbox pods appear during executions:
 
 ```bash
 kubectl get pods -n sinas -l sinas.type=sandbox-executor -w
+```
+
+## File storage
+
+Uploaded files (chat attachments, collections, workbench files) live on a
+volume mounted at `/var/sinas/files` in the backend, all four queue workers
+and the scheduler. They read each other's files: a file uploaded through the
+API is read by an agent worker. In the split profile the volume therefore
+has to be **shared by every pod**, and survive restarts.
+
+| Setup | Values |
+|---|---|
+| One node | `fileStorage.storageClass: <any class>`. The chart creates a `ReadWriteOnce` PVC; every pod mounting it must run on that node. |
+| Several nodes | A **ReadWriteMany** volume: `fileStorage.storageClass: <rwx class>` with `fileStorage.accessMode: ReadWriteMany` (Filestore on GKE, EFS on EKS, Azure Files, an NFS provisioner, Longhorn RWX, ...), or a pre-created RWX claim in `fileStorage.existingClaim`. |
+| Evaluation only | `fileStorage.allowEphemeral: true`: an `emptyDir` per pod. Files aren't shared between pods and are lost on every restart. |
+
+Block storage (GKE `standard-rwo`/`premium-rwo`, EBS, Azure Disk) is
+ReadWriteOnce only: a pod on another node can't mount it, so the workers
+stay `ContainerCreating` with a `Multi-Attach` error.
+
+Without `storageClass` or `existingClaim` the split profile **refuses to
+render** unless `allowEphemeral` is set: per-pod `emptyDir`s look like they
+work until an agent can't find a file uploaded a minute earlier. The
+all-in-one profile (`values-lite.yaml`) is one pod, so it renders with an
+`emptyDir` and a warning in the install notes; files are still lost when
+that pod restarts.
+
+```yaml
+# Pre-created ReadWriteMany claim, e.g. bound to a Filestore / EFS / NFS PersistentVolume
+fileStorage:
+  existingClaim: sinas-files
+```
+
+| Value | Default | Description |
+|---|---|---|
+| `fileStorage.storageClass` | — | Class of the PVC the chart creates. |
+| `fileStorage.accessMode` | `ReadWriteOnce` | Access mode of that PVC (`ReadWriteOnce`, `ReadWriteMany`, `ReadWriteOncePod`). It can't be changed on an existing PVC: to move to RWX, create a new claim, copy the files, and point `existingClaim` at it. |
+| `fileStorage.size` | `5Gi` | Requested size. |
+| `fileStorage.existingClaim` | — | Mount this PVC instead; wins over `storageClass`. |
+| `fileStorage.allowEphemeral` | `false` | Accept the per-pod `emptyDir` fallback in the split profile. |
+
+Files are stored on that filesystem only. There is no object-storage (S3,
+GCS) backend for uploaded files yet, so a multi-node split install needs an
+RWX volume.
+
+## Secrets from an existing Secret
+
+`secrets.secretKey` (token signing) and `secrets.encryptionKey` (encrypts
+stored credentials) are required. Passed as values, they end up in Helm's
+release record, the `sh.helm.release.v1.*` Secret, like every value. To keep
+them out of it, create a Secret yourself, or sync it with External Secrets
+or the Secret Manager CSI driver, and point the chart at it:
+
+```bash
+kubectl create secret generic sinas-app-secrets -n sinas \
+  --from-literal=secret-key=$(openssl rand -hex 32) \
+  --from-literal=encryption-key=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+```
+
+```yaml
+secrets:
+  existingSecret: sinas-app-secrets
+  secretKeyKey: secret-key          # key names in that Secret (these are the defaults)
+  encryptionKeyKey: encryption-key
+```
+
+Every Sinas pod then reads `SECRET_KEY` and `ENCRYPTION_KEY` from that
+Secret, the chart no longer renders either value, and `secrets.secretKey` /
+`secrets.encryptionKey` are not required (and ignored if set). The database
+password has the same option: `postgres.external.existingSecret`. Moving an
+existing install over: copy the current values into the new Secret
+**unchanged** (`kubectl get secret <release>-secrets -o jsonpath='{.data.encryption-key}' | base64 -d`):
+a different encryption key makes every stored credential unreadable.
+
+## Code execution off
+
+`features.codeExecution: false` turns off all user-code execution (Functions
+and the agent `codeExecution` tool). The chart then renders no executor
+RBAC: no sandbox ServiceAccount, no executor Role or RoleBinding, no
+`K8S_SANDBOX_*` settings, and the queue workers and scheduler run without a
+Kubernetes API token.
+
+The backend keeps one identity for the System page, which lists the
+release's pods (`systemStats.rbac`, read-only `get`/`list` on pods and
+`pods.metrics.k8s.io`). With `systemStats.rbac: false` as well, the chart
+renders no ServiceAccount, Role or RoleBinding at all, no Sinas pod mounts a
+token, the backend doesn't call the Kubernetes API, and the console's
+System page leaves out the Services panel. If you grant the backend's
+ServiceAccount (`<release>-executor-manager`) that access yourself, set
+`systemStats.kubernetes: true` to keep the panel.
+
+```yaml
+features:
+  codeExecution: false
+systemStats:
+  rbac: false
 ```
 
 ## How sandbox pods are secured
@@ -209,6 +313,9 @@ For packing several small instances onto one box (e.g. **3 instances on a
 clickhouse:
   enabled: false          # no ClickHouse pod; request logging off (console explains)
 
+fileStorage:
+  storageClass: local-path  # one node: any class works (see File storage)
+
 backend:
   resources:
     requests: { cpu: "200m", memory: "224Mi" }
@@ -239,11 +346,90 @@ for a few concurrent 192Mi sandbox pods across tenants. Keep
 `queueWorker.concurrency` low so tenants can't burst past it, or set
 `SANDBOX_EXECUTOR=disabled` for trusted-only tiers.
 
-With `clickhouse.enabled: false` the backend detects the empty
-`CLICKHOUSE_HOST` and disables logging cleanly (no reconnect attempts). The
-console's Request Logs tab says request logging is off on this deployment, and
-the request-log API answers `503` with that explanation. See
-[ClickHouse](/getting-started/environment-variables#clickhouse-optional).
+### Running without ClickHouse
+
+ClickHouse only stores logs. With `clickhouse.enabled: false` (the default in
+`values-lite.yaml`) the chart renders no ClickHouse StatefulSet, PVC or
+password, and every Sinas process gets an empty `CLICKHOUSE_HOST`, which the
+backend treats as "off": it never tries to connect, so there are no
+reconnect loops or startup errors.
+
+What you lose:
+
+- **Request logs**: API requests aren't recorded. The console's Request
+  Logs page opens on conversation messages and says request logging is off;
+  `GET /api/v1/request-logs` and `/request-logs/stats` answer `503` with
+  that explanation.
+- **Function execution logs**: the per-execution log entries written to
+  ClickHouse aren't kept. Executions, their status, results and errors are
+  still in PostgreSQL.
+- **Request statistics**: the request-log stats (top paths, permissions,
+  error rates) are unavailable.
+
+Everything else works unchanged: agents, functions, pipelines, files,
+schedules and the System page. `GET /info` reports `features.clickhouse:
+false`. See [ClickHouse](/getting-started/environment-variables#clickhouse-optional).
+
+## External PostgreSQL (Cloud SQL, RDS, Azure Database)
+
+`postgres.external.host` replaces the bundled PostgreSQL StatefulSet. PgBouncer
+stays in the cluster and pools against the external instance; the backend
+also connects to it directly, bypassing PgBouncer, for migrations and to
+create the built-in `sinas_data` database. The database and user must exist;
+the user needs `CREATEDB` unless `features.builtinDatabase: false`.
+
+```yaml
+postgres:
+  user: sinas
+  database: sinas
+  external:
+    host: 10.23.96.3              # private IP or DNS name
+    existingSecret: sinas-db      # password, key "password"
+    tls:
+      mode: verify-full
+      caSecret: sinas-db-ca       # or caConfigMap; key ca.crt
+```
+
+### TLS
+
+| Value | Default | Description |
+|---|---|---|
+| `postgres.external.tls.mode` | _(unset)_ | `disable`, `allow`, `prefer`, `require`, `verify-ca` or `verify-full`, applied to PgBouncer's server connections (`server_tls_sslmode`) and the backend's direct connections. Unset keeps the behaviour of earlier charts: `prefer`. |
+| `postgres.external.tls.caSecret` / `caSecretKey` | — / `ca.crt` | Secret holding the server CA (PEM). |
+| `postgres.external.tls.caConfigMap` / `caConfigMapKey` | — / `ca.crt` | The same, from a ConfigMap. Set one of the two. |
+
+- Unset (or `prefer`) encrypts whenever the server offers TLS but doesn't
+  verify the certificate. That satisfies "encrypted connections only"
+  settings such as Cloud SQL `ENCRYPTED_ONLY`, but not a policy that requires
+  verified TLS.
+- `require` refuses unencrypted connections, still without verifying the
+  certificate.
+- `verify-ca` checks the certificate against the CA; `verify-full` also
+  checks that it names `host`. Both need `caSecret` or `caConfigMap`, and a
+  CA with any other mode is a render error (it would verify nothing).
+  `verify-full` needs a server certificate whose SAN covers the host or IP
+  you connect to. Server certificates from Cloud SQL's per-instance CA (the
+  default CA mode) don't name the instance's IP; use `verify-ca` there.
+- The CA is mounted read-only at `/etc/sinas/postgres-ca/ca.crt` in
+  PgBouncer and every Sinas pod. PgBouncer gets `SERVER_TLS_SSLMODE` /
+  `SERVER_TLS_CA_FILE`; the Sinas processes get `DATABASE_DIRECT_SSLMODE` /
+  `DATABASE_DIRECT_SSLROOTCERT`.
+- Connections from the Sinas processes to PgBouncer stay inside the pod
+  network and aren't encrypted.
+- The built-in `sinas_data` Database Connection (used by queries against
+  the built-in database) connects with `ssl_mode` `prefer`, unverified.
+- Instances that require client certificates aren't supported.
+
+To get the Cloud SQL server CA:
+
+```bash
+gcloud sql instances describe <instance> --format='value(serverCaCert.cert)' > ca.crt
+kubectl create configmap sinas-db-ca -n sinas --from-file=ca.crt
+```
+
+A private IP is blocked by the default NetworkPolicy unless allowed: an IPv4
+`host` is allowed on 5432 automatically; for a DNS name, add its range to
+`networkPolicy.egressCidrs`.
 
 ## External Redis (Memorystore, ElastiCache, Azure Cache)
 
@@ -669,6 +855,15 @@ use managed databases (`postgres.external.*`, `redis.external.*`) anyway.
 
 ### Upgrading to 0.5.0
 
+**File storage must be chosen.** A split-profile release without
+`fileStorage.storageClass` ran on a per-pod `emptyDir`. The 0.5.0 chart
+refuses to render that, so `helm upgrade` stops with an error naming
+`fileStorage`. Set `fileStorage.storageClass` or `fileStorage.existingClaim`
+(see [File storage](#file-storage)); the files in the old `emptyDir`s are
+not carried over, they were never shared and are lost on any restart. To
+keep the old behaviour, set `fileStorage.allowEphemeral: true`.
+All-in-one releases are not affected.
+
 Earlier versions ran the Sinas containers, and the bundled Redis, as root.
 On upgrade:
 
@@ -735,7 +930,13 @@ On upgrade:
 | `podSecurityContext` / `containerSecurityContext` | `restricted`-compliant | Pod and container `securityContext` of every pod, runtime pods included; per component `<component>.podSecurityContext` / `.securityContext` ([Pod Security](#pod-security-restricted)) |
 | `registry.username/password` | — | Pull secret for private registries (also attached to sandbox pods) |
 | `imagePullSecrets` | `[]` | Pre-created pull Secrets, attached to every pod and to sandbox pods |
-| `fileStorage.storageClass` | _(emptyDir)_ | RWX storage class for shared file storage on multi-node clusters |
+| `fileStorage.storageClass` / `accessMode` / `existingClaim` | — / `ReadWriteOnce` / — | Shared file storage; required in the split profile ([File storage](#file-storage)) |
+| `fileStorage.allowEphemeral` | `false` | Accept per-pod `emptyDir` file storage in the split profile (evaluation only) |
+| `secrets.existingSecret` | — | Read `SECRET_KEY` / `ENCRYPTION_KEY` from a pre-created Secret ([details](#secrets-from-an-existing-secret)) |
+| `postgres.external.host` / `tls.mode` | — / _(prefer)_ | External PostgreSQL and its TLS mode ([External PostgreSQL](#external-postgresql-cloud-sql-rds-azure-database)) |
+| `features.codeExecution` | `true` | `false`: no user code, no executor RBAC ([Code execution off](#code-execution-off)) |
+| `systemStats.rbac` | `true` | Read-only pod access for the System page; `false` also hides its Services panel |
+| `clickhouse.enabled` | `true` | `false`: no request/execution logs ([Running without ClickHouse](#running-without-clickhouse)) |
 | `networkPolicy.enabled` | `true` | Namespace isolation + sandbox lockdown |
 | `networkPolicy.ingressNamespace` | _(any)_ | Restrict which namespace may reach backend/console |
 | `backend.forwardedAllowIps` | private ranges | Proxies trusted to report the client IP (see below) |
@@ -772,3 +973,6 @@ backend:
   [`redis.external.*`](#external-redis-memorystore-elasticache-azure-cache)
   (Memorystore, ElastiCache, Azure Cache). Each one replaces its bundled
   StatefulSet.
+- Uploaded files need a shared filesystem (an RWX volume on multi-node
+  clusters, see [File storage](#file-storage)); there is no object-storage
+  backend for them yet.
