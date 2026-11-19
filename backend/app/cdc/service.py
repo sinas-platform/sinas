@@ -425,6 +425,11 @@ async def run(stop_event: asyncio.Event) -> None:
     listener_task = asyncio.create_task(_listen_for_trigger_changes(manager, stop_event))
 
     print("🚀 CDC service running")
+    # Kubernetes readiness/liveness (no-op unless the standalone process
+    # started a heartbeat: app/core/heartbeat.py).
+    from app.core import heartbeat
+
+    heartbeat.mark_ready()
     await stop_event.wait()
 
     # --- Graceful shutdown ---
@@ -454,9 +459,13 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
+    from app.core import heartbeat
+
+    heartbeat.start()
     try:
         await run(stop_event)
     finally:
+        await heartbeat.stop()
         await close_redis()
         flush_telemetry()
 
