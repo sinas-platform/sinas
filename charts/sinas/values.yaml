@@ -145,7 +145,8 @@ executor:
 ## the backend's service account.
 ## rbac: false also turns the pod list off: the backend doesn't call the
 ## Kubernetes API for it (SYSTEM_STATS_KUBERNETES=false) and the console
-## hides the Services panel. Together with features.codeExecution=false the
+## shows "Cluster status not available" there (the rest of the System page
+## is unaffected). Together with features.codeExecution=false the
 ## chart then renders no ServiceAccount, Role or RoleBinding at all and no
 ## Sinas pod mounts an API token.
 systemStats:
@@ -403,6 +404,8 @@ pgbouncer:
   ## Built-in: runAsUser: 70, runAsGroup: 70, fsGroup: 70.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   poolMode: transaction
   maxClientConn: 1000
   defaultPoolSize: 50
@@ -500,6 +503,49 @@ scheduling:
   tolerations: []
   affinity: {}
 
+## Probes. Every Deployment's container has readiness and liveness probes;
+## the backend also a startupProbe, so `alembic upgrade head` (it runs
+## before uvicorn) can't be cut short by liveness. Timings are set per
+## component in <component>.probes (backend, console, pgbouncer, queueWorker,
+## queueAgent, queueAgentSub, queuePipeline, scheduler, cdcWorker), deep-
+## merged over the built-in defaults: only the keys you set change, and a
+## null removes a key or a whole probe. Timing keys only (initialDelaySeconds,
+## periodSeconds, timeoutSeconds, successThreshold, failureThreshold,
+## terminationGracePeriodSeconds); the handler is the chart's.
+## Built-in defaults:
+##   backend (GET /health :8000):
+##     startup:   {periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 60}  # 10 min to boot
+##     liveness:  {initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 5}
+##     readiness: {initialDelaySeconds: 30, periodSeconds: 10}
+##   console (GET /health :8080):
+##     liveness:  {initialDelaySeconds: 10, periodSeconds: 15}
+##     readiness: {initialDelaySeconds: 5, periodSeconds: 5}
+##   pgbouncer (pg_isready):
+##     liveness:  {initialDelaySeconds: 15, periodSeconds: 10}
+##     readiness: {initialDelaySeconds: 5, periodSeconds: 5}
+## Example: allow 20 minutes of migrations
+##   backend:
+##     probes:
+##       startup: {failureThreshold: 120}
+##
+## workerProbes: the shared layer for the processes without an HTTP server
+## (queue-worker, queue-agent, queue-agent-sub, queue-pipeline, scheduler,
+## cdc-worker), under each one's own <component>.probes. Each process
+## touches /run/sinas-health/heartbeat (a small in-memory emptyDir) every
+## heartbeatIntervalSeconds from its event loop once it is up; the exec
+## probes (sh + stat, no Python) pass while the file is younger than
+## heartbeatMaxAgeSeconds. They don't depend on Redis or Postgres: an outage
+## of either never restarts the workers. Built-in defaults:
+##   heartbeatIntervalSeconds: 10
+##   heartbeatMaxAgeSeconds: 120    # at least 3x the interval
+##   startup:   {periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 120}  # 10 min to start
+##   liveness:  {periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3}
+##   readiness: {periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3}
+## A worker is ready once its poll loop runs (the scheduler / CDC worker once
+## their service is up), and restarted when its event loop has been stuck for
+## heartbeatMaxAgeSeconds plus up to failureThreshold x periodSeconds.
+workerProbes: {}
+
 ## Backend (FastAPI)
 backend:
   ## Full image reference override for the backend AND every worker
@@ -531,6 +577,8 @@ backend:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "300m"
@@ -549,6 +597,8 @@ queueWorker:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -565,6 +615,8 @@ queueAgent:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -586,6 +638,8 @@ queueAgentSub:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -605,6 +659,8 @@ queuePipeline:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -618,6 +674,8 @@ scheduler:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -631,6 +689,8 @@ cdcWorker:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -647,6 +707,8 @@ console:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "25m"

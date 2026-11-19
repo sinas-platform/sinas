@@ -179,7 +179,8 @@ chart provisions this).
 | `K8S_SANDBOX_SERVICE_ACCOUNT` | _(namespace default)_ | ServiceAccount assigned to sandbox pods |
 | `K8S_SANDBOX_POD_READY_TIMEOUT` | `120` | Seconds to wait for a sandbox pod to become ready |
 | `K8S_SANDBOX_INSTALL_DEPENDENCIES` | `true` | `pip install` platform dependencies into each pod; set to `false` when they are baked into `K8S_SANDBOX_IMAGE` |
-| `SYSTEM_STATS_KUBERNETES` | `true` | System page on Kubernetes: list the release's pods (and their CPU/memory) through the Kubernetes API. `false` skips the API and the console hides the Services panel. The Helm chart sets it from `systemStats`. |
+| `SYSTEM_STATS_KUBERNETES` | `true` | System page on Kubernetes: list the release's pods (and their CPU/memory) through the Kubernetes API. `false` skips the API and the console shows "Cluster status not available" there instead. The Helm chart sets it from `systemStats`. |
+| `SINAS_HEARTBEAT_FILE` | _(unset)_ | Queue workers, scheduler, CDC worker: touch this file every `SINAS_HEARTBEAT_INTERVAL` seconds (default 10) once up, for Kubernetes exec probes. Unset: nothing is written. The Helm chart sets it. |
 
 ## Sandbox Containers
 

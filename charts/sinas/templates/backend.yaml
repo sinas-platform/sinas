@@ -78,19 +78,9 @@ spec:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
             {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 60
-            periodSeconds: 15
-            failureThreshold: 5
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
+          ## startupProbe covers `alembic upgrade head` above: liveness only
+          ## starts once /health answers. Timings: backend.probes.
+          {{- include "sinas.componentProbes" (dict "root" . "values" .Values.backend "defaults" "sinas.probes.backend.default" "handler" (dict "httpGet" (dict "path" "/health" "port" 8000))) | nindent 10 }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
       volumes:

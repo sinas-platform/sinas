@@ -1,6 +1,7 @@
 """System health endpoint — single source of truth for the admin dashboard."""
 import asyncio
 import logging
+import math
 import shutil
 import time
 from typing import Any
@@ -400,6 +401,41 @@ async def _docker_services(include_stats: bool) -> tuple[list[dict], str | None]
     return services, None
 
 
+_CLUSTER_STATUS_OFF = (
+    "Reading the Kubernetes API is turned off for this deployment "
+    "(SYSTEM_STATS_KUBERNETES=false; Helm: systemStats.rbac=false), so the "
+    "release's pods aren't listed here."
+)
+
+
+async def _services_part(
+    deployment: str, services_enabled: bool, include_stats: bool
+) -> tuple[list[dict], str | None, str | None, str | None, int | None]:
+    """(services, services reason, metrics reason, cluster reason, cluster
+    retry-after seconds). Never raises."""
+    if deployment == "kubernetes" and not services_enabled:
+        return [], None, None, _CLUSTER_STATUS_OFF, None
+    try:
+        if deployment == "kubernetes":
+            services, unavailable, metrics_reason = await k8s_stats.list_services(include_stats)
+            if unavailable is None:
+                return services, None, metrics_reason, None, None
+            retry = unavailable.retry_after
+            return (
+                services,
+                str(unavailable),
+                metrics_reason,
+                str(unavailable),
+                math.ceil(retry) if retry is not None else None,
+            )
+        services, reason = await _docker_services(include_stats)
+        return services, reason, None, None, None
+    except Exception as e:
+        logger.warning(f"Failed to list services for health check: {e}")
+        reason = f"Service status unavailable ({type(e).__name__})."
+        return [], reason, None, (reason if deployment == "kubernetes" else None), None
+
+
 @router.get("/health")
 async def get_system_health(
     include_stats: bool = Query(False, description="Include per-container CPU/memory stats (slow)"),
@@ -412,23 +448,15 @@ async def get_system_health(
     that can't be read degrades to an `*_unavailable_reason` instead of a 500.
     """
     deployment = deployment_mode()
-    services: list[dict] = []
-    services_reason: str | None = None
-    metrics_reason: str | None = None
     # Kubernetes pod list turned off (systemStats.rbac=false in the chart):
     # don't call the API at all — there may be no token or RBAC for it.
     services_enabled = deployment != "kubernetes" or settings.system_stats_kubernetes
-    try:
-        if deployment == "kubernetes":
-            if services_enabled:
-                services, services_reason, metrics_reason = await k8s_stats.list_services(
-                    include_stats
-                )
-        else:
-            services, services_reason = await _docker_services(include_stats)
-    except Exception as e:
-        logger.warning(f"Failed to list services for health check: {e}")
-        services_reason = f"Service status unavailable ({type(e).__name__})."
+    # Concurrently with everything below, which never depends on it: a slow
+    # or unusable Kubernetes API (bounded by k8s_stats' breaker) can't slow
+    # or fail the rest of the response.
+    services_task = asyncio.create_task(
+        _services_part(deployment, services_enabled, include_stats)
+    )
 
     # Get host resources (blocking /proc reads, run in thread)
     try:
@@ -468,6 +496,14 @@ async def get_system_health(
         logger.warning(f"Runtime permission checks failed: {e}")
         runtime_problems = []
 
+    (
+        services,
+        services_reason,
+        metrics_reason,
+        cluster_reason,
+        cluster_retry_after,
+    ) = await services_task
+
     warnings = _generate_warnings(
         services, queue_workers, dlq_size, queue_stats, host, redis_memory, runtime_problems
     )
@@ -485,6 +521,8 @@ async def get_system_health(
         services_unavailable_reason=services_reason,
         metrics_unavailable_reason=metrics_reason,
         services_enabled=services_enabled,
+        cluster_unavailable_reason=cluster_reason,
+        cluster_retry_after_seconds=cluster_retry_after,
     )
 
 

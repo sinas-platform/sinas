@@ -31,6 +31,12 @@ on:
       - 'backend/app/services/k8s_stats.py'
       - 'backend/app/services/executor_status.py'
       - 'backend/app/api/v1/endpoints/system.py'
+      - 'backend/app/api/v1/endpoints/containers.py'
+      - 'backend/app/api/v1/endpoints/workers.py'
+      - 'backend/app/core/heartbeat.py'
+      - 'backend/app/queue/arq_worker.py'
+      - 'backend/app/scheduler/service.py'
+      - 'backend/app/cdc/service.py'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
       - 'console/Dockerfile'
@@ -234,6 +240,33 @@ jobs:
           # file storage is writable by the backend's user
           kubectl -n "$NS" exec deploy/backend -c backend -- sh -c 'touch /var/sinas/files/.ci-write && rm /var/sinas/files/.ci-write'
 
+      - name: Assert probes (every Deployment; worker heartbeats live)
+        run: |
+          set -e
+          # every container of every Deployment has readiness + liveness
+          # probes, the backend a startupProbe (alembic runs before uvicorn)
+          kubectl -n "$NS" get deploy -o json | python3 -c '
+          import json, sys
+          bad = []
+          for d in json.load(sys.stdin)["items"]:
+              for c in d["spec"]["template"]["spec"]["containers"]:
+                  for p in ("readinessProbe", "livenessProbe"):
+                      if p not in c:
+                          bad.append((d["metadata"]["name"], c["name"], p))
+              if d["metadata"]["name"] == "backend":
+                  if "startupProbe" not in d["spec"]["template"]["spec"]["containers"][0]:
+                      bad.append(("backend", "backend", "startupProbe"))
+          assert not bad, bad
+          print("probes ok")'
+          # the heartbeat workers (Ready above means their probes passed):
+          # the file is there and fresh, written by uid 10001
+          for d in $(kubectl -n "$NS" get deploy -o name | sed 's|deployment.apps/||' | grep -v -x -e backend -e console -e pgbouncer); do
+            kubectl -n "$NS" exec "deploy/$d" -c "$d" -- sh -c \
+              'f=/run/sinas-health/heartbeat; test -f "$f" && test $(( $(date +%s) - $(stat -c %Y "$f") )) -lt 60 && test "$(stat -c %u "$f")" = 10001' \
+              || { echo "::error::$d has no fresh heartbeat file"; exit 1; }
+            echo "$d heartbeat ok"
+          done
+
       - name: Assert no Kubernetes API identity (noexec)
         if: matrix.profile == 'noexec'
         run: |
@@ -279,6 +312,24 @@ jobs:
           if grep -q . "$ARTIFACTS/failedcreate-runtime.txt"; then
             cat "$ARTIFACTS/failedcreate-runtime.txt"; echo "::error::pods were refused at runtime"; exit 1
           fi
+
+      - name: System page with an unreachable Kubernetes API (split)
+        # RBAC is granted, but the backend's traffic to the apiserver goes
+        # nowhere, as behind a NetworkPolicy that drops it. Simulated by
+        # pointing the backend's in-cluster API address at an unroutable
+        # IP (TEST-NET-1): kind's default CNI doesn't reliably enforce
+        # NetworkPolicy. The page must answer at once with the cluster
+        # part marked unavailable (unit tests: backend/tests/unit/test_k8s_breaker.py).
+        if: matrix.profile == 'split'
+        run: |
+          kill "$(cat "$ARTIFACTS/port-forward.pid")" 2>/dev/null || true
+          kubectl -n "$NS" set env deploy/backend -c backend KUBERNETES_SERVICE_HOST=192.0.2.1
+          kubectl -n "$NS" rollout status deploy/backend --timeout=300s
+          kubectl -n "$NS" port-forward svc/backend 18001:8000 > "$ARTIFACTS/port-forward-blocked.log" 2>&1 &
+          sleep 3
+          SINAS_URL=http://127.0.0.1:18001 SINAS_EMAIL=admin@example.com SINAS_RELEASE="$RELEASE" \
+            SINAS_PASSWORD="$SUPERADMIN_PASSWORD" SMOKE_PROFILE=blocked-api \
+            python3 .github/k8s-restricted/smoke.py
 
       - name: Report container restarts
         # Not a failure: a startup-order restart (e.g. a worker that came up

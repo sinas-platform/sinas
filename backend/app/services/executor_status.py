@@ -9,11 +9,15 @@ reporting an empty pool.
 
 Every result carries `executor`, `deployment`, `scalable`, `note` (what the
 card is showing) and `unavailable_reason` (why it can't show anything).
+When that reason is the Kubernetes API (unreachable, not allowed, backing
+off), `cluster_unavailable` is true and `retry_after_seconds` says when the
+backend tries it again (the console polls no faster).
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from app.core.config import settings
@@ -40,7 +44,17 @@ def _meta(executor: str, **kw: Any) -> dict[str, Any]:
         "scalable": False,
         "note": None,
         "unavailable_reason": None,
+        "cluster_unavailable": False,
+        "retry_after_seconds": None,
         **kw,
+    }
+
+
+def _cluster_unavailable(e: K8sUnavailableError) -> dict[str, Any]:
+    return {
+        "unavailable_reason": str(e),
+        "cluster_unavailable": True,
+        "retry_after_seconds": math.ceil(e.retry_after) if e.retry_after is not None else None,
     }
 
 
@@ -87,7 +101,7 @@ async def sandbox_stats() -> dict[str, Any]:
         try:
             pods = await list_executor_pods(SANDBOX_POD_TYPE)
         except K8sUnavailableError as e:
-            return {**_empty_pool(), **meta, "unavailable_reason": str(e)}
+            return {**_empty_pool(), **meta, **_cluster_unavailable(e)}
         # Only Pending/Running pods are executions in flight. A pod stopped by
         # activeDeadlineSeconds (or whose deleter died) lingers as
         # completed/failed until someone deletes it; count it (and pods
@@ -156,7 +170,7 @@ async def trusted_workers() -> tuple[list[dict[str, Any]], dict[str, Any]]:
         try:
             pods = await list_executor_pods(TRUSTED_POD_TYPE)
         except K8sUnavailableError as e:
-            return [], {**meta, "unavailable_reason": str(e)}
+            return [], {**meta, **_cluster_unavailable(e)}
         workers = [
             {
                 "id": f"worker-{p['name'].rsplit('-', 1)[-1]}",

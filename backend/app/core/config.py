@@ -333,7 +333,8 @@ class Settings(BaseSettings):
     # System page on Kubernetes: list the release's pods (and their
     # metrics.k8s.io usage) through the Kubernetes API. False (the chart's
     # systemStats.rbac=false) skips the API entirely; the System page then
-    # reports the pod list as turned off and the console hides it.
+    # reports the cluster status as turned off (cluster_unavailable_reason)
+    # and the console says so in place of the pod list.
     system_stats_kubernetes: bool = True
     # builtin_database_enabled=False skips creating the `sinas_data` database
     # and its default DatabaseConnection record on startup. This is about not

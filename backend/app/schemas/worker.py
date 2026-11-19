@@ -38,6 +38,10 @@ class WorkerCountResponse(BaseModel):
     scalable: bool = True
     note: str | None = None
     unavailable_reason: str | None = None
+    # The reason is the Kubernetes API (see executor_status); seconds until
+    # the backend tries it again, None when not backing off.
+    cluster_unavailable: bool = False
+    retry_after_seconds: int | None = None
 
 
 class WorkerReloadResponse(BaseModel):

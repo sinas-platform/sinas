@@ -164,12 +164,68 @@ def check_system_page_lists_release_pods():
     assert any(s["service"] == "backend" for s in body["services"]), body["services"]
 
 
+def _timed(path: str) -> tuple[float, dict]:
+    t = time.monotonic()
+    status, body = call("GET", path, timeout=30)
+    elapsed = time.monotonic() - t
+    assert status == 200, f"{path}: {status} {body}"
+    return elapsed, body
+
+
+def _rest_of_page_present(body: dict) -> None:
+    """Everything that doesn't come from the Kubernetes API is there."""
+    assert body["host"].get("disk_total_gb") is not None, body["host"]
+    assert body["redis"] is not None and body["redis"].get("used_bytes") is not None, body["redis"]
+    assert isinstance(body["warnings"], list), body
+    assert body["executors"], body
+
+
 @profiles("noexec")
 def check_system_page_pod_list_off():
-    """systemStats.rbac=false: no API call, no error, the console hides it."""
-    body = _system_health()
-    assert body["services_enabled"] is False, body
-    assert body["services"] == [] and body["services_unavailable_reason"] is None, body
+    """systemStats.rbac=false: no API call, no error; the cluster part says
+    why it isn't there, the rest of the page is, and quickly."""
+    for path in ("/api/v1/system/health?include_stats=false", "/api/v1/system/health?include_stats=true"):
+        elapsed, body = _timed(path)
+        assert elapsed < 3, f"{path} took {elapsed:.1f}s"
+        assert body["deployment"] == "kubernetes", body["deployment"]
+        assert body["services_enabled"] is False, body
+        assert body["services"] == [] and body["services_unavailable_reason"] is None, body
+        assert "turned off" in (body.get("cluster_unavailable_reason") or ""), body
+        _rest_of_page_present(body)
+
+
+@profiles("blocked-api")
+def check_system_page_without_reachable_api():
+    """RBAC granted, but the apiserver drops the backend's traffic (the
+    workflow points the backend at an unroutable apiserver address). The
+    first poll waits at most the breaker's budget; after that every poll of
+    the health endpoint and the executor cards is answered from the breaker
+    at once, with the reason, and the rest of the page is unaffected."""
+    elapsed, body = _timed("/api/v1/system/health?include_stats=true")
+    assert elapsed < 4, f"first health call took {elapsed:.1f}s"
+    assert body["services_enabled"] is True, body
+    reason = body.get("cluster_unavailable_reason") or ""
+    assert reason and "Traceback" not in reason, body
+    _rest_of_page_present(body)
+    time.sleep(3)  # the background call has hit its connect timeout by now
+    for _ in range(3):
+        for path in (
+            "/api/v1/system/health?include_stats=false",
+            "/api/v1/system/health?include_stats=true",
+            "/api/v1/containers/stats",
+            "/api/v1/workers/count",
+            "/api/v1/queue/stats",
+        ):
+            elapsed, body = _timed(path)
+            assert elapsed < 1.5, f"{path} took {elapsed:.1f}s with the breaker open"
+            if path.startswith("/api/v1/system/health"):
+                assert body.get("cluster_unavailable_reason"), body
+                assert body.get("cluster_retry_after_seconds"), body
+                _rest_of_page_present(body)
+            elif path != "/api/v1/queue/stats":
+                assert body.get("cluster_unavailable") is True, (path, body)
+                assert body.get("retry_after_seconds"), (path, body)
+    print(f"  reason: {body.get('unavailable_reason') or reason}")
 
 
 @profiles("noexec")
