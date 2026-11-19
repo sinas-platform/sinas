@@ -144,6 +144,8 @@ def k8s_mode(monkeypatch):
     monkeypatch.setattr(settings, "k8s_sandbox_namespace", "")
     monkeypatch.setattr(settings, "code_execution_enabled", True)
     monkeypatch.setenv("POD_NAMESPACE", NS)
+    # The breaker is process-wide: no failure cached by an earlier test.
+    k8s_stats.reset_breaker()
 
     def no_docker(*a, **kw):
         raise AssertionError("Docker must not be touched on Kubernetes")
@@ -161,6 +163,7 @@ def docker_mode(monkeypatch):
     monkeypatch.setattr(settings, "trusted_executor", "docker_shared")
     monkeypatch.setattr(settings, "k8s_release_name", "")
     monkeypatch.setattr(settings, "code_execution_enabled", True)
+    k8s_stats.reset_breaker()
 
     def no_k8s():
         raise AssertionError("The Kubernetes API must not be touched on Docker")
@@ -288,7 +291,7 @@ class TestKubernetesHealth:
         body = await _health(client, admin_user)
         assert body["services"] == []
         reason = body["services_unavailable_reason"]
-        assert "may not list pods" in reason and NS in reason
+        assert "isn't allowed to list pods" in reason and NS in reason
         # The rest of the page still renders.
         assert "host" in body and isinstance(body["warnings"], list)
 
@@ -328,8 +331,8 @@ class TestKubernetesHealth:
 
     async def test_services_turned_off_skip_the_api(self, client, admin_user, k8s_mode, monkeypatch):
         """systemStats.rbac=false (SYSTEM_STATS_KUBERNETES=false): no API call
-        at all (there may be no token or RBAC), and no error for the console
-        to show — it hides the panel."""
+        at all (there may be no token or RBAC), and no error: the console
+        shows the cluster status as turned off, with the reason."""
         monkeypatch.setattr(settings, "system_stats_kubernetes", False)
         k8s_mode.core.error = AssertionError("pods must not be listed")
         k8s_mode.custom.error = AssertionError("metrics must not be read")
@@ -340,6 +343,9 @@ class TestKubernetesHealth:
         assert body["services"] == []
         assert body["services_unavailable_reason"] is None
         assert body["metrics_unavailable_reason"] is None
+        # ...but the console can say why there is no cluster status.
+        assert "turned off" in body["cluster_unavailable_reason"]
+        assert body["cluster_retry_after_seconds"] is None
         assert k8s_mode.core.calls == [] and k8s_mode.custom.calls == []
         # The rest of the page still renders.
         assert "host" in body and isinstance(body["warnings"], list)
@@ -365,10 +371,42 @@ class TestKubernetesHealth:
         assert "Code execution is disabled" in count["unavailable_reason"]
         assert k8s_mode.core.calls == [] and k8s_mode.custom.calls == []
 
+    async def test_cluster_unavailable_rest_of_page_present(
+        self, client, admin_user, k8s_mode
+    ):
+        """A blocked apiserver: the cluster part says why, once per backoff
+        window; everything else in the response is unaffected, and every
+        later poll (health, both executor cards) is answered from the
+        breaker without calling the API."""
+        from urllib3.exceptions import ConnectTimeoutError, MaxRetryError
+
+        k8s_mode.core.error = MaxRetryError(None, "/api", ConnectTimeoutError("timed out"))
+        body = await _health(client, admin_user)
+        assert body["services"] == []
+        assert "did not answer in time" in body["cluster_unavailable_reason"]
+        assert body["services_unavailable_reason"] == body["cluster_unavailable_reason"]
+        assert body["cluster_retry_after_seconds"] == 60
+        # the rest is there
+        assert body["host"]["disk_total_gb"] is not None
+        assert isinstance(body["warnings"], list) and body["redis"] is not None
+        assert body["deployment"] == "kubernetes" and body["services_enabled"] is True
+
+        h = auth_headers(admin_user)
+        for _ in range(3):
+            body = await _health(client, admin_user)
+            assert "did not answer in time" in body["cluster_unavailable_reason"]
+            stats = (await client.get("/api/v1/containers/stats", headers=h)).json()
+            count = (await client.get("/api/v1/workers/count", headers=h)).json()
+            assert stats["cluster_unavailable"] is True and 0 < stats["retry_after_seconds"] <= 60
+            assert count["cluster_unavailable"] is True and 0 < count["retry_after_seconds"] <= 60
+            assert "did not answer in time" in count["unavailable_reason"]
+        assert len(k8s_mode.core.calls) == 1 and k8s_mode.custom.calls == []
+
     async def test_services_on_by_default(self, client, admin_user, k8s_mode):
         body = await _health(client, admin_user)
         assert body["services_enabled"] is True
         assert len(body["services"]) == 4
+        assert body["cluster_unavailable_reason"] is None
 
     async def test_restart_rejected_clearly(self, client, admin_user, k8s_mode):
         resp = await client.post(
@@ -432,7 +470,7 @@ class TestKubernetesExecutorCards:
         resp = await client.get("/api/v1/containers/stats", headers=auth_headers(admin_user))
         assert resp.status_code == 200
         body = resp.json()
-        assert body["total"] == 0 and "may not list pods" in body["unavailable_reason"]
+        assert body["total"] == 0 and "isn't allowed to list pods" in body["unavailable_reason"]
 
     async def test_finished_sandbox_pods_not_counted_busy(self, client, admin_user, k8s_mode):
         """A pod stopped by activeDeadlineSeconds lingers as Failed; a leaked

@@ -3,6 +3,13 @@ import { apiClient } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { clickHouseFeature } from '../lib/clickhouse';
 import { redisMemoryLabel, redisPolicyNote, type RedisMemory } from '../lib/redisMemory';
+import {
+  cardClusterStatus,
+  clusterPollInterval,
+  healthClusterStatus,
+  retryLabel,
+  type ClusterStatus,
+} from '../lib/clusterStatus';
 import { ClickHouseDisabledNote } from '../components/ClickHouseNotice';
 import { RetentionPanel } from '../components/RetentionPanel';
 import { useState, Fragment, type ReactNode } from 'react';
@@ -46,6 +53,19 @@ function ResourceBar({ value, label, unit }: { value: number | null; label: stri
   );
 }
 
+// The Kubernetes part of a panel can't be shown (API unreachable, not
+// allowed, or turned off): say so and why, neutrally, keep the rest.
+function ClusterUnavailableNote({ status }: { status: ClusterStatus }) {
+  const retry = retryLabel(status.retryAfterSeconds);
+  return (
+    <UnavailableNote>
+      <span className="font-medium text-gray-300">Cluster status not available.</span>{' '}
+      {status.reason}
+      {retry && <span className="block text-xs text-gray-500 mt-1">{retry}</span>}
+    </UnavailableNote>
+  );
+}
+
 function UnavailableNote({ children }: { children: ReactNode }) {
   return (
     <div className="mb-4 p-3 bg-surface-1 border border-line-soft rounded-lg text-sm text-gray-400 flex items-start gap-2">
@@ -63,16 +83,22 @@ export function System() {
   const [restartingContainer, setRestartingContainer] = useState<string | null>(null);
   const [expandedJob, setExpandedJob] = useState<string | null>(null);
 
+  // Polling: the panels that depend on the Kubernetes API slow down while
+  // the backend reports it unavailable (it answers those from a breaker
+  // anyway), and every poll backs off after failed requests. The fast
+  // health poll also carries everything else (warnings, Redis, host), so
+  // it keeps its interval while the cluster part is unavailable.
   const { data: systemHealth, isError: systemHealthError } = useQuery({
     queryKey: ['system-health'],
     queryFn: () => apiClient.getSystemHealth(false),
-    refetchInterval: 10000,
+    refetchInterval: (query) => clusterPollInterval(10000, null, query.state.fetchFailureCount),
   });
 
   const { data: systemHealthWithStats } = useQuery({
     queryKey: ['system-health-stats'],
     queryFn: () => apiClient.getSystemHealth(true),
-    refetchInterval: 30000,
+    refetchInterval: (query) =>
+      clusterPollInterval(30000, healthClusterStatus(query.state.data), query.state.fetchFailureCount),
   });
 
   const { data: stats } = useQuery({
@@ -84,19 +110,23 @@ export function System() {
   const { data: poolStats } = useQuery({
     queryKey: ['container-stats'],
     queryFn: () => apiClient.getContainerStats(),
-    refetchInterval: 5000,
-  });
-
-  const { data: sharedPoolContainers } = useQuery({
-    queryKey: ['shared-pool'],
-    queryFn: () => apiClient.listWorkers(),
-    refetchInterval: 5000,
+    refetchInterval: (query) =>
+      clusterPollInterval(5000, cardClusterStatus(query.state.data), query.state.fetchFailureCount),
   });
 
   const { data: sharedPoolCount } = useQuery({
     queryKey: ['shared-pool-count'],
     queryFn: () => apiClient.getWorkerCount(),
-    refetchInterval: 5000,
+    refetchInterval: (query) =>
+      clusterPollInterval(5000, cardClusterStatus(query.state.data), query.state.fetchFailureCount),
+  });
+  const sharedCluster = cardClusterStatus(sharedPoolCount);
+
+  // The list carries no status of its own: it follows the count's.
+  const { data: sharedPoolContainers } = useQuery({
+    queryKey: ['shared-pool'],
+    queryFn: () => apiClient.listWorkers(),
+    refetchInterval: (query) => clusterPollInterval(5000, sharedCluster, query.state.fetchFailureCount),
   });
 
   const { data: queueWorkers } = useQuery({
@@ -273,13 +303,17 @@ export function System() {
   // On Kubernetes the services are the release's pods (no Docker socket):
   // no restart action, and CPU/memory only where metrics-server is installed.
   const isK8s = (systemHealth?.deployment ?? systemHealthWithStats?.deployment) === 'kubernetes';
+  // The cluster part (the release's pods) can't be shown: the Kubernetes
+  // API is turned off (Helm systemStats.rbac=false), unreachable or not
+  // allowed. A neutral note with the reason, never an error state.
+  const servicesCluster = healthClusterStatus(systemHealth);
   const servicesUnavailable = systemHealthError
     ? 'Could not load service status.'
-    : systemHealth?.services_unavailable_reason;
-  // Turned off on purpose (Helm systemStats.rbac=false: the backend doesn't
-  // read the Kubernetes API) — hide the panel rather than show an error.
-  const servicesEnabled = systemHealth?.services_enabled !== false;
+    : servicesCluster.available
+      ? systemHealth?.services_unavailable_reason
+      : null;
   const metricsUnavailable = systemHealthWithStats?.metrics_unavailable_reason;
+  const poolCluster = cardClusterStatus(poolStats);
 
   return (
     <div className="space-y-6">
@@ -448,7 +482,7 @@ export function System() {
       )}
 
       {/* Services */}
-      {servicesEnabled && (services.length > 0 || servicesUnavailable) && (
+      {(services.length > 0 || servicesUnavailable || !servicesCluster.available) && (
         <div className="card">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -463,6 +497,9 @@ export function System() {
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
+          {!servicesCluster.available && !systemHealthError && (
+            <ClusterUnavailableNote status={servicesCluster} />
+          )}
           {servicesUnavailable && (
             <UnavailableNote>{servicesUnavailable}</UnavailableNote>
           )}
@@ -626,7 +663,11 @@ export function System() {
             </div>
           )}
 
-          {poolStats?.unavailable_reason && <UnavailableNote>{poolStats.unavailable_reason}</UnavailableNote>}
+          {!poolCluster.available ? (
+            <ClusterUnavailableNote status={poolCluster} />
+          ) : (
+            poolStats?.unavailable_reason && <UnavailableNote>{poolStats.unavailable_reason}</UnavailableNote>
+          )}
           {poolStats?.note && <p className="mb-4 text-xs text-gray-500">{poolStats.note}</p>}
 
           {allSandboxContainers.length === 0 ? (
@@ -722,7 +763,11 @@ export function System() {
             </div>
           )}
 
-          {sharedPoolCount?.unavailable_reason && <UnavailableNote>{sharedPoolCount.unavailable_reason}</UnavailableNote>}
+          {!sharedCluster.available ? (
+            <ClusterUnavailableNote status={sharedCluster} />
+          ) : (
+            sharedPoolCount?.unavailable_reason && <UnavailableNote>{sharedPoolCount.unavailable_reason}</UnavailableNote>
+          )}
           {sharedPoolCount?.note && <p className="mb-4 text-xs text-gray-500">{sharedPoolCount.note}</p>}
 
           {!sharedPoolContainers || sharedPoolContainers.length === 0 ? (
