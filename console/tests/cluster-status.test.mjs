@@ -56,6 +56,28 @@ test('failed requests back off exponentially, capped', () => {
   assert.equal(m.clusterPollInterval(10_000, m.healthClusterStatus({}), 2), 40_000);
 });
 
+test('failure streak counts failed polls across fetches, reset by a success', () => {
+  // react-query state after each settled poll (retry: 1 → one error update per failed poll)
+  const polls = [
+    { status: 'success', errorUpdateCount: 0 },
+    { status: 'error', errorUpdateCount: 1 },
+    { status: 'error', errorUpdateCount: 1 }, // re-evaluated, same poll: no change
+    { status: 'error', errorUpdateCount: 2 },
+    { status: 'error', errorUpdateCount: 3 },
+    { status: 'success', errorUpdateCount: 3 },
+    { status: 'error', errorUpdateCount: 4 },
+  ];
+  let s;
+  const streaks = polls.map((p) => (s = m.nextFailureStreak(s, p)).streak);
+  assert.deepEqual(streaks, [0, 1, 1, 2, 3, 0, 1]);
+  // and the intervals grow across those polls
+  let t;
+  const intervals = polls.map((p) => m.clusterPollInterval(5000, null, (t = m.nextFailureStreak(t, p)).streak));
+  assert.deepEqual(intervals, [5000, 10_000, 10_000, 20_000, 40_000, 5000, 10_000]);
+  // first observation already failed (page opened while the backend is down)
+  assert.equal(m.nextFailureStreak(undefined, { status: 'error', errorUpdateCount: 7 }).streak, 1);
+});
+
 test('retry label', () => {
   assert.equal(m.retryLabel(null), null);
   assert.equal(m.retryLabel(12), 'The backend tries again within a minute.');

@@ -59,6 +59,7 @@ _API_TIMEOUT = (_CONNECT_TIMEOUT, _READ_TIMEOUT)
 _WAIT_SECONDS = 2.5
 BACKOFF_INITIAL_SECONDS = 60.0
 BACKOFF_MAX_SECONDS = 300.0
+_MAX_COUNTED_FAILURES = 16
 _MIB = 1024 * 1024
 
 SANDBOX_POD_TYPE = "sandbox-executor"
@@ -113,7 +114,10 @@ class _Breaker:
             if st and st[0] > now:
                 st[1] = reason
                 return st[0] - now
-            failures = (st[2] if st else 0) + 1
+            # Capped: the window stops growing long before 2**n would
+            # overflow a float (a cluster without metrics-server fails
+            # forever, one window at a time).
+            failures = min((st[2] if st else 0) + 1, _MAX_COUNTED_FAILURES)
             window = min(BACKOFF_INITIAL_SECONDS * 2 ** (failures - 1), BACKOFF_MAX_SECONDS)
             self._state[key] = [now + window, reason, failures]
         logger.warning(

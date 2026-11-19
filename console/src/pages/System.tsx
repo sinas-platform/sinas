@@ -7,12 +7,14 @@ import {
   cardClusterStatus,
   clusterPollInterval,
   healthClusterStatus,
+  nextFailureStreak,
+  type FailureStreak,
   retryLabel,
   type ClusterStatus,
 } from '../lib/clusterStatus';
 import { ClickHouseDisabledNote } from '../components/ClickHouseNotice';
 import { RetentionPanel } from '../components/RetentionPanel';
-import { useState, Fragment, type ReactNode } from 'react';
+import { useRef, useState, Fragment, type ReactNode } from 'react';
 import { Server, Plus, Minus, RefreshCw, AlertTriangle, RotateCcw, Box, X, AlertCircle, Info, RotateCw, Trash2, Loader2, ChevronDown, ChevronRight } from 'lucide-react';
 
 function formatAge(seconds: number): string {
@@ -88,17 +90,25 @@ export function System() {
   // anyway), and every poll backs off after failed requests. The fast
   // health poll also carries everything else (warnings, Redis, host), so
   // it keeps its interval while the cluster part is unavailable.
+  // Consecutive failed polls per query (react-query's own failure count
+  // restarts with every fetch).
+  const streaks = useRef<Record<string, FailureStreak>>({});
+  const failedPolls = (name: string, state: { status: string; errorUpdateCount: number }) => {
+    streaks.current[name] = nextFailureStreak(streaks.current[name], state);
+    return streaks.current[name].streak;
+  };
+
   const { data: systemHealth, isError: systemHealthError } = useQuery({
     queryKey: ['system-health'],
     queryFn: () => apiClient.getSystemHealth(false),
-    refetchInterval: (query) => clusterPollInterval(10000, null, query.state.fetchFailureCount),
+    refetchInterval: (query) => clusterPollInterval(10000, null, failedPolls('health', query.state)),
   });
 
   const { data: systemHealthWithStats } = useQuery({
     queryKey: ['system-health-stats'],
     queryFn: () => apiClient.getSystemHealth(true),
     refetchInterval: (query) =>
-      clusterPollInterval(30000, healthClusterStatus(query.state.data), query.state.fetchFailureCount),
+      clusterPollInterval(30000, healthClusterStatus(query.state.data), failedPolls('health-stats', query.state)),
   });
 
   const { data: stats } = useQuery({
@@ -107,26 +117,26 @@ export function System() {
     refetchInterval: 5000,
   });
 
-  const { data: poolStats } = useQuery({
+  const { data: poolStats, isError: poolStatsError } = useQuery({
     queryKey: ['container-stats'],
     queryFn: () => apiClient.getContainerStats(),
     refetchInterval: (query) =>
-      clusterPollInterval(5000, cardClusterStatus(query.state.data), query.state.fetchFailureCount),
+      clusterPollInterval(5000, cardClusterStatus(query.state.data), failedPolls('pool', query.state)),
   });
 
-  const { data: sharedPoolCount } = useQuery({
+  const { data: sharedPoolCount, isError: sharedPoolCountError } = useQuery({
     queryKey: ['shared-pool-count'],
     queryFn: () => apiClient.getWorkerCount(),
     refetchInterval: (query) =>
-      clusterPollInterval(5000, cardClusterStatus(query.state.data), query.state.fetchFailureCount),
+      clusterPollInterval(5000, cardClusterStatus(query.state.data), failedPolls('shared-count', query.state)),
   });
   const sharedCluster = cardClusterStatus(sharedPoolCount);
 
   // The list carries no status of its own: it follows the count's.
-  const { data: sharedPoolContainers } = useQuery({
+  const { data: sharedPoolContainers, isError: sharedPoolListError } = useQuery({
     queryKey: ['shared-pool'],
     queryFn: () => apiClient.listWorkers(),
-    refetchInterval: (query) => clusterPollInterval(5000, sharedCluster, query.state.fetchFailureCount),
+    refetchInterval: (query) => clusterPollInterval(5000, sharedCluster, failedPolls('shared-list', query.state)),
   });
 
   const { data: queueWorkers } = useQuery({
@@ -663,6 +673,9 @@ export function System() {
             </div>
           )}
 
+          {poolStatsError && (
+            <UnavailableNote>Could not load the sandbox status (the request failed); showing the last known state.</UnavailableNote>
+          )}
           {!poolCluster.available ? (
             <ClusterUnavailableNote status={poolCluster} />
           ) : (
@@ -763,6 +776,9 @@ export function System() {
             </div>
           )}
 
+          {(sharedPoolCountError || sharedPoolListError) && (
+            <UnavailableNote>Could not load the shared containers (the request failed); showing the last known state.</UnavailableNote>
+          )}
           {!sharedCluster.available ? (
             <ClusterUnavailableNote status={sharedCluster} />
           ) : (

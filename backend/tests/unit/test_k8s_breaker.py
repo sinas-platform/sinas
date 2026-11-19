@@ -109,6 +109,16 @@ class TestBreaker:
         b.success("k")
         assert b.failure("k", "down") == 60
 
+    def test_endless_failures_stay_at_the_cap(self):
+        """A cluster without metrics-server fails forever: thousands of
+        consecutive windows must not overflow the backoff arithmetic."""
+        clock = Clock()
+        b = _Breaker(clock)
+        for _ in range(3000):
+            window = b.failure("k", "down")
+            clock.now += window
+        assert window == k8s_stats.BACKOFF_MAX_SECONDS
+
     def test_failures_within_a_window_dont_lengthen_it(self):
         """Calls in flight together all fail: one window, not three doublings."""
         clock = Clock()

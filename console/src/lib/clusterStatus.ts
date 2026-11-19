@@ -47,10 +47,30 @@ export function cardClusterStatus(data: unknown): ClusterStatus {
   return { available: false, reason, retryAfterSeconds: seconds(d.retry_after_seconds) };
 }
 
+/** Consecutive failed polls of one query. react-query's fetchFailureCount
+ *  only counts the retries within one fetch (it is reset when the next
+ *  poll starts), so the streak is derived from the cumulative
+ *  errorUpdateCount instead, and reset by a successful poll. */
+export interface FailureStreak {
+  errorUpdateCount: number;
+  streak: number;
+}
+
+export function nextFailureStreak(
+  prev: FailureStreak | undefined,
+  state: { status: string; errorUpdateCount: number },
+): FailureStreak {
+  if (state.status !== 'error') return { errorUpdateCount: state.errorUpdateCount, streak: 0 };
+  if (!prev) return { errorUpdateCount: state.errorUpdateCount, streak: 1 };
+  const failedPolls = Math.max(0, state.errorUpdateCount - prev.errorUpdateCount);
+  return { errorUpdateCount: state.errorUpdateCount, streak: prev.streak + failedPolls };
+}
+
 /**
  * react-query refetchInterval for a query that depends on the Kubernetes API.
  *
- * - failed requests (`failureCount` > 0): double the interval per failure,
+ * - failed polls (`failureCount`: consecutive failed polls, see
+ *   nextFailureStreak): double the interval per failed poll,
  *   up to ERROR_POLL_MAX_MS, so a down backend isn't hammered either;
  * - cluster unavailable: the backend's retry-after, but at least
  *   CLUSTER_POLL_MIN_MS and at most CLUSTER_POLL_MAX_MS (CLUSTER_POLL_MAX_MS
