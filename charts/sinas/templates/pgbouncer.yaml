@@ -66,16 +66,8 @@ spec:
           {{- end }}
           ports:
             - containerPort: 5432
-          livenessProbe:
-            exec:
-              command: ["pg_isready", "-h", "localhost", "-p", "5432"]
-            initialDelaySeconds: 15
-            periodSeconds: 10
-          readinessProbe:
-            exec:
-              command: ["pg_isready", "-h", "localhost", "-p", "5432"]
-            initialDelaySeconds: 5
-            periodSeconds: 5
+          ## Timings: pgbouncer.probes.
+          {{- include "sinas.componentProbes" (dict "root" . "values" .Values.pgbouncer "defaults" "sinas.probes.pgbouncer.default" "handler" (dict "exec" (dict "command" (list "pg_isready" "-h" "localhost" "-p" "5432")))) | nindent 10 }}
       {{- with (include "sinas.postgresCaVolume" . | trim) }}
       volumes:
         {{- . | nindent 8 }}

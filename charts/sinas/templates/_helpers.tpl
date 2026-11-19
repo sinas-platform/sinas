@@ -922,3 +922,157 @@ it only warns there (NOTES.txt).
   emptyDir: {}
 {{- end }}
 {{- end }}
+
+{{/*
+──── Probes ────────────────────────────────────────────────────────────
+Every Deployment's container gets readiness and liveness probes (and a
+startupProbe where boot can be slow). Timings are values: built-in defaults
+(below) ← a shared layer (workerProbes, for the processes without an HTTP
+server) ← <component>.probes, deep-merged like the security contexts (a
+null removes a key, or a whole probe). Only timing keys are taken from the
+values; the probe's handler (httpGet / exec) is the chart's.
+*/}}
+{{- define "sinas.probes.backend.default" -}}
+## alembic upgrade head runs before uvicorn starts: up to 10 minutes of
+## migrations before liveness may restart the container.
+startup:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
+liveness:
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  failureThreshold: 5
+readiness:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+{{- end }}
+
+{{- define "sinas.probes.console.default" -}}
+liveness:
+  initialDelaySeconds: 10
+  periodSeconds: 15
+readiness:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+{{- end }}
+
+{{- define "sinas.probes.pgbouncer.default" -}}
+liveness:
+  initialDelaySeconds: 15
+  periodSeconds: 10
+readiness:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+{{- end }}
+
+{{/* Queue workers, scheduler, CDC worker: heartbeat-file probes
+     (backend/app/core/heartbeat.py). The process touches the file every
+     heartbeatIntervalSeconds once it is up; the probes pass while it is
+     younger than heartbeatMaxAgeSeconds. Independent of Redis/Postgres. */}}
+{{- define "sinas.probes.worker.default" -}}
+heartbeatIntervalSeconds: 10
+heartbeatMaxAgeSeconds: 120
+## Startup work (Redis checks, config apply in the scheduler, executor
+## discovery) before the file first appears: up to 10 minutes.
+startup:
+  periodSeconds: 5
+  timeoutSeconds: 5
+  failureThreshold: 120
+liveness:
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+readiness:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+{{- end }}
+
+{{/* Merged probe settings as JSON. Call with
+     (dict "root" . "values" <component values> "defaults" "<define name>"
+      "shared" <map or nil>). */}}
+{{- define "sinas.probeSettings" -}}
+{{- $defaults := include .defaults .root | fromYaml }}
+{{- $shared := .shared }}
+{{- if not (kindIs "map" $shared) }}{{- $shared = dict }}{{- end }}
+{{- $component := (.values | default dict).probes }}
+{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
+{{- include "sinas.securityContext.merge" (list $defaults $shared $component) -}}
+{{- end }}
+
+{{/* startupProbe / livenessProbe / readinessProbe blocks from merged
+     settings and one handler. Call with (dict "settings" <map> "handler" <map>). */}}
+{{- define "sinas.probeBlocks" -}}
+{{- $timing := list "initialDelaySeconds" "periodSeconds" "timeoutSeconds" "successThreshold" "failureThreshold" "terminationGracePeriodSeconds" }}
+{{- range $kind := list "startup" "liveness" "readiness" }}
+{{- $p := get $.settings $kind }}
+{{- if kindIs "map" $p }}
+{{ $kind }}Probe:
+  {{- toYaml $.handler | nindent 2 }}
+  {{- range $k := $timing }}
+  {{- if hasKey $p $k }}
+  {{ $k }}: {{ get $p $k | int }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* Probes of an HTTP/exec component with a fixed handler. Call with
+     (dict "root" . "values" <component values> "defaults" "<define name>"
+      "handler" <map>). */}}
+{{- define "sinas.componentProbes" -}}
+{{- $settings := include "sinas.probeSettings" (dict "root" .root "values" .values "defaults" .defaults) | fromJson }}
+{{- include "sinas.probeBlocks" (dict "settings" $settings "handler" .handler) }}
+{{- end }}
+
+{{- define "sinas.heartbeatDir" -}}/run/sinas-health{{- end }}
+
+{{/* Merged worker probe settings (JSON), validated. Call with
+     (dict "root" . "values" <component values>). */}}
+{{- define "sinas.workerProbeSettings" -}}
+{{- $s := include "sinas.probeSettings" (dict "root" .root "values" .values "defaults" "sinas.probes.worker.default" "shared" .root.Values.workerProbes) | fromJson }}
+{{- $interval := $s.heartbeatIntervalSeconds | default 10 | int }}
+{{- $maxAge := $s.heartbeatMaxAgeSeconds | default 120 | int }}
+{{- if lt $interval 1 }}
+{{- fail "workerProbes.heartbeatIntervalSeconds must be at least 1" }}
+{{- end }}
+{{- if lt $maxAge (mul 3 $interval) }}
+{{- fail (printf "workerProbes.heartbeatMaxAgeSeconds (%d) must be at least 3x heartbeatIntervalSeconds (%d): a busy event loop would fail the probes" $maxAge $interval) }}
+{{- end }}
+{{- $_ := set $s "heartbeatIntervalSeconds" $interval }}
+{{- $_ := set $s "heartbeatMaxAgeSeconds" $maxAge }}
+{{- toJson $s -}}
+{{- end }}
+
+{{/* Worker container probes (heartbeat file age, checked with sh + stat:
+     no Python interpreter per probe). Call with (dict "root" . "values" <component values>). */}}
+{{- define "sinas.workerProbes" -}}
+{{- $s := include "sinas.workerProbeSettings" . | fromJson }}
+{{- $file := printf "%s/heartbeat" (include "sinas.heartbeatDir" .root) }}
+{{- $check := printf "f=%s; [ -f \"$f\" ] && [ $(( $(date +%%s) - $(stat -c %%Y \"$f\") )) -lt %d ]" $file ($s.heartbeatMaxAgeSeconds | int) }}
+{{- include "sinas.probeBlocks" (dict "settings" $s "handler" (dict "exec" (dict "command" (list "sh" "-c" $check)))) }}
+{{- end }}
+
+{{/* Env, mount and volume of the heartbeat file (a small in-memory
+     emptyDir: writable under readOnlyRootFilesystem too). */}}
+{{- define "sinas.heartbeatEnv" -}}
+{{- $s := include "sinas.workerProbeSettings" . | fromJson }}
+- name: SINAS_HEARTBEAT_FILE
+  value: {{ printf "%s/heartbeat" (include "sinas.heartbeatDir" .root) | quote }}
+- name: SINAS_HEARTBEAT_INTERVAL
+  value: {{ $s.heartbeatIntervalSeconds | int | quote }}
+{{- end }}
+
+{{- define "sinas.heartbeatMount" -}}
+- name: heartbeat
+  mountPath: {{ include "sinas.heartbeatDir" . }}
+{{- end }}
+
+{{- define "sinas.heartbeatVolume" -}}
+- name: heartbeat
+  emptyDir:
+    medium: Memory
+    sizeLimit: 1Mi
+{{- end }}
