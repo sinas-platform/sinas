@@ -37,9 +37,10 @@ When an LLM call fails, or an agent turn can't run, Sinas reports it with a stab
 | `provider_timeout` | 504 | yes | The model API did not answer in time. |
 | `context_length_exceeded` | 422 | no | The conversation is too long for the model's context window. Start a new chat, or use a model with a larger window. |
 | `content_filtered` | 422 | no | The model API's content filter or safety system blocked the call. |
-| `invalid_request` | 502 | no | The model API rejected the request as invalid (a 400 or 422): usually the agent's or the provider's configuration, such as a parameter the model doesn't support. |
+| `invalid_request` | 502 | no | The model API rejected the request as invalid (a 400 or 422): usually the agent's or the provider's configuration, such as a parameter the model doesn't support. Also Sinas's own **400** for a request it refuses before any call: malformed `provider_credentials` or `X-Sinas-Provider-Credential`, or provider batch mode with a run credential ([per-run credentials](/admin/llm-gateway-attribution#per-run-credentials)). |
 | `streaming_required` | 502 | no | The SDK refuses to make a call this long without streaming. Lower the agent's `max_tokens`. |
 | `provider_not_configured` | 503 | no | There is no LLM provider (or no model) to run the agent with: none is configured, the agent's provider is inactive or incomplete, or neither the agent nor its provider names a model. |
+| `provider_credential_required` | 400 | no | The provider requires a per-run credential (`run_credential.required`) and the chat has none, or only an expired one; the message says which. Send one (`provider_credentials`) with the next message. The provider's configured key is never used instead. See [per-run credentials](/admin/llm-gateway-attribution#per-run-credentials). |
 | `provider_error` | 502 | no | Any other error the model API answered with. |
 | `job_timeout` | 504 | no | The turn did not finish within its job timeout. |
 | `internal_error` | 500 | no | The turn failed for a reason that isn't the model API's. |

@@ -37,6 +37,10 @@ Codes (CODES has the HTTP status and retryability of each):
   without streaming (its "streaming is strongly recommended" guard).
 - `provider_not_configured` (503): no LLM provider (or no model) to run the
   agent with: none configured, or the agent's provider is inactive.
+- `provider_credential_required` (400): the provider requires a per-run
+  credential (`config.run_credential.required`, app/providers/run_credentials.py)
+  and the chat has none, or only an expired one. Never retried: the caller
+  has to send one (`provider_credentials`) first.
 - `provider_error` (502): any other error the model API answered with.
 - `job_timeout` (504): the turn did not finish within its job timeout.
 - `internal_error` (500): the turn failed for a reason that isn't the model
@@ -64,6 +68,7 @@ import logging
 import math
 import re
 from email.utils import parsedate_to_datetime
+from collections.abc import Iterable
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -79,6 +84,7 @@ CONTENT_FILTERED = "content_filtered"
 INVALID_REQUEST = "invalid_request"
 STREAMING_REQUIRED = "streaming_required"
 PROVIDER_NOT_CONFIGURED = "provider_not_configured"
+PROVIDER_CREDENTIAL_REQUIRED = "provider_credential_required"
 PROVIDER_ERROR = "provider_error"
 JOB_TIMEOUT = "job_timeout"
 INTERNAL_ERROR = "internal_error"
@@ -97,6 +103,7 @@ CODES: dict[str, tuple[int, bool]] = {
     INVALID_REQUEST: (502, False),
     STREAMING_REQUIRED: (502, False),
     PROVIDER_NOT_CONFIGURED: (503, False),
+    PROVIDER_CREDENTIAL_REQUIRED: (400, False),
     PROVIDER_ERROR: (502, False),
     JOB_TIMEOUT: (504, False),
     INTERNAL_ERROR: (500, False),
@@ -182,8 +189,13 @@ class LLMError(Exception):
         provider: Optional[str] = None,
         retry_after: Optional[str] = None,
         retry_after_seconds: Optional[float] = None,
+        status: Optional[int] = None,
     ):
         self.code = code
+        # Sinas's HTTP status when it isn't the code's own: `invalid_request`
+        # is a 502 when the model API rejected a request, but a 400 when
+        # Sinas rejects the caller's (a malformed `provider_credentials`).
+        self.status = status
         self.message = message
         self.upstream_status = upstream_status
         self.provider = provider
@@ -197,7 +209,27 @@ class LLMError(Exception):
 
     @property
     def http_status(self) -> int:
+        if self.status is not None:
+            return self.status
         return CODES.get(self.code, (502, False))[0]
+
+    def scrubbed(self, secrets: "Iterable[str]") -> "LLMError":
+        """This error with every one of `secrets` masked in its message (a
+        gateway that echoes the credential it was sent). Itself when none
+        occurs."""
+        message = scrub(self.message, secrets)
+        if message == self.message:
+            return self
+        clone = type(self)(
+            self.code,
+            message,
+            upstream_status=self.upstream_status,
+            provider=self.provider,
+            retry_after=self.retry_after,
+            retry_after_seconds=self.retry_after_seconds,
+            status=self.status,
+        )
+        return clone
 
     @property
     def retryable(self) -> bool:
@@ -257,6 +289,24 @@ class LLMError(Exception):
 class LLMRefusalError(LLMError):
     """A call the model API or a gateway refused for budget or rate
     (REFUSAL_CODES)."""
+
+
+REDACTED = "[redacted]"
+
+
+def scrub(text: str, secrets: "Iterable[str]") -> str:
+    """`text` with every occurrence of each secret masked, longest first (a
+    prefixed value before the bare one)."""
+    if not text:
+        return text
+    for secret in sorted({s for s in secrets if s}, key=len, reverse=True):
+        if secret in text:
+            text = text.replace(secret, REDACTED)
+    return text
+
+
+def contains_secret(text: str, secrets: "Iterable[str]") -> bool:
+    return bool(text) and any(s and s in text for s in secrets)
 
 
 def _int_or_none(value: Any) -> Optional[int]:

@@ -88,6 +88,39 @@ def _provider_batch_blockers(agent: Any) -> list[str]:
     return blockers
 
 
+def _run_credential_refusal(message: str):
+    from app.providers.errors import INVALID_REQUEST, LLMError
+
+    return LLMError(INVALID_REQUEST, message, status=400)
+
+
+def _refuse_run_credentials(provider_row: Any) -> None:
+    """Provider batch mode presents the provider's configured key only: one
+    request for the whole batch, sent and polled outside any chat. A
+    provider that requires a per-run credential (config.run_credential) is
+    refused (400 invalid_request), never served with the configured key."""
+    from app.providers.run_credentials import settings_of
+
+    if settings_of(provider_row.config or {}, provider_row.provider_type).required:
+        raise _run_credential_refusal(
+            f"Provider batch mode can't present a per-run credential, and LLM provider "
+            f"'{provider_row.name}' requires one (run_credential.required). Use "
+            "execution_mode 'queue'."
+        )
+
+
+async def _refuse_chats_with_run_credentials(db: AsyncSession, chat_ids: list[str]) -> None:
+    """Refuse (400 invalid_request) a provider batch whose chats carry a run
+    credential: the batch would be sent with the configured key instead."""
+    from app.services.provider_credentials import chat_has_credentials
+
+    if await chat_has_credentials(db, chat_ids):
+        raise _run_credential_refusal(
+            "Provider batch mode can't present a chat's run provider credential "
+            "(provider_credentials). Use execution_mode 'queue'."
+        )
+
+
 async def _resolve_batch_provider(
     db: AsyncSession, agent: Any, user_id: Optional[str] = None
 ) -> tuple[Any, Any, str]:
@@ -116,6 +149,8 @@ async def _resolve_batch_provider(
     provider_row = row.scalar_one_or_none()
     if not provider_row:
         raise BatchError("No active LLM provider found for agent")
+
+    _refuse_run_credentials(provider_row)
 
     model = agent.model or provider_row.default_model
     if not model:
@@ -379,6 +414,7 @@ async def submit_agent_batch(
         from app.services.skill_tools import SkillToolConverter
 
         await db.flush()
+        await _refuse_chats_with_run_credentials(db, chat_ids)
         skill_converter = SkillToolConverter()
 
         requests = []
@@ -576,7 +612,9 @@ async def cancel_batch(
             )
             provider_row = row.scalar_one_or_none()
             if provider_row:
-                provider = await create_provider(provider_name=provider_row.name, db=db)
+                provider = await create_provider(
+                    provider_name=provider_row.name, db=db, run_credentials=False
+                )
                 await provider.cancel_batch(batch.provider_batch_id)
         except Exception as e:
             logger.warning(

@@ -25,12 +25,12 @@ def redact_path(path: str) -> str:
 _SENSITIVE_KEYS = frozenset({
     "password", "api_key", "secret", "token", "refresh_token", "access_token", "otp",
     "code_verifier", "reset_token", "setup_token", "new_password", "current_password",
-    "otp_code",
+    "otp_code", "credential",
 })
 # Whole mappings whose values are credentials (an MCP server's or a
-# connector's request headers), and strings that may carry one in their
-# userinfo or query (an MCP server's url).
-_SECRET_MAPPINGS = frozenset({"headers"})
+# connector's request headers, a chat's run provider credentials), and
+# strings that may carry one in their userinfo or query (an MCP server's url).
+_SECRET_MAPPINGS = frozenset({"headers", "provider_credentials"})
 _URL_KEYS = frozenset({"url"})
 _REDACTED = "***REDACTED***"
 
@@ -134,6 +134,8 @@ def redact_body(body):
                 out[key] = _REDACTED
             elif lowered in _SECRET_MAPPINGS and isinstance(value, dict):
                 out[key] = {k: _REDACTED for k in value}
+            elif lowered == "provider_credentials" and value is not None:
+                out[key] = _REDACTED  # malformed (not an object): masked whole
             elif lowered in _URL_KEYS and isinstance(value, str):
                 out[key] = _safe_url(value)
             else:

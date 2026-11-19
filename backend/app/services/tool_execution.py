@@ -577,7 +577,8 @@ async def prepare_agent_delegation(
     """Resolve a `call_agent_*` target and create (or load) its sub-chat.
 
     A new sub-chat inherits the parent chat's attribution snapshot, so the
-    sub-agent's calls are attributed as the parent's are.
+    sub-agent's calls are attributed as the parent's are, and the parent's
+    run provider credentials (new or resumed sub-chat alike).
 
     Everything `execute_agent_tool` does before enqueueing — shared with the
     suspend-on-delegate path in message_service (issue #90), which enqueues
@@ -645,8 +646,17 @@ async def prepare_agent_delegation(
             attribution=await new_chat_attribution(db, user_id, parent_chat_id=parent_chat_id),
         )
         db.add(sub_chat)
-        await db.commit()
-        await db.refresh(sub_chat)
+        await db.flush()
+
+    # The parent's run credentials go with the work it delegates: the
+    # sub-agent's calls present what the parent's do, also on a resumed
+    # sub-chat (the parent's current ones, replacing older copies).
+    if parent_chat_id:
+        from app.services.provider_credentials import inherit
+
+        await inherit(db, parent_chat_id, sub_chat.id)
+    await db.commit()
+    await db.refresh(sub_chat)
 
     return {"agent": agent, "sub_chat": sub_chat, "content": content, "depth": child_depth}
 

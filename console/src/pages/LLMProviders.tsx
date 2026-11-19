@@ -8,6 +8,7 @@ import type { LLMProvider, LLMProviderCreate, LLMProviderUpdate, ModelPricing, R
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { RatecardSources } from '../components/Ratecard';
 import { ProviderHeaders } from '../components/ProviderHeaders';
+import { ProviderRunCredential } from '../components/ProviderRunCredential';
 import { headerProblem } from '../lib/attribution';
 
 function plural(n: number, one: string, many: string): string {
@@ -368,6 +369,8 @@ export function LLMProviders() {
   // The header rows' first problem, reported by ProviderHeaders.
   const [createHeaderProblem, setCreateHeaderProblem] = useState<string | null>(null);
   const [editHeaderProblem, setEditHeaderProblem] = useState<string | null>(null);
+  const [createRunCredentialProblem, setCreateRunCredentialProblem] = useState<string | null>(null);
+  const [editRunCredentialProblem, setEditRunCredentialProblem] = useState<string | null>(null);
   const [createPricing, setCreatePricing] = useState<PricingDraft>(pricingDraft());
   const [editPricing, setEditPricing] = useState<PricingDraft>(pricingDraft());
   const [editError, setEditError] = useState('');
@@ -446,6 +449,10 @@ export function LLMProviders() {
       setCreateError(`Headers: ${createHeaders}`);
       return;
     }
+    if (createRunCredentialProblem) {
+      setCreateError(`Per-run credential: ${createRunCredentialProblem}`);
+      return;
+    }
     let pricing;
     try {
       pricing = parsePricingDraft(createPricing);
@@ -463,6 +470,10 @@ export function LLMProviders() {
       const editHeaders = editHeaderProblem ?? headerProblem(editFormData.config);
       if (editHeaders) {
         setEditError(`Headers: ${editHeaders}`);
+        return;
+      }
+      if (editRunCredentialProblem) {
+        setEditError(`Per-run credential: ${editRunCredentialProblem}`);
         return;
       }
       let pricing;
@@ -769,6 +780,18 @@ export function LLMProviders() {
                 }}
               />
 
+              <ProviderRunCredential
+                idPrefix="create"
+                config={createFormData.config}
+                providerType={createFormData.provider_type}
+                disabled={!isJsonObject(createConfigText)}
+                onProblemChange={setCreateRunCredentialProblem}
+                onChange={(config) => {
+                  setCreateFormData({ ...createFormData, config });
+                  setCreateConfigText(JSON.stringify(config, null, 2));
+                }}
+              />
+
               <PricingFields
                 idPrefix="create"
                 draft={createPricing}
@@ -960,6 +983,18 @@ export function LLMProviders() {
                 config={editFormData.config}
                 disabled={!isJsonObject(editConfigText)}
                 onProblemChange={setEditHeaderProblem}
+                onChange={(config) => {
+                  setEditFormData({ ...editFormData, config });
+                  setEditConfigText(JSON.stringify(config, null, 2));
+                }}
+              />
+
+              <ProviderRunCredential
+                idPrefix="edit"
+                config={editFormData.config}
+                providerType={editFormData.provider_type || ''}
+                disabled={!isJsonObject(editConfigText)}
+                onProblemChange={setEditRunCredentialProblem}
                 onChange={(config) => {
                   setEditFormData({ ...editFormData, config });
                   setEditConfigText(JSON.stringify(config, null, 2));

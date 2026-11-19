@@ -49,7 +49,7 @@ from app.schemas.chat import (
     ToolApprovalResponse,
     TurnUsage,
 )
-from app.services import batch_service, sync_turns
+from app.services import batch_service, provider_credentials, sync_turns
 from app.core.callback import CallbackURLError, validate_callback_url
 from app.services.message_service import MessageService, refresh_message_tokens
 from app.services.queue_service import queue_service
@@ -314,6 +314,12 @@ async def create_chat_with_agent(
         except jsonschema.ValidationError as e:
             raise HTTPException(400, f"Input validation failed: {e.message}")
 
+    # The run's own provider credentials, checked whole before anything is
+    # stored (403 / 400 invalid_request).
+    credential_changes = await provider_credentials.parse_request(
+        db, request.provider_credentials, permissions, http_request
+    )
+
     # 4. Create chat with input data stored in metadata
     expires_at = None
     if request.expires_in:
@@ -338,6 +344,7 @@ async def create_chat_with_agent(
     db.add(chat)
     await db.flush()
     await db.refresh(chat)
+    await provider_credentials.apply_changes(db, chat.id, credential_changes, user_id)
 
     # 5. Pre-populate with initial_messages if present (rendered with input data)
     if agent.initial_messages:
@@ -372,6 +379,9 @@ async def create_chat_with_agent(
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=None,  # New chat has no messages yet
+        provider_credentials_set=(await provider_credentials.credentials_set(db, [chat.id])).get(
+            str(chat.id), []
+        ),
     )
 
 
@@ -408,6 +418,10 @@ async def invoke_agent(
         set_permission_used(http_request, agent_chat_perm, has_perm=False)
         raise HTTPException(403, f"Not authorized to chat with agent '{namespace}/{agent_name}'")
     set_permission_used(http_request, agent_chat_perm)
+
+    credential_changes = await provider_credentials.parse_request(
+        db, request.provider_credentials, permissions, http_request
+    )
 
     # 3. Resolve or create chat
     chat = None
@@ -474,6 +488,12 @@ async def invoke_agent(
                         pass
                 message = Message(chat_id=chat.id, role=msg_data["role"], content=content)
                 db.add(message)
+
+    # The run's own provider credentials, committed so that work the turn
+    # queues (sub-agents, background runs) finds them.
+    if credential_changes:
+        await provider_credentials.apply_changes(db, chat.id, credential_changes, user_id)
+        await db.commit()
 
     # 4. Save user message
     content_str = (
@@ -627,6 +647,15 @@ async def send_message(
 
     set_permission_used(http_request, agent_chat_perm)
 
+    # The run's own provider credentials: checked whole, then stored and
+    # committed before the turn (or the job that runs it) reads them.
+    credential_changes = await provider_credentials.parse_request(
+        db, request.provider_credentials, permissions, http_request
+    )
+    if credential_changes:
+        await provider_credentials.apply_changes(db, chat.id, credential_changes, user_id)
+        await db.commit()
+
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
 
@@ -700,6 +729,15 @@ async def stream_message(
         raise HTTPException(403, "Not authorized to send messages in this chat")
 
     set_permission_used(http_request, agent_chat_perm)
+
+    # The run's own provider credentials: checked whole, then stored and
+    # committed before the turn (or the job that runs it) reads them.
+    credential_changes = await provider_credentials.parse_request(
+        db, request.provider_credentials, permissions, http_request
+    )
+    if credential_changes:
+        await provider_credentials.apply_changes(db, chat.id, credential_changes, user_id)
+        await db.commit()
 
     # Extract token for auth
     user_token = http_request.headers.get("authorization", "").replace("Bearer ", "")
@@ -1384,7 +1422,11 @@ async def list_chats(
                 page_size,
             )
 
-    return [ChatResponse(**row) for row in rows]
+    credentials = await provider_credentials.credentials_set(db, [row["id"] for row in rows])
+    return [
+        ChatResponse(**row, provider_credentials_set=credentials.get(str(row["id"]), []))
+        for row in rows
+    ]
 
 
 @router.get("/chats/{chat_id}", response_model=ChatWithMessages)
@@ -1483,6 +1525,9 @@ async def get_chat(
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
+        provider_credentials_set=(await provider_credentials.credentials_set(db, [chat.id])).get(
+            str(chat.id), []
+        ),
         messages=message_responses,
         pending_approvals=pending,
         pending_inputs=pending_inputs,
@@ -1552,6 +1597,9 @@ async def update_chat(
         created_at=chat.created_at,
         updated_at=chat.updated_at,
         last_message_at=last_message_at,
+        provider_credentials_set=(await provider_credentials.credentials_set(db, [chat.id])).get(
+            str(chat.id), []
+        ),
     )
 
 

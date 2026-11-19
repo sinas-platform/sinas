@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation
 
 
 class ChatCreate(BaseModel):
@@ -14,6 +14,44 @@ class ChatCreate(BaseModel):
 class ChatUpdate(BaseModel):
     title: Optional[str] = None
     archived: Optional[bool] = None
+
+
+class ProviderCredentialInput(BaseModel):
+    """A run's own credential for one LLM provider (write-only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    credential: str = Field(
+        description="The credential, presented on this chat's calls to the provider. Never returned."
+    )
+    expires_in: Optional[int] = Field(
+        86400,
+        description="Seconds until it expires (1 to 2592000, default 86400). Sending it again "
+        "replaces it, which also extends it.",
+    )
+
+
+# Validated by the endpoint (app/services/provider_credentials.py), not here:
+# a malformed entry is a 400 `invalid_request` whose message never quotes the
+# credential, where a validation error here would be a 422 echoing its input.
+ProviderCredentials = SkipValidation[Optional[dict[str, Optional[ProviderCredentialInput]]]]
+
+PROVIDER_CREDENTIALS_DESCRIPTION = (
+    "Write-only. The run's own credential per LLM provider name, presented on every LLM call "
+    "of this chat to that provider (later messages, approvals, resumes, background jobs, "
+    "sub-agents' chats) instead of the provider's configured key, or in a header the provider "
+    "names (its config.run_credential). Sending a provider again replaces its credential; null "
+    "removes it. Needs sinas.chats.assign_provider_credential:own; the provider must enable "
+    "run_credential. 400 invalid_request for an unknown provider, one that hasn't enabled it, "
+    "an empty credential, or expires_in out of range."
+)
+
+
+class ProviderCredentialSet(BaseModel):
+    """A provider this chat has an unexpired run credential for (never the credential)."""
+
+    provider: str
+    expires_at: datetime
 
 
 class ChatResponse(BaseModel):
@@ -36,6 +74,8 @@ class ChatResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_message_at: Optional[datetime] = None  # Timestamp of last message
+    # Read-only: the providers this chat has an unexpired run credential for.
+    provider_credentials_set: list[ProviderCredentialSet] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -122,6 +162,10 @@ class AgentChatCreateRequest(BaseModel):
     job_timeout: Optional[int] = Field(None, gt=0, description="Job timeout override in seconds")
     keep_alive: Optional[bool] = Field(None, description="Keep agent job alive after HTTP disconnect")
 
+    provider_credentials: ProviderCredentials = Field(
+        None, repr=False, description=PROVIDER_CREDENTIALS_DESCRIPTION
+    )
+
 
 class MessageSendRequest(BaseModel):
     """
@@ -149,6 +193,9 @@ class MessageSendRequest(BaseModel):
         default=False,
         description="Streaming only: send the model's thinking text in `thinking`. "
         "Without it, a stream still gets one empty `thinking` when the model starts thinking.",
+    )
+    provider_credentials: ProviderCredentials = Field(
+        None, repr=False, description=PROVIDER_CREDENTIALS_DESCRIPTION
     )
 
 
@@ -240,6 +287,9 @@ class InvokeRequest(BaseModel):
     )
     input: Optional[dict[str, Any]] = Field(
         None, description="Agent input variables (only used when creating a new chat)"
+    )
+    provider_credentials: ProviderCredentials = Field(
+        None, repr=False, description=PROVIDER_CREDENTIALS_DESCRIPTION
     )
 
 

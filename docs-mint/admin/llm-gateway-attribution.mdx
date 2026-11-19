@@ -1,6 +1,6 @@
 ---
 title: "Attribution and budgets through an LLM gateway"
-description: "Send identity-derived headers on every LLM call, record spend per customer, and surface budget refusals as budget_exceeded"
+description: "Send identity-derived headers on every LLM call, present a per-run credential, record spend per customer, and surface budget refusals as budget_exceeded"
 ---
 
 
@@ -13,7 +13,7 @@ Four pieces work together:
 3. **Telling the gateway.** The provider's header templates send them on every call: `{{attribution.orgId}}`.
 4. **Recording it in Sinas.** `USAGE_CUSTOMER_FIELD=orgId` records the snapshot's `orgId` on every call's usage row, so the [usage API](/admin/usage-cost#cost-per-customer) groups and filters by `customer`. (It is an attribution field whether or not `ATTRIBUTION_FIELDS` lists it.)
 
-And when the gateway refuses a call because the customer's budget is spent, Sinas reports a distinct error, `budget_exceeded`, instead of a generic provider error ([below](#budget-refusals)).
+And when the gateway refuses a call because the customer's budget is spent, Sinas reports a distinct error, `budget_exceeded`, instead of a generic provider error ([below](#budget-refusals)). A gateway that meters per presented key can instead be given each run's own key ([per-run credentials](#per-run-credentials)).
 
 ## The attribution snapshot
 
@@ -167,6 +167,58 @@ llmProviders:
 - Usage: the call's row has `error` starting with `budget_exceeded:`.
 
 The error text always starts with the code, so it survives wherever only a message is kept. These are two of the codes of the error envelope every LLM failure is reported with; see [LLM and agent errors](/platform/errors) for the others.
+
+## Per-run credentials
+
+Some gateways meter spend per **presented key**: each end user gets a key of their own, and the gateway's budget for that user is the budget of that key. Then the service that starts a run supplies that user's key, and every LLM call of the run must present it instead of the provider's configured (shared) key.
+
+**1. The provider opts in** (config apply, the provider API, or the console's raw config):
+
+```yaml
+llmProviders:
+  - name: gateway
+    type: openai
+    endpoint: https://llm-gateway.internal/v1
+    apiKey: <service key>
+    config:
+      run_credential:
+        enabled: true
+        header: null      # null: in place of the provider's own key; or a header name
+        prefix: ""        # with a named header: sent as prefix + credential
+        required: false   # true: never fall back to the configured key
+```
+
+| `header` | Where the credential goes | The configured key |
+|---|---|---|
+| `null` | In place of the provider's own key, the way that provider type sends it: `Authorization: Bearer <credential>` for OpenAI, Gemini and Mistral (their OpenAI-compatible endpoints), `x-api-key` for Anthropic, `api-key` for Azure OpenAI. Ollama has no key of its own, so it needs a named header. | Not sent |
+| `"X-Budget-Key"` | In that header, as `prefix` + credential. Credential headers (`Authorization`, `x-api-key`, ...) may be named here, unlike in header templates; framing, trace context and SDK or Sinas headers may not, nor a header that is also a template. | Still authenticates the call |
+
+With `required: false`, a chat without a credential for the provider (or with an expired one) is served with the configured key. With `required: true` its calls fail with `provider_credential_required` (HTTP 400, not retryable, the message says whether the credential is missing or expired) and the configured key is never used. The provider still needs an API key set for its SDK client to be built; with `required: true` it is never sent.
+
+**2. The service that starts the run sends the credential**, with `sinas.chats.assign_provider_credential:own` (not in any default role), on chat create (`POST /agents/{namespace}/{agent}/chats`), invoke (`POST /agents/{namespace}/{agent}/invoke`) or a message (`POST /chats/{id}/messages`, `/messages/stream`):
+
+```json
+{
+  "content": "...",
+  "provider_credentials": {
+    "gateway": {"credential": "<the user's key>", "expires_in": 86400}
+  }
+}
+```
+
+- Keyed by LLM provider name. `expires_in` is in seconds: 86400 by default, at most 2592000 (30 days).
+- **Bound to the chat.** Every LLM call of the chat presents it: later messages, tool approvals, answers and resumes, queued and background jobs, wakeups, compaction, and the chats of sub-agents it delegates to (they take the parent's credentials, again at every delegation).
+- **Sending it again replaces it** (rotation, or a later expiry). `{"gateway": null}` removes it.
+- **Write-only.** Chat responses show only which providers have one, and until when: `"provider_credentials_set": [{"provider": "gateway", "expires_at": "2026-11-20T10:00:00Z"}]`.
+- Without the permission: 403, nothing stored. An unknown provider, one that hasn't enabled `run_credential`, an empty credential or an `expires_in` out of range: 400 with `{"detail": "invalid_request: ...", "code": "invalid_request", "retryable": false}`, nothing stored.
+
+**The OpenAI-compatible adapter** takes one per request instead: `X-Sinas-Provider-Credential: <credential>` applies to the provider the model resolves to (the agent's provider in agent mode), for that request only, and is never stored. The same permission and opt-in rules apply.
+
+**Gateway refusals are unchanged**: a spent budget is `budget_exceeded` (402), a key the gateway rejects is `provider_auth_failed`.
+
+**Not supported in provider batch mode**: a batch goes out as one request outside any chat, so `execution_mode: "provider"` is refused (400 `invalid_request`) for a provider with `required: true`, and for chats that carry a credential. Use `queue` mode.
+
+**How it's kept:** encrypted at rest with `ENCRYPTION_KEY` (like provider API keys), deleted with its chat, treated as absent once expired and then deleted by the scheduler. It never appears in API responses, chat attribution, usage rows (they record only that a run credential was used: `run_credential: true`), logs, request logs, traces or change history. Within the process it reaches the HTTP client by reference and is filled in as the request is sent, so it is not part of an SDK's request options or debug logs; an error message from a gateway that quotes it back is scrubbed.
 
 ## Recipes
 
