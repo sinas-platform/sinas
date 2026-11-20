@@ -886,3 +886,25 @@ async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatc
     challenge = r.headers["www-authenticate"]
     assert 'Acme "SSO"' in r.json()["detail"] or "no Sinas account" in r.json()["detail"]
     assert challenge.count('"') % 2 == 0 and 'Acme "SSO"' not in challenge
+
+
+async def test_a_counter_without_expiry_is_repaired(_fresh_limits):
+    """INCR without its EXPIRE (a dropped connection in between) used to
+    leave a counter that never reset; now the expiry travels with the key's
+    creation, and a stray counter is given one."""
+    from fastapi import HTTPException
+
+    from app.core.rate_limit import check_rate_limit
+    from app.core.redis import get_redis
+
+    redis = await get_redis()
+    key = f"gateway:test:{_uid()}"
+    await redis.set(f"sinas:ratelimit:{key}", 5)  # at the cap, no TTL: the stuck shape
+    assert await redis.ttl(f"sinas:ratelimit:{key}") == -1
+    with pytest.raises(HTTPException) as refused:
+        await check_rate_limit(key, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{key}") <= 30  # repaired: it will reset
+    assert 0 < int(refused.value.headers["Retry-After"]) <= 30
+    fresh = f"gateway:test:{_uid()}"
+    await check_rate_limit(fresh, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{fresh}") <= 30  # expiry from the first call on
