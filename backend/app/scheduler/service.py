@@ -39,7 +39,7 @@ SCHEDULER_CHANNEL = "sinas:scheduler:jobs"
 
 async def _maintain_tool_result_partitions() -> None:
     """Create future partitions and drop expired ones for tool_call_results."""
-    from app.services.tool_result_store import ensure_partitions, cleanup_expired_partitions
+    from app.services.tool_result_store import cleanup_expired_partitions, ensure_partitions
     async with AsyncSessionLocal() as db:
         await ensure_partitions(db)
         dropped = await cleanup_expired_partitions(db)
@@ -341,6 +341,13 @@ async def run(stop_event: asyncio.Event) -> None:
     logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
 
     from app.scheduler.jobs.cleanup_gateway_calls import cleanup_gateway_calls
+
+    # Overdue rows go now: the interval below restarts with the scheduler,
+    # and a deployment that restarts daily would otherwise never reach it.
+    try:
+        await cleanup_gateway_calls()
+    except Exception as e:
+        logger.warning("Gateway audit cleanup at startup failed: %s", e)
 
     scheduler.scheduler.add_job(
         func=cleanup_gateway_calls,

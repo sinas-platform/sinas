@@ -546,6 +546,33 @@ async def test_audit_listing_filters_and_scopes_by_permission(client, db: AsyncS
     # No permission at all: refused.
     nobody = await _user_with(db, "sinas.chats.read:own")
     assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(nobody))).status_code == 403
+    # Malformed filters are a 422, not a server error.
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": "not-a-uuid"})).status_code == 422
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"api_key_id": "nope"})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audit_write_never_fails_the_call(client, db: AsyncSession, admin_user, monkeypatch):
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"na-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "na"}])
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    real_commit = type(db).commit
+
+    async def failing_commit(self):
+        if any(isinstance(o, __import__("app.models.gateway_call", fromlist=["GatewayCall"]).GatewayCall) for o in self.new):
+            self.expire_all()  # what a failed flush does to loaded rows
+            raise RuntimeError("disk full")
+        return await real_commit(self)
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    monkeypatch.setattr(type(db), "commit", failing_commit)
+    out = await _call(client, f"/mcp/{manifest.namespace}/{manifest.name}", auth_headers(admin_user), "tools/call", {"name": "na", "arguments": {}})
+    assert out["result"]["isError"] is False and json.loads(out["result"]["content"][0]["text"]) == {"ok": True}
 
 
 @pytest.mark.asyncio

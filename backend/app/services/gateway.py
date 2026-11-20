@@ -220,11 +220,14 @@ async def record_call(
     from app.models.gateway_call import GatewayCall
 
     key_id = current_api_key_id()
+    # Read off the row before anything can expire it: a failed commit
+    # expires loaded attributes, and the handler below must not touch them.
+    manifest_id, namespace, name = manifest.id, manifest.namespace, manifest.name
     try:
         db.add(GatewayCall(
-            manifest_id=manifest.id,
-            manifest_namespace=manifest.namespace,
-            manifest_name=manifest.name,
+            manifest_id=manifest_id,
+            manifest_namespace=namespace,
+            manifest_name=name,
             user_id=uuid.UUID(str(user_id)),
             api_key_id=uuid.UUID(str(key_id)) if key_id else None,
             tool_name=tool.name,
@@ -236,6 +239,9 @@ async def record_call(
             duration_ms=duration_ms,
         ))
         await db.commit()
-    except Exception as e:  # pragma: no cover - storage trouble
-        logger.warning("Gateway call on %s/%s not recorded: %s", manifest.namespace, manifest.name, e)
-        await db.rollback()
+    except Exception as e:  # storage trouble: the call already ran, its result stands
+        logger.warning("Gateway call on %s/%s not recorded: %s", namespace, name, e)
+        try:
+            await db.rollback()
+        except Exception as rollback_error:  # pragma: no cover - the session is already broken
+            logger.warning("Gateway audit rollback failed: %s", rollback_error)
