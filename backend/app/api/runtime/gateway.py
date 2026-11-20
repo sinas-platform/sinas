@@ -180,25 +180,47 @@ async def _send_json(send, status: int, body: dict[str, Any], headers: dict[str,
     await send({"type": "http.response.body", "body": raw})
 
 
-def _bearer_challenge(scope) -> dict[str, str]:
-    # The resource metadata URL is where an OAuth-capable client would go
-    # next (RFC 9728); served once the OAuth follow-up lands. The header is
-    # the standard way to say "Bearer token required" meanwhile.
-    return {"WWW-Authenticate": 'Bearer realm="sinas-gateway"'}
+def _bearer_challenge(namespace: str, name: str, error: str | None = None) -> dict[str, str]:
+    """RFC 6750 challenge with the RFC 9728 pointer an OAuth-capable client
+    follows to find the authorization server."""
+    from app.services.gateway_auth import header_safe, metadata_url
+
+    value = f'Bearer realm="sinas-gateway", resource_metadata="{metadata_url(namespace, name)}"'
+    if error:
+        # The full message is in the JSON body; the header gets a safe form.
+        value += f', error="invalid_token", error_description="{header_safe(error)}"'
+    return {"WWW-Authenticate": value}
 
 
-async def _authenticate(token: str):
-    """(user_id, email, permissions) for a Bearer API key or access token,
-    through the same verifier every runtime endpoint uses."""
-    from app.core.auth import verify_jwt_or_api_key
+async def _authenticate(token: str, namespace: str, name: str):
+    """(user_id, email, permissions) for a Bearer API key or a Sinas access
+    token, through the verifier every runtime endpoint uses; else for an
+    access token from a configured identity provider (gateway_auth)."""
+    from app.core.auth import create_access_token, get_user_permissions, verify_jwt_or_api_key
+    from app.services import gateway_auth
 
     async with AsyncSessionLocal() as db:
-        return await verify_jwt_or_api_key(
-            credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
-            x_api_key=None,
-            db=db,
-            request=None,
-        )
+        try:
+            user_id, email, permissions = await verify_jwt_or_api_key(
+                credentials=HTTPAuthorizationCredentials(scheme="Bearer", credentials=token),
+                x_api_key=None,
+                db=db,
+                request=None,
+            )
+            return user_id, email, permissions, token
+        except HTTPException as own:
+            if not gateway_auth.looks_like_jwt(token):
+                raise
+            try:
+                user_id, email = await gateway_auth.resolve_bearer(db, token, namespace, name)
+            except gateway_auth.GatewayAuthError as e:
+                raise HTTPException(status_code=401, detail=str(e)) from own
+            # Tools that call back into Sinas (connector steps, functions
+            # using the API) need a credential Sinas itself accepts: the
+            # external token is not one. A short-lived access token for the
+            # resolved user is.
+            downstream = create_access_token(user_id=user_id, email=email)
+            return user_id, email, await get_user_permissions(db, user_id), downstream
 
 
 class GatewayASGI:
@@ -226,12 +248,12 @@ class GatewayASGI:
             if auth.lower().startswith("bearer "):
                 token = auth[7:].strip()
         if not token:
-            await _send_json(send, 401, {"detail": "Missing authorization header"}, _bearer_challenge(scope))
+            await _send_json(send, 401, {"detail": "Missing authorization header"}, _bearer_challenge(namespace, name))
             return
         try:
-            user_id, email, permissions = await _authenticate(token)
+            user_id, email, permissions, downstream_token = await _authenticate(token, namespace, name)
         except HTTPException as e:
-            await _send_json(send, e.status_code, {"detail": e.detail}, _bearer_challenge(scope))
+            await _send_json(send, e.status_code, {"detail": e.detail}, _bearer_challenge(namespace, name, str(e.detail)))
             return
 
         async with AsyncSessionLocal() as db:
@@ -244,7 +266,7 @@ class GatewayASGI:
                 return
             caller = _Caller(
                 manifest_id=str(manifest.id), manifest_ns=namespace, manifest_name=name,
-                user_id=str(user_id), email=email, permissions=permissions, token=token,
+                user_id=str(user_id), email=email, permissions=permissions, token=downstream_token,
             )
 
         reset = _caller.set(caller)

@@ -610,6 +610,171 @@ async def test_retention_drops_old_audit_rows(db: AsyncSession, admin_user, monk
     assert left == [fresh.id]
 
 
+# ------------------------------------------------------------------ OAuth
+
+
+@pytest.mark.asyncio
+async def test_metadata_names_the_identity_providers_and_the_challenge_points_at_it(client, db: AsyncSession, admin_user, monkeypatch):
+    from tests.unit.test_oidc_sso import ISSUER, _provider
+
+    manifest = await _manifest(db, admin_user, [])
+    manifest.description = "Engineering agents"
+    await _provider(db)
+    await db.flush()
+    r = await client.get(f"/.well-known/oauth-protected-resource/mcp/{manifest.namespace}/{manifest.name}")
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    assert doc["resource"].endswith(f"/mcp/{manifest.namespace}/{manifest.name}")
+    assert doc["authorization_servers"] == [ISSUER.rstrip("/")]
+    assert doc["bearer_methods_supported"] == ["header"] and doc["resource_name"] == "Engineering agents"
+    assert (await client.get("/.well-known/oauth-protected-resource/mcp/gw/nope")).status_code == 404
+
+    r = await client.post(f"/mcp/{manifest.namespace}/{manifest.name}", headers=MCP_HEADERS, json=_rpc("tools/list"))
+    assert r.status_code == 401
+    assert 'resource_metadata="' in r.headers["www-authenticate"]
+    assert f"/.well-known/oauth-protected-resource/mcp/{manifest.namespace}/{manifest.name}" in r.headers["www-authenticate"]
+
+
+@pytest.mark.asyncio
+async def test_an_identity_providers_access_token_signs_the_caller_in(client, db: AsyncSession, admin_user, monkeypatch):
+    import time as _time
+
+    import httpx
+
+    from app.core.auth import get_user_by_email
+    from app.services import gateway_auth, sso
+    from app.services.function_tools import FunctionToolConverter
+    from tests.unit.test_oidc_sso import CLIENT_ID, ISSUER, FakeIdP, _provider, _role
+
+    # The fake identity provider the SSO tests use, reached over a mock transport.
+    fake = FakeIdP()
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+
+    fn = await _function(db, admin_user, "tools", f"ext-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "ext"}])
+    role = await _role(db)
+    for key in (f"sinas.manifests/{manifest.namespace}/{manifest.name}.read:all", f"sinas.functions/tools/{fn.name}.execute:all"):
+        db.add(RolePermission(role_id=role.id, permission_key=key, permission_value=True))
+    provider = await _provider(db, auto_provision=True, default_role=role.name)
+    await db.flush()
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    now = int(_time.time())
+    email = f"agent-{_uid()}@acme.example"
+    resource = gateway_auth.resource_url(manifest.namespace, manifest.name)
+
+    def token(**over):
+        claims = {"iss": ISSUER, "aud": resource, "sub": f"sub-{email}", "email": email, "email_verified": True,
+                  "iat": now, "exp": now + 300, **over}
+        return fake.key.sign(claims)
+
+    # A token for this gateway: the user is provisioned with the provider's default role and sees its tools.
+    listed = await _call(client, path, {"Authorization": f"Bearer {token()}"}, "tools/list")
+    assert [t["name"] for t in listed["result"]["tools"]] == ["ext"]
+    user = await get_user_by_email(db, email)
+    assert user is not None
+    out = await _call(client, path, {"Authorization": f"Bearer {token()}"}, "tools/call", {"name": "ext", "arguments": {}})
+    assert out["result"]["isError"] is False
+
+    # The provider's own client id is an acceptable audience for an access
+    # token (typ at+jwt, RFC 9068) — not for an ID token, which carries the
+    # same audience but authorizes a login, not API calls.
+    from jose import jwt as _jwt
+
+    def access_token_for_client(**over):
+        claims = {"iss": ISSUER, "aud": CLIENT_ID, "sub": f"client-{_uid()}", "email": f"c-{_uid()}@acme.example",
+                  "email_verified": True, "iat": now, "exp": now + 300, **over}
+        return _jwt.encode(claims, fake.key.pem, algorithm="RS256", headers={"kid": fake.key.kid, "typ": "at+jwt"})
+
+    assert (await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {access_token_for_client()}"}, json=_rpc("tools/list"))).status_code == 200
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='id-tok', nonce='n1', email=f'id-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "id token" in r.json()["detail"].lower()
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='plain-jwt', email=f'pj-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401  # client-id audience without the access-token type: refused
+
+    # Not for this gateway, expired, or from an unknown issuer: 401 with the reason in the challenge.
+    for bad, reason in (
+        (token(aud="https://elsewhere.example/mcp/x/y", sub="s2", email=f"s2-{_uid()}@acme.example"), "audience"),
+        (token(exp=now - 600, sub="s3", email=f"s3-{_uid()}@acme.example"), "expired"),
+        (token(iss="https://unknown.example", sub="s4", email=f"s4-{_uid()}@acme.example"), "issuer"),
+    ):
+        r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {bad}"}, json=_rpc("tools/list"))
+        assert r.status_code == 401, r.text
+        assert reason in r.headers["www-authenticate"].lower(), r.headers["www-authenticate"]
+
+    # A provider that does not auto-provision refuses strangers.
+    provider.auto_provision = False
+    await db.flush()
+    gateway_auth.clear_cache()
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(sub='s5', email=f'new-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "no Sinas account" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_token_for_one_gateway_does_not_open_another(client, db: AsyncSession, admin_user, monkeypatch):
+    """The resolution cache is per token AND gateway: a token issued for A,
+    accepted there, still fails B's audience check."""
+    import time as _time
+
+    import httpx
+
+    from app.services import gateway_auth, sso
+    from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
+
+    fake = FakeIdP()
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+    a = await _manifest(db, admin_user, [])
+    b = await _manifest(db, admin_user, [])
+    role = await _role(db)
+    db.add(RolePermission(role_id=role.id, permission_key="sinas.manifests/*/*.read:all", permission_value=True))
+    await _provider(db, auto_provision=True, default_role=role.name)
+    await db.flush()
+    now = int(_time.time())
+    token = fake.key.sign({"iss": ISSUER, "aud": gateway_auth.resource_url(a.namespace, a.name), "sub": "cross",
+                           "email": f"cross-{_uid()}@acme.example", "email_verified": True, "iat": now, "exp": now + 300})
+    headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+    assert (await client.post(f"/mcp/{a.namespace}/{a.name}", headers=headers, json=_rpc("tools/list"))).status_code == 200
+    r = await client.post(f"/mcp/{b.namespace}/{b.name}", headers=headers, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "audience" in r.headers["www-authenticate"].lower()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_identity_provider_is_a_401_not_a_500(client, db: AsyncSession, admin_user, monkeypatch):
+    import time as _time
+
+    import httpx
+
+    from app.services import gateway_auth, sso
+    from tests.unit.test_oidc_sso import ISSUER, SigningKey, _provider
+
+    def down(request):
+        return httpx.Response(503, text="maintenance")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(down)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+    manifest = await _manifest(db, admin_user, [])
+    await _provider(db)
+    await db.flush()
+    now = int(_time.time())
+    token = SigningKey("k9").sign({"iss": ISSUER, "aud": gateway_auth.resource_url(manifest.namespace, manifest.name), "sub": "s",
+                                  "email": "x@acme.example", "iat": now, "exp": now + 300})
+    r = await client.post(f"/mcp/{manifest.namespace}/{manifest.name}", headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401, r.text
+    assert "unavailable" in r.headers["www-authenticate"].lower()
+
+
 def test_deployment_limits_are_validated():
     from app.core.config import Settings
 
@@ -661,6 +826,81 @@ async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
 
 
 @pytest.mark.asyncio
+async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatch):
+    """A cached token dies with its provider; a missing email_verified is
+    fetched from userinfo so an existing account can be linked; downstream
+    calls carry a Sinas token, not the external one; the challenge stays a
+    valid header whatever the provider's display name."""
+    import time as _time
+
+    import httpx
+
+    from app.core.auth import decode_access_token
+    from app.services import gateway_auth, sso
+    from app.services.function_tools import FunctionToolConverter
+    from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
+
+    fake = FakeIdP()
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+
+    fn = await _function(db, admin_user, "tools", f"ds-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "ds"}])
+    role = await _role(db)
+    for key in ("sinas.manifests/*/*.read:all", f"sinas.functions/tools/{fn.name}.execute:all"):
+        db.add(RolePermission(role_id=role.id, permission_key=key, permission_value=True))
+    provider = await _provider(db, auto_provision=True, default_role=role.name, display_name='Acme "SSO"')
+    await db.flush()
+    seen = {}
+
+    async def fake_execute(self, db_, tool_name, arguments, user_id, user_token, **k):
+        seen["token"] = user_token
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    now = int(_time.time())
+    resource = gateway_auth.resource_url(manifest.namespace, manifest.name)
+
+    def token(**over):
+        return fake.key.sign({"iss": ISSUER, "aud": resource, "iat": now, "exp": now + 300, **over})
+
+    # Existing account, token without email_verified: userinfo supplies the proof and the account is linked.
+    existing_email = f"linked-{_uid()}@acme.example"
+    existing = User(email=existing_email)
+    db.add(existing)
+    await db.flush()
+    db.add(UserRole(role_id=role.id, user_id=existing.id, active=True))
+    await db.flush()
+    fake.userinfo = {"sub": "link-me", "email": existing_email, "email_verified": True}
+    t = token(sub="link-me", email=existing_email)
+    out = await _call(client, path, {"Authorization": f"Bearer {t}"}, "tools/call", {"name": "ds", "arguments": {}})
+    assert out["result"]["isError"] is False
+    # Downstream, the tool got a Sinas access token for that user, not the external one.
+    assert seen["token"] != t and decode_access_token(seen["token"])["sub"] == str(existing.id)
+
+    # The provider is disabled: the cached token stops working at once.
+    provider.is_active = False
+    await db.flush()
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {t}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "identity provider" in r.json()["detail"]
+    provider.is_active = True
+    await db.flush()
+
+    # A rejection message carrying the provider's quoted name still yields a parseable header.
+    gateway_auth.clear_cache()
+    provider.auto_provision = False
+    await db.flush()
+    fake.userinfo = None
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(sub='stranger', email=f'new-{_uid()}@acme.example', email_verified=True)}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401
+    challenge = r.headers["www-authenticate"]
+    assert 'Acme "SSO"' in r.json()["detail"] or "no Sinas account" in r.json()["detail"]
+    assert challenge.count('"') % 2 == 0 and 'Acme "SSO"' not in challenge
+
+
 async def test_a_counter_without_expiry_is_repaired(_fresh_limits):
     """INCR without its EXPIRE (a dropped connection in between) used to
     leave a counter that never reset; now the expiry travels with the key's
