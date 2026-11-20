@@ -194,7 +194,8 @@ async def test_call_runs_the_resource_as_the_caller_and_records_it(client, db: A
     (row,) = recorded
     assert row["source"] == "gateway" and row["tool_name"] == "sum" and row["user_id"] == str(caller.id)
     assert row["arguments"]["manifest"] == f"{manifest.namespace}/{manifest.name}"
-    assert row["arguments"]["resource"] == f"function:tools/{fn.name}" and row["arguments"]["x"] == 21
+    assert row["arguments"]["resource"] == f"function:tools/{fn.name}"
+    assert row["arguments"]["arguments"] == {"x": 21}  # the caller's own arguments, kept apart from provenance
     assert row["result"] == {"y": 42} and row["tool_call_id"].startswith("gw_")
 
 
@@ -487,3 +488,43 @@ def test_deployment_limits_are_validated():
     with pytest.raises(ValueError):
         Settings(gateway_rate_limit_max_calls=-1)
     assert Settings(gateway_rate_limit_max_calls=0).gateway_rate_limit_max_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
+    """A tool in the catalog is a tool the call will run: pipelines need the
+    `run` permission and `as_tool`; a function that requires approval is
+    not served (the gateway has no one to ask)."""
+    from app.core.auth import get_user_permissions
+    from app.models.pipeline import Pipeline
+
+    gated = await _function(db, admin_user, "tools", f"gated-{_uid()}", requires_approval=True)
+    plain = await _function(db, admin_user, "tools", f"plain-{_uid()}")
+    as_tool = Pipeline(user_id=admin_user.id, namespace="ops", name=f"p-{_uid()}", description="runs", steps=[], as_tool=True,
+                       input_schema={"type": "object", "properties": {}})
+    not_tool = Pipeline(user_id=admin_user.id, namespace="ops", name=f"q-{_uid()}", description="internal", steps=[], as_tool=False,
+                        input_schema={"type": "object", "properties": {}})
+    db.add_all([as_tool, not_tool])
+    await db.flush()
+    manifest = await _manifest(db, admin_user, [
+        {"type": "function", "namespace": "tools", "name": gated.name, "tool_name": "gated"},
+        {"type": "function", "namespace": "tools", "name": plain.name, "tool_name": "plain"},
+        {"type": "pipeline", "namespace": "ops", "name": as_tool.name, "tool_name": "run_p"},
+        {"type": "pipeline", "namespace": "ops", "name": not_tool.name, "tool_name": "run_q"},
+    ])
+    admin_perms = await get_user_permissions(db, str(admin_user.id))
+    assert sorted(t.name for t in await gateway.list_tools(db, manifest, str(admin_user.id), admin_perms)) == ["plain", "run_p"]
+
+    runner = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.run:all")
+    executor = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.execute:all")  # the wrong verb for pipelines
+    from app.core.auth import get_user_permissions as perms
+
+    assert [t.name for t in await gateway.list_tools(db, manifest, str(runner.id), await perms(db, str(runner.id)))] == ["run_p"]
+    assert await gateway.list_tools(db, manifest, str(executor.id), await perms(db, str(executor.id))) == []
+
+    # /status counts a declared-but-unservable tool as missing.
+    from app.services.manifest_validator import validate_manifest_status
+
+    status = await validate_manifest_status(db, manifest, str(admin_user.id), admin_perms)
+    assert status.ready is False
+    assert sorted(r.name for r in status.resources["missing"]) == sorted([gated.name, not_tool.name])

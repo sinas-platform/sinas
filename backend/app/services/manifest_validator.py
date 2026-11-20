@@ -8,16 +8,21 @@ from app.core.permissions import check_permission
 from app.models.agent import Agent
 from app.models.component import Component
 from app.models.connector import Connector
-from app.models.manifest import Manifest
 from app.models.file import Collection
 from app.models.function import Function
+from app.models.manifest import Manifest
 from app.models.mcp_server import McpServer
 from app.models.pipeline import Pipeline
 from app.models.query import Query
 from app.models.skill import Skill
 from app.models.state import State
 from app.models.store import Store
-from app.schemas.manifest import ManifestStatusResponse, PermissionStatus, ResourceStatus, StoreDependencyStatus
+from app.schemas.manifest import (
+    ManifestStatusResponse,
+    PermissionStatus,
+    ResourceStatus,
+    StoreDependencyStatus,
+)
 
 # The resource types a manifest's requiredResources may name -> (model, the
 # config kind it is declared under). One table for both checks of them: the
@@ -46,10 +51,13 @@ RESOURCE_TYPE_MAP = {
 
 
 async def check_required_resources(
-    db: AsyncSession, required_resources: list[dict[str, Any]]
+    db: AsyncSession, required_resources: list[dict[str, Any]], *, usable: bool = False
 ) -> tuple[list[ResourceStatus], list[ResourceStatus]]:
     """(satisfied, missing) for a manifest's requiredResources, as they are
-    now. A type this check doesn't know is reported missing."""
+    now. A type this check doesn't know is reported missing. With `usable`
+    (the gateway's exposed tools) a row must also be one the gateway would
+    serve — active, a pipeline marked as a tool, a function that needs no
+    approval — or it counts as missing, like the gateway drops it."""
     satisfied: list[ResourceStatus] = []
     missing: list[ResourceStatus] = []
     for res_ref in required_resources or []:
@@ -62,6 +70,10 @@ async def check_required_resources(
         if model is not None:
             resource = await model.get_by_name(db, namespace=res_ns, name=res_name)
             status.exists = resource is not None
+            if usable and resource is not None:
+                from app.services.gateway import exposable
+
+                status.exists = exposable(resource)
 
         (satisfied if status.exists else missing).append(status)
     return satisfied, missing
@@ -79,14 +91,20 @@ async def validate_manifest_status(
     Returns a structured status showing which resources exist and which
     permissions the user has.
     """
-    # An exposed tool's resource has to exist like a required one.
+    satisfied, missing = await check_required_resources(db, manifest.required_resources or [])
+    # An exposed tool's resource has to exist like a required one — and be
+    # one the gateway serves (active, exposable), or the status would read
+    # ready while the catalog lacks the tool.
+    declared = list(manifest.required_resources or [])
     exposed = [
         {"type": t.get("type"), "namespace": t.get("namespace", "default"), "name": t.get("name")}
         for t in (manifest.exposed_tools or [])
     ]
-    declared = list(manifest.required_resources or [])
-    declared += [e for e in exposed if e not in declared]
-    satisfied, missing = await check_required_resources(db, declared)
+    exposed = [e for e in exposed if e not in declared]
+    if exposed:
+        ok, gone = await check_required_resources(db, exposed, usable=True)
+        satisfied += ok
+        missing += gone
 
     # Check required permissions
     req_granted: list[str] = []
