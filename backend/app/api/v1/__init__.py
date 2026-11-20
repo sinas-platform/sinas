@@ -25,6 +25,7 @@ from .endpoints import (
     pipelines,
     queries,
     queue,
+    gateway_calls,
     request_logs,
     retention,
     system,
@@ -75,6 +76,7 @@ router.include_router(database_triggers.router)
 # Observability routes
 router.include_router(messages.router)
 router.include_router(request_logs.router)
+router.include_router(gateway_calls.router)
 router.include_router(usage.router)
 
 # System routes

@@ -340,6 +340,18 @@ async def run(stop_event: asyncio.Event) -> None:
     )
     logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
 
+    from app.scheduler.jobs.cleanup_gateway_calls import cleanup_gateway_calls
+
+    scheduler.scheduler.add_job(
+        func=cleanup_gateway_calls,
+        trigger="interval",
+        hours=24,
+        id="system:cleanup_gateway_calls",
+        name="Drop gateway audit rows past retention",
+        replace_existing=True,
+    )
+    logger.info("Registered system job: cleanup_gateway_calls (every 24h)")
+
     # --- Operations metering (managed SaaS, default-off) ---
     if settings.metering_enabled:
         from datetime import UTC as _UTC

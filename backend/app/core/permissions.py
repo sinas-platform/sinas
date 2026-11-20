@@ -364,6 +364,8 @@ DEFAULT_ROLE_PERMISSIONS = {
         "sinas.templates/*/*.send:own": True,  # Send with specific templates
         # Request Logs (non-namespaced)
         "sinas.logs.read:own": True,
+        # Calls made through the MCP gateway (non-namespaced): one's own
+        "sinas.gateway_calls.read:own": True,
         # LLM usage and cost of the user's own calls
         "sinas.usage.read:own": True,
     },

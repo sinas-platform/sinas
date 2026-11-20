@@ -63,6 +63,8 @@ Required when `AUTH_MODE` is `otp` or `password+otp`. Skip entirely for `passwor
 | `RATE_LIMIT_WINDOW_SECONDS` | `900` | Rate limit window (15 minutes) |
 | `GATEWAY_RATE_LIMIT_MAX_CALLS` | `120` | [MCP gateway](/build-resources/mcp-gateway) tool calls per caller per manifest per window; `0` disables. A manifest's `gatewayLimits` overrides it |
 | `GATEWAY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Window for the gateway limit |
+| `GATEWAY_AUDIT_RETENTION_DAYS` | `90` | How long gateway tool calls stay in the audit log (`GET /api/v1/gateway/calls`) |
+| `GATEWAY_AUDIT_RESULT_MAX_CHARS` | `8000` | Result size stored per audited call; larger results are clipped |
 
 ### Client IP behind a reverse proxy
 

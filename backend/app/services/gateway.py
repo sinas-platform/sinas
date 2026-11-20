@@ -14,6 +14,7 @@ nothing; it selects what is on offer.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -30,7 +31,6 @@ from app.models.query import Query
 
 logger = logging.getLogger(__name__)
 
-GATEWAY_SOURCE = "gateway"  # tool_call_results.source for calls made through the gateway
 _UNSAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
 # type -> (model, the chat converters' prefix for the type)
@@ -161,7 +161,6 @@ async def call_tool(
     from app.services.function_tools import FunctionToolConverter
     from app.services.pipeline_tools import PIPELINE_TOOL_PREFIX, PipelineToolConverter
     from app.services.query_tools import QueryToolConverter
-    from app.services.tool_result_store import save_tool_result
 
     started = time.monotonic()
     ref = tool.ref
@@ -189,15 +188,54 @@ async def call_tool(
     if not isinstance(result, dict):
         result = {"result": result}
 
-    await save_tool_result(
-        db,
-        tool_call_id=f"gw_{uuid.uuid4().hex}",
-        tool_name=tool.name,
-        arguments={"manifest": f"{manifest.namespace}/{manifest.name}", "resource": f"{tool.type}:{ref}", **(arguments or {})},
-        result=result,
-        user_id=user_id,
-        chat_id=None,
-        source=GATEWAY_SOURCE,
+    await record_call(
+        db, manifest, tool, user_id=user_id, arguments=arguments, result=result,
         duration_ms=int((time.monotonic() - started) * 1000),
     )
     return result
+
+
+def _clip_result(result: dict[str, Any]) -> dict[str, Any]:
+    """The stored copy of a result: redacted like a request body and clipped
+    to gateway_audit_result_max_chars, with a note of what was left out."""
+    from app.core.config import settings
+    from app.middleware.request_logger import redact_body
+
+    safe = redact_body(result)
+    text = json.dumps(safe, default=str)
+    limit = settings.gateway_audit_result_max_chars
+    if len(text) <= limit:
+        return safe
+    return {"_truncated": True, "_original_size": len(text), "_preview": text[:limit]}
+
+
+async def record_call(
+    db: AsyncSession, manifest: Manifest, tool: GatewayTool, *,
+    user_id: str, arguments: dict[str, Any], result: dict[str, Any], duration_ms: int,
+) -> None:
+    """One audit row per call. Best effort: a failed write is logged, never
+    turned into a failed call (the call already ran)."""
+    from app.core.auth import current_api_key_id
+    from app.middleware.request_logger import redact_body
+    from app.models.gateway_call import GatewayCall
+
+    key_id = current_api_key_id()
+    try:
+        db.add(GatewayCall(
+            manifest_id=manifest.id,
+            manifest_namespace=manifest.namespace,
+            manifest_name=manifest.name,
+            user_id=uuid.UUID(str(user_id)),
+            api_key_id=uuid.UUID(str(key_id)) if key_id else None,
+            tool_name=tool.name,
+            resource_type=tool.type,
+            resource_ref=tool.ref,
+            arguments=redact_body(arguments or {}),
+            result=_clip_result(result if isinstance(result, dict) else {"result": result}),
+            is_error=isinstance(result, dict) and "error" in result,
+            duration_ms=duration_ms,
+        ))
+        await db.commit()
+    except Exception as e:  # pragma: no cover - storage trouble
+        logger.warning("Gateway call on %s/%s not recorded: %s", manifest.namespace, manifest.name, e)
+        await db.rollback()
