@@ -139,6 +139,11 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "actions": ["read"],
     },
     {
+        "resource": "gateway_calls",
+        "description": "Tool calls made through the MCP gateway (audit log)",
+        "actions": ["read"],
+    },
+    {
         "resource": "database_connections",
         "description": "External database connections",
         "actions": ["create", "read", "update", "delete", "schema", "schema_destroy", "data"],

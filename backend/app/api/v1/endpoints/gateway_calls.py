@@ -22,16 +22,16 @@ from app.schemas.gateway_call import GatewayCallListResponse, GatewayCallRespons
 router = APIRouter(prefix="/gateway/calls", tags=["gateway"])
 
 
-def _scope(request: Request, permissions: dict[str, bool], current_user_id: str, user_id: str | None) -> str | None:
+def _scope(request: Request, permissions: dict[str, bool], current_user_id: str, user_id: uuid.UUID | None) -> str | None:
     """The user the listing is restricted to, or None for all."""
     if check_permission(permissions, "sinas.gateway_calls.read:all"):
         set_permission_used(request, "sinas.gateway_calls.read:all")
-        return user_id
+        return str(user_id) if user_id else None
     if not check_permission(permissions, "sinas.gateway_calls.read:own"):
         set_permission_used(request, "sinas.gateway_calls.read:own", has_perm=False)
         raise HTTPException(status_code=403, detail="Not authorized to read gateway calls")
     set_permission_used(request, "sinas.gateway_calls.read:own")
-    if user_id and user_id != current_user_id:
+    if user_id and str(user_id) != str(current_user_id):
         raise HTTPException(status_code=403, detail="You can only view your own gateway calls")
     return current_user_id
 
@@ -40,8 +40,8 @@ def _scope(request: Request, permissions: dict[str, bool], current_user_id: str,
 async def list_gateway_calls(
     request: Request,
     manifest: str | None = Query(None, description="namespace/name of the gateway"),
-    user_id: str | None = Query(None),
-    api_key_id: str | None = Query(None),
+    user_id: uuid.UUID | None = Query(None),
+    api_key_id: uuid.UUID | None = Query(None),
     tool: str | None = Query(None, description="Tool name as the agent called it"),
     resource: str | None = Query(None, description="namespace/name of the underlying resource"),
     is_error: bool | None = Query(None),
@@ -64,10 +64,7 @@ async def list_gateway_calls(
         ns, name = manifest.split("/", 1)
         conditions += [GatewayCall.manifest_namespace == ns, GatewayCall.manifest_name == name]
     if api_key_id:
-        try:
-            conditions.append(GatewayCall.api_key_id == uuid.UUID(api_key_id))
-        except ValueError:
-            raise HTTPException(status_code=422, detail="api_key_id must be a UUID") from None
+        conditions.append(GatewayCall.api_key_id == api_key_id)
     if tool:
         conditions.append(GatewayCall.tool_name == tool)
     if resource:

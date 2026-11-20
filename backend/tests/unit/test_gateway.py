@@ -453,6 +453,13 @@ async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_
     r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {"max_calls": 7, "window_seconds": 10}})
     assert r.status_code == 200 and r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
 
+    # An explicit null clears the override (back to the deployment default); an omitted field keeps it.
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"description": "kept"})
+    assert r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": None})
+    assert r.status_code == 200 and r.json()["gateway_limits"] is None
+    assert (await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {}})).status_code == 422
+
     cfg_name = f"cfg-{_uid()}"
     config = SinasConfig.model_validate({
         "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
@@ -546,6 +553,33 @@ async def test_audit_listing_filters_and_scopes_by_permission(client, db: AsyncS
     # No permission at all: refused.
     nobody = await _user_with(db, "sinas.chats.read:own")
     assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(nobody))).status_code == 403
+    # Malformed filters are a 422, not a server error.
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": "not-a-uuid"})).status_code == 422
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"api_key_id": "nope"})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audit_write_never_fails_the_call(client, db: AsyncSession, admin_user, monkeypatch):
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"na-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "na"}])
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    real_commit = type(db).commit
+
+    async def failing_commit(self):
+        if any(isinstance(o, __import__("app.models.gateway_call", fromlist=["GatewayCall"]).GatewayCall) for o in self.new):
+            self.expire_all()  # what a failed flush does to loaded rows
+            raise RuntimeError("disk full")
+        return await real_commit(self)
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    monkeypatch.setattr(type(db), "commit", failing_commit)
+    out = await _call(client, f"/mcp/{manifest.namespace}/{manifest.name}", auth_headers(admin_user), "tools/call", {"name": "na", "arguments": {}})
+    assert out["result"]["isError"] is False and json.loads(out["result"]["content"][0]["text"]) == {"ok": True}
 
 
 @pytest.mark.asyncio
@@ -726,3 +760,53 @@ async def test_an_unreachable_identity_provider_is_a_401_not_a_500(client, db: A
     r = await client.post(f"/mcp/{manifest.namespace}/{manifest.name}", headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"}, json=_rpc("tools/list"))
     assert r.status_code == 401, r.text
     assert "unavailable" in r.headers["www-authenticate"].lower()
+
+
+def test_deployment_limits_are_validated():
+    from app.core.config import Settings
+
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_window_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_max_calls=-1)
+    assert Settings(gateway_rate_limit_max_calls=0).gateway_rate_limit_max_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
+    """A tool in the catalog is a tool the call will run: pipelines need the
+    `run` permission and `as_tool`; a function that requires approval is
+    not served (the gateway has no one to ask)."""
+    from app.core.auth import get_user_permissions
+    from app.models.pipeline import Pipeline
+
+    gated = await _function(db, admin_user, "tools", f"gated-{_uid()}", requires_approval=True)
+    plain = await _function(db, admin_user, "tools", f"plain-{_uid()}")
+    as_tool = Pipeline(user_id=admin_user.id, namespace="ops", name=f"p-{_uid()}", description="runs", steps=[], as_tool=True,
+                       input_schema={"type": "object", "properties": {}})
+    not_tool = Pipeline(user_id=admin_user.id, namespace="ops", name=f"q-{_uid()}", description="internal", steps=[], as_tool=False,
+                        input_schema={"type": "object", "properties": {}})
+    db.add_all([as_tool, not_tool])
+    await db.flush()
+    manifest = await _manifest(db, admin_user, [
+        {"type": "function", "namespace": "tools", "name": gated.name, "tool_name": "gated"},
+        {"type": "function", "namespace": "tools", "name": plain.name, "tool_name": "plain"},
+        {"type": "pipeline", "namespace": "ops", "name": as_tool.name, "tool_name": "run_p"},
+        {"type": "pipeline", "namespace": "ops", "name": not_tool.name, "tool_name": "run_q"},
+    ])
+    admin_perms = await get_user_permissions(db, str(admin_user.id))
+    assert sorted(t.name for t in await gateway.list_tools(db, manifest, str(admin_user.id), admin_perms)) == ["plain", "run_p"]
+
+    runner = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.run:all")
+    executor = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.execute:all")  # the wrong verb for pipelines
+    from app.core.auth import get_user_permissions as perms
+
+    assert [t.name for t in await gateway.list_tools(db, manifest, str(runner.id), await perms(db, str(runner.id)))] == ["run_p"]
+    assert await gateway.list_tools(db, manifest, str(executor.id), await perms(db, str(executor.id))) == []
+
+    # /status counts a declared-but-unservable tool as missing.
+    from app.services.manifest_validator import validate_manifest_status
+
+    status = await validate_manifest_status(db, manifest, str(admin_user.id), admin_perms)
+    assert status.ready is False
+    assert sorted(r.name for r in status.resources["missing"]) == sorted([gated.name, not_tool.name])
