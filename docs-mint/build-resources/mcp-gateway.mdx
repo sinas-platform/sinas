@@ -54,11 +54,13 @@ spec:
 
 The tool's input schema is the resource's `inputSchema`; a function's or query's `outputSchema` is published as the tool's output schema and the result is returned as structured content as well as text.
 
-A resource that is deleted or deactivated later drops out of the catalog; the manifest keeps declaring it and `GET /manifests/{namespace}/{name}/status` reports it under missing resources.
+A resource that is deleted or deactivated later drops out of the catalog; the manifest keeps declaring it and `/status` reports it under missing resources.
 
 ## Who sees what
 
-The manifest selects what is on offer; the caller's own permissions decide what they get. `tools/list` returns only the exposed tools whose resource the caller may execute (`sinas.functions/{ns}/{name}.execute`, `sinas.queries/...execute`, `sinas.pipelines/...execute`, by name, namespace or wildcard), and a call to anything else answers "unknown tool". Two callers of the same gateway can see different catalogs.
+The manifest selects what is on offer; the caller's own permissions decide what they get. `tools/list` returns only the exposed tools whose resource the caller may run — the same permission the tool call itself checks: `sinas.functions/{ns}/{name}.execute`, `sinas.queries/{ns}/{name}.execute`, `sinas.pipelines/{ns}/{name}.run`, by name, namespace or wildcard. A call to anything else answers "unknown tool". Two callers of the same gateway can see different catalogs.
+
+Some resources are never served, whatever the manifest declares: inactive ones, pipelines without `asTool`, and functions with `requiresApproval` (the gateway has no one to ask, so until it supports approvals such a function is left out rather than run unapproved). `GET /manifests/{namespace}/{name}/status` reports them under missing resources.
 
 For external agents the natural credential is a [scoped API key](/admin/users-roles#api-keys): give it the manifest's `read` permission plus the `execute` permissions of the tools that client may use, and nothing else. The key's permissions are evaluated live, so revoking or narrowing it takes effect on the next call.
 

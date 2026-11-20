@@ -33,8 +33,9 @@ logger = logging.getLogger(__name__)
 GATEWAY_SOURCE = "gateway"  # tool_call_results.source for calls made through the gateway
 _UNSAFE = re.compile(r"[^a-zA-Z0-9_-]")
 
-# type -> (model, the chat converters' prefix for the type)
+# type -> (model, the permission action the chat converters check before running one)
 _MODELS = {"function": Function, "query": Query, "pipeline": Pipeline}
+_ACTIONS = {"function": "execute", "query": "execute", "pipeline": "run"}
 
 
 def default_tool_name(namespace: str, name: str) -> str:
@@ -57,6 +58,20 @@ class GatewayTool:
         return f"{self.namespace}/{self.resource}"
 
 
+def exposable(row: Any) -> bool:
+    """Whether the gateway may serve this resource now. Inactive rows are
+    out; so is a pipeline not marked as a tool (its runner refuses those);
+    so is a function that requires approval — the gateway has no one to
+    ask, so refusing is the only honest answer until it does."""
+    if getattr(row, "is_active", True) is False:
+        return False
+    if isinstance(row, Pipeline) and not row.as_tool:
+        return False
+    if isinstance(row, Function) and row.requires_approval:
+        return False
+    return True
+
+
 def _object_schema(schema: Any) -> dict[str, Any]:
     if isinstance(schema, dict) and schema.get("type") == "object":
         return schema
@@ -77,11 +92,13 @@ async def list_tools(
             continue
         namespace, name = entry.get("namespace", "default"), entry.get("name", "")
         row = await model.get_by_name(db, namespace=namespace, name=name)
-        if row is None or getattr(row, "is_active", True) is False:
-            logger.info("Gateway %s/%s: exposed %s %s/%s is missing or inactive",
+        if row is None or not exposable(row):
+            logger.info("Gateway %s/%s: exposed %s %s/%s is missing, inactive or not exposable",
                         manifest.namespace, manifest.name, entry.get("type"), namespace, name)
             continue
-        if not row.can_user_access(str(user_id), permissions, "execute"):
+        # The same permission the converter checks before running it: a tool
+        # in the catalog is a tool the call will run.
+        if not row.can_user_access(str(user_id), permissions, _ACTIONS[entry["type"]]):
             continue
         tool_name = entry.get("tool_name") or default_tool_name(namespace, name)
         if tool_name in taken:
@@ -155,7 +172,9 @@ async def call_tool(
         db,
         tool_call_id=f"gw_{uuid.uuid4().hex}",
         tool_name=tool.name,
-        arguments={"manifest": f"{manifest.namespace}/{manifest.name}", "resource": f"{tool.type}:{ref}", **(arguments or {})},
+        # Provenance kept apart from the caller's own arguments, which could
+        # otherwise carry a "manifest" or "resource" of their own.
+        arguments={"manifest": f"{manifest.namespace}/{manifest.name}", "resource": f"{tool.type}:{ref}", "arguments": arguments or {}},
         result=result,
         user_id=user_id,
         chat_id=None,
