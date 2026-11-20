@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     rate_limit_otp_ip_max: int = 10  # Max OTP verify requests per IP per window
     rate_limit_setup_link_ip_max: int = 10  # Max setup-link exchange/complete requests per IP per window
     rate_limit_window_seconds: int = 900  # Rate limit window (15 minutes)
+    # MCP gateway (POST /mcp/{ns}/{name}): tool calls per caller (API key, or
+    # user) per manifest, per window. A manifest's gatewayLimits overrides;
+    # 0 max calls disables the limit.
+    gateway_rate_limit_max_calls: int = 120
+    gateway_rate_limit_window_seconds: int = 60
 
     # SMTP Configuration (for sending emails)
     smtp_host: Optional[str] = None

@@ -61,6 +61,8 @@ Required when `AUTH_MODE` is `otp` or `password+otp`. Skip entirely for `passwor
 | `RATE_LIMIT_OTP_IP_MAX` | `10` | Max OTP verify requests per IP per window |
 | `RATE_LIMIT_SETUP_LINK_IP_MAX` | `10` | Max setup-link exchange (and, separately, complete) requests per IP per window |
 | `RATE_LIMIT_WINDOW_SECONDS` | `900` | Rate limit window (15 minutes) |
+| `GATEWAY_RATE_LIMIT_MAX_CALLS` | `120` | [MCP gateway](/build-resources/mcp-gateway) tool calls per caller per manifest per window; `0` disables. A manifest's `gatewayLimits` overrides it |
+| `GATEWAY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Window for the gateway limit |
 
 ### Client IP behind a reverse proxy
 

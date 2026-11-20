@@ -108,6 +108,44 @@ async def list_tools(
     return tools
 
 
+class RateLimitedError(Exception):
+    def __init__(self, max_calls: int, window_seconds: int, retry_after: int):
+        super().__init__(
+            f"Rate limit exceeded: {max_calls} calls per {window_seconds}s for this caller; "
+            f"retry after {retry_after}s"
+        )
+        self.max_calls, self.window_seconds, self.retry_after = max_calls, window_seconds, retry_after
+
+
+def effective_limits(manifest: Manifest) -> tuple[int, int]:
+    """(max_calls, window_seconds) for the manifest: its own, else the
+    deployment default. max_calls 0 means no limit."""
+    from app.core.config import settings
+
+    limits = manifest.gateway_limits or {}
+    max_calls = limits.get("max_calls", settings.gateway_rate_limit_max_calls)
+    window = limits.get("window_seconds", settings.gateway_rate_limit_window_seconds)
+    return int(max_calls), int(window)
+
+
+async def enforce_rate_limit(manifest: Manifest, caller_key: str) -> None:
+    """One counter per manifest and caller (an API key, else the user), a
+    fixed window in Redis. Raises RateLimitedError past the cap. Redis being
+    unreachable fails the call rather than opening the gate."""
+    from fastapi import HTTPException
+
+    from app.core.rate_limit import check_rate_limit
+
+    max_calls, window = effective_limits(manifest)
+    if max_calls <= 0:
+        return
+    try:
+        await check_rate_limit(f"gateway:{manifest.id}:{caller_key}", max_calls, window)
+    except HTTPException as e:
+        retry_after = int((e.headers or {}).get("Retry-After", window))
+        raise RateLimitedError(max_calls, window, retry_after) from None
+
+
 async def call_tool(
     db: AsyncSession,
     manifest: Manifest,

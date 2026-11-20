@@ -64,6 +64,19 @@ For external agents the natural credential is a [scoped API key](/admin/users-ro
 
 Calls run exactly as an agent's tool call would: a query receives the caller's `:user_id`, `:user_email` and custom fields for row-level security, a function runs through the executor with the caller's token, a pipeline runs inline. Every call is recorded in the tool result store with `source: gateway`, the manifest, the resource and the arguments, and the HTTP request itself is in the request log with credentials redacted.
 
+## Rate limits
+
+Tool calls are counted per manifest and per caller (an API key is its own caller; a user token counts per user) in a fixed window. The deployment default is `GATEWAY_RATE_LIMIT_MAX_CALLS` (120) per `GATEWAY_RATE_LIMIT_WINDOW_SECONDS` (60); a manifest overrides it:
+
+```yaml
+  manifests:
+    - namespace: hub
+      name: agents
+      gatewayLimits: { maxCalls: 600, windowSeconds: 60 }   # maxCalls: 0 disables the limit
+```
+
+Past the cap, `tools/call` answers a JSON-RPC error (code `-32029`) whose message says when to retry and whose `data.retry_after_seconds` carries the number. `tools/list` is not counted.
+
 ## Composing a tool
 
 A tool that must read, interpret and write in one go is a [pipeline](/build-resources/pipelines) with an agent step, exposed as one tool. That keeps the sequence on the server, where the gateway can enforce it, instead of relying on the calling agent to make the calls in order.

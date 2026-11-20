@@ -419,6 +419,13 @@ class ExposedToolConfig(BaseModel):
     description: Optional[str] = Field(default=None, description="Overrides the resource's description for the agent")
 
 
+class GatewayLimitsConfig(BaseModel):
+    """Per-caller rate limit on the manifest's gateway tool calls."""
+
+    maxCalls: int = Field(..., ge=0, description="Calls per caller per window; 0 disables")
+    windowSeconds: int = Field(default=60, ge=1, le=86400)
+
+
 class ManifestConfig(BaseModel):
     """Manifest registration configuration"""
 
@@ -437,6 +444,8 @@ class ManifestConfig(BaseModel):
     # Served to external agents on POST /mcp/{namespace}/{name}; each caller
     # sees only what their permissions allow. Nothing is exposed by default.
     exposedTools: list[ExposedToolConfig] = Field(default_factory=list)
+    # Unset: the deployment's GATEWAY_RATE_LIMIT_* defaults apply.
+    gatewayLimits: Optional[GatewayLimitsConfig] = None
     # Unset: a new manifest is active, an existing one keeps its state.
     isActive: Optional[bool] = None
 

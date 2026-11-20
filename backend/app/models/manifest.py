@@ -42,6 +42,9 @@ class Manifest(Base, PermissionMixin):
     # "pipeline", "namespace": ..., "name": ..., "tool_name": ..., "description": ...}].
     # Each caller sees only the entries their own permissions allow.
     exposed_tools = Column(JSON, nullable=False, default=list)
+    # Per-caller rate limit on gateway tool calls: {"max_calls": n,
+    # "window_seconds": s}. None: the deployment default applies.
+    gateway_limits = Column(JSON, nullable=True)
 
     # Values this manifest publishes on the unauthenticated GET /info, under
     # services[<namespace>], so clients can discover the app and, for example,
