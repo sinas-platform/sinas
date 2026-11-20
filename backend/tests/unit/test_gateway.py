@@ -658,3 +658,26 @@ async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
     status = await validate_manifest_status(db, manifest, str(admin_user.id), admin_perms)
     assert status.ready is False
     assert sorted(r.name for r in status.resources["missing"]) == sorted([gated.name, not_tool.name])
+
+
+@pytest.mark.asyncio
+async def test_a_counter_without_expiry_is_repaired(_fresh_limits):
+    """INCR without its EXPIRE (a dropped connection in between) used to
+    leave a counter that never reset; now the expiry travels with the key's
+    creation, and a stray counter is given one."""
+    from fastapi import HTTPException
+
+    from app.core.rate_limit import check_rate_limit
+    from app.core.redis import get_redis
+
+    redis = await get_redis()
+    key = f"gateway:test:{_uid()}"
+    await redis.set(f"sinas:ratelimit:{key}", 5)  # at the cap, no TTL: the stuck shape
+    assert await redis.ttl(f"sinas:ratelimit:{key}") == -1
+    with pytest.raises(HTTPException) as refused:
+        await check_rate_limit(key, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{key}") <= 30  # repaired: it will reset
+    assert 0 < int(refused.value.headers["Retry-After"]) <= 30
+    fresh = f"gateway:test:{_uid()}"
+    await check_rate_limit(fresh, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{fresh}") <= 30  # expiry from the first call on
