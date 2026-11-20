@@ -459,6 +459,13 @@ async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_
     r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {"max_calls": 7, "window_seconds": 10}})
     assert r.status_code == 200 and r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
 
+    # An explicit null clears the override (back to the deployment default); an omitted field keeps it.
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"description": "kept"})
+    assert r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": None})
+    assert r.status_code == 200 and r.json()["gateway_limits"] is None
+    assert (await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {}})).status_code == 422
+
     cfg_name = f"cfg-{_uid()}"
     config = SinasConfig.model_validate({
         "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
@@ -470,3 +477,13 @@ async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_
     row = await Manifest.get_by_name(db, "gw", cfg_name)
     assert row.gateway_limits == {"max_calls": 0, "window_seconds": 60}
     assert gateway.effective_limits(row) == (0, 60)
+
+
+def test_deployment_limits_are_validated():
+    from app.core.config import Settings
+
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_window_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_max_calls=-1)
+    assert Settings(gateway_rate_limit_max_calls=0).gateway_rate_limit_max_calls == 0
