@@ -7,6 +7,7 @@ import json
 import uuid
 
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.runtime import gateway as gateway_endpoint
@@ -363,6 +364,132 @@ async def test_a_real_mcp_client_can_list_and_call(app, db: AsyncSession, admin_
         assert json.loads(result.content[0].text) == {"echo": {"x": 1}}
 
 
+# ------------------------------------------------------------- rate limits
+
+
+@pytest_asyncio.fixture
+async def _fresh_limits():
+    """Rate-limit counters live in Redis across tests: clear the gateway's."""
+    from app.core.redis import get_redis
+
+    redis = await get_redis()
+    async for key in redis.scan_iter("sinas:ratelimit:gateway:*"):
+        await redis.delete(key)
+    yield
+
+
+@pytest.mark.asyncio
+async def test_calls_past_the_manifests_limit_are_refused_with_a_retry_hint(client, db: AsyncSession, admin_user, monkeypatch, _fresh_limits):
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"lim-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "lim"}])
+    manifest.gateway_limits = {"max_calls": 2, "window_seconds": 60}
+    await db.flush()
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    headers = auth_headers(admin_user)
+    for _ in range(2):
+        out = await _call(client, path, headers, "tools/call", {"name": "lim", "arguments": {}})
+        assert out["result"]["isError"] is False
+    out = await _call(client, path, headers, "tools/call", {"name": "lim", "arguments": {}})
+    assert out["error"]["code"] == gateway_endpoint.RATE_LIMITED
+    assert "2 calls per 60s" in out["error"]["message"]
+    assert 0 < out["error"]["data"]["retry_after_seconds"] <= 60
+    # Listing is never counted.
+    listed = await _call(client, path, headers, "tools/list")
+    assert [t["name"] for t in listed["result"]["tools"]] == ["lim"]
+
+
+@pytest.mark.asyncio
+async def test_each_api_key_is_its_own_caller_and_zero_disables(client, db: AsyncSession, admin_user, monkeypatch, _fresh_limits):
+    from app.core.config import settings
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"keys-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "k"}])
+    monkeypatch.setattr(settings, "gateway_rate_limit_max_calls", 1)  # the deployment default applies: no manifest override
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    perms = {
+        f"sinas.manifests/{manifest.namespace}/{manifest.name}.read:all": True,
+        f"sinas.functions/tools/{fn.name}.execute:all": True,
+    }
+    _, key_a = await create_api_key(db, admin_user, f"a-{_uid()}", perms)
+    _, key_b = await create_api_key(db, admin_user, f"b-{_uid()}", perms)
+    await db.flush()
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    call = {"name": "k", "arguments": {}}
+    assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["result"]["isError"] is False
+    assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["error"]["code"] == gateway_endpoint.RATE_LIMITED
+    # Same user, other key: its own budget.
+    assert (await _call(client, path, {"X-API-Key": key_b}, "tools/call", call))["result"]["isError"] is False
+
+    manifest.gateway_limits = {"max_calls": 0, "window_seconds": 60}
+    await db.flush()
+    for _ in range(3):
+        assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["result"]["isError"] is False
+
+
+def test_limits_declare_and_export():
+    spec = ManifestSpec(name="x", gatewayLimits={"maxCalls": 10})
+    assert spec.gateway_limits.window_seconds == 60
+    assert ManifestSpec(name="x", gateway_limits={"max_calls": 10, "window_seconds": 5}).to_config()["gatewayLimits"] == {"maxCalls": 10, "windowSeconds": 5}
+    assert "gatewayLimits" not in ManifestSpec(name="plain").to_config()
+    with pytest.raises(ValueError):
+        ManifestSpec(name="bad", gatewayLimits={"maxCalls": -1})
+
+
+@pytest.mark.asyncio
+async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_user):
+    from app.schemas.config import SinasConfig
+    from app.services.config_apply.service import ConfigApplyService
+
+    headers = auth_headers(admin_user)
+    name = f"lim-{_uid()}"
+    r = await client.post("/api/v1/manifests", headers=headers, json={"namespace": "gw", "name": name, "gateway_limits": {"max_calls": 5}})
+    assert r.status_code == 201, r.text
+    assert r.json()["gateway_limits"] == {"max_calls": 5, "window_seconds": 60}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {"max_calls": 7, "window_seconds": 10}})
+    assert r.status_code == 200 and r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
+
+    # An explicit null clears the override (back to the deployment default); an omitted field keeps it.
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"description": "kept"})
+    assert r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": None})
+    assert r.status_code == 200 and r.json()["gateway_limits"] is None
+    assert (await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {}})).status_code == 422
+
+    cfg_name = f"cfg-{_uid()}"
+    config = SinasConfig.model_validate({
+        "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
+        "spec": {"manifests": [{"namespace": "gw", "name": cfg_name, "gatewayLimits": {"maxCalls": 0}}]},
+    })
+    svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id), managed_by="config", auto_commit=False)
+    result = await svc.apply_config(config)
+    assert result.success, result.errors
+    row = await Manifest.get_by_name(db, "gw", cfg_name)
+    assert row.gateway_limits == {"max_calls": 0, "window_seconds": 60}
+    assert gateway.effective_limits(row) == (0, 60)
+
+
+def test_deployment_limits_are_validated():
+    from app.core.config import Settings
+
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_window_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(gateway_rate_limit_max_calls=-1)
+    assert Settings(gateway_rate_limit_max_calls=0).gateway_rate_limit_max_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
     """A tool in the catalog is a tool the call will run: pipelines need the
@@ -401,3 +528,26 @@ async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
     status = await validate_manifest_status(db, manifest, str(admin_user.id), admin_perms)
     assert status.ready is False
     assert sorted(r.name for r in status.resources["missing"]) == sorted([gated.name, not_tool.name])
+
+
+@pytest.mark.asyncio
+async def test_a_counter_without_expiry_is_repaired(_fresh_limits):
+    """INCR without its EXPIRE (a dropped connection in between) used to
+    leave a counter that never reset; now the expiry travels with the key's
+    creation, and a stray counter is given one."""
+    from fastapi import HTTPException
+
+    from app.core.rate_limit import check_rate_limit
+    from app.core.redis import get_redis
+
+    redis = await get_redis()
+    key = f"gateway:test:{_uid()}"
+    await redis.set(f"sinas:ratelimit:{key}", 5)  # at the cap, no TTL: the stuck shape
+    assert await redis.ttl(f"sinas:ratelimit:{key}") == -1
+    with pytest.raises(HTTPException) as refused:
+        await check_rate_limit(key, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{key}") <= 30  # repaired: it will reset
+    assert 0 < int(refused.value.headers["Retry-After"]) <= 30
+    fresh = f"gateway:test:{_uid()}"
+    await check_rate_limit(fresh, 5, 30)
+    assert 0 < await redis.ttl(f"sinas:ratelimit:{fresh}") <= 30  # expiry from the first call on

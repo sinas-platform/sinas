@@ -1,8 +1,7 @@
 import json
 import os
-from typing import Optional
 
-from pydantic import ValidationInfo, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 VALID_AUTH_MODES = {"otp", "password", "password+otp"}
@@ -10,7 +9,7 @@ VALID_AUTH_MODES = {"otp", "password", "password+otp"}
 
 class Settings(BaseSettings):
     # Database - can be set as full URL or individual components
-    database_url: Optional[str] = None
+    database_url: str | None = None
     database_user: str = "postgres"
     database_password: str = "password"
     database_host: str = "localhost"
@@ -18,7 +17,7 @@ class Settings(BaseSettings):
     database_name: str = "sinas"
 
     # Direct postgres connection (bypasses pgbouncer, used for migrations)
-    database_direct_host: Optional[str] = None
+    database_direct_host: str | None = None
 
     @property
     def get_database_url(self) -> str:
@@ -78,7 +77,7 @@ class Settings(BaseSettings):
     # - Unset / empty: callback feature disabled (request with callback_url → 400)
     # - "*": permissive — any HTTPS non-private URL accepted
     # - Comma-separated host list: exact-host allowlist (e.g. "app1.example.com,app2.example.com")
-    callback_url_hosts: Optional[str] = None
+    callback_url_hosts: str | None = None
 
     # Cap on batch-submission size (function and agent batches). Prevents
     # accidental DoS-by-batch via the bulk-enqueue endpoints.
@@ -94,13 +93,18 @@ class Settings(BaseSettings):
     rate_limit_otp_ip_max: int = 10  # Max OTP verify requests per IP per window
     rate_limit_setup_link_ip_max: int = 10  # Max setup-link exchange/complete requests per IP per window
     rate_limit_window_seconds: int = 900  # Rate limit window (15 minutes)
+    # MCP gateway (POST /mcp/{ns}/{name}): tool calls per caller (API key, or
+    # user) per manifest, per window. A manifest's gatewayLimits overrides;
+    # 0 max calls disables the limit.
+    gateway_rate_limit_max_calls: int = Field(default=120, ge=0)
+    gateway_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86400)
 
     # SMTP Configuration (for sending emails)
-    smtp_host: Optional[str] = None
+    smtp_host: str | None = None
     smtp_port: int = 587
-    smtp_user: Optional[str] = None
-    smtp_password: Optional[str] = None
-    smtp_domain: Optional[str] = None  # Used for "from" email: login@{smtp_domain}
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_domain: str | None = None  # Used for "from" email: login@{smtp_domain}
 
     # SMTP Server Configuration (for receiving emails)
     smtp_server_host: str = "0.0.0.0"
@@ -195,7 +199,7 @@ class Settings(BaseSettings):
     # silently exhausting the shared worker pool and deadlocking. Defaults to
     # `default_worker_count` (None = auto) so a full chain always fits the pool
     # (depth <= workers); set an explicit value to override, or 0 to disable.
-    max_execution_depth: Optional[int] = None
+    max_execution_depth: int | None = None
     # Reserve N shared-worker slots that only NESTED executions (depth > 0) may
     # use, so a parent blocked on a child never starves the pool (the nested-
     # call deadlock). 0 = disabled (no admission control; default — no behaviour
@@ -234,7 +238,7 @@ class Settings(BaseSettings):
 
     # Package management
     allow_package_installation: bool = True
-    allowed_packages: Optional[str] = None  # Comma-separated whitelist, None = all allowed
+    allowed_packages: str | None = None  # Comma-separated whitelist, None = all allowed
 
     # Database pool
     db_pool_size: int = 20  # Connection pool size
@@ -351,14 +355,14 @@ class Settings(BaseSettings):
     # MinIO, R2). Sinas only ever calls PutObject. Credentials unset = the
     # standard AWS chain (env, web identity / IRSA, ECS / EKS pod identity,
     # instance metadata).
-    chat_archive_s3_bucket: Optional[str] = None
+    chat_archive_s3_bucket: str | None = None
     chat_archive_s3_prefix: str = "sinas/chats"
-    chat_archive_s3_endpoint_url: Optional[str] = None  # unset = AWS S3
-    chat_archive_s3_region: Optional[str] = None
-    chat_archive_s3_access_key_id: Optional[str] = None
-    chat_archive_s3_secret_access_key: Optional[str] = None
-    chat_archive_s3_session_token: Optional[str] = None
-    chat_archive_s3_kms_key_id: Optional[str] = None  # set = SSE-KMS with this key
+    chat_archive_s3_endpoint_url: str | None = None  # unset = AWS S3
+    chat_archive_s3_region: str | None = None
+    chat_archive_s3_access_key_id: str | None = None
+    chat_archive_s3_secret_access_key: str | None = None
+    chat_archive_s3_session_token: str | None = None
+    chat_archive_s3_kms_key_id: str | None = None  # set = SSE-KMS with this key
     chat_archive_s3_addressing_style: str = "auto"  # auto | path | virtual
     chat_archive_s3_timeout_seconds: int = 60
 
@@ -393,7 +397,7 @@ class Settings(BaseSettings):
     # Optional deployment-wide content filter ("namespace/name" of a Function)
     # applied to workbench file uploads, mirroring collection content filters
     # (e.g. the sensitive-image filter). Unset = uploads are not filtered.
-    workbench_content_filter_function: Optional[str] = None
+    workbench_content_filter_function: str | None = None
     # How long an upload waits for its content filter (a collection's
     # content_filter_function, or the workbench filter above) to answer,
     # time spent queued for a worker included. On expiry the upload is
@@ -509,9 +513,9 @@ class Settings(BaseSettings):
     # last good copy kept in the database). Where several are set, inline
     # JSON wins over the file, the file over the URL. None set and no
     # provider pricing: calls are recorded unpriced.
-    model_prices_file: Optional[str] = None
-    model_prices_json: Optional[str] = None
-    model_prices_url: Optional[str] = None
+    model_prices_file: str | None = None
+    model_prices_json: str | None = None
+    model_prices_url: str | None = None
     model_prices_refresh_hours: int = 24
     model_prices_timeout_seconds: int = 30
     model_prices_max_bytes: int = 16 * 1024 * 1024
@@ -520,24 +524,24 @@ class Settings(BaseSettings):
     # chat takes a snapshot of when it is created; every LLM call in the chat
     # is attributed by that snapshot ({{attribution.<key>}} in a provider's
     # header templates), however and by whomever the chat is continued.
-    attribution_fields: Optional[str] = None
+    attribution_fields: str | None = None
     # The attribution field that names the customer a call is for, e.g.
     # "orgId" (an attribution field whether or not ATTRIBUTION_FIELDS lists
     # it). Recorded on each llm_usage row as `customer`, and offered by the
     # usage API as the `customer` dimension and filter. Unset: none recorded.
-    usage_customer_field: Optional[str] = None
+    usage_customer_field: str | None = None
     # Membership checks on a credential's session context (comma-separated
     # `contextField:listingField` pairs, e.g. "orgId:orgs"): a session context
     # value for orgId must be one the user's custom field `orgs` lists, or the
     # token exchange, sign-in or refresh that would carry it is refused.
-    attribution_memberships: Optional[str] = None
+    attribution_memberships: str | None = None
 
     # Encryption
-    encryption_key: Optional[str] = None  # Fernet key for encrypting sensitive data
+    encryption_key: str | None = None  # Fernet key for encrypting sensitive data
 
     # Superadmin
-    superadmin_email: Optional[str] = None  # Email for superadmin user
-    superadmin_password: Optional[str] = None  # Seed password for superadmin (used when auth_mode includes password)
+    superadmin_email: str | None = None  # Email for superadmin user
+    superadmin_password: str | None = None  # Seed password for superadmin (used when auth_mode includes password)
 
     # How long a password setup/reset link stays valid (hours). One setting
     # for both: an admin's "reset link" and the operator's `setup-link` CLI
@@ -594,7 +598,7 @@ class Settings(BaseSettings):
         return self
 
     # Domain (for generating external URLs, e.g., temp file URLs)
-    domain: Optional[str] = None  # FQDN like "app.example.com"; localhost or None = no external URLs
+    domain: str | None = None  # FQDN like "app.example.com"; localhost or None = no external URLs
 
     # OAuth authorization-code: bind the consent flow to the browser that started it
     # (an HttpOnly nonce cookie set by the authenticated begin call, checked at the
@@ -620,7 +624,7 @@ class Settings(BaseSettings):
 
     # Where the console is reached, if not at {public_base_url}/ui (e.g. the
     # compose setup serves it on its own port). Used to send people to it.
-    console_url: Optional[str] = None
+    console_url: str | None = None
 
     @property
     def public_console_url(self) -> str:
@@ -659,14 +663,14 @@ class Settings(BaseSettings):
     # [{"name": "langfuse", "endpoint": "https://cloud.langfuse.com/api/public/otel", "preset": "langfuse"},
     #  {"name": "apm", "endpoint": "http://otel-collector:4318", "preset": "none"}]
     # Secret headers: OTEL_EXPORTER_<NAME>_HEADERS=k=v,... (merged per entry).
-    otel_exporters: Optional[str] = None
+    otel_exporters: str | None = None
     # Attribute preset of the exporter the standard OTEL_EXPORTER_OTLP_*
     # variables configure: genai | langfuse | langwatch | none (no content).
     otel_preset: str = "genai"
     # service.name; "{process}" is replaced by the process (backend,
     # queue-agent, scheduler...). Unset: OTEL_RESOURCE_ATTRIBUTES' service.name,
     # else "sinas". Every process also carries sinas.process.
-    otel_service_name: Optional[str] = None
+    otel_service_name: str | None = None
     # Python logging -> OTLP logs, to the exporters with the "logs" signal.
     otel_logs_enabled: bool = False
     otel_logs_level: str = "INFO"
@@ -682,12 +686,12 @@ class Settings(BaseSettings):
     otel_fastapi_operation_spans: bool = True
     # Deprecated (0.5.0): one exporter. Still honoured, as an exporter named
     # "legacy" that receives Sinas's own spans in the OTEL_VENDOR preset.
-    otel_exporter_endpoint: Optional[str] = None  # full OTLP/HTTP traces URL
-    otel_exporter_headers: Optional[str] = None  # k=v,k2=v2
+    otel_exporter_endpoint: str | None = None  # full OTLP/HTTP traces URL
+    otel_exporter_headers: str | None = None  # k=v,k2=v2
     otel_vendor: str = "langwatch"  # langwatch | langfuse | generic_otel | genai | none
 
     # Declarative Configuration
-    config_file: Optional[str] = None  # Path to YAML config file
+    config_file: str | None = None  # Path to YAML config file
     auto_apply_config: bool = False  # Auto-apply config file on startup
 
     class Config:

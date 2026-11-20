@@ -18,6 +18,7 @@ Manifests are application declarations that describe what resources, permissions
 | `exposed_namespaces` | Namespace filter per resource type (e.g., `{"agents": ["support"]}`) |
 | `store_dependencies` | Stores the application expects: `[{"store": "ns/name", "key": "optional_key"}]` |
 | `public_info` | Small JSON object the manifest publishes on the unauthenticated `GET /info` under `services[namespace]`, e.g. `{"url": "https://cellar.example.com"}`. Identifier keys, at most 4 KB, never secrets. |
+| `gateway_limits` | Per-caller rate limit on gateway tool calls: `{"max_calls": 600, "window_seconds": 60}`. Unset: the deployment default. |
 | `exposed_tools` | Functions, queries and pipelines served to external agents as MCP tools at `POST /mcp/{namespace}/{name}`: `[{"type": "query", "namespace": "crm", "name": "open_orders", "tool_name": "...", "description": "..."}]`. Each caller sees only what their own permissions allow. See [MCP Gateway](/build-resources/mcp-gateway). |
 
 **Endpoints:**

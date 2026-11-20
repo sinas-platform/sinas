@@ -52,6 +52,15 @@ class ExposedTool(BaseModel):
         return f"{self.namespace}/{self.name}"
 
 
+class GatewayLimits(BaseModel):
+    """Per-caller rate limit on the manifest's gateway tool calls."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
+
+    max_calls: int = Field(ge=0, description="Calls per caller per window; 0 disables the limit")
+    window_seconds: int = Field(default=60, ge=1, le=86400)
+
+
 class ManifestSpec(SpecModel):
     namespace: str = Field(default="default", min_length=1, max_length=255, pattern=r"^[^/]+$")
     name: str = Field(min_length=1, max_length=255)
@@ -63,6 +72,7 @@ class ManifestSpec(SpecModel):
     store_dependencies: list[StoreDependency] = Field(default_factory=list)
     public_info: dict[str, Any] = Field(default_factory=dict)
     exposed_tools: list[ExposedTool] = Field(default_factory=list)
+    gateway_limits: GatewayLimits | None = None
     is_active: bool = True
 
     @field_validator("description", mode="before")

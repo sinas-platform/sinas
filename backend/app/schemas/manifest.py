@@ -61,6 +61,11 @@ class ExposedToolRef(BaseModel):
     description: Optional[str] = None
 
 
+class GatewayLimitsRef(BaseModel):
+    max_calls: int = Field(..., ge=0, description="Calls per caller per window; 0 disables")
+    window_seconds: int = Field(default=60, ge=1, le=86400)
+
+
 class ManifestCreate(BaseModel):
     namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -80,6 +85,7 @@ class ManifestCreate(BaseModel):
         default_factory=list,
         description="Served to external agents on POST /mcp/{namespace}/{name}",
     )
+    gateway_limits: Optional[GatewayLimitsRef] = None
 
     @field_validator("public_info")
     @classmethod
@@ -111,6 +117,7 @@ class ManifestUpdate(BaseModel):
     store_dependencies: Optional[list[StoreDependency]] = None
     public_info: dict[str, Any] | None = None
     exposed_tools: Optional[list[ExposedToolRef]] = None
+    gateway_limits: Optional[GatewayLimitsRef] = None
     is_active: Optional[bool] = None
 
     @field_validator("public_info")
@@ -143,6 +150,7 @@ class ManifestResponse(BaseModel):
     store_dependencies: list[StoreDependency]
     public_info: dict[str, Any] = Field(default_factory=dict)
     exposed_tools: list[ExposedToolRef] = Field(default_factory=list)
+    gateway_limits: Optional[GatewayLimitsRef] = None
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime]

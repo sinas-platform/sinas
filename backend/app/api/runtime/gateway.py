@@ -47,7 +47,21 @@ class _Caller:
     token: str
 
 
+    @property
+    def rate_key(self) -> str:
+        # An API key is its own caller (several agents may share one user);
+        # a user token counts per user.
+        from app.core.auth import current_api_key_id
+
+        key_id = current_api_key_id()
+        return f"key:{key_id}" if key_id else f"user:{self.user_id}"
+
+
 _caller: ContextVar[_Caller | None] = ContextVar("gateway_caller", default=None)
+
+# JSON-RPC reserves -32000..-32099 for implementation-defined errors; this
+# one carries retry_after_seconds in its data.
+RATE_LIMITED = -32029
 
 
 async def _load_manifest(db, caller: _Caller) -> Manifest:
@@ -89,6 +103,10 @@ async def _on_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallT
         if tool is None:
             # Unknown and not-allowed look the same: the catalog is per caller.
             raise MCPError(types.INVALID_PARAMS, f"Unknown tool: {params.name}")
+        try:
+            await gateway.enforce_rate_limit(manifest, caller.rate_key)
+        except gateway.RateLimitedError as e:
+            raise MCPError(RATE_LIMITED, str(e), {"retry_after_seconds": e.retry_after}) from None
         result = await gateway.call_tool(
             db, manifest, tool,
             user_id=caller.user_id, user_email=caller.email, user_token=caller.token,
