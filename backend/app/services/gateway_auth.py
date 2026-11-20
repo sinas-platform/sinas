@@ -149,6 +149,7 @@ async def _sign_in(db: AsyncSession, provider: IdentityProvider, issuer: str, cl
 class Resolution:
     user_id: str
     email: str
+    provider_id: Any
     expires_at: float
 
 
@@ -167,7 +168,13 @@ async def resolve_bearer(db: AsyncSession, token: str, namespace: str, name: str
     digest = hashlib.sha256(f"{namespace}/{name}\n{token}".encode()).hexdigest()
     cached = _cache.get(digest)
     if cached and cached.expires_at > time.monotonic():
-        return cached.user_id, cached.email
+        # The provider that vouched for this token must still be there and
+        # active: disabling or deleting it ends its tokens' access at once,
+        # cache or no cache.
+        if await _provider_active(db, cached.provider_id):
+            return cached.user_id, cached.email
+        _cache.pop(digest, None)
+        raise GatewayAuthError("Token issuer is not a configured identity provider")
     issuer = _unverified_issuer(token)
     if issuer is None:
         raise GatewayAuthError("Invalid or expired credentials")
@@ -178,7 +185,11 @@ async def resolve_bearer(db: AsyncSession, token: str, namespace: str, name: str
     # Access tokens often leave the email, the groups or a mapped claim to
     # userinfo. Ask for it whenever the SSO callback would: signing in with
     # groups missing would end the roles this provider granted earlier.
-    if not sso.claim_values(claims, provider.email_claim) or sso.needs_userinfo(provider, claims):
+    if (
+        not sso.claim_values(claims, provider.email_claim)
+        or sso.email_verified(claims) is None  # linking by email needs the proof
+        or sso.needs_userinfo(provider, claims)
+    ):
         try:
             claims = await sso.with_userinfo(await _discovery(provider), claims, token)
         except sso.SsoError as e:
@@ -187,5 +198,22 @@ async def resolve_bearer(db: AsyncSession, token: str, namespace: str, name: str
     ttl = min(RESOLUTION_CACHE_SECONDS, max(1, int(claims.get("exp", 0) - time.time())))
     if len(_cache) > 10_000:
         _cache.clear()
-    _cache[digest] = Resolution(str(user.id), user.email, time.monotonic() + ttl)
+    _cache[digest] = Resolution(str(user.id), user.email, provider.id, time.monotonic() + ttl)
     return str(user.id), user.email
+
+
+async def _provider_active(db: AsyncSession, provider_id: Any) -> bool:
+    from sqlalchemy import select
+
+    return (
+        await db.execute(
+            select(IdentityProvider.id).where(IdentityProvider.id == provider_id, IdentityProvider.is_active.is_(True))
+        )
+    ).scalar_one_or_none() is not None
+
+
+def header_safe(text: str, limit: int = 200) -> str:
+    """A string fit for a quoted header parameter: no quotes, backslashes or
+    control characters, bounded in length."""
+    cleaned = "".join(ch for ch in text if 32 <= ord(ch) < 127 and ch not in '"\\')
+    return cleaned[:limit]

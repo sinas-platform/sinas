@@ -810,3 +810,79 @@ async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
     status = await validate_manifest_status(db, manifest, str(admin_user.id), admin_perms)
     assert status.ready is False
     assert sorted(r.name for r in status.resources["missing"]) == sorted([gated.name, not_tool.name])
+
+
+@pytest.mark.asyncio
+async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatch):
+    """A cached token dies with its provider; a missing email_verified is
+    fetched from userinfo so an existing account can be linked; downstream
+    calls carry a Sinas token, not the external one; the challenge stays a
+    valid header whatever the provider's display name."""
+    import time as _time
+
+    import httpx
+
+    from app.core.auth import decode_access_token
+    from app.services import gateway_auth, sso
+    from app.services.function_tools import FunctionToolConverter
+    from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
+
+    fake = FakeIdP()
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+
+    fn = await _function(db, admin_user, "tools", f"ds-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "ds"}])
+    role = await _role(db)
+    for key in ("sinas.manifests/*/*.read:all", f"sinas.functions/tools/{fn.name}.execute:all"):
+        db.add(RolePermission(role_id=role.id, permission_key=key, permission_value=True))
+    provider = await _provider(db, auto_provision=True, default_role=role.name, display_name='Acme "SSO"')
+    await db.flush()
+    seen = {}
+
+    async def fake_execute(self, db_, tool_name, arguments, user_id, user_token, **k):
+        seen["token"] = user_token
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    now = int(_time.time())
+    resource = gateway_auth.resource_url(manifest.namespace, manifest.name)
+
+    def token(**over):
+        return fake.key.sign({"iss": ISSUER, "aud": resource, "iat": now, "exp": now + 300, **over})
+
+    # Existing account, token without email_verified: userinfo supplies the proof and the account is linked.
+    existing_email = f"linked-{_uid()}@acme.example"
+    existing = User(email=existing_email)
+    db.add(existing)
+    await db.flush()
+    db.add(UserRole(role_id=role.id, user_id=existing.id, active=True))
+    await db.flush()
+    fake.userinfo = {"sub": "link-me", "email": existing_email, "email_verified": True}
+    t = token(sub="link-me", email=existing_email)
+    out = await _call(client, path, {"Authorization": f"Bearer {t}"}, "tools/call", {"name": "ds", "arguments": {}})
+    assert out["result"]["isError"] is False
+    # Downstream, the tool got a Sinas access token for that user, not the external one.
+    assert seen["token"] != t and decode_access_token(seen["token"])["sub"] == str(existing.id)
+
+    # The provider is disabled: the cached token stops working at once.
+    provider.is_active = False
+    await db.flush()
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {t}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "identity provider" in r.json()["detail"]
+    provider.is_active = True
+    await db.flush()
+
+    # A rejection message carrying the provider's quoted name still yields a parseable header.
+    gateway_auth.clear_cache()
+    provider.auto_provision = False
+    await db.flush()
+    fake.userinfo = None
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(sub='stranger', email=f'new-{_uid()}@acme.example', email_verified=True)}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401
+    challenge = r.headers["www-authenticate"]
+    assert 'Acme "SSO"' in r.json()["detail"] or "no Sinas account" in r.json()["detail"]
+    assert challenge.count('"') % 2 == 0 and 'Acme "SSO"' not in challenge
