@@ -40,7 +40,7 @@ Its `authorization_servers` are the active [identity providers](/admin/sso) of t
 
 - its `iss` is a configured, active identity provider, and its signature verifies against that provider's published keys;
 - it has not expired;
-- its `aud` names this gateway's resource URL (`{PUBLIC_BASE_URL}/mcp/{namespace}/{name}`, the RFC 8707 resource indicator the client requests) or, for providers that cannot mint resource-specific audiences, the provider's own client id.
+- its `aud` names this gateway's resource URL (`{PUBLIC_BASE_URL}/mcp/{namespace}/{name}`, the RFC 8707 resource indicator the client requests) or, for providers that cannot mint resource-specific audiences, the provider's own client id. On the client-id audience only an access token is taken (header `typ: at+jwt`, RFC 9068); an ID token carries the same audience but authorizes a login, not API calls, and is refused.
 
 The token's subject is mapped to a Sinas user exactly as an SSO sign-in is: by linked identity, else by verified email, else provisioned when the provider has `autoProvision` with its `defaultRole`; the provider's role mappings apply. If the token carries no email claim, the provider's userinfo endpoint is asked. The user's roles then decide the catalog, like for any other caller. Resolutions are cached per token for a few minutes.
 

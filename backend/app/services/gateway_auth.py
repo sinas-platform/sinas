@@ -120,9 +120,19 @@ async def _verify(token: str, provider: IdentityProvider, audiences: list[str]) 
         raise GatewayAuthError("Token could not be verified") from e
     aud = claims.get("aud")
     token_audiences = set(aud if isinstance(aud, list) else [aud] if aud else [])
-    if not token_audiences & set(audiences):
-        raise GatewayAuthError("Token was not issued for this gateway (audience)")
-    return claims
+    resource, client_id = audiences[0], audiences[1:]
+    if resource in token_audiences:
+        return claims
+    if token_audiences & set(client_id):
+        # The provider's own client id is also what its SSO ID tokens carry.
+        # Only a token the provider marked as an access token (RFC 9068,
+        # typ at+jwt) is taken on that audience; an ID token (a nonce, no
+        # such type) authorizes a login, not API calls.
+        typ = str(header.get("typ") or "").lower()
+        if typ in ("at+jwt", "application/at+jwt") and "nonce" not in claims:
+            return claims
+        raise GatewayAuthError("Token is an ID token, not an access token for this gateway")
+    raise GatewayAuthError("Token was not issued for this gateway (audience)")
 
 
 async def _sign_in(db: AsyncSession, provider: IdentityProvider, issuer: str, claims: dict[str, Any]):

@@ -683,8 +683,21 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     out = await _call(client, path, {"Authorization": f"Bearer {token()}"}, "tools/call", {"name": "ext", "arguments": {}})
     assert out["result"]["isError"] is False
 
-    # The provider's own client id is an acceptable audience too.
-    assert (await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='other-sub', email=f'o-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))).status_code == 200
+    # The provider's own client id is an acceptable audience for an access
+    # token (typ at+jwt, RFC 9068) — not for an ID token, which carries the
+    # same audience but authorizes a login, not API calls.
+    from jose import jwt as _jwt
+
+    def access_token_for_client(**over):
+        claims = {"iss": ISSUER, "aud": CLIENT_ID, "sub": f"client-{_uid()}", "email": f"c-{_uid()}@acme.example",
+                  "email_verified": True, "iat": now, "exp": now + 300, **over}
+        return _jwt.encode(claims, fake.key.pem, algorithm="RS256", headers={"kid": fake.key.kid, "typ": "at+jwt"})
+
+    assert (await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {access_token_for_client()}"}, json=_rpc("tools/list"))).status_code == 200
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='id-tok', nonce='n1', email=f'id-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "id token" in r.json()["detail"].lower()
+    r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='plain-jwt', email=f'pj-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401  # client-id audience without the access-token type: refused
 
     # Not for this gateway, expired, or from an unknown issuer: 401 with the reason in the challenge.
     for bad, reason in (
