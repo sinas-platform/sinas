@@ -13,7 +13,7 @@ Where [MCP servers](/build-resources/mcp-servers) let Sinas agents *consume* rem
 POST   /mcp/{namespace}/{name}        # Streamable HTTP MCP server for the manifest namespace/name
 ```
 
-Stateless: every request authenticates on its own with a Bearer API key, a Bearer access token or an `X-API-Key` header, so nothing is pinned to a server and nothing is replayed. Requests without a credential get `401` with a `WWW-Authenticate: Bearer` challenge; a caller without `sinas.manifests/{namespace}/{name}.read` on the manifest gets `403`.
+Stateless: every request authenticates on its own with a Bearer API key, a Bearer access token or an `X-API-Key` header, so nothing is pinned to a server and nothing is replayed. Requests without a credential get `401` with a `WWW-Authenticate: Bearer` challenge that points at the gateway's OAuth metadata (below); a caller without `sinas.manifests/{namespace}/{name}.read` on the manifest gets `403`.
 
 Point an MCP client at it:
 
@@ -27,6 +27,24 @@ Point an MCP client at it:
   }
 }
 ```
+
+## OAuth for agent clients
+
+An MCP client without a Sinas API key signs in through OAuth, as the MCP specification describes. The gateway publishes [protected-resource metadata](https://www.rfc-editor.org/rfc/rfc9728) (RFC 9728):
+
+```
+GET /.well-known/oauth-protected-resource/mcp/{namespace}/{name}
+```
+
+Its `authorization_servers` are the active [identity providers](/admin/sso) of the deployment, so the authorization server is whatever already signs your people in (WorkOS AuthKit, Keycloak, Entra ID, Okta, Auth0). Sinas is not an authorization server itself and does not issue OAuth tokens to third parties; the client obtains an access token from the identity provider and presents it as a Bearer token. The gateway accepts it when:
+
+- its `iss` is a configured, active identity provider, and its signature verifies against that provider's published keys;
+- it has not expired;
+- its `aud` names this gateway's resource URL (`{PUBLIC_BASE_URL}/mcp/{namespace}/{name}`, the RFC 8707 resource indicator the client requests) or, for providers that cannot mint resource-specific audiences, the provider's own client id.
+
+The token's subject is mapped to a Sinas user exactly as an SSO sign-in is: by linked identity, else by verified email, else provisioned when the provider has `autoProvision` with its `defaultRole`; the provider's role mappings apply. If the token carries no email claim, the provider's userinfo endpoint is asked. The user's roles then decide the catalog, like for any other caller. Resolutions are cached per token for a few minutes.
+
+A rejected token answers `401` with the reason in the `WWW-Authenticate` challenge (`error="invalid_token"`).
 
 ## Exposing tools
 
