@@ -409,6 +409,16 @@ class ManifestResourceRef(BaseModel):
     name: str
 
 
+class ExposedToolConfig(BaseModel):
+    """A resource the manifest serves as an MCP tool through the gateway."""
+
+    type: str = Field(..., description="function, query or pipeline")
+    namespace: str = "default"
+    name: str
+    toolName: Optional[str] = Field(default=None, description="Name the agent calls it by (default namespace__name)")
+    description: Optional[str] = Field(default=None, description="Overrides the resource's description for the agent")
+
+
 class ManifestConfig(BaseModel):
     """Manifest registration configuration"""
 
@@ -424,6 +434,9 @@ class ManifestConfig(BaseModel):
     # Package variables substitute into it, so an installer can supply e.g.
     # the browser-reachable URL of the service this manifest describes.
     publicInfo: dict[str, Any] = Field(default_factory=dict)
+    # Served to external agents on POST /mcp/{namespace}/{name}; each caller
+    # sees only what their permissions allow. Nothing is exposed by default.
+    exposedTools: list[ExposedToolConfig] = Field(default_factory=list)
     # Unset: a new manifest is active, an existing one keeps its state.
     isActive: Optional[bool] = None
 

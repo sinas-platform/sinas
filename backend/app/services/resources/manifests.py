@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.models.manifest import Manifest
 from app.schemas.spec.manifest import ManifestSpec
-from app.services.resources.base import ApplyContext, ResourceApplier
+from app.services.resources.base import ApplyContext, ReferenceNotFound, ResourceApplier
 
 
 class ManifestApplier(ResourceApplier[ManifestSpec]):
@@ -21,6 +21,8 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
     model = Manifest
     # Config apply used to switch every manifest it touched back on.
     keep_unless_declared = ("is_active",)
+    # A changed exposure re-runs the existence check of what it names.
+    reference_fields = ("exposed_tools",)
 
     def key_of(self, spec: ManifestSpec) -> str:
         return spec.key
@@ -43,7 +45,7 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
         ).scalar_one_or_none()
 
     def spec_from_row(self, row: Manifest) -> ManifestSpec:
-        from app.schemas.spec.manifest import RequiredResource, StoreDependency
+        from app.schemas.spec.manifest import ExposedTool, RequiredResource, StoreDependency
 
         return ManifestSpec.model_construct(
             namespace=row.namespace,
@@ -60,8 +62,30 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
                 for d in (row.store_dependencies or [])
             ],
             public_info=dict(row.public_info or {}),
+            exposed_tools=[
+                ExposedTool.model_construct(**{"tool_name": None, "description": None, **t})
+                for t in (row.exposed_tools or [])
+            ],
             is_active=row.is_active is not False,
         )
+
+    async def check_references(self, spec: ManifestSpec, ctx: ApplyContext) -> None:
+        """An exposed tool names a function, query or pipeline that exists —
+        or that the same config declares. (requiredResources are checked by
+        the config parser's pre-pass, as before.)"""
+        from app.models.function import Function
+        from app.models.pipeline import Pipeline
+        from app.models.query import Query
+
+        kinds = {"function": ("functions", Function), "query": ("queries", Query), "pipeline": ("pipelines", Pipeline)}
+        for tool in spec.exposed_tools:
+            kind, model = kinds[tool.type]
+            if ctx.declared(kind, tool.ref):
+                continue
+            if await model.get_by_name(ctx.db, namespace=tool.namespace, name=tool.name) is None:
+                raise ReferenceNotFound(
+                    f"Exposed tool {tool.type} '{tool.ref}' not found (create it first, or declare it in the same config)"
+                )
 
     def new_row(self, spec: ManifestSpec, ctx: ApplyContext) -> Manifest:
         return Manifest(user_id=uuid.UUID(str(ctx.owner_user_id)))
@@ -76,4 +100,5 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
         row.exposed_namespaces = {k: list(v) for k, v in spec.exposed_namespaces.items()}
         row.store_dependencies = [d.model_dump() for d in spec.store_dependencies]
         row.public_info = dict(spec.public_info)
+        row.exposed_tools = [t.model_dump(exclude_none=True) for t in spec.exposed_tools]
         row.is_active = spec.is_active

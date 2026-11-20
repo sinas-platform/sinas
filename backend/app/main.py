@@ -232,6 +232,14 @@ adapters_openai_app.include_router(openai_adapter_router)
 # Mount adapter app at /adapters/openai
 app.mount("/adapters/openai", adapters_openai_app)
 
+# MCP gateway: a manifest's exposed tools, served to external agents at
+# POST /mcp/{namespace}/{name}. A raw ASGI app (the MCP SDK's transport is
+# one, and it authenticates before the SDK reads a body), mounted before the
+# runtime router so the prefix is its own.
+from app.api.runtime.gateway import gateway_app
+
+app.mount("/mcp", gateway_app)
+
 # Include runtime API routes (root level)
 app.include_router(runtime_router)
 
