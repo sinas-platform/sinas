@@ -79,7 +79,14 @@ async def validate_manifest_status(
     Returns a structured status showing which resources exist and which
     permissions the user has.
     """
-    satisfied, missing = await check_required_resources(db, manifest.required_resources or [])
+    # An exposed tool's resource has to exist like a required one.
+    exposed = [
+        {"type": t.get("type"), "namespace": t.get("namespace", "default"), "name": t.get("name")}
+        for t in (manifest.exposed_tools or [])
+    ]
+    declared = list(manifest.required_resources or [])
+    declared += [e for e in exposed if e not in declared]
+    satisfied, missing = await check_required_resources(db, declared)
 
     # Check required permissions
     req_granted: list[str] = []

@@ -51,6 +51,16 @@ class StoreDependency(BaseModel):
     key: Optional[str] = Field(None, description="Optional specific key within store")
 
 
+class ExposedToolRef(BaseModel):
+    """A resource served as an MCP tool through the gateway."""
+
+    type: str = Field(..., description="function, query or pipeline")
+    namespace: str = Field(default="default")
+    name: str
+    tool_name: Optional[str] = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,64}$")
+    description: Optional[str] = None
+
+
 class ManifestCreate(BaseModel):
     namespace: str = Field(
         default="default", min_length=1, max_length=255, pattern=r"^[a-zA-Z][a-zA-Z0-9_-]*$"
@@ -65,6 +75,10 @@ class ManifestCreate(BaseModel):
     public_info: dict[str, Any] = Field(
         default_factory=dict,
         description="Published on the unauthenticated GET /info under services[namespace]",
+    )
+    exposed_tools: list[ExposedToolRef] = Field(
+        default_factory=list,
+        description="Served to external agents on POST /mcp/{namespace}/{name}",
     )
 
     @field_validator("public_info")
@@ -96,6 +110,7 @@ class ManifestUpdate(BaseModel):
     exposed_namespaces: Optional[dict[str, list[str]]] = None
     store_dependencies: Optional[list[StoreDependency]] = None
     public_info: dict[str, Any] | None = None
+    exposed_tools: Optional[list[ExposedToolRef]] = None
     is_active: Optional[bool] = None
 
     @field_validator("public_info")
@@ -127,6 +142,7 @@ class ManifestResponse(BaseModel):
     exposed_namespaces: dict[str, list[str]]
     store_dependencies: list[StoreDependency]
     public_info: dict[str, Any] = Field(default_factory=dict)
+    exposed_tools: list[ExposedToolRef] = Field(default_factory=list)
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime]
