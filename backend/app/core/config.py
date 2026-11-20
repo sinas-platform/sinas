@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     # 0 max calls disables the limit.
     gateway_rate_limit_max_calls: int = Field(default=120, ge=0)
     gateway_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86400)
+    # Gateway audit log (gateway_calls): how long rows are kept, and how much
+    # of a result is stored with each row (the rest is clipped).
+    gateway_audit_retention_days: int = 90
+    gateway_audit_result_max_chars: int = 8000
 
     # SMTP Configuration (for sending emails)
     smtp_host: str | None = None

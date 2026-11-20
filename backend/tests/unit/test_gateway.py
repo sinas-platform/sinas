@@ -170,16 +170,6 @@ async def test_call_runs_the_resource_as_the_caller_and_records_it(client, db: A
         return {"y": arguments["x"] * 2}
 
     monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
-    # The result store's table is partitioned by day and the test database
-    # carries no partitions: capture the record instead of reading it back.
-    from app.services import tool_result_store
-
-    recorded = []
-
-    async def fake_save(db_, **kwargs):
-        recorded.append(kwargs)
-
-    monkeypatch.setattr(tool_result_store, "save_tool_result", fake_save)
     headers = auth_headers(caller)
     out = await _call(client, f"/mcp/{manifest.namespace}/{manifest.name}", headers, "tools/call",
                       {"name": "sum", "arguments": {"x": 21}})
@@ -191,12 +181,15 @@ async def test_call_runs_the_resource_as_the_caller_and_records_it(client, db: A
     assert seen["token"] == headers["Authorization"].split(" ", 1)[1]
     assert seen["kwargs"]["enabled_functions"] == [f"tools/{fn.name}"]
 
-    (row,) = recorded
-    assert row["source"] == "gateway" and row["tool_name"] == "sum" and row["user_id"] == str(caller.id)
-    assert row["arguments"]["manifest"] == f"{manifest.namespace}/{manifest.name}"
-    assert row["arguments"]["resource"] == f"function:tools/{fn.name}"
-    assert row["arguments"]["arguments"] == {"x": 21}  # the caller's own arguments, kept apart from provenance
-    assert row["result"] == {"y": 42} and row["tool_call_id"].startswith("gw_")
+    from sqlalchemy import select
+
+    from app.models.gateway_call import GatewayCall
+
+    (row,) = (await db.execute(select(GatewayCall).where(GatewayCall.user_id == caller.id))).scalars().all()
+    assert (row.manifest_id, row.manifest_namespace, row.manifest_name) == (manifest.id, manifest.namespace, manifest.name)
+    assert (row.tool_name, row.resource_type, row.resource_ref) == ("sum", "function", f"tools/{fn.name}")
+    assert row.arguments == {"x": 21} and row.result == {"y": 42} and row.is_error is False
+    assert row.api_key_id is None and row.duration_ms is not None
 
 
 @pytest.mark.asyncio
@@ -478,6 +471,143 @@ async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_
     row = await Manifest.get_by_name(db, "gw", cfg_name)
     assert row.gateway_limits == {"max_calls": 0, "window_seconds": 60}
     assert gateway.effective_limits(row) == (0, 60)
+
+
+# ------------------------------------------------------------------ audit
+
+
+@pytest.mark.asyncio
+async def test_audit_rows_are_redacted_clipped_and_keyed_by_api_key(client, db: AsyncSession, admin_user, monkeypatch):
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.models.gateway_call import GatewayCall
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"big-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "big"}])
+    api_key, plain = await create_api_key(db, admin_user, f"agent-{_uid()}", {
+        f"sinas.manifests/{manifest.namespace}/{manifest.name}.read:all": True,
+        f"sinas.functions/tools/{fn.name}.execute:all": True,
+    })
+    await db.flush()
+    monkeypatch.setattr(settings, "gateway_audit_result_max_chars", 200)
+
+    async def fake_execute(self, db_, tool_name, arguments, *a, **k):
+        if arguments.get("fail"):
+            return {"error": "boom"}
+        return {"rows": ["x" * 50] * 20, "token": "secret-token"}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    path = f"/mcp/{manifest.namespace}/{manifest.name}"
+    await _call(client, path, {"X-API-Key": plain}, "tools/call", {"name": "big", "arguments": {"password": "hunter2", "q": 1}})
+    await _call(client, path, {"X-API-Key": plain}, "tools/call", {"name": "big", "arguments": {"fail": True}})
+
+    rows = (await db.execute(select(GatewayCall).where(GatewayCall.manifest_id == manifest.id).order_by(GatewayCall.created_at))).scalars().all()
+    assert len(rows) == 2
+    ok, failed = rows
+    assert ok.api_key_id == api_key.id and ok.user_id == admin_user.id
+    assert ok.arguments == {"password": "***REDACTED***", "q": 1}
+    assert ok.result["_truncated"] is True and "secret-token" not in json.dumps(ok.result)
+    assert failed.is_error is True and failed.result == {"error": "boom"}
+
+
+@pytest.mark.asyncio
+async def test_audit_listing_filters_and_scopes_by_permission(client, db: AsyncSession, admin_user, monkeypatch):
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"aud-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "aud"}])
+    other_manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "aud2"}])
+    member = await _user_with(
+        db, "sinas.manifests/*/*.read:all", f"sinas.functions/tools/{fn.name}.execute:all", "sinas.gateway_calls.read:own",
+    )
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    for user, m, tool in ((admin_user, manifest, "aud"), (member, manifest, "aud"), (member, other_manifest, "aud2")):
+        await _call(client, f"/mcp/{m.namespace}/{m.name}", auth_headers(user), "tools/call", {"name": tool, "arguments": {}})
+
+    # Admin: everything, with filters.
+    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"manifest": f"{manifest.namespace}/{manifest.name}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == 2 and {c["tool_name"] for c in r.json()["items"]} == {"aud"}
+    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": str(member.id)})
+    assert r.json()["total"] == 2 and {c["manifest_name"] for c in r.json()["items"]} == {manifest.name, other_manifest.name}
+    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"tool": "aud2", "is_error": "false"})
+    assert r.json()["total"] == 1 and r.json()["items"][0]["resource_ref"] == f"tools/{fn.name}"
+    one = r.json()["items"][0]
+    r = await client.get(f"/api/v1/gateway/calls/{one['id']}", headers=auth_headers(admin_user))
+    assert r.status_code == 200 and r.json()["id"] == one["id"]
+
+    # Member: own calls only, whatever they ask for.
+    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(member))
+    assert r.status_code == 200 and r.json()["total"] == 2 and {c["user_id"] for c in r.json()["items"]} == {str(member.id)}
+    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(member), params={"user_id": str(admin_user.id)})
+    assert r.status_code == 403
+    admin_call = (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": str(admin_user.id)})).json()["items"][0]
+    r = await client.get(f"/api/v1/gateway/calls/{admin_call['id']}", headers=auth_headers(member))
+    assert r.status_code == 404
+    # No permission at all: refused.
+    nobody = await _user_with(db, "sinas.chats.read:own")
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(nobody))).status_code == 403
+    # Malformed filters are a 422, not a server error.
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": "not-a-uuid"})).status_code == 422
+    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"api_key_id": "nope"})).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_a_failed_audit_write_never_fails_the_call(client, db: AsyncSession, admin_user, monkeypatch):
+    from app.services.function_tools import FunctionToolConverter
+
+    fn = await _function(db, admin_user, "tools", f"na-{_uid()}")
+    manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "na"}])
+
+    async def fake_execute(self, *a, **k):
+        return {"ok": True}
+
+    real_commit = type(db).commit
+
+    async def failing_commit(self):
+        if any(isinstance(o, __import__("app.models.gateway_call", fromlist=["GatewayCall"]).GatewayCall) for o in self.new):
+            self.expire_all()  # what a failed flush does to loaded rows
+            raise RuntimeError("disk full")
+        return await real_commit(self)
+
+    monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
+    monkeypatch.setattr(type(db), "commit", failing_commit)
+    out = await _call(client, f"/mcp/{manifest.namespace}/{manifest.name}", auth_headers(admin_user), "tools/call", {"name": "na", "arguments": {}})
+    assert out["result"]["isError"] is False and json.loads(out["result"]["content"][0]["text"]) == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_retention_drops_old_audit_rows(db: AsyncSession, admin_user, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.models.gateway_call import GatewayCall
+    from app.scheduler.jobs import cleanup_gateway_calls as job
+
+    @contextlib.asynccontextmanager
+    async def _session():
+        yield db
+
+    monkeypatch.setattr(job, "AsyncSessionLocal", _session)
+    monkeypatch.setattr(settings, "gateway_audit_retention_days", 30)
+    manifest = await _manifest(db, admin_user, [])
+    old = GatewayCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
+                      tool_name="t", resource_type="function", resource_ref="a/b", created_at=datetime.now(UTC) - timedelta(days=31))
+    fresh = GatewayCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
+                        tool_name="t", resource_type="function", resource_ref="a/b")
+    db.add_all([old, fresh])
+    await db.flush()
+    assert await job.cleanup_gateway_calls() == 1
+    left = (await db.execute(select(GatewayCall.id).where(GatewayCall.manifest_id == manifest.id))).scalars().all()
+    assert left == [fresh.id]
 
 
 def test_deployment_limits_are_validated():

@@ -64,7 +64,18 @@ Some resources are never served, whatever the manifest declares: inactive ones, 
 
 For external agents the natural credential is a [scoped API key](/admin/users-roles#api-keys): give it the manifest's `read` permission plus the `execute` permissions of the tools that client may use, and nothing else. The key's permissions are evaluated live, so revoking or narrowing it takes effect on the next call.
 
-Calls run exactly as an agent's tool call would: a query receives the caller's `:user_id`, `:user_email` and custom fields for row-level security, a function runs through the executor with the caller's token, a pipeline runs inline. Every call is recorded in the tool result store with `source: gateway`, the manifest, the resource and the arguments, and the HTTP request itself is in the request log with credentials redacted.
+Calls run exactly as an agent's tool call would: a query receives the caller's `:user_id`, `:user_email` and custom fields for row-level security, a function runs through the executor with the caller's token, a pipeline runs inline.
+
+## Audit log
+
+Every `tools/call` is recorded: the manifest, the caller (user and API key), the tool and the resource behind it, the arguments with credential-bearing fields redacted, the result clipped to `GATEWAY_AUDIT_RESULT_MAX_CHARS`, the outcome and the duration. Rows are kept for `GATEWAY_AUDIT_RETENTION_DAYS` (90). The HTTP requests themselves are in the request log as well, with credentials redacted.
+
+```
+GET /api/v1/gateway/calls             # filters: manifest=ns/name, user_id, api_key_id, tool, resource, is_error, since, until, limit, offset
+GET /api/v1/gateway/calls/{id}
+```
+
+`sinas.gateway_calls.read:all` sees every call (the hub's audit view); `sinas.gateway_calls.read:own`, which every member has, sees the calls made as oneself, including through one's own API keys.
 
 ## Rate limits
 
