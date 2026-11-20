@@ -668,3 +668,61 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     gateway_auth.clear_cache()
     r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(sub='s5', email=f'new-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
     assert r.status_code == 401 and "no Sinas account" in r.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_token_for_one_gateway_does_not_open_another(client, db: AsyncSession, admin_user, monkeypatch):
+    """The resolution cache is per token AND gateway: a token issued for A,
+    accepted there, still fails B's audience check."""
+    import time as _time
+
+    import httpx
+
+    from app.services import gateway_auth, sso
+    from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
+
+    fake = FakeIdP()
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+    a = await _manifest(db, admin_user, [])
+    b = await _manifest(db, admin_user, [])
+    role = await _role(db)
+    db.add(RolePermission(role_id=role.id, permission_key="sinas.manifests/*/*.read:all", permission_value=True))
+    await _provider(db, auto_provision=True, default_role=role.name)
+    await db.flush()
+    now = int(_time.time())
+    token = fake.key.sign({"iss": ISSUER, "aud": gateway_auth.resource_url(a.namespace, a.name), "sub": "cross",
+                           "email": f"cross-{_uid()}@acme.example", "email_verified": True, "iat": now, "exp": now + 300})
+    headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
+    assert (await client.post(f"/mcp/{a.namespace}/{a.name}", headers=headers, json=_rpc("tools/list"))).status_code == 200
+    r = await client.post(f"/mcp/{b.namespace}/{b.name}", headers=headers, json=_rpc("tools/list"))
+    assert r.status_code == 401 and "audience" in r.headers["www-authenticate"].lower()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_identity_provider_is_a_401_not_a_500(client, db: AsyncSession, admin_user, monkeypatch):
+    import time as _time
+
+    import httpx
+
+    from app.services import gateway_auth, sso
+    from tests.unit.test_oidc_sso import ISSUER, SigningKey, _provider
+
+    def down(request):
+        return httpx.Response(503, text="maintenance")
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(down)))
+    sso.clear_caches()
+    gateway_auth.clear_cache()
+    manifest = await _manifest(db, admin_user, [])
+    await _provider(db)
+    await db.flush()
+    now = int(_time.time())
+    token = SigningKey("k9").sign({"iss": ISSUER, "aud": gateway_auth.resource_url(manifest.namespace, manifest.name), "sub": "s",
+                                  "email": "x@acme.example", "iat": now, "exp": now + 300})
+    r = await client.post(f"/mcp/{manifest.namespace}/{manifest.name}", headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"}, json=_rpc("tools/list"))
+    assert r.status_code == 401, r.text
+    assert "unavailable" in r.headers["www-authenticate"].lower()

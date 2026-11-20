@@ -81,8 +81,17 @@ def looks_like_jwt(token: str) -> bool:
     return token.count(".") == 2 and _unverified_issuer(token) is not None
 
 
+async def _discovery(provider: IdentityProvider) -> dict:
+    """The provider's metadata; a provider that is down or misconfigured is
+    an authentication failure, not a server error."""
+    try:
+        return await sso.discovery(provider.issuer)
+    except sso.SsoError as e:
+        raise GatewayAuthError(f"Identity provider unavailable: {e}") from e
+
+
 async def _verify(token: str, provider: IdentityProvider, audiences: list[str]) -> dict[str, Any]:
-    doc = await sso.discovery(provider.issuer)
+    doc = await _discovery(provider)
     try:
         header = jwt.get_unverified_header(token)
     except JWTError as e:
@@ -91,9 +100,12 @@ async def _verify(token: str, provider: IdentityProvider, audiences: list[str]) 
     if alg not in ACCESS_TOKEN_ALGORITHMS:
         raise GatewayAuthError(f"Token algorithm {alg!r} is not accepted")
     kid = header.get("kid")
-    key = sso._pick_key(await sso._jwks(doc["jwks_uri"]), kid, alg)
-    if key is None:
-        key = sso._pick_key(await sso._jwks(doc["jwks_uri"], refetch=True), kid, alg)
+    try:
+        key = sso._pick_key(await sso._jwks(doc["jwks_uri"]), kid, alg)
+        if key is None:
+            key = sso._pick_key(await sso._jwks(doc["jwks_uri"], refetch=True), kid, alg)
+    except sso.SsoError as e:
+        raise GatewayAuthError(f"Identity provider unavailable: {e}") from e
     if key is None:
         raise GatewayAuthError("Token is signed with a key the issuer does not publish")
     try:
@@ -113,6 +125,26 @@ async def _verify(token: str, provider: IdentityProvider, audiences: list[str]) 
     return claims
 
 
+async def _sign_in(db: AsyncSession, provider: IdentityProvider, issuer: str, claims: dict[str, Any]):
+    """sign_in, committed. Two first sign-ins of one new identity can race
+    into the same insert; the loser rolls back and finds the winner's row."""
+    from sqlalchemy.exc import IntegrityError
+
+    for attempt in (1, 2):
+        try:
+            signed_in = await sso.sign_in(db, provider, issuer, claims)
+            await db.commit()
+            return signed_in.user
+        except sso.SsoError as e:
+            await db.rollback()
+            raise GatewayAuthError(str(e)) from e
+        except IntegrityError:
+            await db.rollback()
+            if attempt == 2:
+                raise GatewayAuthError("Sign-in collided with another request; retry") from None
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 @dataclass
 class Resolution:
     user_id: str
@@ -130,7 +162,9 @@ def clear_cache() -> None:
 async def resolve_bearer(db: AsyncSession, token: str, namespace: str, name: str) -> tuple[str, str]:
     """(user_id, email) for an external access token presented to the
     gateway `namespace/name`, or GatewayAuthError."""
-    digest = hashlib.sha256(token.encode()).hexdigest()
+    # Cached per token AND gateway: a token issued for gateway A must still
+    # fail B's audience check, cache or no cache.
+    digest = hashlib.sha256(f"{namespace}/{name}\n{token}".encode()).hexdigest()
     cached = _cache.get(digest)
     if cached and cached.expires_at > time.monotonic():
         return cached.user_id, cached.email
@@ -141,20 +175,15 @@ async def resolve_bearer(db: AsyncSession, token: str, namespace: str, name: str
     if provider is None:
         raise GatewayAuthError("Token issuer is not a configured identity provider")
     claims = await _verify(token, provider, [resource_url(namespace, name), provider.client_id])
-    if not sso.claim_values(claims, provider.email_claim):
-        # Access tokens often leave the email out; userinfo has it.
-        doc = await sso.discovery(provider.issuer)
+    # Access tokens often leave the email, the groups or a mapped claim to
+    # userinfo. Ask for it whenever the SSO callback would: signing in with
+    # groups missing would end the roles this provider granted earlier.
+    if not sso.claim_values(claims, provider.email_claim) or sso.needs_userinfo(provider, claims):
         try:
-            claims = await sso.with_userinfo(doc, claims, token)
+            claims = await sso.with_userinfo(await _discovery(provider), claims, token)
         except sso.SsoError as e:
             raise GatewayAuthError(str(e)) from e
-    try:
-        signed_in = await sso.sign_in(db, provider, issuer, claims)
-        await db.commit()
-    except sso.SsoError as e:
-        await db.rollback()
-        raise GatewayAuthError(str(e)) from e
-    user = signed_in.user
+    user = await _sign_in(db, provider, issuer, claims)
     ttl = min(RESOLUTION_CACHE_SECONDS, max(1, int(claims.get("exp", 0) - time.time())))
     if len(_cache) > 10_000:
         _cache.clear()
