@@ -18,14 +18,21 @@ async def check_rate_limit(key: str, max_requests: int, window_seconds: int) -> 
     redis = await get_redis()
     redis_key = f"sinas:ratelimit:{key}"
 
+    # The window's expiry is set with the key's creation (SET NX EX), never
+    # after the count: an increment that happens without its EXPIRE (a
+    # dropped connection in between) used to leave a counter that never
+    # reset, refusing its caller forever once at the cap. A counter found
+    # without an expiry (from before this change) is repaired the same way.
+    await redis.set(redis_key, 0, ex=window_seconds, nx=True)
     count = await redis.incr(redis_key)
-    if count == 1:
+    ttl = await redis.ttl(redis_key)
+    if ttl is None or ttl < 0:
         await redis.expire(redis_key, window_seconds)
+        ttl = window_seconds
 
     if count > max_requests:
         # Retry-After lets automation back off intelligently instead of
         # hammering into the same window. TTL of the window key = seconds left.
-        ttl = await redis.ttl(redis_key)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests. Please try again later.",
