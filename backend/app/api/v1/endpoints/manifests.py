@@ -4,8 +4,8 @@ Writes go through ManifestApplier, the path config apply and package install
 use too: the same validation, ownership and change history on every channel.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import and_
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import and_, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_with_permissions, set_permission_used
@@ -52,13 +52,16 @@ async def create_manifest(
 async def list_manifests(
     request: Request,
     namespace: str = None,
+    include_inactive: bool = Query(
+        False, description="Also list switched-off manifests (the Switchboard app shows them, to switch back on)"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_data=Depends(get_current_user_with_permissions),
 ):
     """List all manifests accessible to the user."""
     user_id, permissions = current_user_data
 
-    additional_filters = Manifest.is_active == True
+    additional_filters = true() if include_inactive else Manifest.is_active == True
     if namespace:
         additional_filters = and_(additional_filters, Manifest.namespace == namespace)
 

@@ -1,0 +1,13 @@
+{
+  "name": "sinas-web",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "dev:switchboard": "npm run dev -w @sinas/switchboard"
+  }
+}

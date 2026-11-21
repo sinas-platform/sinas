@@ -101,6 +101,17 @@ services:
     ports:
       - "51245:80"
 
+  # Switchboard: publish tools to outside agents (web/apps/switchboard).
+  switchboard:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        APP: switchboard
+        VITE_API_URL: ${VITE_API_URL:-}
+    ports:
+      - "51246:80"
+
   caddy:
     profiles:
       - disabled

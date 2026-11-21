@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "../../../packages/ui/src/styles.css";
+
+/* Tailwind only scans this app by default; the shared shell's classes live
+   in the ui package. */
+@source "../../../packages/ui/src";
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
