@@ -7,6 +7,12 @@ The **Switchboard** publishes what a [manifest](/admin/manifests) exposes to age
 
 Where [MCP servers](/build-resources/mcp-servers) let Sinas agents *consume* remote tools, the switchboard lets the outside world consume Sinas resources. Together they make a Sinas instance a central switchboard for tools: central IT configures connectors, queries and pipelines once, decides who may call what, and downstream teams build on them without a copy of the credentials.
 
+## The Switchboard app
+
+The Switchboard app is a separate web app for the people who publish tools. It lists the switchboards, edits their tools and rate limits, shows how to connect Claude, ChatGPT, Cursor or a script, manages API keys, and reads the audit log. It runs under `/switchboard/`. With the development compose file it is at `http://localhost:51246/switchboard/`.
+
+Everything it does goes through the API below, so a manifest kept in YAML and one edited in the app are the same thing.
+
 ## Endpoint
 
 ```

@@ -441,6 +441,23 @@ def test_limits_declare_and_export():
 
 
 @pytest.mark.asyncio
+async def test_a_switched_off_switchboard_is_listed_only_on_request(client, db: AsyncSession, admin_user):
+    # The Switchboard app lists switched-off ones so they can be switched
+    # back on; every other caller keeps the active-only list.
+    headers = auth_headers(admin_user)
+    name = f"off-{_uid()}"
+    assert (await client.post("/api/v1/manifests", headers=headers, json={"namespace": "gw", "name": name})).status_code == 201
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"is_active": False})
+    assert r.status_code == 200 and r.json()["is_active"] is False
+
+    names = lambda r: {m["name"] for m in r.json()}  # noqa: E731
+    assert name not in names(await client.get("/api/v1/manifests", headers=headers))
+    r = await client.get("/api/v1/manifests", headers=headers, params={"include_inactive": "true"})
+    assert r.status_code == 200 and name in names(r)
+    assert next(m for m in r.json() if m["name"] == name)["is_active"] is False
+
+
+@pytest.mark.asyncio
 async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_user):
     from app.schemas.config import SinasConfig
     from app.services.config_apply.service import ConfigApplyService
