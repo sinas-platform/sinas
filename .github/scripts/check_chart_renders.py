@@ -175,12 +175,77 @@ def clickhouse_off(docs: list[dict]) -> None:
         assert "CLICKHOUSE_PORT" not in env, workload
 
 
+# The processes without an HTTP server: heartbeat-file probes.
+HEARTBEAT_WORKLOADS = SINAS_WORKLOADS - {"backend"}
+PROBE_KINDS = ("startupProbe", "livenessProbe", "readinessProbe")
+
+
+def _deployment_containers(docs: list[dict]) -> list[tuple[str, dict, dict]]:
+    out = []
+    for name, d in by_kind(docs, "Deployment").items():
+        spec = d["spec"]["template"]["spec"]
+        out += [(name, spec, c) for c in spec["containers"]]
+    assert out, "no Deployments rendered"
+    return out
+
+
+def probes(docs: list[dict]) -> None:
+    """Every Deployment container has readiness + liveness probes; the
+    backend a startupProbe (alembic runs before uvicorn); the heartbeat
+    workers check the file the process is told to write, on its emptyDir."""
+    for name, spec, c in _deployment_containers(docs):
+        for kind in ("readinessProbe", "livenessProbe"):
+            assert kind in c, (name, c["name"], kind)
+        if name == "backend":
+            assert c["startupProbe"]["httpGet"]["path"] == "/health", c.get("startupProbe")
+        if name in HEARTBEAT_WORKLOADS:
+            hb = env_of(c)["SINAS_HEARTBEAT_FILE"]["value"]
+            hb_dir = hb.rsplit("/", 1)[0]
+            for kind in PROBE_KINDS:
+                cmd = c[kind]["exec"]["command"]
+                assert cmd[:2] == ["sh", "-c"] and hb in cmd[2] and "stat -c %Y" in cmd[2], (name, kind, cmd)
+            mount = next(m for m in c["volumeMounts"] if m["mountPath"] == hb_dir)
+            vol = next(v for v in spec["volumes"] if v["name"] == mount["name"])
+            assert "emptyDir" in vol, (name, vol)
+    names = {n for n, _, _ in _deployment_containers(docs)}
+    if "queue-worker" in names:  # split profile: all of them
+        assert HEARTBEAT_WORKLOADS <= names, sorted(names)
+
+
+# Rendered with these overrides in helm.yml (probe-overrides).
+PROBE_OVERRIDES = {
+    ("backend", "startupProbe", "failureThreshold"): 90,
+    ("queue-agent", "livenessProbe", "periodSeconds"): 45,
+    ("pgbouncer", "livenessProbe", "timeoutSeconds"): 3,
+    ("console", "readinessProbe", "periodSeconds"): 7,
+}
+HEARTBEAT_MAX_AGE_OVERRIDE = 300  # workerProbes.heartbeatMaxAgeSeconds
+
+
+def probe_overrides(docs: list[dict]) -> None:
+    """Probe values are applied: per-component keys change, the rest keep
+    their defaults; workerProbes reaches every heartbeat worker."""
+    containers = {name: c for name, _, c in _deployment_containers(docs)}
+    for (name, kind, key), value in PROBE_OVERRIDES.items():
+        assert containers[name][kind][key] == value, (name, kind, containers[name][kind])
+    # untouched keys keep the built-in defaults
+    assert containers["backend"]["startupProbe"]["periodSeconds"] == 10
+    assert containers["queue-agent"]["livenessProbe"]["failureThreshold"] == 3
+    assert containers["queue-worker"]["livenessProbe"]["periodSeconds"] == 30
+    for name in HEARTBEAT_WORKLOADS & set(containers):
+        for kind in PROBE_KINDS:
+            cmd = containers[name][kind]["exec"]["command"][2]
+            assert f"-lt {HEARTBEAT_MAX_AGE_OVERRIDE} ]" in cmd, (name, kind, cmd)
+
+
 CHECKS: dict[str, Callable[[list[dict]], None]] = {
     "existing-secret": existing_secret,
     "code-execution-off": code_execution_off,
     "no-api-identity": no_api_identity,
     "postgres-tls": postgres_tls,
     "clickhouse-off": clickhouse_off,
+    "probes": probes,
+    "probe-overrides": probe_overrides,
 }
 
 

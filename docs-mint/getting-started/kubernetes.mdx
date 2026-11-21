@@ -172,9 +172,11 @@ release's pods (`systemStats.rbac`, read-only `get`/`list` on pods and
 `pods.metrics.k8s.io`). With `systemStats.rbac: false` as well, the chart
 renders no ServiceAccount, Role or RoleBinding at all, no Sinas pod mounts a
 token, the backend doesn't call the Kubernetes API, and the console's
-System page leaves out the Services panel. If you grant the backend's
+System page shows "Cluster status not available" (with that reason) where
+the release's pods would be; queues, workers, Redis, the database and the
+node's resources are still shown. If you grant the backend's
 ServiceAccount (`<release>-executor-manager`) that access yourself, set
-`systemStats.kubernetes: true` to keep the panel.
+`systemStats.kubernetes: true` to list the pods again.
 
 ```yaml
 features:
@@ -182,6 +184,58 @@ features:
 systemStats:
   rbac: false
 ```
+
+### System page without the Kubernetes API
+
+The System page is the place to check health whether or not code execution
+is on. When the backend can't use the Kubernetes API (turned off as above,
+RBAC missing, a NetworkPolicy or firewall dropping its traffic to the
+apiserver), only the cluster part (the release's pods, their CPU/memory, the
+sandbox and trusted-worker pods) shows "Cluster status not available" and
+the reason, e.g. that the backend's service account isn't allowed to list
+pods; everything else on the page is current.
+
+The backend puts a circuit breaker in front of the API: every call has a 2s
+connect / 5s read timeout and no retries, and after a failure it doesn't
+call the apiserver again for 60s, doubling to 5 minutes while the failures
+continue. Meanwhile the page's polls get the cached reason at once, and the
+console polls those panels no faster than the backend retries. A blocked
+apiserver therefore costs one short call per backoff window, however many
+tabs have the page open.
+
+## Probes
+
+Every Deployment has readiness and liveness probes. The backend also has a
+startupProbe: `alembic upgrade head` runs before the API starts, and
+liveness only begins once `/health` answers (default budget: 10 minutes of
+migrations). The queue workers, the scheduler and the CDC worker have no
+HTTP server: each touches a heartbeat file (an in-memory `emptyDir` at
+`/run/sinas-health`) every 10 seconds from its event loop once it is up, and
+exec probes (`sh` + `stat`, no Python) check its age. They don't depend on
+Redis or Postgres, so an outage of either never restarts the workers; a
+worker is restarted when its event loop has been stuck for
+`heartbeatMaxAgeSeconds` (120) plus up to three failed probes.
+
+Timings are values, merged over the built-in defaults key by key (a `null`
+removes a key or a whole probe):
+
+```yaml
+backend:
+  probes:
+    startup:
+      failureThreshold: 120   # 20 minutes for long migrations
+workerProbes:                 # all heartbeat workers
+  heartbeatMaxAgeSeconds: 300
+queueAgent:
+  probes:
+    liveness:
+      periodSeconds: 60
+```
+
+Per component: `backend`, `console`, `pgbouncer`, `queueWorker`,
+`queueAgent`, `queueAgentSub`, `queuePipeline`, `scheduler`, `cdcWorker`
+(`.probes`); the defaults are listed in `values.yaml`. Postgres, Redis and
+ClickHouse (StatefulSets) keep their own probes.
 
 ## How sandbox pods are secured
 
@@ -935,7 +989,8 @@ On upgrade:
 | `secrets.existingSecret` | — | Read `SECRET_KEY` / `ENCRYPTION_KEY` from a pre-created Secret ([details](#secrets-from-an-existing-secret)) |
 | `postgres.external.host` / `tls.mode` | — / _(prefer)_ | External PostgreSQL and its TLS mode ([External PostgreSQL](#external-postgresql-cloud-sql-rds-azure-database)) |
 | `features.codeExecution` | `true` | `false`: no user code, no executor RBAC ([Code execution off](#code-execution-off)) |
-| `systemStats.rbac` | `true` | Read-only pod access for the System page; `false` also hides its Services panel |
+| `systemStats.rbac` | `true` | Read-only pod access for the System page; `false` also turns its cluster part off ("Cluster status not available") |
+| `<component>.probes` / `workerProbes` | see `values.yaml` | Probe timings per Deployment; shared layer for the heartbeat workers ([Probes](#probes)) |
 | `clickhouse.enabled` | `true` | `false`: no request/execution logs ([Running without ClickHouse](#running-without-clickhouse)) |
 | `networkPolicy.enabled` | `true` | Namespace isolation + sandbox lockdown |
 | `networkPolicy.ingressNamespace` | _(any)_ | Restrict which namespace may reach backend/console |
