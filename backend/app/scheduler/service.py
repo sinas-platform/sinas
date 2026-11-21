@@ -71,6 +71,8 @@ async def _initialize_builtin_database() -> None:
             user=settings.database_user,
             password=settings.database_password,
             database=settings.database_name,
+            # DATABASE_DIRECT_SSLMODE / _SSLROOTCERT; None = asyncpg default.
+            ssl=settings.database_direct_asyncpg_ssl(),
         )
         try:
             exists = await conn.fetchval(
@@ -423,6 +425,11 @@ async def run(stop_event: asyncio.Event) -> None:
     listener_task = asyncio.create_task(_listen_for_job_changes(stop_event))
 
     print("🚀 Scheduler service running")
+    # Kubernetes readiness/liveness (no-op unless the standalone process
+    # started a heartbeat: app/core/heartbeat.py).
+    from app.core import heartbeat
+
+    heartbeat.mark_ready()
     await stop_event.wait()
 
     # --- Graceful shutdown ---
@@ -451,9 +458,13 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop_event.set)
+    from app.core import heartbeat
+
+    heartbeat.start()
     try:
         await run(stop_event)
     finally:
+        await heartbeat.stop()
         await close_redis()
         flush_telemetry()
 

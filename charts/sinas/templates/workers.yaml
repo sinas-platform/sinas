@@ -19,7 +19,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-worker
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -31,16 +31,24 @@ spec:
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.WorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" (.Values.queueWorker)) | nindent 12 }}
             - name: QUEUE_FUNCTION_CONCURRENCY
               value: {{ .Values.queueWorker.concurrency | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by this component's probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" (.Values.queueWorker)) | nindent 10 }}
           resources:
             {{- toYaml .Values.queueWorker.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## queue-agent
 apiVersion: apps/v1
@@ -62,7 +70,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-agent
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgent) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueAgent)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -74,16 +82,24 @@ spec:
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.AgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" (.Values.queueAgent)) | nindent 12 }}
             - name: QUEUE_AGENT_CONCURRENCY
               value: {{ .Values.queueAgent.concurrency | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by this component's probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" (.Values.queueAgent)) | nindent 10 }}
           resources:
             {{- toYaml .Values.queueAgent.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- if include "sinas.queueAgentSubOn" . }}
 {{- /* Guarded reads: `--reuse-values` from a release without the
        queueAgentSub block must still render (defaults = values.yaml). */}}
@@ -114,7 +130,7 @@ spec:
         app.kubernetes.io/component: queue-agent-sub
     spec:
       ## Same as queue-agent: the agent codeExecution tool creates sandbox pods.
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qs "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qs) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -126,16 +142,24 @@ spec:
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.SubAgentWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" $qs) | nindent 12 }}
             - name: QUEUE_AGENT_SUB_CONCURRENCY
               value: {{ $qs.concurrency | default 5 | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by this component's probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" $qs) | nindent 10 }}
           resources:
             {{- toYaml ($qs.resources | default (dict "requests" (dict "cpu" "150m" "memory" "192Mi") "limits" (dict "cpu" "1" "memory" "768Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- end }}
 {{- /* Guarded reads, as for queue-agent-sub. */}}
 {{- $qp := .Values.queuePipeline | default dict }}
@@ -163,6 +187,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-pipeline
     spec:
+      ## Orchestration only (steps run on the function/agent workers): no
+      ## Kubernetes API access, so no token.
+      automountServiceAccountToken: false
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qp "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qp) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -174,16 +201,24 @@ spec:
           command: ["python", "-m", "app.queue.arq_worker", "app.queue.worker.PipelineWorkerSettings"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" $qp) | nindent 12 }}
             - name: QUEUE_PIPELINE_CONCURRENCY
               value: {{ $qp.concurrency | default 50 | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by this component's probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" $qp) | nindent 10 }}
           resources:
             {{- toYaml ($qp.resources | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi") "limits" (dict "cpu" "500m" "memory" "512Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## scheduler
 apiVersion: apps/v1
@@ -205,7 +240,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: scheduler
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.scheduler) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.scheduler)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -217,16 +252,24 @@ spec:
           command: ["python", "-m", "app.scheduler.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" (.Values.scheduler)) | nindent 12 }}
             - name: SUPERADMIN_EMAIL
               value: {{ .Values.superadminEmail | quote }}
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by this component's probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" (.Values.scheduler)) | nindent 10 }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## cdc-worker
 apiVersion: apps/v1
@@ -248,6 +291,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: cdc-worker
     spec:
+      automountServiceAccountToken: false
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.cdcWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.cdcWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -259,14 +303,18 @@ spec:
           command: ["python", "-m", "app.cdc.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
-          {{- with (include "sinas.redisCaMount" . | trim) }}
+            {{- include "sinas.heartbeatEnv" (dict "root" . "values" (.Values.cdcWorker)) | nindent 12 }}
           volumeMounts:
-            {{- . | nindent 12 }}
-          {{- end }}
+            {{- include "sinas.heartbeatMount" . | nindent 12 }}
+            {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+          ## Heartbeat-file probes (no HTTP server here). Timings:
+          ## workerProbes, overridden by cdcWorker.probes.
+          {{- include "sinas.workerProbes" (dict "root" . "values" (.Values.cdcWorker)) | nindent 10 }}
           resources:
             {{- toYaml .Values.cdcWorker.resources | nindent 12 }}
-      {{- with (include "sinas.redisCaVolume" . | trim) }}
       volumes:
-        {{- . | nindent 8 }}
-      {{- end }}
+        {{- include "sinas.heartbeatVolume" . | nindent 8 }}
+        {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- end }}

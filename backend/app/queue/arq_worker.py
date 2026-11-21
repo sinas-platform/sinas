@@ -64,6 +64,7 @@ from arq.constants import (
 )
 from arq.worker import Retry, Worker
 
+from app.core import heartbeat
 from app.core.redis import is_redis_oom, redis_oom_summary
 
 logger = logging.getLogger(__name__)
@@ -103,7 +104,22 @@ class SinasWorker(Worker):
         else:
             self._oom_suppressed += 1
 
+    async def main(self) -> None:
+        # Liveness for Kubernetes (no-op unless SINAS_HEARTBEAT_FILE is set):
+        # a file touched from this event loop, independent of Redis, so a
+        # Redis outage never fails the probe (app/core/heartbeat.py).
+        heartbeat.start()
+        await super().main()
+
+    async def close(self) -> None:
+        try:
+            await super().close()
+        finally:
+            await heartbeat.stop()
+
     async def _poll_iteration(self) -> None:
+        # The poll loop is running (after on_startup): the worker is up.
+        heartbeat.mark_ready()
         backoff = self._oom_until - time.monotonic()
         if backoff > 0:
             await asyncio.sleep(backoff)

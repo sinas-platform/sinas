@@ -126,6 +126,10 @@ import type {
  * the page). */
 type QuietRequestConfig = AxiosRequestConfig & { quietStatuses?: number[] };
 
+/** The System page's polled endpoints: a failing backend shows in place on
+ * the page (and the page polls slower), not as a toast every few seconds. */
+const SYSTEM_POLL_QUIET = { quietStatuses: [500, 502, 503, 504] } as QuietRequestConfig;
+
 // Auto-detect API base URL based on environment.
 // - VITE_API_URL overrides (point a dev console at any backend)
 // - localhost on the console's own ports (Vite dev, nginx :51245) → the
@@ -1369,7 +1373,9 @@ class APIClient {
 
   // Workers
   async listWorkers(): Promise<any[]> {
-    const response = await this.configClient.get('/workers');
+    // Polled by the System page, which shows failures in place: no toast
+    // per poll (the same below for its other polled endpoints).
+    const response = await this.configClient.get('/workers', SYSTEM_POLL_QUIET);
     return response.data;
   }
 
@@ -1380,8 +1386,10 @@ class APIClient {
     scalable?: boolean;
     note?: string | null;
     unavailable_reason?: string | null;
+    cluster_unavailable?: boolean;
+    retry_after_seconds?: number | null;
   }> {
-    const response = await this.configClient.get('/workers/count');
+    const response = await this.configClient.get('/workers/count', SYSTEM_POLL_QUIET);
     return response.data;
   }
 
@@ -1447,6 +1455,7 @@ class APIClient {
   async getSystemHealth(includeStats: boolean = false): Promise<any> {
     const response = await this.configClient.get('/system/health', {
       params: { include_stats: includeStats },
+      ...SYSTEM_POLL_QUIET,
     });
     return response.data;
   }
@@ -1467,7 +1476,7 @@ class APIClient {
   }
 
   async getContainerStats(): Promise<any> {
-    const response = await this.configClient.get('/containers/stats');
+    const response = await this.configClient.get('/containers/stats', SYSTEM_POLL_QUIET);
     return response.data;
   }
 

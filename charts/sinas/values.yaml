@@ -48,10 +48,21 @@ allInOne: false
 lite:
   image: ""
 
-## Secrets (required — provide via --set or a secrets values file)
+## Secrets (required — provide via --set or a secrets values file, or keep
+## them out of values entirely with existingSecret).
 secrets:
   secretKey: ""
   encryptionKey: ""
+  ## A pre-created Secret holding SECRET_KEY and ENCRYPTION_KEY (e.g. synced
+  ## by External Secrets / Secret Manager CSI, or created with kubectl).
+  ## When set, every Sinas pod reads both from it, the chart renders neither
+  ## value and the two values above are ignored, so the keys never sit in
+  ## Helm's release record. Key names inside that Secret:
+  ##   kubectl create secret generic sinas-app-secrets \
+  ##     --from-literal=secret-key=... --from-literal=encryption-key=...
+  existingSecret: ""
+  secretKeyKey: "secret-key"
+  encryptionKeyKey: "encryption-key"
 
 ## Superadmin. How the first login works depends on what else is set:
 ##   smtp.* configured          -> "otp": login codes arrive by email.
@@ -131,10 +142,20 @@ executor:
 ## release's pods and, when metrics-server is installed, reads their
 ## CPU/memory from metrics.k8s.io. rbac renders a read-only Role for that
 ## (get/list on pods and pods.metrics.k8s.io, this namespace only), bound to
-## the backend's service account. Set false if you manage RBAC yourself; the
-## page then says what it can't read instead of showing numbers.
+## the backend's service account.
+## rbac: false also turns the pod list off: the backend doesn't call the
+## Kubernetes API for it (SYSTEM_STATS_KUBERNETES=false) and the console
+## shows "Cluster status not available" there (the rest of the System page
+## is unaffected). Together with features.codeExecution=false the
+## chart then renders no ServiceAccount, Role or RoleBinding at all and no
+## Sinas pod mounts an API token.
 systemStats:
   rbac: true
+  ## Whether the backend reads the Kubernetes API for the System page.
+  ## Unset (null) = follows rbac. Set true with rbac: false when you grant
+  ## the backend's ServiceAccount (<release>-executor-manager) get/list on
+  ## pods (and pods.metrics.k8s.io) yourself.
+  kubernetes: null
 
 ## Pull secret for private registries, created by the chart from these
 ## credentials. Leave username empty for public images.
@@ -237,14 +258,34 @@ postgres:
   ## auto-allows egress to it on 5432; a DNS hostname resolving to a
   ## private IP needs its range allowlisted in networkPolicy.egressCidrs,
   ## or connections will TIME OUT, not be refused.
-  ## TLS: connections are negotiated opportunistically ("prefer" semantics
-  ## in pgbouncer and the drivers), which satisfies encrypt-only instances
-  ## (e.g. Cloud SQL ENCRYPTED_ONLY). Instances requiring CLIENT
-  ## CERTIFICATES are not supported.
+  ## TLS: see external.tls below. Instances requiring CLIENT CERTIFICATES
+  ## are not supported.
   external:
     host: ""
     existingSecret: ""
     existingSecretKey: "password"
+    tls:
+      ## sslmode of every connection to the external database: pgbouncer's
+      ## server connections (server_tls_sslmode) and the backend's direct
+      ## ones (migrations, CREATE DATABASE for the built-in database):
+      ## disable | allow | prefer | require | verify-ca | verify-full.
+      ## Empty = unchanged from earlier charts: "prefer" (TLS when the server
+      ## offers it, certificate NOT verified), which satisfies encrypt-only
+      ## instances (e.g. Cloud SQL ENCRYPTED_ONLY) but not a policy that
+      ## requires verified TLS.
+      ## verify-ca checks the certificate against the CA below; verify-full
+      ## also checks it names `host` (needs a certificate whose SAN covers
+      ## the host or IP you connect to; otherwise use verify-ca).
+      mode: ""
+      ## Server CA (PEM) for verify-ca / verify-full — required there, and
+      ## refused with the other modes (it would verify nothing). From a
+      ## Secret OR a ConfigMap (a CA certificate isn't secret). Mounted
+      ## read-only at /etc/sinas/postgres-ca/ca.crt into pgbouncer and every
+      ## Sinas pod.
+      caSecret: ""
+      caSecretKey: "ca.crt"
+      caConfigMap: ""
+      caConfigMapKey: "ca.crt"
   storage: 5Gi
   ## Compute requests matter: without them, GKE Autopilot bills its platform
   ## default (0.5 vCPU / 2Gi PER POD) and standard clusters give the database
@@ -331,8 +372,13 @@ redis:
 
 ## ClickHouse
 clickhouse:
-  ## Set false for the compact profile: no ClickHouse pod, request/execution
-  ## logging off, log UI empty. Everything else works normally.
+  ## Set false to run without ClickHouse: no ClickHouse pod, PVC or
+  ## password. What degrades: request logs and function execution logs are
+  ## not recorded (the console's Request Logs page shows conversation
+  ## messages only and says why; the request-log API answers 503), and the
+  ## request-log statistics are unavailable. Everything else (agents,
+  ## functions, pipelines, files, the System page) works normally; the
+  ## backend sees an empty CLICKHOUSE_HOST and never tries to connect.
   enabled: true
   ## Full image reference override; empty = clickhouse/clickhouse-server:24-alpine.
   image: ""
@@ -358,6 +404,8 @@ pgbouncer:
   ## Built-in: runAsUser: 70, runAsGroup: 70, fsGroup: 70.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   poolMode: transaction
   maxClientConn: 1000
   defaultPoolSize: 50
@@ -370,11 +418,32 @@ pgbouncer:
 
 ## File storage — shared volume for uploaded files (/var/sinas/files).
 ## Mounted into backend, queue-worker, queue-agent, queue-agent-sub,
-## queue-pipeline, scheduler.
-## Use an RWX storage class on multi-node clusters.
+## queue-pipeline, scheduler. Every one of those pods reads and writes the
+## SAME files (an upload through the API is read by an agent worker), so in
+## the split profile the volume must be shared:
+##   - one node: any storage class works (ReadWriteOnce);
+##   - several nodes: a ReadWriteMany volume — an NFS / Filestore / EFS /
+##     Azure Files class with accessMode: ReadWriteMany, or a pre-created
+##     RWX claim in existingClaim. Block storage (GKE pd, EBS, ...) is
+##     ReadWriteOnce: pods on another node can't mount it.
+## Without storageClass or existingClaim every pod gets its own emptyDir:
+## nothing is shared and files are lost on restart. The split profile
+## refuses that unless allowEphemeral is true; the all-in-one profile (one
+## pod) allows it with a warning.
 fileStorage:
   size: 5Gi
   storageClass: ""
+  ## Access mode of the PVC the chart creates from storageClass.
+  ## ReadWriteOnce is what earlier charts created (a PVC's access modes
+  ## can't be changed afterwards); use ReadWriteMany with an RWX class.
+  ## ReadWriteOncePod (one pod only) is accepted with allInOne only.
+  accessMode: ReadWriteOnce
+  ## Pre-created PVC to mount instead (wins over storageClass), e.g. one
+  ## bound to a Filestore / EFS / NFS PersistentVolume.
+  existingClaim: ""
+  ## Accept the per-pod emptyDir fallback in the split profile (evaluation
+  ## only: uploaded files are not shared between pods and vanish on restart).
+  allowEphemeral: false
 
 ## Network policy — namespace isolation + locked-down sandbox pods.
 ## ingressNamespace: the namespace your ingress controller runs in (allowed to
@@ -434,6 +503,49 @@ scheduling:
   tolerations: []
   affinity: {}
 
+## Probes. Every Deployment's container has readiness and liveness probes;
+## the backend also a startupProbe, so `alembic upgrade head` (it runs
+## before uvicorn) can't be cut short by liveness. Timings are set per
+## component in <component>.probes (backend, console, pgbouncer, queueWorker,
+## queueAgent, queueAgentSub, queuePipeline, scheduler, cdcWorker), deep-
+## merged over the built-in defaults: only the keys you set change, and a
+## null removes a key or a whole probe. Timing keys only (initialDelaySeconds,
+## periodSeconds, timeoutSeconds, successThreshold, failureThreshold,
+## terminationGracePeriodSeconds); the handler is the chart's.
+## Built-in defaults:
+##   backend (GET /health :8000):
+##     startup:   {periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 60}  # 10 min to boot
+##     liveness:  {initialDelaySeconds: 60, periodSeconds: 15, failureThreshold: 5}
+##     readiness: {initialDelaySeconds: 30, periodSeconds: 10}
+##   console (GET /health :8080):
+##     liveness:  {initialDelaySeconds: 10, periodSeconds: 15}
+##     readiness: {initialDelaySeconds: 5, periodSeconds: 5}
+##   pgbouncer (pg_isready):
+##     liveness:  {initialDelaySeconds: 15, periodSeconds: 10}
+##     readiness: {initialDelaySeconds: 5, periodSeconds: 5}
+## Example: allow 20 minutes of migrations
+##   backend:
+##     probes:
+##       startup: {failureThreshold: 120}
+##
+## workerProbes: the shared layer for the processes without an HTTP server
+## (queue-worker, queue-agent, queue-agent-sub, queue-pipeline, scheduler,
+## cdc-worker), under each one's own <component>.probes. Each process
+## touches /run/sinas-health/heartbeat (a small in-memory emptyDir) every
+## heartbeatIntervalSeconds from its event loop once it is up; the exec
+## probes (sh + stat, no Python) pass while the file is younger than
+## heartbeatMaxAgeSeconds. They don't depend on Redis or Postgres: an outage
+## of either never restarts the workers. Built-in defaults:
+##   heartbeatIntervalSeconds: 10
+##   heartbeatMaxAgeSeconds: 120    # at least 3x the interval
+##   startup:   {periodSeconds: 5, timeoutSeconds: 5, failureThreshold: 120}  # 10 min to start
+##   liveness:  {periodSeconds: 30, timeoutSeconds: 5, failureThreshold: 3}
+##   readiness: {periodSeconds: 10, timeoutSeconds: 5, failureThreshold: 3}
+## A worker is ready once its poll loop runs (the scheduler / CDC worker once
+## their service is up), and restarted when its event loop has been stuck for
+## heartbeatMaxAgeSeconds plus up to failureThreshold x periodSeconds.
+workerProbes: {}
+
 ## Backend (FastAPI)
 backend:
   ## Full image reference override for the backend AND every worker
@@ -465,6 +577,8 @@ backend:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "300m"
@@ -483,6 +597,8 @@ queueWorker:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -499,6 +615,8 @@ queueAgent:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -520,6 +638,8 @@ queueAgentSub:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "150m"
@@ -539,6 +659,8 @@ queuePipeline:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -552,6 +674,8 @@ scheduler:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -565,6 +689,8 @@ cdcWorker:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "50m"
@@ -581,6 +707,8 @@ console:
   ## Merged over the global podSecurityContext / containerSecurityContext.
   podSecurityContext: {}
   securityContext: {}
+  ## Probe timings over the built-in defaults (see "Probes" above).
+  probes: {}
   resources:
     requests:
       cpu: "25m"
@@ -605,7 +733,10 @@ features:
   ## false disables ALL user-code execution: Functions and the agent
   ## codeExecution tool. Also skips sandbox/shared-worker startup entirely, so
   ## no pool, no per-execution pods, and no executor image is needed — the
-  ## biggest single footprint saving available.
+  ## biggest single footprint saving available. The chart then renders no
+  ## executor RBAC (sandbox ServiceAccount, executor Role/RoleBinding), no
+  ## executor settings (K8S_SANDBOX_*), and the workers mount no Kubernetes
+  ## API token; see systemStats for the backend's own.
   codeExecution: true
   ## false skips creating the `sinas_data` database and its default Database
   ## Connection on startup, for operators who only use their own connections.

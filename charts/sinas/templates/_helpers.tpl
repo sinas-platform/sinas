@@ -33,6 +33,63 @@ ServiceAccount names
 {{- end }}
 
 {{/*
+"true" when user-code execution is on (features.codeExecution). Missing key
+= on, so `helm upgrade --reuse-values` from a release without it keeps
+today's behaviour; only an explicit false (or "false") turns it off.
+*/}}
+{{- define "sinas.codeExecutionOn" -}}
+{{- $f := .Values.features | default dict }}
+{{- if or (not (hasKey $f "codeExecution")) (kindIs "invalid" $f.codeExecution) (eq (toString $f.codeExecution) "true") }}true{{- end }}
+{{- end }}
+
+{{/*
+"true" when the backend reads the Kubernetes API for the System page
+(release pods, metrics.k8s.io). systemStats.kubernetes when set, else
+follows systemStats.rbac; both missing = on (`--reuse-values`-safe).
+*/}}
+{{- define "sinas.k8sStatsOn" -}}
+{{- $s := .Values.systemStats | default dict }}
+{{- $on := true }}
+{{- if and (hasKey $s "rbac") (not (kindIs "invalid" $s.rbac)) }}
+{{- $on = eq (toString $s.rbac) "true" }}
+{{- end }}
+{{- if and (hasKey $s "kubernetes") (not (kindIs "invalid" $s.kubernetes)) }}
+{{- $on = eq (toString $s.kubernetes) "true" }}
+{{- end }}
+{{- if $on }}true{{- end }}
+{{- end }}
+
+{{/* "true" when the chart renders the read-only system-stats Role. */}}
+{{- define "sinas.k8sStatsRbacOn" -}}
+{{- $s := .Values.systemStats | default dict }}
+{{- if and (include "sinas.k8sStatsOn" .) (or (not (hasKey $s "rbac")) (kindIs "invalid" $s.rbac) (eq (toString $s.rbac) "true")) }}true{{- end }}
+{{- end }}
+
+{{/*
+"true" when the executor-manager ServiceAccount is rendered: the backend
+needs a Kubernetes API identity for code execution (sandbox / trusted-worker
+pods) or for the System page's pod list. With neither, no ServiceAccount,
+Role or RoleBinding is rendered and no pod mounts an API token.
+*/}}
+{{- define "sinas.apiServiceAccountOn" -}}
+{{- if or (include "sinas.codeExecutionOn" .) (include "sinas.k8sStatsOn" .) }}true{{- end }}
+{{- end }}
+
+{{/*
+Pod-spec identity for one Sinas workload. needsApi=true: the
+executor-manager ServiceAccount, token mounted. Otherwise the namespace's
+default ServiceAccount WITHOUT a token (nothing in the pod talks to the
+Kubernetes API). Call with: (dict "root" . "needsApi" <bool>)
+*/}}
+{{- define "sinas.podServiceAccount" -}}
+{{- if .needsApi }}
+serviceAccountName: {{ include "sinas.executorManagerSA" .root }}
+{{- else }}
+automountServiceAccountToken: false
+{{- end }}
+{{- end }}
+
+{{/*
 Image tag: explicit .Values.image.tag wins; empty falls back to the chart's
 appVersion, which CI stamps from the release tag — so a versioned install
 pulls that version's images instead of whatever `latest` points at (or, for
@@ -296,6 +353,26 @@ securityContext:
 {{- end }}
 
 {{/*
+SECRET_KEY / ENCRYPTION_KEY secretKeyRef body — the release secret by
+default, or the operator's pre-created Secret when secrets.existingSecret is
+set (key names secrets.secretKeyKey / secrets.encryptionKeyKey). Then the
+chart never renders the values themselves, so they stay out of Helm's
+release record. Paren-safe for `--reuse-values` from a release without them.
+Call with: (dict "root" . "key" "secretKey"|"encryptionKey")
+*/}}
+{{- define "sinas.appSecretRef" -}}
+{{- $s := .root.Values.secrets | default dict }}
+{{- $defaults := dict "secretKey" "secret-key" "encryptionKey" "encryption-key" }}
+{{- if $s.existingSecret -}}
+name: {{ $s.existingSecret | quote }}
+key: {{ get $s (printf "%sKey" .key) | default (get $defaults .key) | quote }}
+{{- else -}}
+name: {{ .root.Release.Name }}-secrets
+key: {{ get $defaults .key }}
+{{- end }}
+{{- end }}
+
+{{/*
 Database password secretKeyRef body — release secret by default, or the
 operator's pre-created secret when postgres.external.existingSecret is set.
 Shared by backendEnv and pgbouncer.
@@ -307,6 +384,94 @@ key: {{ .Values.postgres.external.existingSecretKey | default "password" }}
 {{- else -}}
 name: {{ .Release.Name }}-secrets
 key: database-password
+{{- end }}
+{{- end }}
+
+{{/*
+External PostgreSQL TLS (postgres.external.tls). The validated sslmode, or
+empty when unset — then nothing is rendered and pgbouncer and the drivers
+keep their defaults ("prefer": TLS when the server offers it, unverified),
+as before this setting existed. Fails the render on contradictory settings.
+Paren-safe for `--reuse-values` from a release without the keys.
+*/}}
+{{- define "sinas.postgresTlsMode" -}}
+{{- $ext := (.Values.postgres).external | default dict }}
+{{- $tls := $ext.tls | default dict }}
+{{- $mode := toString ($tls.mode | default "") }}
+{{- if $mode }}
+{{- if not (has $mode (list "disable" "allow" "prefer" "require" "verify-ca" "verify-full")) }}
+{{- fail (printf "postgres.external.tls.mode must be one of disable, allow, prefer, require, verify-ca, verify-full (got %q)" $mode) }}
+{{- end }}
+{{- if not $ext.host }}
+{{- fail "postgres.external.tls.mode applies to an external database: set postgres.external.host (the bundled postgres has no TLS)" }}
+{{- end }}
+{{- end }}
+{{- if and $tls.caSecret $tls.caConfigMap }}
+{{- fail "postgres.external.tls: set caSecret OR caConfigMap, not both" }}
+{{- end }}
+{{- $hasCa := or $tls.caSecret $tls.caConfigMap }}
+{{- $verify := has $mode (list "verify-ca" "verify-full") }}
+{{- if and $verify (not $hasCa) }}
+{{- fail (printf "postgres.external.tls.mode=%s verifies the server certificate: set postgres.external.tls.caSecret or caConfigMap to the server CA (PEM)" $mode) }}
+{{- end }}
+{{- if and $hasCa (not $verify) }}
+{{- fail (printf "postgres.external.tls: a CA (caSecret/caConfigMap) is only used with mode verify-ca or verify-full; with mode %q the certificate would not be verified" ($mode | default "")) }}
+{{- end }}
+{{- $mode -}}
+{{- end }}
+
+{{/* Non-empty when the PostgreSQL server CA is mounted (verify-ca / verify-full). */}}
+{{- define "sinas.postgresCaEnabled" -}}
+{{- if has (include "sinas.postgresTlsMode" .) (list "verify-ca" "verify-full") }}true{{- end }}
+{{- end }}
+
+{{/* Where the PostgreSQL server CA is mounted (pgbouncer and the Sinas pods). */}}
+{{- define "sinas.postgresCaPath" -}}
+/etc/sinas/postgres-ca/ca.crt
+{{- end }}
+
+{{/*
+Direct (non-pgbouncer) database connections of the Sinas processes:
+migrations, CREATE DATABASE of the built-in sinas_data database. Part of
+backendEnv; empty while postgres.external.tls.mode is unset.
+*/}}
+{{- define "sinas.postgresTlsEnv" -}}
+{{- with (include "sinas.postgresTlsMode" .) }}
+- name: DATABASE_DIRECT_SSLMODE
+  value: {{ . | quote }}
+{{- end }}
+{{- if include "sinas.postgresCaEnabled" . }}
+- name: DATABASE_DIRECT_SSLROOTCERT
+  value: {{ include "sinas.postgresCaPath" . | quote }}
+{{- end }}
+{{- end }}
+
+{{/* PostgreSQL server CA volume mount / volume — empty unless verify-*. */}}
+{{- define "sinas.postgresCaMount" -}}
+{{- if include "sinas.postgresCaEnabled" . }}
+- name: postgres-ca
+  mountPath: /etc/sinas/postgres-ca
+  readOnly: true
+{{- end }}
+{{- end }}
+
+{{- define "sinas.postgresCaVolume" -}}
+{{- if include "sinas.postgresCaEnabled" . }}
+{{- $tls := .Values.postgres.external.tls }}
+- name: postgres-ca
+{{- if $tls.caSecret }}
+  secret:
+    secretName: {{ $tls.caSecret | quote }}
+    items:
+      - key: {{ $tls.caSecretKey | default "ca.crt" | quote }}
+        path: ca.crt
+{{- else }}
+  configMap:
+    name: {{ $tls.caConfigMap | quote }}
+    items:
+      - key: {{ $tls.caConfigMapKey | default "ca.crt" | quote }}
+        path: ca.crt
+{{- end }}
 {{- end }}
 {{- end }}
 
@@ -479,6 +644,8 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: ""
 {{- end }}
 {{- include "sinas.redisEnv" . }}
+{{- include "sinas.postgresTlsEnv" . }}
+{{- if include "sinas.codeExecutionOn" . }}
 ## Executor selection — k8s-native: sandbox code runs in ephemeral pods
 ## created via the Kubernetes API (no Docker socket anywhere).
 - name: SANDBOX_EXECUTOR
@@ -494,8 +661,6 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
   value: {{ include "sinas.sandboxSA" . | quote }}
 - name: K8S_SANDBOX_INSTALL_DEPENDENCIES
   value: {{ .Values.executor.installDependencies | quote }}
-- name: K8S_RELEASE_NAME
-  value: {{ .Release.Name | quote }}
 - name: K8S_TRUSTED_WORKERS
   value: {{ .Values.executor.trustedWorkers | default 2 | quote }}
 - name: K8S_SANDBOX_POD_READY_TIMEOUT
@@ -541,6 +706,24 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: K8S_SANDBOX_CONTAINER_SECURITY_CONTEXT
   value: {{ include "sinas.containerSecurityContext" (dict "root" . "values" $ex) | quote }}
 {{- end }}
+{{- else }}
+## Code execution off (features.codeExecution=false): no executor, no
+## sandbox/trusted-worker pods, so none of the executor settings above.
+- name: SANDBOX_EXECUTOR
+  value: "disabled"
+- name: TRUSTED_EXECUTOR
+  value: "disabled"
+{{- end }}
+{{- /* Always set: runtime pods are stamped with it, and the System page
+       lists the release's pods by app.kubernetes.io/instance=<release>. */}}
+- name: K8S_RELEASE_NAME
+  value: {{ .Release.Name | quote }}
+{{- if not (include "sinas.k8sStatsOn" .) }}
+## System page: don't read the Kubernetes API (systemStats); the console
+## hides the pod list instead of showing a permission error.
+- name: SYSTEM_STATS_KUBERNETES
+  value: "false"
+{{- end }}
 - name: POD_NAMESPACE
   valueFrom:
     fieldRef:
@@ -548,13 +731,11 @@ Backend environment — shared by backend, all workers, scheduler, cdc-worker
 - name: SECRET_KEY
   valueFrom:
     secretKeyRef:
-      name: {{ .Release.Name }}-secrets
-      key: secret-key
+      {{- include "sinas.appSecretRef" (dict "root" . "key" "secretKey") | nindent 6 }}
 - name: ENCRYPTION_KEY
   valueFrom:
     secretKeyRef:
-      name: {{ .Release.Name }}-secrets
-      key: encryption-key
+      {{- include "sinas.appSecretRef" (dict "root" . "key" "encryptionKey") | nindent 6 }}
 {{- if .Values.clickhouse.enabled }}
 - name: CLICKHOUSE_PASSWORD
   valueFrom:
@@ -707,19 +888,191 @@ File storage volume mount — /var/sinas/files
 {{- end }}
 
 {{/*
-File storage volume reference.
-Default: emptyDir (dev-friendly, no cross-pod sharing, non-persistent).
-Set fileStorage.storageClass to enable a PVC with an RWX storage class for
-production (Longhorn, NFS, etc.) — the only way to share files across pods
-on multiple nodes.
+File storage volume reference, in order of precedence:
+  fileStorage.existingClaim — a pre-created PVC (e.g. bound to an NFS /
+                              Filestore / EFS ReadWriteMany volume);
+  fileStorage.storageClass  — a PVC the chart creates (file-storage.yaml);
+  neither                   — an emptyDir PER POD: not shared between the
+                              backend and the workers, lost on restart.
+The emptyDir fallback is refused in the split profile (uploads made through
+the backend would be invisible to the workers) unless
+fileStorage.allowEphemeral=true; the all-in-one profile is a single pod, so
+it only warns there (NOTES.txt).
 */}}
+{{- define "sinas.fileStorageEphemeral" -}}
+{{- $fs := .Values.fileStorage | default dict }}
+{{- if not (or $fs.existingClaim $fs.storageClass) }}true{{- end }}
+{{- end }}
+
 {{- define "sinas.fileStorageVolume" -}}
-{{- if (.Values.fileStorage).storageClass }}
+{{- $fs := .Values.fileStorage | default dict }}
+{{- if $fs.existingClaim }}
+- name: file-storage
+  persistentVolumeClaim:
+    claimName: {{ $fs.existingClaim | quote }}
+{{- else if $fs.storageClass }}
 - name: file-storage
   persistentVolumeClaim:
     claimName: {{ .Release.Name }}-file-storage
 {{- else }}
+{{- if not (or .Values.allInOne (eq (toString $fs.allowEphemeral) "true")) }}
+{{- fail "fileStorage: no storageClass or existingClaim set, so every pod would get its own emptyDir — files uploaded through the backend would be invisible to the queue workers and lost on every restart. Set fileStorage.storageClass (a ReadWriteMany class on multi-node clusters, e.g. an NFS / Filestore / EFS class) or fileStorage.existingClaim; or set fileStorage.allowEphemeral=true to accept throwaway per-pod storage (evaluation only). See the Kubernetes docs, \"File storage\"." }}
+{{- end }}
 - name: file-storage
   emptyDir: {}
 {{- end }}
+{{- end }}
+
+{{/*
+──── Probes ────────────────────────────────────────────────────────────
+Every Deployment's container gets readiness and liveness probes (and a
+startupProbe where boot can be slow). Timings are values: built-in defaults
+(below) ← a shared layer (workerProbes, for the processes without an HTTP
+server) ← <component>.probes, deep-merged like the security contexts (a
+null removes a key, or a whole probe). Only timing keys are taken from the
+values; the probe's handler (httpGet / exec) is the chart's.
+*/}}
+{{- define "sinas.probes.backend.default" -}}
+## alembic upgrade head runs before uvicorn starts: up to 10 minutes of
+## migrations before liveness may restart the container.
+startup:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 60
+liveness:
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  failureThreshold: 5
+readiness:
+  initialDelaySeconds: 30
+  periodSeconds: 10
+{{- end }}
+
+{{- define "sinas.probes.console.default" -}}
+liveness:
+  initialDelaySeconds: 10
+  periodSeconds: 15
+readiness:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+{{- end }}
+
+{{- define "sinas.probes.pgbouncer.default" -}}
+liveness:
+  initialDelaySeconds: 15
+  periodSeconds: 10
+readiness:
+  initialDelaySeconds: 5
+  periodSeconds: 5
+{{- end }}
+
+{{/* Queue workers, scheduler, CDC worker: heartbeat-file probes
+     (backend/app/core/heartbeat.py). The process touches the file every
+     heartbeatIntervalSeconds once it is up; the probes pass while it is
+     younger than heartbeatMaxAgeSeconds. Independent of Redis/Postgres. */}}
+{{- define "sinas.probes.worker.default" -}}
+heartbeatIntervalSeconds: 10
+heartbeatMaxAgeSeconds: 120
+## Startup work (Redis checks, config apply in the scheduler, executor
+## discovery) before the file first appears: up to 10 minutes.
+startup:
+  periodSeconds: 5
+  timeoutSeconds: 5
+  failureThreshold: 120
+liveness:
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+readiness:
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+{{- end }}
+
+{{/* Merged probe settings as JSON. Call with
+     (dict "root" . "values" <component values> "defaults" "<define name>"
+      "shared" <map or nil>). */}}
+{{- define "sinas.probeSettings" -}}
+{{- $defaults := include .defaults .root | fromYaml }}
+{{- $shared := .shared }}
+{{- if not (kindIs "map" $shared) }}{{- $shared = dict }}{{- end }}
+{{- $component := (.values | default dict).probes }}
+{{- if not (kindIs "map" $component) }}{{- $component = dict }}{{- end }}
+{{- include "sinas.securityContext.merge" (list $defaults $shared $component) -}}
+{{- end }}
+
+{{/* startupProbe / livenessProbe / readinessProbe blocks from merged
+     settings and one handler. Call with (dict "settings" <map> "handler" <map>). */}}
+{{- define "sinas.probeBlocks" -}}
+{{- $timing := list "initialDelaySeconds" "periodSeconds" "timeoutSeconds" "successThreshold" "failureThreshold" "terminationGracePeriodSeconds" }}
+{{- range $kind := list "startup" "liveness" "readiness" }}
+{{- $p := get $.settings $kind }}
+{{- if kindIs "map" $p }}
+{{ $kind }}Probe:
+  {{- toYaml $.handler | nindent 2 }}
+  {{- range $k := $timing }}
+  {{- if hasKey $p $k }}
+  {{ $k }}: {{ get $p $k | int }}
+  {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/* Probes of an HTTP/exec component with a fixed handler. Call with
+     (dict "root" . "values" <component values> "defaults" "<define name>"
+      "handler" <map>). */}}
+{{- define "sinas.componentProbes" -}}
+{{- $settings := include "sinas.probeSettings" (dict "root" .root "values" .values "defaults" .defaults) | fromJson }}
+{{- include "sinas.probeBlocks" (dict "settings" $settings "handler" .handler) }}
+{{- end }}
+
+{{- define "sinas.heartbeatDir" -}}/run/sinas-health{{- end }}
+
+{{/* Merged worker probe settings (JSON), validated. Call with
+     (dict "root" . "values" <component values>). */}}
+{{- define "sinas.workerProbeSettings" -}}
+{{- $s := include "sinas.probeSettings" (dict "root" .root "values" .values "defaults" "sinas.probes.worker.default" "shared" .root.Values.workerProbes) | fromJson }}
+{{- $interval := $s.heartbeatIntervalSeconds | default 10 | int }}
+{{- $maxAge := $s.heartbeatMaxAgeSeconds | default 120 | int }}
+{{- if lt $interval 1 }}
+{{- fail "workerProbes.heartbeatIntervalSeconds must be at least 1" }}
+{{- end }}
+{{- if lt $maxAge (mul 3 $interval) }}
+{{- fail (printf "workerProbes.heartbeatMaxAgeSeconds (%d) must be at least 3x heartbeatIntervalSeconds (%d): a busy event loop would fail the probes" $maxAge $interval) }}
+{{- end }}
+{{- $_ := set $s "heartbeatIntervalSeconds" $interval }}
+{{- $_ := set $s "heartbeatMaxAgeSeconds" $maxAge }}
+{{- toJson $s -}}
+{{- end }}
+
+{{/* Worker container probes (heartbeat file age, checked with sh + stat:
+     no Python interpreter per probe). Call with (dict "root" . "values" <component values>). */}}
+{{- define "sinas.workerProbes" -}}
+{{- $s := include "sinas.workerProbeSettings" . | fromJson }}
+{{- $file := printf "%s/heartbeat" (include "sinas.heartbeatDir" .root) }}
+{{- $check := printf "f=%s; [ -f \"$f\" ] && [ $(( $(date +%%s) - $(stat -c %%Y \"$f\") )) -lt %d ]" $file ($s.heartbeatMaxAgeSeconds | int) }}
+{{- include "sinas.probeBlocks" (dict "settings" $s "handler" (dict "exec" (dict "command" (list "sh" "-c" $check)))) }}
+{{- end }}
+
+{{/* Env, mount and volume of the heartbeat file (a small in-memory
+     emptyDir: writable under readOnlyRootFilesystem too). */}}
+{{- define "sinas.heartbeatEnv" -}}
+{{- $s := include "sinas.workerProbeSettings" . | fromJson }}
+- name: SINAS_HEARTBEAT_FILE
+  value: {{ printf "%s/heartbeat" (include "sinas.heartbeatDir" .root) | quote }}
+- name: SINAS_HEARTBEAT_INTERVAL
+  value: {{ $s.heartbeatIntervalSeconds | int | quote }}
+{{- end }}
+
+{{- define "sinas.heartbeatMount" -}}
+- name: heartbeat
+  mountPath: {{ include "sinas.heartbeatDir" . }}
+{{- end }}
+
+{{- define "sinas.heartbeatVolume" -}}
+- name: heartbeat
+  emptyDir:
+    medium: Memory
+    sizeLimit: 1Mi
 {{- end }}

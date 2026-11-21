@@ -6,6 +6,9 @@ name: Kubernetes (Pod Security restricted)
 # run in a sandbox pod and in a warm trusted-worker pod (both created by the
 # backend at runtime, both subject to the same admission).
 #
+# The CI values (values-ci.yaml) run without ClickHouse, so every profile
+# also proves the ClickHouse-less install.
+#
 # Images are built in the job from this checkout and loaded into kind; they
 # are never pushed. The helm.yml static check (check_pod_security.py) catches
 # most regressions earlier; this job is the live proof.
@@ -25,6 +28,15 @@ on:
       - 'backend/app/core/pod_security.py'
       - 'backend/app/core/runtime_checks.py'
       - 'backend/app/services/code_execution.py'
+      - 'backend/app/services/k8s_stats.py'
+      - 'backend/app/services/executor_status.py'
+      - 'backend/app/api/v1/endpoints/system.py'
+      - 'backend/app/api/v1/endpoints/containers.py'
+      - 'backend/app/api/v1/endpoints/workers.py'
+      - 'backend/app/core/heartbeat.py'
+      - 'backend/app/queue/arq_worker.py'
+      - 'backend/app/scheduler/service.py'
+      - 'backend/app/cdc/service.py'
       - 'backend/pyproject.toml'
       - 'backend/uv.lock'
       - 'console/Dockerfile'
@@ -64,6 +76,11 @@ jobs:
           # lite: the all-in-one backend pod (lite image).
           - profile: lite
             values: -f charts/sinas/values-lite.yaml -f .github/k8s-restricted/values-ci.yaml
+          # noexec: split, code execution off and systemStats.rbac off (no
+          # ServiceAccount, Role or token anywhere), app keys from an
+          # existing Secret.
+          - profile: noexec
+            values: -f .github/k8s-restricted/values-ci.yaml -f .github/k8s-restricted/values-noexec.yaml
     env:
       NS: sinas
       RELEASE: sinas
@@ -139,12 +156,21 @@ jobs:
           SUPERADMIN_PASSWORD=$(openssl rand -hex 16)
           echo "::add-mask::$SUPERADMIN_PASSWORD"
           echo "SUPERADMIN_PASSWORD=$SUPERADMIN_PASSWORD" >> "$GITHUB_ENV"
+          if [ "${{ matrix.profile }}" = noexec ]; then
+            # secrets.existingSecret (values-noexec.yaml): the keys never
+            # pass through Helm.
+            kubectl -n "$NS" create secret generic sinas-app-secrets \
+              --from-literal=secret-key="$SECRET_KEY" --from-literal=encryption-key="$ENC_KEY"
+            APP_SECRETS=()
+          else
+            APP_SECRETS=(--set secrets.secretKey="$SECRET_KEY" --set secrets.encryptionKey="$ENC_KEY")
+          fi
           # Admission warnings ("would violate PodSecurity ...") arrive on
           # stderr; keep them to assert on.
           helm install "$RELEASE" charts/sinas -n "$NS" ${{ matrix.values }} \
             --set image.registry="$REG" --set image.tag="$TAG" \
             --set domain=sinas.ci.example.com \
-            --set secrets.secretKey="$SECRET_KEY" --set secrets.encryptionKey="$ENC_KEY" \
+            "${APP_SECRETS[@]}" \
             --set postgres.password="$(openssl rand -hex 16)" \
             --set superadminEmail=admin@example.com \
             --set superadminPassword="$SUPERADMIN_PASSWORD" \
@@ -204,7 +230,7 @@ jobs:
           test "$(uid deploy/pgbouncer pgbouncer)" = 70
           test "$(uid statefulset/postgres postgres)" = 70
           test "$(uid statefulset/redis redis)" = 999
-          if [ "${{ matrix.profile }}" = split ]; then
+          if [ "${{ matrix.profile }}" != lite ]; then
             test "$(uid deploy/console console)" = 10001
             test "$(uid deploy/queue-worker queue-worker)" = 10001
             # the console (nginx on 8080) still answers on the Service's port 80
@@ -214,7 +240,52 @@ jobs:
           # file storage is writable by the backend's user
           kubectl -n "$NS" exec deploy/backend -c backend -- sh -c 'touch /var/sinas/files/.ci-write && rm /var/sinas/files/.ci-write'
 
-      - name: Run a function in a sandbox pod and a trusted-worker pod
+      - name: Assert probes (every Deployment; worker heartbeats live)
+        run: |
+          set -e
+          # every container of every Deployment has readiness + liveness
+          # probes, the backend a startupProbe (alembic runs before uvicorn)
+          kubectl -n "$NS" get deploy -o json | python3 -c '
+          import json, sys
+          bad = []
+          for d in json.load(sys.stdin)["items"]:
+              for c in d["spec"]["template"]["spec"]["containers"]:
+                  for p in ("readinessProbe", "livenessProbe"):
+                      if p not in c:
+                          bad.append((d["metadata"]["name"], c["name"], p))
+              if d["metadata"]["name"] == "backend":
+                  if "startupProbe" not in d["spec"]["template"]["spec"]["containers"][0]:
+                      bad.append(("backend", "backend", "startupProbe"))
+          assert not bad, bad
+          print("probes ok")'
+          # the heartbeat workers (Ready above means their probes passed):
+          # the file is there and fresh, written by uid 10001
+          for d in $(kubectl -n "$NS" get deploy -o name | sed 's|deployment.apps/||' | grep -v -x -e backend -e console -e pgbouncer); do
+            kubectl -n "$NS" exec "deploy/$d" -c "$d" -- sh -c \
+              'f=/run/sinas-health/heartbeat; test -f "$f" && test $(( $(date +%s) - $(stat -c %Y "$f") )) -lt 60 && test "$(stat -c %u "$f")" = 10001' \
+              || { echo "::error::$d has no fresh heartbeat file"; exit 1; }
+            echo "$d heartbeat ok"
+          done
+
+      - name: Assert no Kubernetes API identity (noexec)
+        if: matrix.profile == 'noexec'
+        run: |
+          set -e
+          # only the namespace's own default ServiceAccount; no Role/Binding
+          kubectl -n "$NS" get serviceaccount,role,rolebinding -o name | tee "$ARTIFACTS/rbac.txt"
+          test "$(cat "$ARTIFACTS/rbac.txt")" = "serviceaccount/default"
+          # no Sinas pod has an API token mounted
+          for d in backend queue-worker queue-agent scheduler cdc-worker; do
+            kubectl -n "$NS" exec "deploy/$d" -c "$d" -- sh -c \
+              'test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token' \
+              || { echo "::error::$d has a service account token"; exit 1; }
+          done
+          # the app keys come from the pre-created Secret, not the release's
+          ! kubectl -n "$NS" get secret "$RELEASE-secrets" -o jsonpath='{.data}' | grep -q -e secret-key -e encryption-key || exit 1
+          kubectl -n "$NS" get deploy backend -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="SECRET_KEY")].valueFrom.secretKeyRef.name}' \
+            | grep -qx sinas-app-secrets
+
+      - name: Smoke test (split/lite run functions in sandbox + trusted pods; noexec is refused)
         run: |
           kubectl -n "$NS" port-forward svc/backend 18000:8000 > "$ARTIFACTS/port-forward.log" 2>&1 &
           echo $! > "$ARTIFACTS/port-forward.pid"
@@ -224,9 +295,15 @@ jobs:
           WATCH=$!
           sleep 3
           SINAS_URL=http://127.0.0.1:18000 SINAS_EMAIL=admin@example.com SINAS_RELEASE="$RELEASE" \
-            SINAS_PASSWORD="$SUPERADMIN_PASSWORD" \
+            SINAS_PASSWORD="$SUPERADMIN_PASSWORD" SMOKE_PROFILE="${{ matrix.profile }}" \
             python3 .github/k8s-restricted/smoke.py
           kill $WATCH || true
+          if [ "${{ matrix.profile }}" = noexec ]; then
+            # code execution off: the backend must not have created any pod
+            ! grep -q 'pod/' "$ARTIFACTS/sandbox-pods.txt" || { echo "::error::a sandbox pod was created"; exit 1; }
+            ! kubectl -n "$NS" get pods -l sinas.type -o name | grep -q . || { echo "::error::runtime pods exist"; exit 1; }
+            exit 0
+          fi
           echo "sandbox pods created:"; sort -u "$ARTIFACTS/sandbox-pods.txt"
           grep -q 'pod/sinas-sbx-' "$ARTIFACTS/sandbox-pods.txt" || { echo "::error::no sandbox pod was created"; exit 1; }
           # Nothing refused at runtime either (sandbox/trusted pods are
@@ -235,6 +312,24 @@ jobs:
           if grep -q . "$ARTIFACTS/failedcreate-runtime.txt"; then
             cat "$ARTIFACTS/failedcreate-runtime.txt"; echo "::error::pods were refused at runtime"; exit 1
           fi
+
+      - name: System page with an unreachable Kubernetes API (split)
+        # RBAC is granted, but the backend's traffic to the apiserver goes
+        # nowhere, as behind a NetworkPolicy that drops it. Simulated by
+        # pointing the backend's in-cluster API address at an unroutable
+        # IP (TEST-NET-1): kind's default CNI doesn't reliably enforce
+        # NetworkPolicy. The page must answer at once with the cluster
+        # part marked unavailable (unit tests: backend/tests/unit/test_k8s_breaker.py).
+        if: matrix.profile == 'split'
+        run: |
+          kill "$(cat "$ARTIFACTS/port-forward.pid")" 2>/dev/null || true
+          kubectl -n "$NS" set env deploy/backend -c backend KUBERNETES_SERVICE_HOST=192.0.2.1
+          kubectl -n "$NS" rollout status deploy/backend --timeout=300s
+          kubectl -n "$NS" port-forward svc/backend 18001:8000 > "$ARTIFACTS/port-forward-blocked.log" 2>&1 &
+          sleep 3
+          SINAS_URL=http://127.0.0.1:18001 SINAS_EMAIL=admin@example.com SINAS_RELEASE="$RELEASE" \
+            SINAS_PASSWORD="$SUPERADMIN_PASSWORD" SMOKE_PROFILE=blocked-api \
+            python3 .github/k8s-restricted/smoke.py
 
       - name: Report container restarts
         # Not a failure: a startup-order restart (e.g. a worker that came up

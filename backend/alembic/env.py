@@ -22,8 +22,10 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Override sqlalchemy.url - use direct connection (bypasses pgbouncer for DDL)
-config.set_main_option("sqlalchemy.url", settings.get_database_direct_url)
+# Override sqlalchemy.url - use direct connection (bypasses pgbouncer for DDL).
+# The value goes through configparser interpolation: a literal "%" (e.g. a
+# percent-encoded sslrootcert path) must be doubled.
+config.set_main_option("sqlalchemy.url", settings.get_database_direct_url.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

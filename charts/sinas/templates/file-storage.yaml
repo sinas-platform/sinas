@@ -1,13 +1,26 @@
-{{- if (.Values.fileStorage).storageClass }}
+{{- $fs := .Values.fileStorage | default dict }}
+{{- if and $fs.storageClass (not $fs.existingClaim) }}
+{{- $mode := $fs.accessMode | default "ReadWriteOnce" }}
+{{- if not (has $mode (list "ReadWriteOnce" "ReadWriteMany" "ReadWriteOncePod")) }}
+{{- fail (printf "fileStorage.accessMode must be ReadWriteOnce, ReadWriteMany or ReadWriteOncePod (got %q)" $mode) }}
+{{- end }}
+{{- /* ReadWriteOncePod admits ONE pod: the split profile mounts the claim
+       into six (backend, four queue workers, scheduler), so all but one
+       would never start. Only the all-in-one pod can use it. */}}
+{{- if and (eq $mode "ReadWriteOncePod") (not .Values.allInOne) }}
+{{- fail "fileStorage.accessMode=ReadWriteOncePod admits a single pod, but the split profile mounts file storage into the backend, the queue workers and the scheduler: use ReadWriteOnce (one node) or ReadWriteMany" }}
+{{- end }}
 ## Shared persistent volume for user-uploaded files (/var/sinas/files).
 ## Mounted into backend, queue-worker, queue-agent, queue-agent-sub,
 ## queue-pipeline and scheduler.
 ##
-## Scaleway SBS (and most block storage) is ReadWriteOnce — it can only attach
-## to a single node. All pods that mount this volume must be co-located on the
-## same node.
-##
-## For multi-node production use, use an RWX storage class (NFS, Longhorn, etc.)
+## fileStorage.accessMode defaults to ReadWriteOnce (what earlier charts
+## created; a PVC's access modes can't be changed afterwards). Block storage
+## is ReadWriteOnce only: it attaches to ONE node, so every pod mounting this
+## volume must be scheduled there. On a multi-node cluster use a
+## ReadWriteMany class (NFS, Filestore, EFS, Azure Files, ...) with
+## accessMode: ReadWriteMany, or bind a pre-created RWX volume through
+## fileStorage.existingClaim.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -16,9 +29,9 @@ metadata:
     {{- include "sinas.labels" . | nindent 4 }}
 spec:
   accessModes:
-    - ReadWriteOnce
+    - {{ $mode }}
   resources:
     requests:
-      storage: {{ .Values.fileStorage.size | default "5Gi" }}
-  storageClassName: {{ .Values.fileStorage.storageClass }}
+      storage: {{ $fs.size | default "5Gi" }}
+  storageClassName: {{ $fs.storageClass }}
 {{- end }}
