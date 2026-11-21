@@ -30,6 +30,13 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "namespaced": True,
     },
     {
+        "resource": "chats",
+        "description": "Agent chats (chatting itself is the agent's `chat` action)",
+        # assign_provider_credential: give a chat its own LLM provider
+        # credential (`provider_credentials`, app/services/provider_credentials.py)
+        "actions": ["assign_provider_credential"],
+    },
+    {
         "resource": "functions",
         "description": "Executable functions",
         "actions": ["create", "read", "update", "delete", "execute", "shared_pool"],

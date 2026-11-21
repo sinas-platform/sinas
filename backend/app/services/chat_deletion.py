@@ -19,6 +19,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chat import Chat, Message
+from app.models.chat_provider_credential import ChatProviderCredential
 from app.models.chat_wakeup import ChatWakeup
 from app.models.execution import Execution
 from app.models.mcp_task import McpTask
@@ -89,6 +90,7 @@ async def delete_chats_and_rows(db: AsyncSession, chat_ids: Sequence[Any]) -> tu
     await db.execute(delete(ToolCallResult).where(ToolCallResult.chat_id.in_(ids)))
     await db.execute(delete(ChatWakeup).where(ChatWakeup.chat_id.in_(ids)))
     await db.execute(delete(McpTask).where(McpTask.chat_id.in_(ids)))
+    await db.execute(delete(ChatProviderCredential).where(ChatProviderCredential.chat_id.in_(ids)))
     paths = await delete_workbenches_for_chats(db, ids)
     messages = (await db.execute(delete(Message).where(Message.chat_id.in_(ids)))).rowcount or 0
     await db.execute(delete(Chat).where(Chat.id.in_(ids)))

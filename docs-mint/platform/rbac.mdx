@@ -46,6 +46,7 @@ Users are assigned to **roles**, and roles define **permissions**. A user's effe
 | `sinas.functions/marketing/*.execute:own` | Execute any function in the `marketing` namespace |
 | `sinas.states/*.read:own` | Read own states in any namespace |
 | `sinas.chats.*:own` | All chat actions (read, update, delete) on own chats |
+| `sinas.chats.assign_provider_credential:own` | Give own chats a per-run LLM provider credential (`provider_credentials`, the adapter's `X-Sinas-Provider-Credential`); in no default role. See [per-run credentials](/admin/llm-gateway-attribution#per-run-credentials) |
 
 **Namespaced resource permissions** use slashes in the resource path:
 

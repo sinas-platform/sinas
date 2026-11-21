@@ -64,7 +64,7 @@ class OllamaProvider(BaseLLMProvider):
                 logger.error(f"Ollama API error: {response.status_code}")
                 logger.error(f"URL: {self.base_url}/api/chat")
                 logger.error(f"Payload: {payload}")
-                logger.error(f"Response: {response.text}")
+                logger.error(f"Response: {self.scrub(response.text)}")
 
             response.raise_for_status()
             data = response.json()

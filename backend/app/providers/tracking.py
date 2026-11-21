@@ -23,7 +23,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from .base import BaseLLMProvider
-from .errors import LLMError, error_from_exception
+from .errors import PROVIDER_ERROR, LLMError, contains_secret, error_from_exception, scrub
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +218,7 @@ class UsageTrackingProvider(BaseLLMProvider):
     ):
         super().__init__(api_key=inner.api_key, base_url=inner.base_url)
         self._inner = inner
+        self.run_credential = getattr(inner, "run_credential", None)
         self._provider_name = provider_name
         self._provider_type = provider_type
         self._context = context or {}
@@ -231,6 +232,32 @@ class UsageTrackingProvider(BaseLLMProvider):
         except Exception:  # classifying must never hide the original error
             logger.debug("Classifying an LLM error failed", exc_info=True)
             return None
+
+    def _secrets(self) -> list[str]:
+        credential = getattr(self._inner, "run_credential", None)
+        return credential.secrets() if credential is not None else []
+
+    def _failure(self, error: Exception, model: Optional[str]) -> tuple[Optional[LLMError], bool]:
+        """(the typed error to raise, whether to hide the original) for a
+        failed call. With a run credential, no trace of it leaves: a typed
+        error's message is scrubbed of it, and an error whose own text holds
+        it (a gateway echoing the key it was sent) is raised as a typed one
+        without its cause."""
+        typed = self._classify(error, model)
+        secrets = self._secrets()
+        if not secrets:
+            return typed, False
+        hide = contains_secret(str(error), secrets) or contains_secret(repr(error), secrets)
+        if typed is not None:
+            return typed.scrubbed(secrets), hide
+        if hide:
+            where = f"LLM provider '{self._provider_name}'" if self._provider_name else "The LLM provider"
+            return LLMError(
+                PROVIDER_ERROR,
+                f"{where} failed: {scrub(str(error), secrets)[:500]}",
+                provider=self._provider_name,
+            ), True
+        return None, False
 
     def _record(
         self,
@@ -262,6 +289,9 @@ class UsageTrackingProvider(BaseLLMProvider):
             "error": error,
             "finish_reason": normalized,
             "finish_reason_raw": raw_finish_reason(finish_reason),
+            # Whether the call presented the run's own credential (never
+            # the credential, nor anything derived from it).
+            "run_credential": getattr(self._inner, "run_credential", None) is not None,
         }
         for key in _CONTEXT_KEYS:
             if self._context.get(key) is not None:
@@ -305,7 +335,7 @@ class UsageTrackingProvider(BaseLLMProvider):
             )
             raise
         except Exception as e:
-            typed = self._classify(e, model)
+            typed, hide = self._failure(e, model)
             self._record(
                 model=model,
                 usage=None,
@@ -314,6 +344,8 @@ class UsageTrackingProvider(BaseLLMProvider):
                 error=str(typed or e)[:2000],
             )
             if typed is not None:
+                if hide:
+                    raise typed from None
                 raise typed from e
             raise
         self._record(
@@ -363,9 +395,11 @@ class UsageTrackingProvider(BaseLLMProvider):
             error = CANCELLED
             raise
         except Exception as e:
-            typed = self._classify(e, model)
+            typed, hide = self._failure(e, model)
             error = str(typed or e)[:2000]
             if typed is not None:
+                if hide:
+                    raise typed from None
                 raise typed from e
             raise
         finally:

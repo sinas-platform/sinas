@@ -3,6 +3,7 @@ from .manifest import Manifest
 from .base import Base
 from .batch import Batch, BatchKind, BatchStatus
 from .chat import Chat, Message
+from .chat_provider_credential import ChatProviderCredential
 from .connector import Connector
 from .connector_oauth_token import ConnectorOAuthToken
 from .component import Component
@@ -60,6 +61,7 @@ __all__ = [
     "FunctionVersion",
     "Webhook",
     "ChatWakeup",
+    "ChatProviderCredential",
     "McpTask",
     "PackageRepository",
     "IdentityProvider",

@@ -48,6 +48,28 @@ class BaseLLMProvider(ABC):
         # The provider's own budget refusal rules (`config.budget_errors`,
         # app/providers/errors.py), for the SDK client's no-retry hook.
         self.budget_rules: list[dict[str, Any]] = []
+        # The run's own credential for this provider, when the chat (or the
+        # request) has one (app/providers/run_credentials.py). Sent by
+        # reference: see `_run_credential_headers`.
+        self.run_credential: Optional[Any] = None
+
+    def _run_credential_headers(self) -> dict[str, str]:
+        """The run credential's reference (a private header the client's hook
+        takes off) and a placeholder in each header it goes in, which the
+        hook replaces with the value (`clients._apply_run_credential`)."""
+        if self.run_credential is None:
+            return {}
+        from .clients import RUN_CREDENTIAL_HEADER
+
+        return {**self.run_credential.placeholders(), RUN_CREDENTIAL_HEADER: self.run_credential.ref}
+
+    def scrub(self, text: str) -> str:
+        """`text` (an error body, a log line) without the run credential."""
+        if self.run_credential is None or not text:
+            return text
+        from .errors import scrub
+
+        return scrub(text, self.run_credential.secrets())
 
     def _context_headers(self) -> dict[str, str]:
         """The headers that carry the current trace context, when enabled."""
@@ -72,16 +94,19 @@ class BaseLLMProvider(ABC):
     def _request_headers(self) -> dict[str, str]:
         """Every header Sinas adds to a request sent over plain HTTP (not
         through an SDK client, but through a client guarded the same way):
-        the trace context, when enabled and marked for the guard, and the
-        identity headers."""
+        the trace context, when enabled and marked for the guard, the
+        identity headers and the run credential (by reference)."""
         from .attribution import merge_headers
 
-        return merge_headers(self._sdk_context_headers(), self.identity_headers)
+        return merge_headers(
+            self._sdk_context_headers(), self.identity_headers, self._run_credential_headers()
+        )
 
     def _sdk_request_headers(self) -> dict[str, str]:
         """`_request_headers` for a call through an SDK client: the trace
-        context marked for the client's guard, and the budget rules for its
-        no-retry hook (private headers the hooks take off again)."""
+        context marked for the client's guard, the budget rules for its
+        no-retry hook (private headers the hooks take off again), the
+        identity headers, and the run credential by reference."""
         from .attribution import merge_headers
 
         private: dict[str, str] = {}
@@ -91,7 +116,9 @@ class BaseLLMProvider(ABC):
             from .clients import BUDGET_RULES_HEADER
 
             private[BUDGET_RULES_HEADER] = json.dumps(self.budget_rules, separators=(",", ":"))
-        return merge_headers(self._sdk_context_headers(), private, self.identity_headers)
+        return merge_headers(
+            self._sdk_context_headers(), private, self.identity_headers, self._run_credential_headers()
+        )
 
     def _add_context_headers(self, call_kwargs: dict[str, Any]) -> None:
         """Add Sinas's headers (`_sdk_request_headers`) to an SDK call's

@@ -25,6 +25,9 @@ from app.models.database_connection import DatabaseConnection
 from app.models.schedule import ScheduledJob
 from app.models.user import Role, User, UserRole
 from app.scheduler.jobs.cleanup_expired_chats import cleanup_expired_chats
+from app.scheduler.jobs.cleanup_expired_provider_credentials import (
+    cleanup_expired_provider_credentials,
+)
 from app.scheduler.jobs.poll_provider_batches import poll_provider_batches
 from app.services.config_apply import ConfigApplyService
 from app.services.config_parser import ConfigParser
@@ -325,6 +328,16 @@ async def run(stop_event: asyncio.Event) -> None:
         replace_existing=True,
     )
     logger.info("Registered system job: cleanup_expired_chats (every 1h)")
+
+    scheduler.scheduler.add_job(
+        func=cleanup_expired_provider_credentials,
+        trigger="interval",
+        minutes=15,
+        id="system:cleanup_expired_provider_credentials",
+        name="Delete expired run provider credentials",
+        replace_existing=True,
+    )
+    logger.info("Registered system job: cleanup_expired_provider_credentials (every 15m)")
 
     scheduler.scheduler.add_job(
         func=poll_provider_batches,

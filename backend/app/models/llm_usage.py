@@ -67,6 +67,12 @@ class LLMUsage(Base):
     # (an organization id, say) when the call was made. NULL when that
     # setting is off or the user had no such field.
     customer: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # The call presented the run's own provider credential (a chat's
+    # provider_credentials) instead of the provider's configured key. Never
+    # the credential, nor a hash of it.
+    run_credential: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
