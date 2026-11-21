@@ -68,6 +68,8 @@ async def _initialize_builtin_database() -> None:
             user=settings.database_user,
             password=settings.database_password,
             database=settings.database_name,
+            # DATABASE_DIRECT_SSLMODE / _SSLROOTCERT; None = asyncpg default.
+            ssl=settings.database_direct_asyncpg_ssl(),
         )
         try:
             exists = await conn.fetchval(

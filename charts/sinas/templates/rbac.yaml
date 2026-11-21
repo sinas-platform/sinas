@@ -9,12 +9,20 @@
 ## automountServiceAccountToken: false on each pod). It exists so sandbox
 ## pods never run as the namespace default SA and so private-registry pull
 ## secrets can be attached to them.
+##
+## With features.codeExecution=false none of the executor objects (sandbox
+## SA, executor Role/RoleBinding) are rendered. The executor-manager SA then
+## exists only for the System page's pod list (systemStats); with that off
+## too, nothing here is rendered and no Sinas pod mounts an API token.
+{{- if include "sinas.apiServiceAccountOn" . }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ include "sinas.executorManagerSA" . }}
   labels:
     {{- include "sinas.labels" . | nindent 4 }}
+{{- end }}
+{{- if include "sinas.codeExecutionOn" . }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -56,10 +64,10 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "sinas.executorManagerSA" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- /* On unless explicitly false; a --reuse-values upgrade from a release
        without the key keeps it on. */}}
-{{- $systemStats := .Values.systemStats | default dict }}
-{{- if or (not (hasKey $systemStats "rbac")) $systemStats.rbac }}
+{{- if include "sinas.k8sStatsRbacOn" . }}
 ---
 ## System page stats — read-only. The console's System page lists the
 ## release's pods (phase, ready, restarts, age) and, where metrics-server is

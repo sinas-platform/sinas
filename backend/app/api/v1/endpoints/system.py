@@ -415,11 +415,15 @@ async def get_system_health(
     services: list[dict] = []
     services_reason: str | None = None
     metrics_reason: str | None = None
+    # Kubernetes pod list turned off (systemStats.rbac=false in the chart):
+    # don't call the API at all — there may be no token or RBAC for it.
+    services_enabled = deployment != "kubernetes" or settings.system_stats_kubernetes
     try:
         if deployment == "kubernetes":
-            services, services_reason, metrics_reason = await k8s_stats.list_services(
-                include_stats
-            )
+            if services_enabled:
+                services, services_reason, metrics_reason = await k8s_stats.list_services(
+                    include_stats
+                )
         else:
             services, services_reason = await _docker_services(include_stats)
     except Exception as e:
@@ -480,6 +484,7 @@ async def get_system_health(
         },
         services_unavailable_reason=services_reason,
         metrics_unavailable_reason=metrics_reason,
+        services_enabled=services_enabled,
     )
 
 

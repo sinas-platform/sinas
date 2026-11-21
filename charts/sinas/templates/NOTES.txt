@@ -4,12 +4,47 @@ Sinas has been deployed to namespace {{ .Release.Namespace }}.
   API:      https://{{ .Values.domain }}/api/v1
   Health:   https://{{ .Values.domain }}/health
 
+{{- $fs := .Values.fileStorage | default dict }}
+{{- if include "sinas.fileStorageEphemeral" . }}
+
+################################################################################
+WARNING: FILE STORAGE IS EPHEMERAL
+  fileStorage has no storageClass or existingClaim, so /var/sinas/files is an
+  emptyDir: uploaded files are LOST whenever the pod restarts or moves
+{{- if not .Values.allInOne }}, and
+  each pod has its own copy: files uploaded through the backend are NOT
+  visible to the queue workers (fileStorage.allowEphemeral=true)
+{{- end }}.
+  Fine for evaluation, not for real use. Set fileStorage.storageClass (a
+  ReadWriteMany class on multi-node clusters) or fileStorage.existingClaim.
+################################################################################
+{{- else if and (not .Values.allInOne) (not $fs.existingClaim) (ne ($fs.accessMode | default "ReadWriteOnce") "ReadWriteMany") }}
+
+NOTE: file storage is a {{ $fs.accessMode | default "ReadWriteOnce" }} volume (storage class
+{{ $fs.storageClass | quote }}). It attaches to one node, so the backend and every
+worker mounting it must run on that node. On a multi-node cluster use a
+ReadWriteMany class with fileStorage.accessMode=ReadWriteMany, or
+fileStorage.existingClaim.
+{{- end }}
+{{- if and (.Values.secrets | default dict).existingSecret (or .Values.secrets.secretKey .Values.secrets.encryptionKey) }}
+
+NOTE: secrets.existingSecret is set, so secrets.secretKey / encryptionKey are
+ignored; remove them from your values.
+{{- end }}
+
+{{- if include "sinas.codeExecutionOn" . }}
+
 Executor configuration:
   sandbox (untrusted code):  {{ .Values.executor.sandbox }}
   trusted (shared_pool):     {{ .Values.executor.trusted }}
   sandbox pod image:         {{ include "sinas.image.executor" . }}
+{{- else }}
 
-{{- if eq .Values.executor.sandbox "k8s_pod" }}
+Code execution is disabled (features.codeExecution=false): no sandbox or
+trusted-worker pods, and no executor RBAC.
+{{- end }}
+
+{{- if and (include "sinas.codeExecutionOn" .) (eq .Values.executor.sandbox "k8s_pod") }}
 
 Untrusted code runs in ephemeral hardened Pods created in this namespace
 (label sinas.type=sandbox-executor). Watch them during an execution:

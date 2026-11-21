@@ -9,7 +9,9 @@ Standard library only. Talks to the backend through a port-forward:
 
 Each check is a function named check_*; they run in definition order and
 the script exits non-zero if any fails. Add further end-to-end checks
-(pipelines, sub-agents, ...) as more check_* functions.
+(pipelines, sub-agents, ...) as more check_* functions. SMOKE_PROFILE (the
+workflow's matrix profile) selects the checks marked with @profiles(...);
+unmarked checks run everywhere.
 """
 
 from __future__ import annotations
@@ -28,6 +30,19 @@ PASSWORD = os.environ["SINAS_PASSWORD"]
 EXPECT_UID = int(os.environ.get("EXPECT_UID", "10001"))
 NS = "k8s_ci"
 RELEASE = os.environ.get("SINAS_RELEASE", "sinas")
+PROFILE = os.environ.get("SMOKE_PROFILE", "split")
+# Profiles that run user code (features.codeExecution on).
+EXEC_PROFILES = ("split", "lite")
+
+
+def profiles(*names: str):
+    """Run the decorated check only in these profiles."""
+
+    def mark(fn):
+        fn.profiles = names
+        return fn
+
+    return mark
 
 _token: str | None = None
 
@@ -123,6 +138,57 @@ def _execute(name: str, payload: dict) -> dict:
     return result
 
 
+def check_clickhouse_off():
+    """The CI values run without ClickHouse: the API says so, the request-log
+    API answers 503 with the reason instead of erroring, and nothing else
+    depends on it."""
+    status, body = call("GET", "/info")
+    assert status == 200, f"/info: {status} {body}"
+    assert body["features"]["clickhouse"] is False, body["features"]
+    status, body = call("GET", "/api/v1/request-logs")
+    assert status == 503 and "disabled" in body.get("detail", ""), f"request-logs: {status} {body}"
+
+
+def _system_health() -> dict:
+    status, body = call("GET", "/api/v1/system/health?include_stats=true", timeout=90)
+    assert status == 200, f"system health: {status} {body}"
+    assert body["deployment"] == "kubernetes", body["deployment"]
+    return body
+
+
+@profiles(*EXEC_PROFILES)
+def check_system_page_lists_release_pods():
+    body = _system_health()
+    assert body["services_enabled"] is True, body
+    assert body["services_unavailable_reason"] is None, body["services_unavailable_reason"]
+    assert any(s["service"] == "backend" for s in body["services"]), body["services"]
+
+
+@profiles("noexec")
+def check_system_page_pod_list_off():
+    """systemStats.rbac=false: no API call, no error, the console hides it."""
+    body = _system_health()
+    assert body["services_enabled"] is False, body
+    assert body["services"] == [] and body["services_unavailable_reason"] is None, body
+
+
+@profiles("noexec")
+def check_code_execution_off():
+    status, body = call("GET", "/info")
+    assert body["features"]["code_execution"] is False, body["features"]
+    status, body = call("POST", "/api/v1/functions", {
+        "namespace": NS, "name": "nope", "description": "must be refused", "code": WHOAMI,
+        "input_schema": {"type": "object"}, "output_schema": {"type": "object"},
+    })
+    assert status == 403 and "disabled" in json.dumps(body), f"create function: {status} {body}"
+    h = {"sandbox": "/api/v1/containers/stats", "shared": "/api/v1/workers/count"}
+    for card, path in h.items():
+        status, body = call("GET", path)
+        assert status == 200, f"{card}: {status} {body}"
+        assert "Code execution is disabled" in (body.get("unavailable_reason") or ""), (card, body)
+
+
+@profiles(*EXEC_PROFILES)
 def check_dependency_approved():
     status, body = call("POST", "/api/v1/dependencies", {"package_name": "six"})
     assert status in (200, 201) or (status == 400 and "already" in json.dumps(body)), (
@@ -130,6 +196,7 @@ def check_dependency_approved():
     )
 
 
+@profiles(*EXEC_PROFILES)
 def check_sandbox_function_runs_in_restricted_pod():
     _create_function("whoami", shared_pool=False)
     result = _execute("whoami", {"import_dependency": True})
@@ -144,6 +211,7 @@ def check_sandbox_function_runs_in_restricted_pod():
     assert result["six_file"].startswith("/usr/local/"), result
 
 
+@profiles(*EXEC_PROFILES)
 def check_trusted_function_runs_in_restricted_pod():
     _create_function("whoami_trusted", shared_pool=True)
     result = _execute("whoami_trusted", {})
@@ -154,7 +222,12 @@ def check_trusted_function_runs_in_restricted_pod():
 
 
 def main() -> int:
-    checks = [(n, f) for n, f in globals().items() if n.startswith("check_") and callable(f)]
+    checks = [
+        (n, f)
+        for n, f in globals().items()
+        if n.startswith("check_") and callable(f) and PROFILE in getattr(f, "profiles", (PROFILE,))
+    ]
+    print(f"profile {PROFILE}: {', '.join(n for n, _ in checks)}")
     failed = 0
     for name, fn in checks:
         t = time.time()

@@ -1,0 +1,12 @@
+# The "noexec" profile of .github/workflows/k8s-restricted.yml, on top of
+# values-ci.yaml: a deployment that runs no user code and gives Sinas no
+# Kubernetes API identity at all, with its app keys from a pre-created
+# Secret (the workflow creates sinas-app-secrets before installing).
+features:
+  codeExecution: false
+
+systemStats:
+  rbac: false
+
+secrets:
+  existingSecret: sinas-app-secrets

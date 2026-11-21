@@ -6,9 +6,9 @@ name: Helm Chart Checks
 on:
   push:
     branches: [main, dev]
-    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/workflows/helm.yml']
+    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/scripts/check_chart_renders.py', '.github/workflows/helm.yml']
   pull_request:
-    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/workflows/helm.yml']
+    paths: ['charts/**', '.github/scripts/check_pod_security.py', '.github/scripts/check_chart_renders.py', '.github/workflows/helm.yml']
 
 jobs:
   helm:
@@ -31,7 +31,7 @@ jobs:
           CHECK=.github/scripts/check_pod_security.py
           BASE=(--set domain=ci.example.com
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci
-            --set postgres.password=ci --set clickhouse.password=ci)
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci)
           helm template ci charts/sinas "${BASE[@]}" > /tmp/psa-default.yaml
           helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${BASE[@]}" > /tmp/psa-lite.yaml
           helm template ci charts/sinas "${BASE[@]}" --set clickhouse.enabled=false \
@@ -87,14 +87,14 @@ jobs:
           helm lint charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci
 
       - name: helm template (default profile)
         run: |
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             > /tmp/default.yaml
           grep -q "kind: StatefulSet" /tmp/default.yaml
           # Client IP from the ingress's X-Forwarded-For, trusted proxies only
@@ -111,7 +111,7 @@ jobs:
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set redis.maxmemoryPolicy=allkeys-lru \
             | grep -A1 -- "--maxmemory-policy" | grep -q '"allkeys-lru"'
           # Every arq queue has a consumer in the split profile
@@ -138,7 +138,7 @@ jobs:
           D=@sha256:0000000000000000000000000000000000000000000000000000000000000000
           OVR=(--set domain=ci.example.com
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci
-            --set postgres.password=ci --set clickhouse.password=ci
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci
             --set "backend.image=$M/backend:0.5.0$D" --set "console.image=$M/console$D"
             --set "lite.image=$M/lite$D" --set "executor.image=$M/executor:0.5.0$D"
             --set "postgres.image=$M/postgres$D" --set "redis.image=$M/redis$D"
@@ -172,7 +172,7 @@ jobs:
           ! helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set backend.image.repository=x > /dev/null 2>&1
           # ...and so is any other non-string (false, 0, []): only unset or ""
           # mean the default
@@ -180,7 +180,7 @@ jobs:
             ! helm template ci charts/sinas \
               --set domain=ci.example.com \
               --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-              --set postgres.password=ci --set clickhouse.password=ci \
+              --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
               --set-json "redis.image=$bad" > /dev/null 2>&1 || exit 1
           done
 
@@ -189,7 +189,7 @@ jobs:
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set queueAgentSub.enabled=false \
             > /tmp/nosub.yaml
           ! grep -q "name: queue-agent-sub$" /tmp/nosub.yaml || exit 1
@@ -199,7 +199,7 @@ jobs:
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set queueAgentSub.replicas=0 \
             > /tmp/zerosub.yaml
           ! grep -q "name: queue-agent-sub$" /tmp/zerosub.yaml || exit 1
@@ -208,12 +208,180 @@ jobs:
           helm template ci charts/sinas -f charts/sinas/values-lite.yaml \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true \
             --set queueAgentSub.enabled=false \
             > /tmp/lite-nosub.yaml
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/lite-nosub.yaml || exit 1
           # the lite profile inherits noeviction
           grep -A1 -- "--maxmemory-policy" /tmp/lite-nosub.yaml | grep -q '"noeviction"'
+
+      - name: helm template (file storage)
+        # Without a storageClass or existingClaim every pod gets its own
+        # emptyDir: uploads through the backend are invisible to the workers.
+        # The split profile refuses that unless allowEphemeral; the
+        # all-in-one profile (one pod) still renders.
+        run: |
+          B=(--set domain=ci.example.com
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci
+            --set postgres.password=ci --set clickhouse.password=ci)
+          ! helm template ci charts/sinas "${B[@]}" > /dev/null 2> /tmp/fs-err.txt || exit 1
+          grep -q 'fileStorage.allowEphemeral=true' /tmp/fs-err.txt
+          # positive control: the opt-in renders, per-pod emptyDirs
+          helm template ci charts/sinas "${B[@]}" --set fileStorage.allowEphemeral=true > /tmp/fs-eph.yaml
+          test "$(grep -A1 -- '- name: file-storage$' /tmp/fs-eph.yaml | grep -c 'emptyDir: {}')" -eq 6
+          ! grep -q 'kind: PersistentVolumeClaim' /tmp/fs-eph.yaml || exit 1
+          # lite needs no opt-in (one pod)
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" > /tmp/fs-lite.yaml
+          grep -A1 -- '- name: file-storage$' /tmp/fs-lite.yaml | grep -q 'emptyDir: {}'
+          # storageClass: a chart PVC, ReadWriteOnce by default (as before)...
+          helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=fast > /tmp/fs-rwo.yaml
+          grep -A12 '^kind: PersistentVolumeClaim' /tmp/fs-rwo.yaml | grep -A1 'accessModes:' | grep -q -- '- ReadWriteOnce'
+          test "$(grep -c 'claimName: ci-file-storage$' /tmp/fs-rwo.yaml)" -eq 6
+          # ...or ReadWriteMany
+          helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=nfs \
+            --set fileStorage.accessMode=ReadWriteMany > /tmp/fs-rwx.yaml
+          grep -A12 '^kind: PersistentVolumeClaim' /tmp/fs-rwx.yaml | grep -A1 'accessModes:' | grep -q -- '- ReadWriteMany'
+          # existingClaim wins: no chart PVC, all six pods mount the claim
+          helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=nfs \
+            --set fileStorage.existingClaim=shared-files > /tmp/fs-claim.yaml
+          ! grep -q 'kind: PersistentVolumeClaim' /tmp/fs-claim.yaml || exit 1
+          test "$(grep -c 'claimName: "shared-files"' /tmp/fs-claim.yaml)" -eq 6
+          # a typo in accessMode is a render error
+          ! helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=nfs \
+            --set fileStorage.accessMode=RWX > /dev/null 2>&1 || exit 1
+          # ReadWriteOncePod admits one pod: refused in the split profile
+          # (six pods mount it), accepted for the all-in-one pod
+          ! helm template ci charts/sinas "${B[@]}" --set fileStorage.storageClass=fast \
+            --set fileStorage.accessMode=ReadWriteOncePod > /dev/null 2> /tmp/fs-rwop.txt || exit 1
+          grep -q 'admits a single pod' /tmp/fs-rwop.txt
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" \
+            --set fileStorage.storageClass=fast --set fileStorage.accessMode=ReadWriteOncePod \
+            | grep -A1 'accessModes:' | grep -q -- '- ReadWriteOncePod'
+
+      - name: helm template (app secrets from an existing Secret)
+        run: |
+          pip install --quiet pyyaml
+          B=(--set domain=ci.example.com --set postgres.password=ci
+            --set clickhouse.password=ci --set fileStorage.allowEphemeral=true)
+          # no inline keys: existingSecret satisfies the required-value check
+          helm lint charts/sinas "${B[@]}" --set secrets.existingSecret=app-keys
+          helm template ci charts/sinas "${B[@]}" --set secrets.existingSecret=app-keys \
+            --set secrets.secretKeyKey=sk > /tmp/es.yaml
+          helm template ci charts/sinas "${B[@]}" --set secrets.secretKey=ci \
+            --set secrets.encryptionKey=ci > /tmp/es-control.yaml
+          python .github/scripts/check_chart_renders.py existing-secret /tmp/es.yaml /tmp/es-control.yaml
+          # leftover inline values are ignored, never rendered
+          helm template ci charts/sinas "${B[@]}" --set secrets.existingSecret=app-keys \
+            --set secrets.secretKeyKey=sk \
+            --set secrets.secretKey=sk-must-not-render --set secrets.encryptionKey=ek-must-not-render \
+            > /tmp/es-both.yaml
+          python .github/scripts/check_chart_renders.py existing-secret /tmp/es-both.yaml
+          ! grep -q -e 'sk-must-not-render' -e 'ek-must-not-render' /tmp/es-both.yaml || exit 1
+          grep -q 'sk-must-not-render' <(helm template ci charts/sinas "${B[@]}" \
+            --set secrets.secretKey=sk-must-not-render --set secrets.encryptionKey=ci)
+          # lite profile too (one backend pod)
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" \
+            --set secrets.existingSecret=app-keys > /tmp/es-lite.yaml
+          test "$(grep -A3 -E 'name: (SECRET_KEY|ENCRYPTION_KEY)$' /tmp/es-lite.yaml | grep -c 'name: "app-keys"')" -eq 2
+          # and without either, the install still fails loudly
+          ! helm template ci charts/sinas "${B[@]}" > /dev/null 2>&1 || exit 1
+
+      - name: helm template (code execution off)
+        run: |
+          B=(--set domain=ci.example.com
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci
+            --set postgres.password=ci --set clickhouse.password=ci --set fileStorage.allowEphemeral=true)
+          C=.github/scripts/check_chart_renders.py
+          helm template ci charts/sinas "${B[@]}" > /tmp/exec-control.yaml
+          # no executor RBAC/settings; the backend keeps its System-page identity
+          helm template ci charts/sinas "${B[@]}" --set features.codeExecution=false > /tmp/noexec.yaml
+          python $C code-execution-off /tmp/noexec.yaml /tmp/exec-control.yaml
+          # ...and with systemStats.rbac=false: no ServiceAccount/Role/Binding,
+          # no token in any Sinas pod, the backend skips the Kubernetes API
+          helm template ci charts/sinas "${B[@]}" --set features.codeExecution=false \
+            --set systemStats.rbac=false > /tmp/noapi.yaml
+          python $C no-api-identity /tmp/noapi.yaml /tmp/exec-control.yaml
+          python .github/scripts/check_pod_security.py /tmp/noexec.yaml /tmp/noapi.yaml
+          # the default keeps all of it (control, literal)
+          grep -q 'name: K8S_SANDBOX_IMAGE$' /tmp/exec-control.yaml
+          grep -q 'name: ci-sandbox$' /tmp/exec-control.yaml
+          ! grep -q -e 'K8S_SANDBOX_' -e 'name: ci-sandbox$' /tmp/noexec.yaml /tmp/noapi.yaml || exit 1
+          # rbac=false alone (execution on) keeps the executor identity but
+          # turns the System page's pod list off
+          helm template ci charts/sinas "${B[@]}" --set systemStats.rbac=false > /tmp/norbac.yaml
+          ! grep -q 'name: ci-system-stats$' /tmp/norbac.yaml || exit 1
+          grep -q 'name: ci-executor-manager$' /tmp/norbac.yaml
+          grep -A1 'name: SYSTEM_STATS_KUBERNETES$' /tmp/norbac.yaml | grep -q '"false"'
+          ! grep -q 'SYSTEM_STATS_KUBERNETES' /tmp/exec-control.yaml || exit 1
+          # ...unless the operator grants RBAC themselves (kubernetes: true)
+          helm template ci charts/sinas "${B[@]}" --set features.codeExecution=false \
+            --set systemStats.rbac=false --set systemStats.kubernetes=true > /tmp/ownrbac.yaml
+          test "$(grep -cE '^kind: (Role|RoleBinding)$' /tmp/ownrbac.yaml)" -eq 0
+          grep -q 'serviceAccountName: ci-executor-manager$' /tmp/ownrbac.yaml
+          ! grep -q 'SYSTEM_STATS_KUBERNETES' /tmp/ownrbac.yaml || exit 1
+          # lite profile, all off: one backend pod, no token, no RBAC
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" \
+            --set features.codeExecution=false --set systemStats.rbac=false > /tmp/noapi-lite.yaml
+          test "$(grep -cE '^kind: (ServiceAccount|Role|RoleBinding)$' /tmp/noapi-lite.yaml)" -eq 0
+          grep -q 'automountServiceAccountToken: false' /tmp/noapi-lite.yaml
+          ! grep -q -e 'K8S_SANDBOX_' -e 'serviceAccountName' /tmp/noapi-lite.yaml || exit 1
+
+      - name: helm template (external Postgres, verified TLS)
+        run: |
+          B=(--set domain=ci.example.com
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci
+            --set postgres.password=ci --set clickhouse.password=ci --set fileStorage.allowEphemeral=true)
+          C=.github/scripts/check_chart_renders.py
+          TLS=(--set postgres.external.host=10.9.8.7 --set postgres.external.tls.mode=verify-full
+            --set postgres.external.tls.caSecret=pg-ca)
+          helm lint charts/sinas "${B[@]}" "${TLS[@]}"
+          helm template ci charts/sinas "${B[@]}" "${TLS[@]}" > /tmp/pg-tls.yaml
+          helm template ci charts/sinas "${B[@]}" --set postgres.external.host=10.9.8.7 > /tmp/pg-plain.yaml
+          python $C postgres-tls /tmp/pg-tls.yaml /tmp/pg-plain.yaml
+          python .github/scripts/check_pod_security.py /tmp/pg-tls.yaml
+          # unset mode = unchanged: nothing TLS-related rendered
+          ! grep -q -e 'SERVER_TLS_' -e 'DATABASE_DIRECT_SSL' -e 'postgres-ca' /tmp/pg-plain.yaml || exit 1
+          # CA from a ConfigMap, lite profile: backend + pgbouncer mount it
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml "${B[@]}" \
+            --set postgres.external.host=db.example.internal --set postgres.external.tls.mode=verify-ca \
+            --set postgres.external.tls.caConfigMap=pg-ca > /tmp/pg-lite.yaml
+          test "$(grep -c 'name: postgres-ca$' /tmp/pg-lite.yaml)" -eq 4
+          grep -A1 'configMap:' /tmp/pg-lite.yaml | grep -q 'name: "pg-ca"'
+          grep -A1 'name: SERVER_TLS_SSLMODE$' /tmp/pg-lite.yaml | grep -q '"verify-ca"'
+          # require: TLS without verification, no CA plumbing
+          helm template ci charts/sinas "${B[@]}" --set postgres.external.host=10.9.8.7 \
+            --set postgres.external.tls.mode=require > /tmp/pg-req.yaml
+          grep -A1 'name: SERVER_TLS_SSLMODE$' /tmp/pg-req.yaml | grep -q '"require"'
+          ! grep -q -e 'SERVER_TLS_CA_FILE' -e 'DATABASE_DIRECT_SSLROOTCERT' -e 'postgres-ca' /tmp/pg-req.yaml || exit 1
+          # contradictions are render errors
+          bad() { ! helm template ci charts/sinas "${B[@]}" "$@" > /dev/null 2>&1; }
+          bad --set postgres.external.host=10.9.8.7 --set postgres.external.tls.mode=verify-full
+          bad --set postgres.external.host=10.9.8.7 --set postgres.external.tls.mode=require \
+            --set postgres.external.tls.caSecret=pg-ca
+          bad --set postgres.external.host=10.9.8.7 --set postgres.external.tls.mode=verify_full \
+            --set postgres.external.tls.caSecret=pg-ca
+          bad --set postgres.external.host=10.9.8.7 --set postgres.external.tls.mode=verify-ca \
+            --set postgres.external.tls.caSecret=a --set postgres.external.tls.caConfigMap=b
+          bad --set postgres.external.tls.mode=require
+          # The pgbouncer image turns the rendered env into pgbouncer.ini: run
+          # its entrypoint with exactly that env and read the file back.
+          python - > /tmp/pgb-env.list <<'EOF'
+          import yaml
+          docs = [d for d in yaml.safe_load_all(open("/tmp/pg-tls.yaml")) if d]
+          pgb = next(d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "pgbouncer")
+          c = pgb["spec"]["template"]["spec"]["containers"][0]
+          print("IMAGE=" + c["image"])
+          for e in c["env"]:
+              if "value" in e:
+                  print(f'{e["name"]}={e["value"].replace("$(DATABASE_PASSWORD)", "ci")}')
+          EOF
+          IMAGE=$(sed -n 's/^IMAGE=//p' /tmp/pgb-env.list)
+          grep -v '^IMAGE=' /tmp/pgb-env.list > /tmp/pgb.env
+          docker run --rm --env-file /tmp/pgb.env "$IMAGE" true > /tmp/pgb-ini.txt
+          cat /tmp/pgb-ini.txt
+          grep -qx 'server_tls_sslmode = verify-full' /tmp/pgb-ini.txt
+          grep -qx 'server_tls_ca_file = /etc/sinas/postgres-ca/ca.crt' /tmp/pgb-ini.txt
+          grep -q '^sinas = host=10.9.8.7 port=5432' /tmp/pgb-ini.txt
 
       - name: helm template (upgrade with --reuse-values from 0.4.0)
         # --reuse-values renders the new templates against the OLD release's
@@ -226,10 +394,19 @@ jobs:
           cp -R charts/sinas /tmp/oldvals/sinas
           git show 0.4.0:charts/sinas/values.yaml > /tmp/oldvals/sinas/values.yaml
           git show 0.4.0:charts/sinas/values-lite.yaml > /tmp/oldvals/values-lite-0.4.0.yaml
-          helm template ci /tmp/oldvals/sinas \
+          # A split-profile release without fileStorage.storageClass ran on
+          # per-pod emptyDirs; the upgrade now stops and says why, until the
+          # operator picks storage or opts in (allowEphemeral, used below).
+          ! helm template ci /tmp/oldvals/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
             --set postgres.password=ci --set clickhouse.password=ci \
+            > /dev/null 2> /tmp/upgrade-fs-err.txt || exit 1
+          grep -q 'fileStorage.allowEphemeral=true' /tmp/upgrade-fs-err.txt
+          helm template ci /tmp/oldvals/sinas \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             > /tmp/upgrade.yaml
           # new workers render with their documented defaults, sub-agent on
           grep -q "name: queue-pipeline$" /tmp/upgrade.yaml
@@ -245,7 +422,7 @@ jobs:
           helm template ci /tmp/oldvals/sinas -f /tmp/oldvals/values-lite-0.4.0.yaml \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true \
             > /tmp/upgrade-lite.yaml
           ! grep -q -e "name: queue-pipeline$" -e "name: queue-agent-sub$" /tmp/upgrade-lite.yaml || exit 1
           ! grep -q 'AGENT_SUBAGENT_QUEUE' /tmp/upgrade-lite.yaml || exit 1
@@ -260,7 +437,7 @@ jobs:
           helm template ci /tmp/oldvals/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set podSecurityContext.runAsUser=12345 \
             --set containerSecurityContext.readOnlyRootFilesystem=false \
             --set postgres.podSecurityContext.runAsUser=null \
@@ -276,19 +453,28 @@ jobs:
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true \
             --set clickhouse.enabled=false \
             > /tmp/compact.yaml
           ! grep -q "name: clickhouse" /tmp/compact.yaml || exit 1
-          # backend must get the explicit-disable signal
-          grep -q 'CLICKHOUSE_HOST' /tmp/compact.yaml
+          # every Sinas process gets the explicit-disable signal (empty
+          # CLICKHOUSE_HOST) and no ClickHouse credentials; the default
+          # render is the control
+          pip install --quiet pyyaml
+          python .github/scripts/check_chart_renders.py clickhouse-off /tmp/compact.yaml /tmp/default.yaml
+          # the lite preset ships with ClickHouse off
+          helm template ci charts/sinas -f charts/sinas/values-lite.yaml \
+            --set domain=ci.example.com \
+            --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
+            --set postgres.password=ci > /tmp/compact-lite.yaml
+          python .github/scripts/check_chart_renders.py clickhouse-off /tmp/compact-lite.yaml
 
       - name: helm template (OpenTelemetry, exporter headers from a Secret)
         run: |
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set otel.enabled=true \
             --set 'otel.exporters[0].name=lang-fuse' \
             --set 'otel.exporters[0].endpoint=https://otel.example.com' \
@@ -312,14 +498,14 @@ jobs:
           helm lint charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
             --set redis.external.existingSecret=redis-auth \
             --set redis.external.tls.enabled=true --set redis.external.tls.caSecret=redis-ca
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
             --set redis.external.existingSecret=redis-auth \
             --set redis.external.tls.enabled=true --set redis.external.tls.caSecret=redis-ca \
@@ -343,7 +529,7 @@ jobs:
           helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set redis.external.host=redis.example.internal \
             --set redis.external.database=2 --set redis.external.username=app \
             > /tmp/redis-plain.yaml
@@ -359,7 +545,7 @@ jobs:
           helm template ci charts/sinas -f charts/sinas/values-lite.yaml \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true \
             --set redis.external.host=10.1.2.3 --set redis.external.port=6378 \
             --set redis.external.tls.enabled=true --set redis.external.tls.caConfigMap=redis-ca \
             > /tmp/redis-lite.yaml
@@ -376,7 +562,7 @@ jobs:
           ! helm template ci charts/sinas \
             --set domain=ci.example.com \
             --set secrets.secretKey=ci --set secrets.encryptionKey=ci \
-            --set postgres.password=ci --set clickhouse.password=ci \
+            --set postgres.password=ci --set fileStorage.allowEphemeral=true --set clickhouse.password=ci \
             --set redis.external.host=10.1.2.3 --set redis.external.tls.enabled=true \
             --set redis.external.tls.caSecret=a --set redis.external.tls.caConfigMap=b \
             > /dev/null 2>&1

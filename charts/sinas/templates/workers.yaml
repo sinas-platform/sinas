@@ -19,7 +19,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-worker
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -36,11 +36,13 @@ spec:
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.queueWorker.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## queue-agent
 apiVersion: apps/v1
@@ -62,7 +64,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-agent
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.queueAgent) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.queueAgent)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -79,11 +81,13 @@ spec:
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.queueAgent.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- if include "sinas.queueAgentSubOn" . }}
 {{- /* Guarded reads: `--reuse-values` from a release without the
        queueAgentSub block must still render (defaults = values.yaml). */}}
@@ -114,7 +118,7 @@ spec:
         app.kubernetes.io/component: queue-agent-sub
     spec:
       ## Same as queue-agent: the agent codeExecution tool creates sandbox pods.
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qs "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qs) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -131,11 +135,13 @@ spec:
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml ($qs.resources | default (dict "requests" (dict "cpu" "150m" "memory" "192Mi") "limits" (dict "cpu" "1" "memory" "768Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 {{- end }}
 {{- /* Guarded reads, as for queue-agent-sub. */}}
 {{- $qp := .Values.queuePipeline | default dict }}
@@ -163,6 +169,9 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: queue-pipeline
     spec:
+      ## Orchestration only (steps run on the function/agent workers): no
+      ## Kubernetes API access, so no token.
+      automountServiceAccountToken: false
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" $qp "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" $qp) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -179,11 +188,13 @@ spec:
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml ($qp.resources | default (dict "requests" (dict "cpu" "50m" "memory" "128Mi") "limits" (dict "cpu" "500m" "memory" "512Mi"))) | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## scheduler
 apiVersion: apps/v1
@@ -205,7 +216,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: scheduler
     spec:
-      serviceAccountName: {{ include "sinas.executorManagerSA" . }}
+      {{- include "sinas.podServiceAccount" (dict "root" . "needsApi" (include "sinas.codeExecutionOn" .)) | trim | nindent 6 }}
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.scheduler) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.scheduler)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -222,11 +233,13 @@ spec:
           volumeMounts:
             {{- include "sinas.fileStorageMount" . | nindent 12 }}
             {{- with (include "sinas.redisCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
+            {{- with (include "sinas.postgresCaMount" . | trim) }}{{ . | nindent 12 }}{{- end }}
           resources:
             {{- toYaml .Values.scheduler.resources | nindent 12 }}
       volumes:
         {{- include "sinas.fileStorageVolume" . | nindent 8 }}
         {{- with (include "sinas.redisCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
+        {{- with (include "sinas.postgresCaVolume" . | trim) }}{{ . | nindent 8 }}{{- end }}
 ---
 ## cdc-worker
 apiVersion: apps/v1
@@ -248,6 +261,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: cdc-worker
     spec:
+      automountServiceAccountToken: false
       {{- include "sinas.imagePullSecrets" . | nindent 6 }}
       {{- with (include "sinas.scheduling" (dict "values" (.Values.cdcWorker) "root" . "inherit" true) | trim) }}{{ . | nindent 6 }}{{- end }}
       {{- with (include "sinas.podSecurityContextBlock" (dict "root" . "values" (.Values.cdcWorker)) | trim) }}{{ . | nindent 6 }}{{- end }}
@@ -259,13 +273,13 @@ spec:
           command: ["python", "-m", "app.cdc.service"]
           env:
             {{- include "sinas.backendEnv" . | nindent 12 }}
-          {{- with (include "sinas.redisCaMount" . | trim) }}
+          {{- with (printf "%s\n%s" (include "sinas.redisCaMount" .) (include "sinas.postgresCaMount" .) | trim) }}
           volumeMounts:
             {{- . | nindent 12 }}
           {{- end }}
           resources:
             {{- toYaml .Values.cdcWorker.resources | nindent 12 }}
-      {{- with (include "sinas.redisCaVolume" . | trim) }}
+      {{- with (printf "%s\n%s" (include "sinas.redisCaVolume" .) (include "sinas.postgresCaVolume" .) | trim) }}
       volumes:
         {{- . | nindent 8 }}
       {{- end }}
