@@ -19,12 +19,12 @@ class StoreDependency(BaseModel):
     key: str | None = None
 
 
-GATEWAY_TOOL_TYPES = ("function", "query", "pipeline")
+SWITCHBOARD_TOOL_TYPES = ("function", "query", "pipeline")
 _TOOL_NAME = r"^[a-zA-Z0-9_-]{1,64}$"
 
 
 class ExposedTool(BaseModel):
-    """One resource the manifest serves as an MCP tool through the gateway.
+    """One resource the manifest serves as an MCP tool through the switchboard.
 
     `tool_name` is the name the agent calls it by (default: `namespace__name`);
     `description` overrides the resource's own description for the agent.
@@ -41,9 +41,9 @@ class ExposedTool(BaseModel):
     @field_validator("type")
     @classmethod
     def _known_type(cls, value: str) -> str:
-        if value not in GATEWAY_TOOL_TYPES:
+        if value not in SWITCHBOARD_TOOL_TYPES:
             raise ValueError(
-                f"exposed tool type must be one of {', '.join(GATEWAY_TOOL_TYPES)}, got {value!r}"
+                f"exposed tool type must be one of {', '.join(SWITCHBOARD_TOOL_TYPES)}, got {value!r}"
             )
         return value
 
@@ -52,8 +52,8 @@ class ExposedTool(BaseModel):
         return f"{self.namespace}/{self.name}"
 
 
-class GatewayLimits(BaseModel):
-    """Per-caller rate limit on the manifest's gateway tool calls."""
+class SwitchboardLimits(BaseModel):
+    """Per-caller rate limit on the manifest's switchboard tool calls."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True, extra="forbid")
 
@@ -72,7 +72,7 @@ class ManifestSpec(SpecModel):
     store_dependencies: list[StoreDependency] = Field(default_factory=list)
     public_info: dict[str, Any] = Field(default_factory=dict)
     exposed_tools: list[ExposedTool] = Field(default_factory=list)
-    gateway_limits: GatewayLimits | None = None
+    switchboard_limits: SwitchboardLimits | None = None
     is_active: bool = True
 
     @field_validator("description", mode="before")
@@ -92,7 +92,7 @@ class ManifestSpec(SpecModel):
     @field_validator("exposed_tools")
     @classmethod
     def _tool_names_unique(cls, value: list[ExposedTool]) -> list[ExposedTool]:
-        from app.services.gateway import default_tool_name
+        from app.services.switchboard import default_tool_name
 
         seen: dict[str, str] = {}
         for tool in value:

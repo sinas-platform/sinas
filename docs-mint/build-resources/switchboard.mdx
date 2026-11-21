@@ -1,0 +1,113 @@
+---
+title: "Switchboard"
+description: "Publish functions, queries and pipelines to external agents, under Sinas permissions and logging"
+---
+
+The **Switchboard** publishes what a [manifest](/admin/manifests) exposes to agents and apps outside Sinas. Today it serves them over the [Model Context Protocol](https://modelcontextprotocol.io): each manifest becomes an MCP server. Agents and apps outside Sinas (Claude, Cursor, an in-house agent, a vibe-coded internal tool) connect to one URL and get the functions, queries and pipelines the manifest exposes, as tools, under Sinas permissions and logging.
+
+Where [MCP servers](/build-resources/mcp-servers) let Sinas agents *consume* remote tools, the switchboard lets the outside world consume Sinas resources. Together they make a Sinas instance a central switchboard for tools: central IT configures connectors, queries and pipelines once, decides who may call what, and downstream teams build on them without a copy of the credentials.
+
+## Endpoint
+
+```
+POST   /mcp/{namespace}/{name}        # Streamable HTTP MCP server for the manifest namespace/name
+```
+
+Stateless: every request authenticates on its own with a Bearer API key, a Bearer access token or an `X-API-Key` header, so nothing is pinned to a server and nothing is replayed. Requests without a credential get `401` with a `WWW-Authenticate: Bearer` challenge that points at the switchboard's OAuth metadata (below); a caller without `sinas.manifests/{namespace}/{name}.read` on the manifest gets `403`.
+
+Point an MCP client at it:
+
+```json
+{
+  "mcpServers": {
+    "acme-hub": {
+      "url": "https://sinas.example.com/mcp/hub/agents",
+      "headers": { "Authorization": "Bearer sk_..." }
+    }
+  }
+}
+```
+
+## OAuth for agent clients
+
+An MCP client without a Sinas API key signs in through OAuth, as the MCP specification describes. The switchboard publishes [protected-resource metadata](https://www.rfc-editor.org/rfc/rfc9728) (RFC 9728):
+
+```
+GET /.well-known/oauth-protected-resource/mcp/{namespace}/{name}
+```
+
+Its `authorization_servers` are the active [identity providers](/admin/sso) of the deployment, so the authorization server is whatever already signs your people in (WorkOS AuthKit, Keycloak, Entra ID, Okta, Auth0). Sinas is not an authorization server itself and does not issue OAuth tokens to third parties; the client obtains an access token from the identity provider and presents it as a Bearer token. The switchboard accepts it when:
+
+- its `iss` is a configured, active identity provider, and its signature verifies against that provider's published keys;
+- it has not expired;
+- its `aud` names this switchboard's resource URL (`{PUBLIC_BASE_URL}/mcp/{namespace}/{name}`, the RFC 8707 resource indicator the client requests) or, for providers that cannot mint resource-specific audiences, the provider's own client id. On the client-id audience only an access token is taken (header `typ: at+jwt`, RFC 9068); an ID token carries the same audience but authorizes a login, not API calls, and is refused.
+
+The token's subject is mapped to a Sinas user exactly as an SSO sign-in is: by linked identity, else by verified email, else provisioned when the provider has `autoProvision` with its `defaultRole`; the provider's role mappings apply. If the token carries no email claim, the provider's userinfo endpoint is asked. The user's roles then decide the catalog, like for any other caller. Resolutions are cached per token for a few minutes.
+
+A rejected token answers `401` with the reason in the `WWW-Authenticate` challenge (`error="invalid_token"`).
+
+## Exposing tools
+
+A manifest's `exposedTools` lists what the switchboard serves. Nothing is exposed unless declared:
+
+```yaml
+spec:
+  manifests:
+    - namespace: hub
+      name: agents
+      description: Tools for the engineering agents
+      exposedTools:
+        - { type: query, namespace: crm, name: open_orders }
+        - { type: function, namespace: crm, name: refund, toolName: refund_order,
+            description: "Refund an order. Asks the finance approver when above 500 EUR." }
+        - { type: pipeline, namespace: ops, name: close_ticket }
+```
+
+| Field | Description |
+|---|---|
+| `type` | `function`, `query` or `pipeline` |
+| `namespace` / `name` | The resource. It must exist, or be declared in the same config; a config that exposes a missing resource is refused. |
+| `toolName` | What the agent calls it. Default `namespace__name` (unsafe characters become `_`). Names must be unique within the manifest. |
+| `description` | Shown to the agent instead of the resource's own description. |
+
+The tool's input schema is the resource's `inputSchema`; a function's or query's `outputSchema` is published as the tool's output schema and the result is returned as structured content as well as text.
+
+A resource that is deleted or deactivated later drops out of the catalog; the manifest keeps declaring it and `/status` reports it under missing resources.
+
+## Who sees what
+
+The manifest selects what is on offer; the caller's own permissions decide what they get. `tools/list` returns only the exposed tools whose resource the caller may run — the same permission the tool call itself checks: `sinas.functions/{ns}/{name}.execute`, `sinas.queries/{ns}/{name}.execute`, `sinas.pipelines/{ns}/{name}.run`, by name, namespace or wildcard. A call to anything else answers "unknown tool". Two callers of the same switchboard can see different catalogs.
+
+Some resources are never served, whatever the manifest declares: inactive ones, pipelines without `asTool`, and functions with `requiresApproval` (the switchboard has no one to ask, so until it supports approvals such a function is left out rather than run unapproved). `GET /manifests/{namespace}/{name}/status` reports them under missing resources.
+
+For external agents the natural credential is a [scoped API key](/admin/users-roles#api-keys): give it the manifest's `read` permission plus the `execute` permissions of the tools that client may use, and nothing else. The key's permissions are evaluated live, so revoking or narrowing it takes effect on the next call.
+
+Calls run exactly as an agent's tool call would: a query receives the caller's `:user_id`, `:user_email` and custom fields for row-level security, a function runs through the executor with the caller's token, a pipeline runs inline.
+
+## Audit log
+
+Every `tools/call` is recorded: the manifest, the caller (user and API key), the tool and the resource behind it, the arguments with credential-bearing fields redacted, the result clipped to `SWITCHBOARD_AUDIT_RESULT_MAX_CHARS`, the outcome and the duration. Rows are kept for `SWITCHBOARD_AUDIT_RETENTION_DAYS` (90). The HTTP requests themselves are in the request log as well, with credentials redacted.
+
+```
+GET /api/v1/switchboard/calls             # filters: manifest=ns/name, user_id, api_key_id, tool, resource, is_error, since, until, limit, offset
+GET /api/v1/switchboard/calls/{id}
+```
+
+`sinas.switchboard_calls.read:all` sees every call (the Switchboard audit view); `sinas.switchboard_calls.read:own`, which every member has, sees the calls made as oneself, including through one's own API keys.
+
+## Rate limits
+
+Tool calls are counted per manifest and per caller (an API key is its own caller; a user token counts per user) in a fixed window. The deployment default is `SWITCHBOARD_RATE_LIMIT_MAX_CALLS` (120) per `SWITCHBOARD_RATE_LIMIT_WINDOW_SECONDS` (60); a manifest overrides it:
+
+```yaml
+  manifests:
+    - namespace: hub
+      name: agents
+      switchboardLimits: { maxCalls: 600, windowSeconds: 60 }   # maxCalls: 0 disables the limit
+```
+
+Past the cap, `tools/call` answers a JSON-RPC error (code `-32029`) whose message says when to retry and whose `data.retry_after_seconds` carries the number. `tools/list` is not counted.
+
+## Composing a tool
+
+A tool that must read, interpret and write in one go is a [pipeline](/build-resources/pipelines) with an agent step, exposed as one tool. That keeps the sequence on the server, where the switchboard can enforce it, instead of relying on the calling agent to make the calls in order.

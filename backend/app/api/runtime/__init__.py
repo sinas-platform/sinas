@@ -1,7 +1,7 @@
 """Runtime API - Data Plane for execution, authentication, and runtime state."""
 from fastapi import APIRouter
 
-from app.api.runtime.endpoints import batches, manifests, authentication, chats, components, discovery, executions, files, functions, gateway_meta, info, oidc, pipelines, queries, sso, stores, templates, watch, webhooks, workbench
+from app.api.runtime.endpoints import batches, manifests, authentication, chats, components, discovery, executions, files, functions, switchboard_meta, info, oidc, pipelines, queries, sso, stores, templates, watch, webhooks, workbench
 
 runtime_router = APIRouter()
 
@@ -18,8 +18,8 @@ runtime_router.include_router(sso.router, prefix="/auth", tags=["runtime-auth"])
 # OIDC-compatible verification - JWKS (root-level .well-known) + userinfo
 runtime_router.include_router(oidc.router, tags=["runtime-oidc"])
 
-# MCP gateway discovery - RFC 9728 protected-resource metadata per gateway
-runtime_router.include_router(gateway_meta.router, tags=["runtime-gateway"])
+# switchboard discovery - RFC 9728 protected-resource metadata per switchboard
+runtime_router.include_router(switchboard_meta.router, tags=["runtime-switchboard"])
 
 # Chats - agent chat creation, message execution, and chat management
 runtime_router.include_router(chats.router, tags=["runtime-chats"])

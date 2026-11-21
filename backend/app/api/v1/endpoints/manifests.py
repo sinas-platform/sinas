@@ -19,7 +19,7 @@ from app.services.resources.manifests import ManifestApplier
 router = APIRouter(prefix="/manifests", tags=["manifests"])
 
 _applier = ManifestApplier()
-_NULLABLE_ON_UPDATE = frozenset({"gateway_limits"})
+_NULLABLE_ON_UPDATE = frozenset({"switchboard_limits"})
 
 
 @router.post("", response_model=ManifestResponse, status_code=status.HTTP_201_CREATED)
@@ -126,7 +126,7 @@ async def update_manifest(
     ctx = rest.api_context(db, user_id)
     manifest = await rest.locked(_applier, ctx, manifest)
     # As before: a field left out or sent as null stays as it is; a new
-    # namespace/name renames it (a clash is a 400). gateway_limits is the
+    # namespace/name renames it (a clash is a 400). switchboard_limits is the
     # exception: an explicit null clears it, back to the deployment default
     # (there is no other way to say "no override" — 0 means "no limit").
     patch = {

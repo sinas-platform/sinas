@@ -55,9 +55,9 @@ async def check_required_resources(
 ) -> tuple[list[ResourceStatus], list[ResourceStatus]]:
     """(satisfied, missing) for a manifest's requiredResources, as they are
     now. A type this check doesn't know is reported missing. With `usable`
-    (the gateway's exposed tools) a row must also be one the gateway would
+    (the switchboard's exposed tools) a row must also be one the switchboard would
     serve — active, a pipeline marked as a tool, a function that needs no
-    approval — or it counts as missing, like the gateway drops it."""
+    approval — or it counts as missing, like the switchboard drops it."""
     satisfied: list[ResourceStatus] = []
     missing: list[ResourceStatus] = []
     for res_ref in required_resources or []:
@@ -71,7 +71,7 @@ async def check_required_resources(
             resource = await model.get_by_name(db, namespace=res_ns, name=res_name)
             status.exists = resource is not None
             if usable and resource is not None:
-                from app.services.gateway import exposable
+                from app.services.switchboard import exposable
 
                 status.exists = exposable(resource)
 
@@ -93,7 +93,7 @@ async def validate_manifest_status(
     """
     satisfied, missing = await check_required_resources(db, manifest.required_resources or [])
     # An exposed tool's resource has to exist like a required one — and be
-    # one the gateway serves (active, exposable), or the status would read
+    # one the switchboard serves (active, exposable), or the status would read
     # ready while the catalog lacks the tool.
     declared = list(manifest.required_resources or [])
     exposed = [

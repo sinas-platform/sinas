@@ -93,15 +93,15 @@ class Settings(BaseSettings):
     rate_limit_otp_ip_max: int = 10  # Max OTP verify requests per IP per window
     rate_limit_setup_link_ip_max: int = 10  # Max setup-link exchange/complete requests per IP per window
     rate_limit_window_seconds: int = 900  # Rate limit window (15 minutes)
-    # MCP gateway (POST /mcp/{ns}/{name}): tool calls per caller (API key, or
-    # user) per manifest, per window. A manifest's gatewayLimits overrides;
+    # switchboard (POST /mcp/{ns}/{name}): tool calls per caller (API key, or
+    # user) per manifest, per window. A manifest's switchboardLimits overrides;
     # 0 max calls disables the limit.
-    gateway_rate_limit_max_calls: int = Field(default=120, ge=0)
-    gateway_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86400)
-    # Gateway audit log (gateway_calls): how long rows are kept, and how much
+    switchboard_rate_limit_max_calls: int = Field(default=120, ge=0)
+    switchboard_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86400)
+    # Switchboard audit log (switchboard_calls): how long rows are kept, and how much
     # of a result is stored with each row (the rest is clipped).
-    gateway_audit_retention_days: int = 90
-    gateway_audit_result_max_chars: int = 8000
+    switchboard_audit_retention_days: int = 90
+    switchboard_audit_result_max_chars: int = 8000
 
     # SMTP Configuration (for sending emails)
     smtp_host: str | None = None

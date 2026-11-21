@@ -340,24 +340,24 @@ async def run(stop_event: asyncio.Event) -> None:
     )
     logger.info("Registered system job: maintain_tool_result_partitions (every 24h)")
 
-    from app.scheduler.jobs.cleanup_gateway_calls import cleanup_gateway_calls
+    from app.scheduler.jobs.cleanup_switchboard_calls import cleanup_switchboard_calls
 
     # Overdue rows go now: the interval below restarts with the scheduler,
     # and a deployment that restarts daily would otherwise never reach it.
     try:
-        await cleanup_gateway_calls()
+        await cleanup_switchboard_calls()
     except Exception as e:
-        logger.warning("Gateway audit cleanup at startup failed: %s", e)
+        logger.warning("Switchboard audit cleanup at startup failed: %s", e)
 
     scheduler.scheduler.add_job(
-        func=cleanup_gateway_calls,
+        func=cleanup_switchboard_calls,
         trigger="interval",
         hours=24,
-        id="system:cleanup_gateway_calls",
-        name="Drop gateway audit rows past retention",
+        id="system:cleanup_switchboard_calls",
+        name="Drop switchboard audit rows past retention",
         replace_existing=True,
     )
-    logger.info("Registered system job: cleanup_gateway_calls (every 24h)")
+    logger.info("Registered system job: cleanup_switchboard_calls (every 24h)")
 
     # --- Operations metering (managed SaaS, default-off) ---
     if settings.metering_enabled:

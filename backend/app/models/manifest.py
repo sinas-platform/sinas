@@ -37,14 +37,14 @@ class Manifest(Base, PermissionMixin):
     # Store dependencies: [{"store": "default/preferences"}, {"store": "default/memory", "key": "name"}, ...]
     store_dependencies = Column(JSON, nullable=False, default=list)
 
-    # What this manifest serves to external agents through the MCP gateway
+    # What this manifest serves to external agents through the switchboard
     # (POST /mcp/{namespace}/{name}): [{"type": "function" | "query" |
     # "pipeline", "namespace": ..., "name": ..., "tool_name": ..., "description": ...}].
     # Each caller sees only the entries their own permissions allow.
     exposed_tools = Column(JSON, nullable=False, default=list)
-    # Per-caller rate limit on gateway tool calls: {"max_calls": n,
+    # Per-caller rate limit on switchboard tool calls: {"max_calls": n,
     # "window_seconds": s}. None: the deployment default applies.
-    gateway_limits = Column(JSON, nullable=True)
+    switchboard_limits = Column(JSON, nullable=True)
 
     # Values this manifest publishes on the unauthenticated GET /info, under
     # services[<namespace>], so clients can discover the app and, for example,

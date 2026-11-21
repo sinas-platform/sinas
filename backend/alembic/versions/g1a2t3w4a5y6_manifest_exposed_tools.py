@@ -1,5 +1,5 @@
 """manifests.exposed_tools: the functions, queries and pipelines a manifest
-serves to external agents through the MCP gateway (/mcp/{ns}/{name}).
+serves to external agents through the switchboard (/mcp/{ns}/{name}).
 
 Empty for every existing manifest: nothing is exposed until declared.
 

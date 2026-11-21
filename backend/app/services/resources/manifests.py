@@ -45,7 +45,7 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
         ).scalar_one_or_none()
 
     def spec_from_row(self, row: Manifest) -> ManifestSpec:
-        from app.schemas.spec.manifest import ExposedTool, GatewayLimits, RequiredResource, StoreDependency
+        from app.schemas.spec.manifest import ExposedTool, SwitchboardLimits, RequiredResource, StoreDependency
 
         return ManifestSpec.model_construct(
             namespace=row.namespace,
@@ -66,7 +66,7 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
                 ExposedTool.model_construct(**{"tool_name": None, "description": None, **t})
                 for t in (row.exposed_tools or [])
             ],
-            gateway_limits=GatewayLimits.model_construct(**row.gateway_limits) if row.gateway_limits else None,
+            switchboard_limits=SwitchboardLimits.model_construct(**row.switchboard_limits) if row.switchboard_limits else None,
             is_active=row.is_active is not False,
         )
 
@@ -102,5 +102,5 @@ class ManifestApplier(ResourceApplier[ManifestSpec]):
         row.store_dependencies = [d.model_dump() for d in spec.store_dependencies]
         row.public_info = dict(spec.public_info)
         row.exposed_tools = [t.model_dump(exclude_none=True) for t in spec.exposed_tools]
-        row.gateway_limits = spec.gateway_limits.model_dump() if spec.gateway_limits else None
+        row.switchboard_limits = spec.switchboard_limits.model_dump() if spec.switchboard_limits else None
         row.is_active = spec.is_active

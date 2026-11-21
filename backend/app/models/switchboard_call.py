@@ -1,8 +1,8 @@
-"""One tool call made through the MCP gateway (POST /mcp/{ns}/{name}).
+"""One tool call made through the switchboard (POST /mcp/{ns}/{name}).
 
-The audit log the connector hub shows: who called what, through which
+The audit log the Switchboard app shows: who called what, through which
 manifest, with what (redacted) arguments, and how it went. Rows are kept
-for GATEWAY_AUDIT_RETENTION_DAYS (scheduler job cleanup_gateway_calls).
+for SWITCHBOARD_AUDIT_RETENTION_DAYS (scheduler job cleanup_switchboard_calls).
 """
 import uuid
 from typing import Any
@@ -14,8 +14,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .base import Base, created_at, uuid_pk
 
 
-class GatewayCall(Base):
-    __tablename__ = "gateway_calls"
+class SwitchboardCall(Base):
+    __tablename__ = "switchboard_calls"
 
     id: Mapped[uuid_pk]
     manifest_id: Mapped[uuid.UUID | None] = mapped_column(
