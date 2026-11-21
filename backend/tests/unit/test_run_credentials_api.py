@@ -704,3 +704,46 @@ def test_the_permission_is_registered():
 
     entry = next(e for e in PERMISSION_REGISTRY if e["resource"] == "chats")
     assert "assign_provider_credential" in entry["actions"]
+
+
+async def test_a_request_invalid_elsewhere_does_not_echo_the_credential(client, db, gateway):
+    """FastAPI's default 422 returns the failing `input`, which for a missing
+    body field is the whole body: the credential must not come back."""
+    user = await _user(db)
+    provider = await _provider(db, {"enabled": True})
+    agent = await _agent(db, user, provider)
+    chat_id = (await _new_chat(client, user, agent)).json()["id"]
+
+    # `content` missing: the error's input is the whole body
+    r = await client.post(
+        f"/chats/{chat_id}/messages",
+        json={"provider_credentials": _creds(provider)},
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 422, r.text
+    assert SENTINEL not in r.text
+    assert any(e["loc"][-1] == "content" for e in r.json()["detail"])
+    # a wrongly typed field elsewhere, credential alongside
+    r = await client.post(
+        f"/agents/{agent.namespace}/{agent.name}/chats",
+        json={"provider_credentials": _creds(provider), "expires_in": "soon"},
+        headers=auth_headers(user),
+    )
+    assert r.status_code == 422, r.text
+    assert SENTINEL not in r.text
+    assert not await _rows(db)
+
+
+def test_validation_errors_are_scrubbed_by_location_and_content():
+    from app.core.validation_errors import scrub_validation_errors
+
+    errors = scrub_validation_errors([
+        {"loc": ["body", "content"], "msg": "Field required", "type": "missing",
+         "input": {"provider_credentials": {"p": {"credential": SENTINEL}}, "title": "t"}},
+        {"loc": ["header", "x-sinas-provider-credential"], "msg": "bad", "type": "x", "input": SENTINEL},
+        {"loc": ["body", "password"], "msg": "too short", "type": "x", "input": SENTINEL},
+        {"loc": ["body", "title"], "msg": "bad", "type": "x", "input": "kept"},
+    ])
+    assert SENTINEL not in json.dumps(errors)
+    assert errors[0]["input"]["title"] == "t"
+    assert errors[3]["input"] == "kept"

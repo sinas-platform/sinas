@@ -251,6 +251,13 @@ for _api in (app, management_app):
     install_error_handler(_api)
 install_error_handler(adapters_openai_app, openai_format=True)
 
+# A request that fails validation answers 422 without echoing any credential
+# it carried (app/core/validation_errors.py).
+from app.core.validation_errors import install_validation_error_handler
+
+for _api in (app, management_app, adapters_openai_app):
+    install_validation_error_handler(_api)
+
 # A write refused by a full Redis (noeviction) answers 503 with what to do
 # rather than an anonymous 500 (app/core/redis.py).
 from app.core.redis import install_redis_oom_handler
