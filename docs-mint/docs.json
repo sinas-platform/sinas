@@ -45,7 +45,7 @@
               "build-resources/pipelines",
               "build-resources/connectors",
               "build-resources/mcp-servers",
-              "build-resources/mcp-gateway",
+              "build-resources/switchboard",
               "build-resources/skills",
               "build-resources/components",
               "build-resources/secrets"

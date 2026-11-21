@@ -31,7 +31,7 @@ from mcp.shared.exceptions import MCPError
 
 from app.core.database import AsyncSessionLocal
 from app.models.manifest import Manifest
-from app.services import gateway
+from app.services import switchboard
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class _Caller:
         return f"key:{key_id}" if key_id else f"user:{self.user_id}"
 
 
-_caller: ContextVar[_Caller | None] = ContextVar("gateway_caller", default=None)
+_caller: ContextVar[_Caller | None] = ContextVar("switchboard_caller", default=None)
 
 # JSON-RPC reserves -32000..-32099 for implementation-defined errors; this
 # one carries retry_after_seconds in its data.
@@ -77,7 +77,7 @@ async def _on_list_tools(ctx, params) -> types.ListToolsResult:
         raise MCPError(types.INVALID_REQUEST, "Unauthenticated")
     async with AsyncSessionLocal() as db:
         manifest = await _load_manifest(db, caller)
-        tools = await gateway.list_tools(db, manifest, caller.user_id, caller.permissions)
+        tools = await switchboard.list_tools(db, manifest, caller.user_id, caller.permissions)
     return types.ListToolsResult(
         tools=[
             types.Tool(
@@ -98,16 +98,16 @@ async def _on_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallT
         raise MCPError(types.INVALID_REQUEST, "Unauthenticated")
     async with AsyncSessionLocal() as db:
         manifest = await _load_manifest(db, caller)
-        tools = await gateway.list_tools(db, manifest, caller.user_id, caller.permissions)
+        tools = await switchboard.list_tools(db, manifest, caller.user_id, caller.permissions)
         tool = next((t for t in tools if t.name == params.name), None)
         if tool is None:
             # Unknown and not-allowed look the same: the catalog is per caller.
             raise MCPError(types.INVALID_PARAMS, f"Unknown tool: {params.name}")
         try:
-            await gateway.enforce_rate_limit(manifest, caller.rate_key)
-        except gateway.RateLimitedError as e:
+            await switchboard.enforce_rate_limit(manifest, caller.rate_key)
+        except switchboard.RateLimitedError as e:
             raise MCPError(RATE_LIMITED, str(e), {"retry_after_seconds": e.retry_after}) from None
-        result = await gateway.call_tool(
+        result = await switchboard.call_tool(
             db, manifest, tool,
             user_id=caller.user_id, user_email=caller.email, user_token=caller.token,
             arguments=dict(params.arguments or {}),
@@ -122,7 +122,7 @@ async def _on_call_tool(ctx, params: types.CallToolRequestParams) -> types.CallT
 
 
 def _build_server() -> Server:
-    server = Server("sinas-gateway")
+    server = Server("sinas-switchboard")
     server.add_request_handler("tools/list", types.PaginatedRequestParams, _on_list_tools)
     server.add_request_handler("tools/call", types.CallToolRequestParams, _on_call_tool)
     return server
@@ -162,7 +162,7 @@ class _Transport:
                     started.set()
                     await stop.wait()
 
-            loop.create_task(run(), name="sinas-gateway-mcp")
+            loop.create_task(run(), name="sinas-switchboard-mcp")
             await started.wait()
             self._manager, self._loop, self._started, self._stop = manager, loop, started, stop
             return manager
@@ -183,9 +183,9 @@ async def _send_json(send, status: int, body: dict[str, Any], headers: dict[str,
 def _bearer_challenge(namespace: str, name: str, error: str | None = None) -> dict[str, str]:
     """RFC 6750 challenge with the RFC 9728 pointer an OAuth-capable client
     follows to find the authorization server."""
-    from app.services.gateway_auth import header_safe, metadata_url
+    from app.services.switchboard_auth import header_safe, metadata_url
 
-    value = f'Bearer realm="sinas-gateway", resource_metadata="{metadata_url(namespace, name)}"'
+    value = f'Bearer realm="sinas-switchboard", resource_metadata="{metadata_url(namespace, name)}"'
     if error:
         # The full message is in the JSON body; the header gets a safe form.
         value += f', error="invalid_token", error_description="{header_safe(error)}"'
@@ -195,9 +195,9 @@ def _bearer_challenge(namespace: str, name: str, error: str | None = None) -> di
 async def _authenticate(token: str, namespace: str, name: str):
     """(user_id, email, permissions) for a Bearer API key or a Sinas access
     token, through the verifier every runtime endpoint uses; else for an
-    access token from a configured identity provider (gateway_auth)."""
+    access token from a configured identity provider (switchboard_auth)."""
     from app.core.auth import create_access_token, get_user_permissions, verify_jwt_or_api_key
-    from app.services import gateway_auth
+    from app.services import switchboard_auth
 
     async with AsyncSessionLocal() as db:
         try:
@@ -209,11 +209,11 @@ async def _authenticate(token: str, namespace: str, name: str):
             )
             return user_id, email, permissions, token
         except HTTPException as own:
-            if not gateway_auth.looks_like_jwt(token):
+            if not switchboard_auth.looks_like_jwt(token):
                 raise
             try:
-                user_id, email = await gateway_auth.resolve_bearer(db, token, namespace, name)
-            except gateway_auth.GatewayAuthError as e:
+                user_id, email = await switchboard_auth.resolve_bearer(db, token, namespace, name)
+            except switchboard_auth.SwitchboardAuthError as e:
                 raise HTTPException(status_code=401, detail=str(e)) from own
             # Tools that call back into Sinas (connector steps, functions
             # using the API) need a credential Sinas itself accepts: the
@@ -223,7 +223,7 @@ async def _authenticate(token: str, namespace: str, name: str):
             return user_id, email, await get_user_permissions(db, user_id), downstream
 
 
-class GatewayASGI:
+class SwitchboardASGI:
     """`/mcp/{namespace}/{name}` -> the manifest's MCP server for this caller."""
 
     async def __call__(self, scope, receive, send) -> None:
@@ -262,7 +262,7 @@ class GatewayASGI:
                 await _send_json(send, 404, {"detail": f"Manifest '{namespace}/{name}' not found"})
                 return
             if not manifest.can_user_access(str(user_id), permissions, "read"):
-                await _send_json(send, 403, {"detail": "Not authorized to use this gateway"})
+                await _send_json(send, 403, {"detail": "Not authorized to use this switchboard"})
                 return
             caller = _Caller(
                 manifest_id=str(manifest.id), manifest_ns=namespace, manifest_name=name,
@@ -277,4 +277,4 @@ class GatewayASGI:
             _caller.reset(reset)
 
 
-gateway_app = GatewayASGI()
+switchboard_app = SwitchboardASGI()

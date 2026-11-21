@@ -1,8 +1,8 @@
-"""MCP gateway: a manifest's exposed tools, served to external agents.
+"""switchboard: a manifest's exposed tools, served to external agents.
 
 A manifest declares `exposed_tools`: functions, queries and pipelines that
 agents and apps outside Sinas may call through `POST /mcp/{namespace}/{name}`
-(app/api/runtime/gateway.py). This module turns that declaration into the
+(app/api/runtime/switchboard.py). This module turns that declaration into the
 tool list one caller sees and runs a call, through the same converters the
 chat loop uses — so permissions, locked parameters, the user context in
 queries and the result store behave exactly as for an agent's tool call.
@@ -44,7 +44,7 @@ def default_tool_name(namespace: str, name: str) -> str:
 
 
 @dataclass(frozen=True)
-class GatewayTool:
+class SwitchboardTool:
     name: str
     description: str
     input_schema: dict[str, Any]
@@ -59,9 +59,9 @@ class GatewayTool:
 
 
 def exposable(row: Any) -> bool:
-    """Whether the gateway may serve this resource now. Inactive rows are
+    """Whether the switchboard may serve this resource now. Inactive rows are
     out; so is a pipeline not marked as a tool (its runner refuses those);
-    so is a function that requires approval — the gateway has no one to
+    so is a function that requires approval — the switchboard has no one to
     ask, so refusing is the only honest answer until it does."""
     if getattr(row, "is_active", True) is False:
         return False
@@ -80,11 +80,11 @@ def _object_schema(schema: Any) -> dict[str, Any]:
 
 async def list_tools(
     db: AsyncSession, manifest: Manifest, user_id: str, permissions: dict[str, bool]
-) -> list[GatewayTool]:
+) -> list[SwitchboardTool]:
     """The exposed tools `user_id` may call: the resource exists, is active,
     and the caller's permissions allow executing it. Entries the caller may
     not use are left out silently — the catalog itself is per caller."""
-    tools: list[GatewayTool] = []
+    tools: list[SwitchboardTool] = []
     taken: set[str] = set()
     for entry in manifest.exposed_tools or []:
         model = _MODELS.get(entry.get("type", ""))
@@ -93,7 +93,7 @@ async def list_tools(
         namespace, name = entry.get("namespace", "default"), entry.get("name", "")
         row = await model.get_by_name(db, namespace=namespace, name=name)
         if row is None or not exposable(row):
-            logger.info("Gateway %s/%s: exposed %s %s/%s is missing, inactive or not exposable",
+            logger.info("Switchboard %s/%s: exposed %s %s/%s is missing, inactive or not exposable",
                         manifest.namespace, manifest.name, entry.get("type"), namespace, name)
             continue
         # The same permission the converter checks before running it: a tool
@@ -112,7 +112,7 @@ async def list_tools(
         )
         output = getattr(row, "output_schema", None)
         tools.append(
-            GatewayTool(
+            SwitchboardTool(
                 name=tool_name,
                 description=description,
                 input_schema=_object_schema(getattr(row, "input_schema", None)),
@@ -139,9 +139,9 @@ def effective_limits(manifest: Manifest) -> tuple[int, int]:
     deployment default. max_calls 0 means no limit."""
     from app.core.config import settings
 
-    limits = manifest.gateway_limits or {}
-    max_calls = limits.get("max_calls", settings.gateway_rate_limit_max_calls)
-    window = limits.get("window_seconds", settings.gateway_rate_limit_window_seconds)
+    limits = manifest.switchboard_limits or {}
+    max_calls = limits.get("max_calls", settings.switchboard_rate_limit_max_calls)
+    window = limits.get("window_seconds", settings.switchboard_rate_limit_window_seconds)
     return int(max_calls), int(window)
 
 
@@ -157,7 +157,7 @@ async def enforce_rate_limit(manifest: Manifest, caller_key: str) -> None:
     if max_calls <= 0:
         return
     try:
-        await check_rate_limit(f"gateway:{manifest.id}:{caller_key}", max_calls, window)
+        await check_rate_limit(f"switchboard:{manifest.id}:{caller_key}", max_calls, window)
     except HTTPException as e:
         retry_after = int((e.headers or {}).get("Retry-After", window))
         raise RateLimitedError(max_calls, window, retry_after) from None
@@ -166,7 +166,7 @@ async def enforce_rate_limit(manifest: Manifest, caller_key: str) -> None:
 async def call_tool(
     db: AsyncSession,
     manifest: Manifest,
-    tool: GatewayTool,
+    tool: SwitchboardTool,
     *,
     user_id: str,
     user_email: str | None,
@@ -174,7 +174,7 @@ async def call_tool(
     arguments: dict[str, Any],
 ) -> dict[str, Any]:
     """Run one exposed tool as `user_id`, through the chat loop's converters,
-    and record the call in the tool result store under source=gateway."""
+    and record the call in the tool result store under source=switchboard."""
     from app.services.function_tools import FunctionToolConverter
     from app.services.pipeline_tools import PIPELINE_TOOL_PREFIX, PipelineToolConverter
     from app.services.query_tools import QueryToolConverter
@@ -200,7 +200,7 @@ async def call_tool(
         else:  # pragma: no cover - list_tools never yields another type
             result = {"error": f"Unsupported tool type {tool.type!r}"}
     except Exception as e:  # the converters raise on "not found"-class failures
-        logger.warning("Gateway %s/%s: %s %s failed: %s", manifest.namespace, manifest.name, tool.type, ref, e)
+        logger.warning("Switchboard %s/%s: %s %s failed: %s", manifest.namespace, manifest.name, tool.type, ref, e)
         result = {"error": str(e)}
     if not isinstance(result, dict):
         result = {"result": result}
@@ -214,34 +214,34 @@ async def call_tool(
 
 def _clip_result(result: dict[str, Any]) -> dict[str, Any]:
     """The stored copy of a result: redacted like a request body and clipped
-    to gateway_audit_result_max_chars, with a note of what was left out."""
+    to switchboard_audit_result_max_chars, with a note of what was left out."""
     from app.core.config import settings
     from app.middleware.request_logger import redact_body
 
     safe = redact_body(result)
     text = json.dumps(safe, default=str)
-    limit = settings.gateway_audit_result_max_chars
+    limit = settings.switchboard_audit_result_max_chars
     if len(text) <= limit:
         return safe
     return {"_truncated": True, "_original_size": len(text), "_preview": text[:limit]}
 
 
 async def record_call(
-    db: AsyncSession, manifest: Manifest, tool: GatewayTool, *,
+    db: AsyncSession, manifest: Manifest, tool: SwitchboardTool, *,
     user_id: str, arguments: dict[str, Any], result: dict[str, Any], duration_ms: int,
 ) -> None:
     """One audit row per call. Best effort: a failed write is logged, never
     turned into a failed call (the call already ran)."""
     from app.core.auth import current_api_key_id
     from app.middleware.request_logger import redact_body
-    from app.models.gateway_call import GatewayCall
+    from app.models.switchboard_call import SwitchboardCall
 
     key_id = current_api_key_id()
     # Read off the row before anything can expire it: a failed commit
     # expires loaded attributes, and the handler below must not touch them.
     manifest_id, namespace, name = manifest.id, manifest.namespace, manifest.name
     try:
-        db.add(GatewayCall(
+        db.add(SwitchboardCall(
             manifest_id=manifest_id,
             manifest_namespace=namespace,
             manifest_name=name,
@@ -257,8 +257,8 @@ async def record_call(
         ))
         await db.commit()
     except Exception as e:  # storage trouble: the call already ran, its result stands
-        logger.warning("Gateway call on %s/%s not recorded: %s", namespace, name, e)
+        logger.warning("Switchboard call on %s/%s not recorded: %s", namespace, name, e)
         try:
             await db.rollback()
         except Exception as rollback_error:  # pragma: no cover - the session is already broken
-            logger.warning("Gateway audit rollback failed: %s", rollback_error)
+            logger.warning("Switchboard audit rollback failed: %s", rollback_error)

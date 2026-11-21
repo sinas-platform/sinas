@@ -1,4 +1,4 @@
-"""The MCP gateway: a manifest's exposed tools served to external agents at
+"""The switchboard: a manifest's exposed tools served to external agents at
 POST /mcp/{namespace}/{name}, each caller seeing only what their own
 permissions allow."""
 
@@ -10,13 +10,13 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.runtime import gateway as gateway_endpoint
+from app.api.runtime import switchboard as switchboard_endpoint
 from app.core.auth import create_api_key
 from app.models.function import Function
 from app.models.manifest import Manifest
 from app.models.user import Role, RolePermission, User, UserRole
 from app.schemas.spec.manifest import ManifestSpec
-from app.services import gateway
+from app.services import switchboard
 from tests.conftest import auth_headers
 
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
@@ -28,14 +28,14 @@ def _uid() -> str:
 
 @pytest.fixture(autouse=True)
 def _same_session(db, monkeypatch):
-    """The gateway opens its own sessions; the fixture's rows live in a
+    """The switchboard opens its own sessions; the fixture's rows live in a
     rolled-back transaction those can't see, so hand it the fixture's."""
 
     @contextlib.asynccontextmanager
     async def _session():
         yield db
 
-    monkeypatch.setattr(gateway_endpoint, "AsyncSessionLocal", _session)
+    monkeypatch.setattr(switchboard_endpoint, "AsyncSessionLocal", _session)
 
 
 async def _function(db, owner, namespace, name, **extra) -> Function:
@@ -145,7 +145,7 @@ async def test_default_tool_names_are_mcp_safe_and_distinct_across_types(db: Asy
     from app.core.auth import get_user_permissions
 
     perms = await get_user_permissions(db, str(admin_user.id))
-    tools = await gateway.list_tools(db, manifest, str(admin_user.id), perms)
+    tools = await switchboard.list_tools(db, manifest, str(admin_user.id), perms)
     assert [t.name for t in tools] == ["my_ns__do-it", "query_my_ns__do-it"]
     assert {t.type for t in tools} == {"function", "query"}
 
@@ -183,9 +183,9 @@ async def test_call_runs_the_resource_as_the_caller_and_records_it(client, db: A
 
     from sqlalchemy import select
 
-    from app.models.gateway_call import GatewayCall
+    from app.models.switchboard_call import SwitchboardCall
 
-    (row,) = (await db.execute(select(GatewayCall).where(GatewayCall.user_id == caller.id))).scalars().all()
+    (row,) = (await db.execute(select(SwitchboardCall).where(SwitchboardCall.user_id == caller.id))).scalars().all()
     assert (row.manifest_id, row.manifest_namespace, row.manifest_name) == (manifest.id, manifest.namespace, manifest.name)
     assert (row.tool_name, row.resource_type, row.resource_ref) == ("sum", "function", f"tools/{fn.name}")
     assert row.arguments == {"x": 21} and row.result == {"y": 42} and row.is_error is False
@@ -224,7 +224,7 @@ async def test_a_failed_call_is_an_error_result_not_a_protocol_error(client, db:
 
 
 @pytest.mark.asyncio
-async def test_gateway_requires_a_credential_and_the_manifest(client, db: AsyncSession, admin_user):
+async def test_switchboard_requires_a_credential_and_the_manifest(client, db: AsyncSession, admin_user):
     manifest = await _manifest(db, admin_user, [])
     path = f"/mcp/{manifest.namespace}/{manifest.name}"
     r = await client.post(path, headers=MCP_HEADERS, json=_rpc("tools/list"))
@@ -236,7 +236,7 @@ async def test_gateway_requires_a_credential_and_the_manifest(client, db: AsyncS
     r = await client.post("/mcp/only-one-segment", headers={**MCP_HEADERS, **auth_headers(admin_user)}, json=_rpc("tools/list"))
     assert r.status_code == 404
 
-    stranger = await _user_with(db, "sinas.functions/*/*.execute:all")  # may run things, may not use this gateway
+    stranger = await _user_with(db, "sinas.functions/*/*.execute:all")  # may run things, may not use this switchboard
     r = await client.post(path, headers={**MCP_HEADERS, **auth_headers(stranger)}, json=_rpc("tools/list"))
     assert r.status_code == 403
 
@@ -326,7 +326,7 @@ async def test_rest_and_config_declare_exposed_tools_and_refuse_missing_resource
 
 @pytest.mark.asyncio
 async def test_a_real_mcp_client_can_list_and_call(app, db: AsyncSession, admin_user, monkeypatch):
-    """Protocol conformance: the SDK's own client against the gateway, over
+    """Protocol conformance: the SDK's own client against the switchboard, over
     an in-process transport (initialize, tools/list, tools/call)."""
     import httpx
     from mcp import Client
@@ -362,11 +362,11 @@ async def test_a_real_mcp_client_can_list_and_call(app, db: AsyncSession, admin_
 
 @pytest_asyncio.fixture
 async def _fresh_limits():
-    """Rate-limit counters live in Redis across tests: clear the gateway's."""
+    """Rate-limit counters live in Redis across tests: clear the switchboard's."""
     from app.core.redis import get_redis
 
     redis = await get_redis()
-    async for key in redis.scan_iter("sinas:ratelimit:gateway:*"):
+    async for key in redis.scan_iter("sinas:ratelimit:switchboard:*"):
         await redis.delete(key)
     yield
 
@@ -377,7 +377,7 @@ async def test_calls_past_the_manifests_limit_are_refused_with_a_retry_hint(clie
 
     fn = await _function(db, admin_user, "tools", f"lim-{_uid()}")
     manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "lim"}])
-    manifest.gateway_limits = {"max_calls": 2, "window_seconds": 60}
+    manifest.switchboard_limits = {"max_calls": 2, "window_seconds": 60}
     await db.flush()
 
     async def fake_execute(self, *a, **k):
@@ -390,7 +390,7 @@ async def test_calls_past_the_manifests_limit_are_refused_with_a_retry_hint(clie
         out = await _call(client, path, headers, "tools/call", {"name": "lim", "arguments": {}})
         assert out["result"]["isError"] is False
     out = await _call(client, path, headers, "tools/call", {"name": "lim", "arguments": {}})
-    assert out["error"]["code"] == gateway_endpoint.RATE_LIMITED
+    assert out["error"]["code"] == switchboard_endpoint.RATE_LIMITED
     assert "2 calls per 60s" in out["error"]["message"]
     assert 0 < out["error"]["data"]["retry_after_seconds"] <= 60
     # Listing is never counted.
@@ -405,7 +405,7 @@ async def test_each_api_key_is_its_own_caller_and_zero_disables(client, db: Asyn
 
     fn = await _function(db, admin_user, "tools", f"keys-{_uid()}")
     manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "k"}])
-    monkeypatch.setattr(settings, "gateway_rate_limit_max_calls", 1)  # the deployment default applies: no manifest override
+    monkeypatch.setattr(settings, "switchboard_rate_limit_max_calls", 1)  # the deployment default applies: no manifest override
 
     async def fake_execute(self, *a, **k):
         return {"ok": True}
@@ -421,23 +421,23 @@ async def test_each_api_key_is_its_own_caller_and_zero_disables(client, db: Asyn
     path = f"/mcp/{manifest.namespace}/{manifest.name}"
     call = {"name": "k", "arguments": {}}
     assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["result"]["isError"] is False
-    assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["error"]["code"] == gateway_endpoint.RATE_LIMITED
+    assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["error"]["code"] == switchboard_endpoint.RATE_LIMITED
     # Same user, other key: its own budget.
     assert (await _call(client, path, {"X-API-Key": key_b}, "tools/call", call))["result"]["isError"] is False
 
-    manifest.gateway_limits = {"max_calls": 0, "window_seconds": 60}
+    manifest.switchboard_limits = {"max_calls": 0, "window_seconds": 60}
     await db.flush()
     for _ in range(3):
         assert (await _call(client, path, {"X-API-Key": key_a}, "tools/call", call))["result"]["isError"] is False
 
 
 def test_limits_declare_and_export():
-    spec = ManifestSpec(name="x", gatewayLimits={"maxCalls": 10})
-    assert spec.gateway_limits.window_seconds == 60
-    assert ManifestSpec(name="x", gateway_limits={"max_calls": 10, "window_seconds": 5}).to_config()["gatewayLimits"] == {"maxCalls": 10, "windowSeconds": 5}
-    assert "gatewayLimits" not in ManifestSpec(name="plain").to_config()
+    spec = ManifestSpec(name="x", switchboardLimits={"maxCalls": 10})
+    assert spec.switchboard_limits.window_seconds == 60
+    assert ManifestSpec(name="x", switchboard_limits={"max_calls": 10, "window_seconds": 5}).to_config()["switchboardLimits"] == {"maxCalls": 10, "windowSeconds": 5}
+    assert "switchboardLimits" not in ManifestSpec(name="plain").to_config()
     with pytest.raises(ValueError):
-        ManifestSpec(name="bad", gatewayLimits={"maxCalls": -1})
+        ManifestSpec(name="bad", switchboardLimits={"maxCalls": -1})
 
 
 @pytest.mark.asyncio
@@ -447,30 +447,30 @@ async def test_rest_and_config_carry_the_limits(client, db: AsyncSession, admin_
 
     headers = auth_headers(admin_user)
     name = f"lim-{_uid()}"
-    r = await client.post("/api/v1/manifests", headers=headers, json={"namespace": "gw", "name": name, "gateway_limits": {"max_calls": 5}})
+    r = await client.post("/api/v1/manifests", headers=headers, json={"namespace": "gw", "name": name, "switchboard_limits": {"max_calls": 5}})
     assert r.status_code == 201, r.text
-    assert r.json()["gateway_limits"] == {"max_calls": 5, "window_seconds": 60}
-    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {"max_calls": 7, "window_seconds": 10}})
-    assert r.status_code == 200 and r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
+    assert r.json()["switchboard_limits"] == {"max_calls": 5, "window_seconds": 60}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"switchboard_limits": {"max_calls": 7, "window_seconds": 10}})
+    assert r.status_code == 200 and r.json()["switchboard_limits"] == {"max_calls": 7, "window_seconds": 10}
 
     # An explicit null clears the override (back to the deployment default); an omitted field keeps it.
     r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"description": "kept"})
-    assert r.json()["gateway_limits"] == {"max_calls": 7, "window_seconds": 10}
-    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": None})
-    assert r.status_code == 200 and r.json()["gateway_limits"] is None
-    assert (await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"gateway_limits": {}})).status_code == 422
+    assert r.json()["switchboard_limits"] == {"max_calls": 7, "window_seconds": 10}
+    r = await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"switchboard_limits": None})
+    assert r.status_code == 200 and r.json()["switchboard_limits"] is None
+    assert (await client.put(f"/api/v1/manifests/gw/{name}", headers=headers, json={"switchboard_limits": {}})).status_code == 422
 
     cfg_name = f"cfg-{_uid()}"
     config = SinasConfig.model_validate({
         "apiVersion": "sinas.co/v1", "kind": "SinasConfig", "metadata": {"name": "cfg"},
-        "spec": {"manifests": [{"namespace": "gw", "name": cfg_name, "gatewayLimits": {"maxCalls": 0}}]},
+        "spec": {"manifests": [{"namespace": "gw", "name": cfg_name, "switchboardLimits": {"maxCalls": 0}}]},
     })
     svc = ConfigApplyService(db, "cfg", owner_user_id=str(admin_user.id), managed_by="config", auto_commit=False)
     result = await svc.apply_config(config)
     assert result.success, result.errors
     row = await Manifest.get_by_name(db, "gw", cfg_name)
-    assert row.gateway_limits == {"max_calls": 0, "window_seconds": 60}
-    assert gateway.effective_limits(row) == (0, 60)
+    assert row.switchboard_limits == {"max_calls": 0, "window_seconds": 60}
+    assert switchboard.effective_limits(row) == (0, 60)
 
 
 # ------------------------------------------------------------------ audit
@@ -481,7 +481,7 @@ async def test_audit_rows_are_redacted_clipped_and_keyed_by_api_key(client, db: 
     from sqlalchemy import select
 
     from app.core.config import settings
-    from app.models.gateway_call import GatewayCall
+    from app.models.switchboard_call import SwitchboardCall
     from app.services.function_tools import FunctionToolConverter
 
     fn = await _function(db, admin_user, "tools", f"big-{_uid()}")
@@ -491,7 +491,7 @@ async def test_audit_rows_are_redacted_clipped_and_keyed_by_api_key(client, db: 
         f"sinas.functions/tools/{fn.name}.execute:all": True,
     })
     await db.flush()
-    monkeypatch.setattr(settings, "gateway_audit_result_max_chars", 200)
+    monkeypatch.setattr(settings, "switchboard_audit_result_max_chars", 200)
 
     async def fake_execute(self, db_, tool_name, arguments, *a, **k):
         if arguments.get("fail"):
@@ -503,7 +503,7 @@ async def test_audit_rows_are_redacted_clipped_and_keyed_by_api_key(client, db: 
     await _call(client, path, {"X-API-Key": plain}, "tools/call", {"name": "big", "arguments": {"password": "hunter2", "q": 1}})
     await _call(client, path, {"X-API-Key": plain}, "tools/call", {"name": "big", "arguments": {"fail": True}})
 
-    rows = (await db.execute(select(GatewayCall).where(GatewayCall.manifest_id == manifest.id).order_by(GatewayCall.created_at))).scalars().all()
+    rows = (await db.execute(select(SwitchboardCall).where(SwitchboardCall.manifest_id == manifest.id).order_by(SwitchboardCall.created_at))).scalars().all()
     assert len(rows) == 2
     ok, failed = rows
     assert ok.api_key_id == api_key.id and ok.user_id == admin_user.id
@@ -520,7 +520,7 @@ async def test_audit_listing_filters_and_scopes_by_permission(client, db: AsyncS
     manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "aud"}])
     other_manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "aud2"}])
     member = await _user_with(
-        db, "sinas.manifests/*/*.read:all", f"sinas.functions/tools/{fn.name}.execute:all", "sinas.gateway_calls.read:own",
+        db, "sinas.manifests/*/*.read:all", f"sinas.functions/tools/{fn.name}.execute:all", "sinas.switchboard_calls.read:own",
     )
 
     async def fake_execute(self, *a, **k):
@@ -531,31 +531,31 @@ async def test_audit_listing_filters_and_scopes_by_permission(client, db: AsyncS
         await _call(client, f"/mcp/{m.namespace}/{m.name}", auth_headers(user), "tools/call", {"name": tool, "arguments": {}})
 
     # Admin: everything, with filters.
-    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"manifest": f"{manifest.namespace}/{manifest.name}"})
+    r = await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"manifest": f"{manifest.namespace}/{manifest.name}"})
     assert r.status_code == 200, r.text
     assert r.json()["total"] == 2 and {c["tool_name"] for c in r.json()["items"]} == {"aud"}
-    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": str(member.id)})
+    r = await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"user_id": str(member.id)})
     assert r.json()["total"] == 2 and {c["manifest_name"] for c in r.json()["items"]} == {manifest.name, other_manifest.name}
-    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"tool": "aud2", "is_error": "false"})
+    r = await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"tool": "aud2", "is_error": "false"})
     assert r.json()["total"] == 1 and r.json()["items"][0]["resource_ref"] == f"tools/{fn.name}"
     one = r.json()["items"][0]
-    r = await client.get(f"/api/v1/gateway/calls/{one['id']}", headers=auth_headers(admin_user))
+    r = await client.get(f"/api/v1/switchboard/calls/{one['id']}", headers=auth_headers(admin_user))
     assert r.status_code == 200 and r.json()["id"] == one["id"]
 
     # Member: own calls only, whatever they ask for.
-    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(member))
+    r = await client.get("/api/v1/switchboard/calls", headers=auth_headers(member))
     assert r.status_code == 200 and r.json()["total"] == 2 and {c["user_id"] for c in r.json()["items"]} == {str(member.id)}
-    r = await client.get("/api/v1/gateway/calls", headers=auth_headers(member), params={"user_id": str(admin_user.id)})
+    r = await client.get("/api/v1/switchboard/calls", headers=auth_headers(member), params={"user_id": str(admin_user.id)})
     assert r.status_code == 403
-    admin_call = (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": str(admin_user.id)})).json()["items"][0]
-    r = await client.get(f"/api/v1/gateway/calls/{admin_call['id']}", headers=auth_headers(member))
+    admin_call = (await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"user_id": str(admin_user.id)})).json()["items"][0]
+    r = await client.get(f"/api/v1/switchboard/calls/{admin_call['id']}", headers=auth_headers(member))
     assert r.status_code == 404
     # No permission at all: refused.
     nobody = await _user_with(db, "sinas.chats.read:own")
-    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(nobody))).status_code == 403
+    assert (await client.get("/api/v1/switchboard/calls", headers=auth_headers(nobody))).status_code == 403
     # Malformed filters are a 422, not a server error.
-    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"user_id": "not-a-uuid"})).status_code == 422
-    assert (await client.get("/api/v1/gateway/calls", headers=auth_headers(admin_user), params={"api_key_id": "nope"})).status_code == 422
+    assert (await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"user_id": "not-a-uuid"})).status_code == 422
+    assert (await client.get("/api/v1/switchboard/calls", headers=auth_headers(admin_user), params={"api_key_id": "nope"})).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -571,7 +571,7 @@ async def test_a_failed_audit_write_never_fails_the_call(client, db: AsyncSessio
     real_commit = type(db).commit
 
     async def failing_commit(self):
-        if any(isinstance(o, __import__("app.models.gateway_call", fromlist=["GatewayCall"]).GatewayCall) for o in self.new):
+        if any(isinstance(o, __import__("app.models.switchboard_call", fromlist=["SwitchboardCall"]).SwitchboardCall) for o in self.new):
             self.expire_all()  # what a failed flush does to loaded rows
             raise RuntimeError("disk full")
         return await real_commit(self)
@@ -589,24 +589,24 @@ async def test_retention_drops_old_audit_rows(db: AsyncSession, admin_user, monk
     from sqlalchemy import select
 
     from app.core.config import settings
-    from app.models.gateway_call import GatewayCall
-    from app.scheduler.jobs import cleanup_gateway_calls as job
+    from app.models.switchboard_call import SwitchboardCall
+    from app.scheduler.jobs import cleanup_switchboard_calls as job
 
     @contextlib.asynccontextmanager
     async def _session():
         yield db
 
     monkeypatch.setattr(job, "AsyncSessionLocal", _session)
-    monkeypatch.setattr(settings, "gateway_audit_retention_days", 30)
+    monkeypatch.setattr(settings, "switchboard_audit_retention_days", 30)
     manifest = await _manifest(db, admin_user, [])
-    old = GatewayCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
+    old = SwitchboardCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
                       tool_name="t", resource_type="function", resource_ref="a/b", created_at=datetime.now(UTC) - timedelta(days=31))
-    fresh = GatewayCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
+    fresh = SwitchboardCall(manifest_id=manifest.id, manifest_namespace="gw", manifest_name=manifest.name, user_id=admin_user.id,
                         tool_name="t", resource_type="function", resource_ref="a/b")
     db.add_all([old, fresh])
     await db.flush()
-    assert await job.cleanup_gateway_calls() == 1
-    left = (await db.execute(select(GatewayCall.id).where(GatewayCall.manifest_id == manifest.id))).scalars().all()
+    assert await job.cleanup_switchboard_calls() == 1
+    left = (await db.execute(select(SwitchboardCall.id).where(SwitchboardCall.manifest_id == manifest.id))).scalars().all()
     assert left == [fresh.id]
 
 
@@ -642,7 +642,7 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     import httpx
 
     from app.core.auth import get_user_by_email
-    from app.services import gateway_auth, sso
+    from app.services import sso, switchboard_auth
     from app.services.function_tools import FunctionToolConverter
     from tests.unit.test_oidc_sso import CLIENT_ID, ISSUER, FakeIdP, _provider, _role
 
@@ -651,7 +651,7 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     real = httpx.AsyncClient
     monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
     sso.clear_caches()
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
 
     fn = await _function(db, admin_user, "tools", f"ext-{_uid()}")
     manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "ext"}])
@@ -668,14 +668,14 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     path = f"/mcp/{manifest.namespace}/{manifest.name}"
     now = int(_time.time())
     email = f"agent-{_uid()}@acme.example"
-    resource = gateway_auth.resource_url(manifest.namespace, manifest.name)
+    resource = switchboard_auth.resource_url(manifest.namespace, manifest.name)
 
     def token(**over):
         claims = {"iss": ISSUER, "aud": resource, "sub": f"sub-{email}", "email": email, "email_verified": True,
                   "iat": now, "exp": now + 300, **over}
         return fake.key.sign(claims)
 
-    # A token for this gateway: the user is provisioned with the provider's default role and sees its tools.
+    # A token for this switchboard: the user is provisioned with the provider's default role and sees its tools.
     listed = await _call(client, path, {"Authorization": f"Bearer {token()}"}, "tools/list")
     assert [t["name"] for t in listed["result"]["tools"]] == ["ext"]
     user = await get_user_by_email(db, email)
@@ -699,7 +699,7 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(aud=CLIENT_ID, sub='plain-jwt', email=f'pj-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
     assert r.status_code == 401  # client-id audience without the access-token type: refused
 
-    # Not for this gateway, expired, or from an unknown issuer: 401 with the reason in the challenge.
+    # Not for this switchboard, expired, or from an unknown issuer: 401 with the reason in the challenge.
     for bad, reason in (
         (token(aud="https://elsewhere.example/mcp/x/y", sub="s2", email=f"s2-{_uid()}@acme.example"), "audience"),
         (token(exp=now - 600, sub="s3", email=f"s3-{_uid()}@acme.example"), "expired"),
@@ -712,27 +712,27 @@ async def test_an_identity_providers_access_token_signs_the_caller_in(client, db
     # A provider that does not auto-provision refuses strangers.
     provider.auto_provision = False
     await db.flush()
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
     r = await client.post(path, headers={**MCP_HEADERS, "Authorization": f"Bearer {token(sub='s5', email=f'new-{_uid()}@acme.example')}"}, json=_rpc("tools/list"))
     assert r.status_code == 401 and "no Sinas account" in r.json()["detail"]
 
 
 @pytest.mark.asyncio
-async def test_a_token_for_one_gateway_does_not_open_another(client, db: AsyncSession, admin_user, monkeypatch):
-    """The resolution cache is per token AND gateway: a token issued for A,
+async def test_a_token_for_one_switchboard_does_not_open_another(client, db: AsyncSession, admin_user, monkeypatch):
+    """The resolution cache is per token AND switchboard: a token issued for A,
     accepted there, still fails B's audience check."""
     import time as _time
 
     import httpx
 
-    from app.services import gateway_auth, sso
+    from app.services import sso, switchboard_auth
     from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
 
     fake = FakeIdP()
     real = httpx.AsyncClient
     monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
     sso.clear_caches()
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
     a = await _manifest(db, admin_user, [])
     b = await _manifest(db, admin_user, [])
     role = await _role(db)
@@ -740,7 +740,7 @@ async def test_a_token_for_one_gateway_does_not_open_another(client, db: AsyncSe
     await _provider(db, auto_provision=True, default_role=role.name)
     await db.flush()
     now = int(_time.time())
-    token = fake.key.sign({"iss": ISSUER, "aud": gateway_auth.resource_url(a.namespace, a.name), "sub": "cross",
+    token = fake.key.sign({"iss": ISSUER, "aud": switchboard_auth.resource_url(a.namespace, a.name), "sub": "cross",
                            "email": f"cross-{_uid()}@acme.example", "email_verified": True, "iat": now, "exp": now + 300})
     headers = {**MCP_HEADERS, "Authorization": f"Bearer {token}"}
     assert (await client.post(f"/mcp/{a.namespace}/{a.name}", headers=headers, json=_rpc("tools/list"))).status_code == 200
@@ -754,7 +754,7 @@ async def test_an_unreachable_identity_provider_is_a_401_not_a_500(client, db: A
 
     import httpx
 
-    from app.services import gateway_auth, sso
+    from app.services import sso, switchboard_auth
     from tests.unit.test_oidc_sso import ISSUER, SigningKey, _provider
 
     def down(request):
@@ -763,12 +763,12 @@ async def test_an_unreachable_identity_provider_is_a_401_not_a_500(client, db: A
     real = httpx.AsyncClient
     monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(down)))
     sso.clear_caches()
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
     manifest = await _manifest(db, admin_user, [])
     await _provider(db)
     await db.flush()
     now = int(_time.time())
-    token = SigningKey("k9").sign({"iss": ISSUER, "aud": gateway_auth.resource_url(manifest.namespace, manifest.name), "sub": "s",
+    token = SigningKey("k9").sign({"iss": ISSUER, "aud": switchboard_auth.resource_url(manifest.namespace, manifest.name), "sub": "s",
                                   "email": "x@acme.example", "iat": now, "exp": now + 300})
     r = await client.post(f"/mcp/{manifest.namespace}/{manifest.name}", headers={**MCP_HEADERS, "Authorization": f"Bearer {token}"}, json=_rpc("tools/list"))
     assert r.status_code == 401, r.text
@@ -779,17 +779,17 @@ def test_deployment_limits_are_validated():
     from app.core.config import Settings
 
     with pytest.raises(ValueError):
-        Settings(gateway_rate_limit_window_seconds=0)
+        Settings(switchboard_rate_limit_window_seconds=0)
     with pytest.raises(ValueError):
-        Settings(gateway_rate_limit_max_calls=-1)
-    assert Settings(gateway_rate_limit_max_calls=0).gateway_rate_limit_max_calls == 0
+        Settings(switchboard_rate_limit_max_calls=-1)
+    assert Settings(switchboard_rate_limit_max_calls=0).switchboard_rate_limit_max_calls == 0
 
 
 @pytest.mark.asyncio
 async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
     """A tool in the catalog is a tool the call will run: pipelines need the
     `run` permission and `as_tool`; a function that requires approval is
-    not served (the gateway has no one to ask)."""
+    not served (the switchboard has no one to ask)."""
     from app.core.auth import get_user_permissions
     from app.models.pipeline import Pipeline
 
@@ -808,14 +808,14 @@ async def test_catalog_uses_the_runners_own_rules(db: AsyncSession, admin_user):
         {"type": "pipeline", "namespace": "ops", "name": not_tool.name, "tool_name": "run_q"},
     ])
     admin_perms = await get_user_permissions(db, str(admin_user.id))
-    assert sorted(t.name for t in await gateway.list_tools(db, manifest, str(admin_user.id), admin_perms)) == ["plain", "run_p"]
+    assert sorted(t.name for t in await switchboard.list_tools(db, manifest, str(admin_user.id), admin_perms)) == ["plain", "run_p"]
 
     runner = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.run:all")
     executor = await _user_with(db, f"sinas.pipelines/ops/{as_tool.name}.execute:all")  # the wrong verb for pipelines
     from app.core.auth import get_user_permissions as perms
 
-    assert [t.name for t in await gateway.list_tools(db, manifest, str(runner.id), await perms(db, str(runner.id)))] == ["run_p"]
-    assert await gateway.list_tools(db, manifest, str(executor.id), await perms(db, str(executor.id))) == []
+    assert [t.name for t in await switchboard.list_tools(db, manifest, str(runner.id), await perms(db, str(runner.id)))] == ["run_p"]
+    assert await switchboard.list_tools(db, manifest, str(executor.id), await perms(db, str(executor.id))) == []
 
     # /status counts a declared-but-unservable tool as missing.
     from app.services.manifest_validator import validate_manifest_status
@@ -836,7 +836,7 @@ async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatc
     import httpx
 
     from app.core.auth import decode_access_token
-    from app.services import gateway_auth, sso
+    from app.services import sso, switchboard_auth
     from app.services.function_tools import FunctionToolConverter
     from tests.unit.test_oidc_sso import ISSUER, FakeIdP, _provider, _role
 
@@ -844,7 +844,7 @@ async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatc
     real = httpx.AsyncClient
     monkeypatch.setattr(sso, "_client", lambda: real(transport=httpx.MockTransport(fake.handler)))
     sso.clear_caches()
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
 
     fn = await _function(db, admin_user, "tools", f"ds-{_uid()}")
     manifest = await _manifest(db, admin_user, [{"type": "function", "namespace": "tools", "name": fn.name, "tool_name": "ds"}])
@@ -862,7 +862,7 @@ async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatc
     monkeypatch.setattr(FunctionToolConverter, "execute_function_tool", fake_execute)
     path = f"/mcp/{manifest.namespace}/{manifest.name}"
     now = int(_time.time())
-    resource = gateway_auth.resource_url(manifest.namespace, manifest.name)
+    resource = switchboard_auth.resource_url(manifest.namespace, manifest.name)
 
     def token(**over):
         return fake.key.sign({"iss": ISSUER, "aud": resource, "iat": now, "exp": now + 300, **over})
@@ -890,7 +890,7 @@ async def test_oauth_follow_ups(client, db: AsyncSession, admin_user, monkeypatc
     await db.flush()
 
     # A rejection message carrying the provider's quoted name still yields a parseable header.
-    gateway_auth.clear_cache()
+    switchboard_auth.clear_cache()
     provider.auto_provision = False
     await db.flush()
     fake.userinfo = None
@@ -911,13 +911,13 @@ async def test_a_counter_without_expiry_is_repaired(_fresh_limits):
     from app.core.redis import get_redis
 
     redis = await get_redis()
-    key = f"gateway:test:{_uid()}"
+    key = f"switchboard:test:{_uid()}"
     await redis.set(f"sinas:ratelimit:{key}", 5)  # at the cap, no TTL: the stuck shape
     assert await redis.ttl(f"sinas:ratelimit:{key}") == -1
     with pytest.raises(HTTPException) as refused:
         await check_rate_limit(key, 5, 30)
     assert 0 < await redis.ttl(f"sinas:ratelimit:{key}") <= 30  # repaired: it will reset
     assert 0 < int(refused.value.headers["Retry-After"]) <= 30
-    fresh = f"gateway:test:{_uid()}"
+    fresh = f"switchboard:test:{_uid()}"
     await check_rate_limit(fresh, 5, 30)
     assert 0 < await redis.ttl(f"sinas:ratelimit:{fresh}") <= 30  # expiry from the first call on

@@ -139,8 +139,8 @@ PERMISSION_REGISTRY: list[dict[str, Any]] = [
         "actions": ["read"],
     },
     {
-        "resource": "gateway_calls",
-        "description": "Tool calls made through the MCP gateway (audit log)",
+        "resource": "switchboard_calls",
+        "description": "Tool calls made through the switchboard (audit log)",
         "actions": ["read"],
     },
     {

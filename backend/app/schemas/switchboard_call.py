@@ -1,4 +1,4 @@
-"""Gateway audit log responses."""
+"""Switchboard audit log responses."""
 
 import uuid
 from datetime import datetime
@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
-class GatewayCallResponse(BaseModel):
+class SwitchboardCallResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -26,8 +26,8 @@ class GatewayCallResponse(BaseModel):
     created_at: datetime
 
 
-class GatewayCallListResponse(BaseModel):
-    items: list[GatewayCallResponse]
+class SwitchboardCallListResponse(BaseModel):
+    items: list[SwitchboardCallResponse]
     total: int
     limit: int
     offset: int

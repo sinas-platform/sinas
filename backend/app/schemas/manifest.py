@@ -52,7 +52,7 @@ class StoreDependency(BaseModel):
 
 
 class ExposedToolRef(BaseModel):
-    """A resource served as an MCP tool through the gateway."""
+    """A resource served as an MCP tool through the switchboard."""
 
     type: str = Field(..., description="function, query or pipeline")
     namespace: str = Field(default="default")
@@ -61,7 +61,7 @@ class ExposedToolRef(BaseModel):
     description: Optional[str] = None
 
 
-class GatewayLimitsRef(BaseModel):
+class SwitchboardLimitsRef(BaseModel):
     max_calls: int = Field(..., ge=0, description="Calls per caller per window; 0 disables")
     window_seconds: int = Field(default=60, ge=1, le=86400)
 
@@ -85,7 +85,7 @@ class ManifestCreate(BaseModel):
         default_factory=list,
         description="Served to external agents on POST /mcp/{namespace}/{name}",
     )
-    gateway_limits: Optional[GatewayLimitsRef] = None
+    switchboard_limits: Optional[SwitchboardLimitsRef] = None
 
     @field_validator("public_info")
     @classmethod
@@ -117,7 +117,7 @@ class ManifestUpdate(BaseModel):
     store_dependencies: Optional[list[StoreDependency]] = None
     public_info: dict[str, Any] | None = None
     exposed_tools: Optional[list[ExposedToolRef]] = None
-    gateway_limits: Optional[GatewayLimitsRef] = None
+    switchboard_limits: Optional[SwitchboardLimitsRef] = None
     is_active: Optional[bool] = None
 
     @field_validator("public_info")
@@ -150,7 +150,7 @@ class ManifestResponse(BaseModel):
     store_dependencies: list[StoreDependency]
     public_info: dict[str, Any] = Field(default_factory=dict)
     exposed_tools: list[ExposedToolRef] = Field(default_factory=list)
-    gateway_limits: Optional[GatewayLimitsRef] = None
+    switchboard_limits: Optional[SwitchboardLimitsRef] = None
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime]

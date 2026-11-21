@@ -48,7 +48,7 @@ from .user import (
     UserRole,
 )
 from .chat_wakeup import ChatWakeup
-from .gateway_call import GatewayCall
+from .switchboard_call import SwitchboardCall
 from .mcp_task import McpTask
 from .package_repository import PackageRepository
 from .retention_run import ChatRetentionRun
@@ -61,7 +61,7 @@ __all__ = [
     "FunctionVersion",
     "Webhook",
     "ChatWakeup",
-    "GatewayCall",
+    "SwitchboardCall",
     "McpTask",
     "PackageRepository",
     "IdentityProvider",
