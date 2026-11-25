@@ -732,9 +732,10 @@ if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
     echo ""
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"
     if [ "$PROFILE" = lite ]; then
-        # Healthy once migrations ran and the API serves (first start: a minute or two)
+        # Healthy once migrations ran and the API serves (first start: a minute
+        # or two). At most 60 tries of up to 5s + 3s: the wait is bounded.
         for _ in $(seq 1 60); do
-            if curl -fsS -o /dev/null "http://localhost:${APP_PORT}/health" 2>/dev/null; then
+            if curl -fsS --max-time 5 -o /dev/null "http://localhost:${APP_PORT}/health" 2>/dev/null; then
                 SERVICES_STARTED=true
                 break
             fi

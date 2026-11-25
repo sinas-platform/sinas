@@ -154,11 +154,16 @@ As with the full profile, update the compose files and the images together ([Upd
     && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
   ```
 
-- **By hand:** download the new version's `docker-compose-lite-<version>.yml` over `docker-compose.lite.yml` (and `docker-compose.lite.exec.yml`, if you use it), then pull and restart:
+- **By hand:** download the new version's `docker-compose-lite-<version>.yml` over `docker-compose.lite.yml` (and `docker-compose.lite.exec.yml`, if you use it), then pull and restart with the same `-f` options you started with:
 
   ```bash
+  # without code execution
   docker compose -f docker-compose.lite.yml pull
   docker compose -f docker-compose.lite.yml up -d
+
+  # with code execution: leaving out the exec file would recreate sinas without it
+  docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml pull
+  docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d
   ```
 
   The release file names its image tag itself; `IMAGE_TAG` in `.env` doesn't change it.
