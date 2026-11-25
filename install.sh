@@ -22,6 +22,17 @@ case "$INSTALL_DIR" in /*) ;; *) INSTALL_DIR="$PWD/${INSTALL_DIR#./}" ;; esac
 #   SINAS_IMAGE_TAG=...        the image tag to run, overriding the above
 # The choice is saved in .env (SINAS_SOURCE, IMAGE_TAG): a later run without
 # any of these reuses it, so an update keeps files and images together.
+#
+# Which profile (a new install asks; the default is full):
+#   SINAS_PROFILE=full         the full profile: Caddy (TLS), ClickHouse request
+#                              logs, separate worker containers
+#   SINAS_PROFILE=lite         Sinas lite: postgres, redis and one sinas container
+#                              serving the API and console over plain HTTP on
+#                              SINAS_PORT (default 8000); bring your own TLS proxy
+#   SINAS_CODE_EXECUTION=y     lite: enable code execution, which mounts the host
+#                              Docker socket (default n; n on a re-run turns it off)
+# The profile is saved in .env (SINAS_PROFILE); a re-run keeps it and the
+# installer does not switch an install to the other profile.
 # Non-interactive installs (CI, agents): SINAS_NONINTERACTIVE=1 plus the
 # answers as SINAS_* variables; see https://docs.sinas.co/getting-started/deployment
 die() {
@@ -87,6 +98,17 @@ fi
 NONINTERACTIVE=false
 case "${SINAS_NONINTERACTIVE:-}" in
     1|true|TRUE|True|yes|YES|y|Y) NONINTERACTIVE=true ;;
+esac
+
+case "${SINAS_PROFILE:-}" in
+    ""|full|lite) ;;
+    *) die "SINAS_PROFILE must be full or lite (got '${SINAS_PROFILE}')" ;;
+esac
+case "${SINAS_CODE_EXECUTION:-}" in
+    "") ;;
+    1|true|TRUE|True|yes|YES|y|Y) SINAS_CODE_EXECUTION=y ;;
+    0|false|FALSE|False|no|NO|n|N) SINAS_CODE_EXECUTION=n ;;
+    *) die "SINAS_CODE_EXECUTION must be y or n (got '${SINAS_CODE_EXECUTION}')" ;;
 esac
 
 echo -e "${BLUE}"
@@ -163,46 +185,153 @@ echo -e "${YELLOW}Setting up in ${INSTALL_DIR}...${NC}"
 mkdir -p "${INSTALL_DIR}"
 cd "${INSTALL_DIR}"
 
-# Download required files from GitHub
-echo -e "${YELLOW}Downloading configuration files...${NC}"
-
-curl -fsSL "${RAW_URL}/docker-compose.yml" -o docker-compose.yml \
-    || die "Could not download docker-compose.yml for '${REF}'. Is it a published version (see https://github.com/${REPO}/releases) or a branch?"
-curl -fsSL "${RAW_URL}/Caddyfile" -o Caddyfile
-
-mkdir -p backend/clickhouse
-curl -fsSL "${RAW_URL}/backend/init-clickhouse.sql" -o backend/init-clickhouse.sql
-curl -fsSL "${RAW_URL}/backend/init-postgres.sh" -o backend/init-postgres.sh
-chmod +x backend/init-postgres.sh
-curl -fsSL "${RAW_URL}/backend/clickhouse/entrypoint-wrapper.sh" -o backend/clickhouse/entrypoint-wrapper.sh
-curl -fsSL "${RAW_URL}/backend/clickhouse/system-logs.xml" -o backend/clickhouse/system-logs.xml
-curl -fsSL "${RAW_URL}/backend/clickhouse/resource-limits.xml" -o backend/clickhouse/resource-limits.xml
-curl -fsSL "${RAW_URL}/backend/clickhouse/network.xml" -o backend/clickhouse/network.xml
-curl -fsSL "${RAW_URL}/backend/clickhouse/user-limits.xml" -o backend/clickhouse/user-limits.xml
-chmod +x backend/clickhouse/entrypoint-wrapper.sh
-
-echo -e "${GREEN}✓ Files downloaded${NC}"
-
-# Configuration
 # Reopen stdin from /dev/tty so interactive prompts work when piped (curl | bash)
 if [ "$NONINTERACTIVE" = false ]; then
     exec < /dev/tty || die "Cannot open terminal for interactive input. Run the script directly instead of piping, or set SINAS_NONINTERACTIVE=1 (see https://docs.sinas.co/getting-started/deployment)."
 fi
+
+# Profile. An existing install (it has a .env) keeps its own: SINAS_PROFILE
+# in .env, or for one set up before that existed or by hand, lite when it has
+# the lite compose file and no full one.
+EXISTING_PROFILE=""
+if [ -f .env ]; then
+    EXISTING_PROFILE=$(saved SINAS_PROFILE)
+    if [ -z "$EXISTING_PROFILE" ]; then
+        if [ -f docker-compose.lite.yml ] && [ ! -f docker-compose.yml ]; then
+            EXISTING_PROFILE=lite
+        else
+            EXISTING_PROFILE=full
+        fi
+    fi
+fi
+if [ -n "$EXISTING_PROFILE" ]; then
+    if [ -n "$SINAS_PROFILE" ] && [ "$SINAS_PROFILE" != "$EXISTING_PROFILE" ]; then
+        die "${INSTALL_DIR} has a ${EXISTING_PROFILE} install; the installer does not switch it to ${SINAS_PROFILE}. See https://docs.sinas.co/getting-started/lite#moving-to-the-full-profile"
+    fi
+    PROFILE="$EXISTING_PROFILE"
+elif [ -n "$SINAS_PROFILE" ]; then
+    PROFILE="$SINAS_PROFILE"
+elif [ "$NONINTERACTIVE" = true ]; then
+    PROFILE=full
+else
+    echo ""
+    echo -e "${YELLOW}Profile:${NC}"
+    echo "  1) Full — Caddy with automatic TLS for your domain, ClickHouse request logs,"
+    echo "     separate worker containers. For production."
+    echo "  2) Lite — postgres, redis and one sinas container serving the API and console"
+    echo "     over plain HTTP; no TLS, request logs or code execution unless you add"
+    echo "     them. For evaluation, demos and small single-host installs."
+    echo ""
+    read -p "Choose [1-2, default 1]: " PROFILE_CHOICE
+    case "${PROFILE_CHOICE:-1}" in
+        1) PROFILE=full ;;
+        2) PROFILE=lite ;;
+        *)
+            echo -e "${RED}Invalid choice, defaulting to full${NC}"
+            PROFILE=full
+            ;;
+    esac
+fi
+echo -e "${GREEN}✓ Profile: ${PROFILE}${NC}"
+
+# Lite: code execution is the additive docker-compose.lite.exec.yml. Plain
+# `docker compose` commands in the install directory pick up the files from
+# COMPOSE_FILE in .env.
+CODE_EXECUTION=n
+COMPOSE_FILES=""
+if [ "$PROFILE" = lite ]; then
+    SAVED_COMPOSE_FILE=$(saved COMPOSE_FILE)
+    if [ -n "$SINAS_CODE_EXECUTION" ]; then
+        CODE_EXECUTION="$SINAS_CODE_EXECUTION"
+    elif [ -n "$EXISTING_PROFILE" ]; then
+        # Keep what the install runs now
+        if [ -n "$SAVED_COMPOSE_FILE" ]; then
+            case ":${SAVED_COMPOSE_FILE}:" in *:docker-compose.lite.exec.yml:*) CODE_EXECUTION=y ;; esac
+        elif [ -f docker-compose.lite.exec.yml ]; then
+            CODE_EXECUTION=y
+        fi
+    elif [ "$NONINTERACTIVE" = false ]; then
+        echo ""
+        echo "  Code execution runs functions and agent code in sandbox containers. In the"
+        echo "  lite profile it mounts this host's Docker socket into the sinas container,"
+        echo "  which gives that container root-equivalent control of the host."
+        read -p "Enable code execution? [y/N]: " CODE_EXECUTION_INPUT
+        if [[ "${CODE_EXECUTION_INPUT:-N}" =~ ^[Yy]$ ]]; then
+            CODE_EXECUTION=y
+        fi
+    fi
+    # The base file first, then any of the install's own files, then the
+    # exec override when enabled.
+    COMPOSE_FILES="docker-compose.lite.yml"
+    IFS=: read -r -a SAVED_FILES <<< "$SAVED_COMPOSE_FILE"
+    for f in "${SAVED_FILES[@]}"; do
+        case "$f" in
+            ""|docker-compose.lite.yml|docker-compose.lite.exec.yml) ;;
+            *) COMPOSE_FILES="${COMPOSE_FILES}:${f}" ;;
+        esac
+    done
+    if [ "$CODE_EXECUTION" = y ]; then
+        COMPOSE_FILES="${COMPOSE_FILES}:docker-compose.lite.exec.yml"
+        echo -e "${GREEN}✓ Code execution: on (host Docker socket mounted)${NC}"
+    else
+        echo -e "${GREEN}✓ Code execution: off${NC}"
+    fi
+fi
+
+# Download required files from GitHub
+echo -e "${YELLOW}Downloading configuration files...${NC}"
+
+if [ "$PROFILE" = lite ]; then
+    curl -fsSL "${RAW_URL}/docker-compose.lite.yml" -o docker-compose.lite.yml \
+        || die "Could not download docker-compose.lite.yml for '${REF}'. Is it a published version (see https://github.com/${REPO}/releases) or a branch? The lite profile needs 0.4.0 or later."
+    if [ "$CODE_EXECUTION" = y ]; then
+        curl -fsSL "${RAW_URL}/docker-compose.lite.exec.yml" -o docker-compose.lite.exec.yml
+    else
+        rm -f docker-compose.lite.exec.yml
+    fi
+else
+    curl -fsSL "${RAW_URL}/docker-compose.yml" -o docker-compose.yml \
+        || die "Could not download docker-compose.yml for '${REF}'. Is it a published version (see https://github.com/${REPO}/releases) or a branch?"
+    curl -fsSL "${RAW_URL}/Caddyfile" -o Caddyfile
+
+    mkdir -p backend/clickhouse
+    curl -fsSL "${RAW_URL}/backend/init-clickhouse.sql" -o backend/init-clickhouse.sql
+    curl -fsSL "${RAW_URL}/backend/init-postgres.sh" -o backend/init-postgres.sh
+    chmod +x backend/init-postgres.sh
+    curl -fsSL "${RAW_URL}/backend/clickhouse/entrypoint-wrapper.sh" -o backend/clickhouse/entrypoint-wrapper.sh
+    curl -fsSL "${RAW_URL}/backend/clickhouse/system-logs.xml" -o backend/clickhouse/system-logs.xml
+    curl -fsSL "${RAW_URL}/backend/clickhouse/resource-limits.xml" -o backend/clickhouse/resource-limits.xml
+    curl -fsSL "${RAW_URL}/backend/clickhouse/network.xml" -o backend/clickhouse/network.xml
+    curl -fsSL "${RAW_URL}/backend/clickhouse/user-limits.xml" -o backend/clickhouse/user-limits.xml
+    chmod +x backend/clickhouse/entrypoint-wrapper.sh
+fi
+
+echo -e "${GREEN}✓ Files downloaded${NC}"
 
 # Non-interactive answers, from the environment (SINAS_NONINTERACTIVE=1)
 noninteractive_answers() {
     DOMAIN="${SINAS_DOMAIN:-}"
     ACME_EMAIL="${SINAS_ACME_EMAIL:-}"
     SUPERADMIN_EMAIL="${SINAS_SUPERADMIN_EMAIL:-$ACME_EMAIL}"
-    AUTH_MODE="${SINAS_AUTH_MODE:-otp}"
+    if [ "$PROFILE" = lite ]; then
+        # No Caddy, so no certificates; no SMTP needed by default
+        AUTH_MODE="${SINAS_AUTH_MODE:-password}"
+        APP_PORT="${SINAS_PORT:-8000}"
+        [ -n "$SUPERADMIN_EMAIL" ] || die "SINAS_NONINTERACTIVE: set SINAS_SUPERADMIN_EMAIL"
+        valid_port "$APP_PORT" || die "SINAS_PORT must be a port number (got '${APP_PORT}')"
+    else
+        AUTH_MODE="${SINAS_AUTH_MODE:-otp}"
+    fi
     SUPERADMIN_PASSWORD="${SINAS_SUPERADMIN_PASSWORD:-}"
     SMTP_HOST="${SINAS_SMTP_HOST:-}"
     SMTP_PORT="${SINAS_SMTP_PORT:-587}"
     SMTP_USER="${SINAS_SMTP_USER:-}"
     SMTP_PASSWORD="${SINAS_SMTP_PASSWORD:-}"
     SMTP_DOMAIN="${SINAS_SMTP_DOMAIN:-}"
-    [ -n "$DOMAIN" ] || die "SINAS_NONINTERACTIVE: set SINAS_DOMAIN"
-    [ -n "$ACME_EMAIL" ] || die "SINAS_NONINTERACTIVE: set SINAS_ACME_EMAIL (email for SSL certificates)"
+    if [ "$PROFILE" = full ]; then
+        [ -n "$DOMAIN" ] || die "SINAS_NONINTERACTIVE: set SINAS_DOMAIN"
+        [ -n "$ACME_EMAIL" ] || die "SINAS_NONINTERACTIVE: set SINAS_ACME_EMAIL (email for SSL certificates)"
+    fi
     case "$AUTH_MODE" in
         otp|password|password+otp) ;;
         *) die "SINAS_AUTH_MODE must be otp, password or password+otp (got '${AUTH_MODE}')" ;;
@@ -219,7 +348,24 @@ noninteractive_answers() {
             die "SINAS_AUTH_MODE=${AUTH_MODE} sends login codes by email: set SINAS_SMTP_HOST, SINAS_SMTP_USER and SINAS_SMTP_PASSWORD (or use SINAS_AUTH_MODE=password)"
         fi
     fi
-    echo -e "${GREEN}✓ Domain: ${DOMAIN}, superadmin: ${SUPERADMIN_EMAIL}, auth mode: ${AUTH_MODE}${NC}"
+    if [ "$PROFILE" = lite ]; then
+        echo -e "${GREEN}✓ Port: ${APP_PORT}, domain: ${DOMAIN:-(none)}, superadmin: ${SUPERADMIN_EMAIL}, auth mode: ${AUTH_MODE}${NC}"
+    else
+        echo -e "${GREEN}✓ Domain: ${DOMAIN}, superadmin: ${SUPERADMIN_EMAIL}, auth mode: ${AUTH_MODE}${NC}"
+    fi
+}
+
+valid_port() {
+    case "$1" in
+        ""|*[!0-9]*) return 1 ;;
+    esac
+    [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# Set KEY=VALUE in .env, replacing an earlier value; .env stays private.
+set_env() {
+    (umask 077; { grep -v "^$1=" .env || true; echo "$1=$2"; } > .env.new)
+    cat .env.new > .env && rm -f .env.new
 }
 
 echo ""
@@ -238,13 +384,20 @@ if [ -f .env ]; then
     ENV_IMAGE_TAG=$(saved IMAGE_TAG)
     if [ "$SOURCE_EXPLICIT" = true ]; then
         if [ "$(saved SINAS_SOURCE)" != "$SOURCE" ] || [ "$ENV_IMAGE_TAG" != "$IMAGE_TAG" ]; then
-            (umask 077; { grep -v -e "^IMAGE_TAG=" -e "^SINAS_SOURCE=" .env || true; echo "SINAS_SOURCE=$SOURCE"; echo "IMAGE_TAG=$IMAGE_TAG"; } > .env.new)
-            cat .env.new > .env && rm -f .env.new
+            set_env SINAS_SOURCE "$SOURCE"
+            set_env IMAGE_TAG "$IMAGE_TAG"
             echo -e "${GREEN}✓ SINAS_SOURCE=${SOURCE}, IMAGE_TAG=${IMAGE_TAG:-(latest)} written to .env${NC}"
         fi
     elif [ -z "$SOURCE_REUSED" ] && [ -n "$ENV_IMAGE_TAG" ]; then
         echo -e "${YELLOW}⚠ .env pins IMAGE_TAG=${ENV_IMAGE_TAG}, but these files are ${REF}'s."
         echo -e "  To install a version's files and images together, set SINAS_VERSION (e.g. SINAS_VERSION=${ENV_IMAGE_TAG}).${NC}"
+    fi
+    if [ "$PROFILE" = lite ]; then
+        [ "$(saved SINAS_PROFILE)" = lite ] || set_env SINAS_PROFILE lite
+        if [ "$(saved COMPOSE_FILE)" != "$COMPOSE_FILES" ]; then
+            set_env COMPOSE_FILE "$COMPOSE_FILES"
+            echo -e "${GREEN}✓ COMPOSE_FILE=${COMPOSE_FILES} written to .env${NC}"
+        fi
     fi
 else
     FRESH_INSTALL=true
@@ -271,23 +424,50 @@ else
         echo -e "${BLUE}Please provide the following information:${NC}"
         echo ""
 
-        # Domain
-        read -p "Domain name (e.g., sinas.example.com): " DOMAIN
-        while [ -z "$DOMAIN" ]; do
-            echo -e "${RED}Domain is required${NC}"
-            read -p "Domain name: " DOMAIN
-        done
+        if [ "$PROFILE" = lite ]; then
+            # Superadmin email
+            read -p "Superadmin email: " SUPERADMIN_EMAIL
+            while [ -z "$SUPERADMIN_EMAIL" ]; do
+                echo -e "${RED}Email is required${NC}"
+                read -p "Superadmin email: " SUPERADMIN_EMAIL
+            done
 
-        # Email for SSL
-        read -p "Email for SSL certificates: " ACME_EMAIL
-        while [ -z "$ACME_EMAIL" ]; do
-            echo -e "${RED}Email is required${NC}"
+            # Port
+            read -p "Port to serve Sinas on (plain HTTP) [8000]: " APP_PORT
+            APP_PORT=${APP_PORT:-8000}
+            while ! valid_port "$APP_PORT"; do
+                echo -e "${RED}Enter a port number${NC}"
+                read -p "Port [8000]: " APP_PORT
+                APP_PORT=${APP_PORT:-8000}
+            done
+
+            # Public hostname (links in emails and setup links)
+            echo ""
+            echo "  If a TLS proxy will serve Sinas at https://<hostname>, enter that hostname:"
+            echo "  links Sinas sends (setup links, emails) then use it. Leave empty to use"
+            echo "  http://localhost:${APP_PORT}."
+            read -p "Public hostname [empty = localhost]: " DOMAIN
+            DEFAULT_AUTH_CHOICE=2
+        else
+            # Domain
+            read -p "Domain name (e.g., sinas.example.com): " DOMAIN
+            while [ -z "$DOMAIN" ]; do
+                echo -e "${RED}Domain is required${NC}"
+                read -p "Domain name: " DOMAIN
+            done
+
+            # Email for SSL
             read -p "Email for SSL certificates: " ACME_EMAIL
-        done
+            while [ -z "$ACME_EMAIL" ]; do
+                echo -e "${RED}Email is required${NC}"
+                read -p "Email for SSL certificates: " ACME_EMAIL
+            done
 
-        # Superadmin email
-        read -p "Superadmin email [default: $ACME_EMAIL]: " SUPERADMIN_EMAIL
-        SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL:-$ACME_EMAIL}
+            # Superadmin email
+            read -p "Superadmin email [default: $ACME_EMAIL]: " SUPERADMIN_EMAIL
+            SUPERADMIN_EMAIL=${SUPERADMIN_EMAIL:-$ACME_EMAIL}
+            DEFAULT_AUTH_CHOICE=1
+        fi
 
         echo ""
         echo -e "${YELLOW}Authentication mode:${NC}"
@@ -295,16 +475,21 @@ else
         echo "  2) Password             — password only (works airgapped, no SMTP)"
         echo "  3) Password + Email OTP — both required (most secure, requires SMTP)"
         echo ""
-        read -p "Choose [1-3, default 1]: " AUTH_CHOICE
-        AUTH_CHOICE=${AUTH_CHOICE:-1}
+        read -p "Choose [1-3, default ${DEFAULT_AUTH_CHOICE}]: " AUTH_CHOICE
+        AUTH_CHOICE=${AUTH_CHOICE:-$DEFAULT_AUTH_CHOICE}
 
         case "$AUTH_CHOICE" in
             1) AUTH_MODE="otp" ;;
             2) AUTH_MODE="password" ;;
             3) AUTH_MODE="password+otp" ;;
             *)
-                echo -e "${RED}Invalid choice, defaulting to OTP${NC}"
-                AUTH_MODE="otp"
+                if [ "$DEFAULT_AUTH_CHOICE" = 2 ]; then
+                    echo -e "${RED}Invalid choice, defaulting to password${NC}"
+                    AUTH_MODE="password"
+                else
+                    echo -e "${RED}Invalid choice, defaulting to OTP${NC}"
+                    AUTH_MODE="otp"
+                fi
                 ;;
         esac
         echo -e "${GREEN}✓ Auth mode: $AUTH_MODE${NC}"
@@ -365,7 +550,61 @@ else
         fi
     fi
 
-    cat > .env << EOF
+    # Private before the secrets go in
+    (umask 077; : > .env)
+    if [ "$PROFILE" = lite ]; then
+        cat > .env << EOF
+# Sinas lite: postgres, redis and one sinas container (docker-compose.lite.yml).
+# Plain docker compose commands in this directory use COMPOSE_FILE.
+SINAS_PROFILE=lite
+COMPOSE_FILE=$COMPOSE_FILES
+
+# Security
+SECRET_KEY=$SECRET_KEY
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+
+# Database
+DATABASE_PASSWORD=$DB_PASSWORD
+DATABASE_USER=postgres
+DATABASE_NAME=sinas
+
+# Authentication
+AUTH_MODE=$AUTH_MODE
+
+# SMTP
+SMTP_HOST=$SMTP_HOST
+SMTP_PORT=$SMTP_PORT
+SMTP_USER=$SMTP_USER
+SMTP_PASSWORD=$SMTP_PASSWORD
+SMTP_DOMAIN=$SMTP_DOMAIN
+
+# Admin
+SUPERADMIN_EMAIL=$SUPERADMIN_EMAIL
+SUPERADMIN_PASSWORD=$SUPERADMIN_PASSWORD
+
+# Where Sinas is served: plain HTTP on BACKEND_PORT. DOMAIN is the hostname a
+# TLS proxy in front serves it at (links then use https://DOMAIN); empty means
+# http://localhost:BACKEND_PORT. Set FORWARDED_ALLOW_IPS to that proxy's
+# address as the sinas container sees it, for client IPs in rate limits.
+BACKEND_PORT=$APP_PORT
+DOMAIN=$DOMAIN
+
+# What this install runs: where its files come from, and its images
+# (empty = latest). A plain re-run of the installer reuses both.
+SINAS_SOURCE=$SOURCE
+IMAGE_TAG=$IMAGE_TAG
+
+# Function Execution
+FUNCTION_TIMEOUT=300
+MAX_FUNCTION_MEMORY=512
+ALLOW_PACKAGE_INSTALLATION=true
+
+# Request logging is off: this profile has no ClickHouse. Set CLICKHOUSE_HOST
+# (and CLICKHOUSE_PORT, _USER, _PASSWORD, _DATABASE) to a ClickHouse server to
+# turn it on.
+EOF
+    else
+        cat > .env << EOF
 # Security
 SECRET_KEY=$SECRET_KEY
 ENCRYPTION_KEY=$ENCRYPTION_KEY
@@ -415,6 +654,7 @@ CLICKHOUSE_USER=default
 CLICKHOUSE_PASSWORD=
 CLICKHOUSE_DATABASE=sinas
 EOF
+    fi
 
     chmod 600 .env
     echo -e "${GREEN}✓ .env file created${NC}"
@@ -425,6 +665,20 @@ DOMAIN=$(grep "^DOMAIN=" .env 2>/dev/null | cut -d= -f2)
 SUPERADMIN_EMAIL=$(grep "^SUPERADMIN_EMAIL=" .env 2>/dev/null | cut -d= -f2)
 AUTH_MODE=$(grep "^AUTH_MODE=" .env 2>/dev/null | cut -d= -f2)
 AUTH_MODE=${AUTH_MODE:-otp}
+
+# The service that runs the API (and, in lite, everything else)
+if [ "$PROFILE" = lite ]; then
+    APP_SERVICE=sinas
+    APP_PORT=$(saved BACKEND_PORT)
+    APP_PORT=${APP_PORT:-8000}
+    if [ -n "$DOMAIN" ] && [ "$DOMAIN" != localhost ] && [ "$DOMAIN" != 127.0.0.1 ]; then
+        PUBLIC_URL="https://${DOMAIN}"
+    else
+        PUBLIC_URL="http://localhost:${APP_PORT}"
+    fi
+else
+    APP_SERVICE=backend
+fi
 
 # Firewall (Linux only)
 if [[ "$OS_TYPE" == "linux" ]]; then
@@ -477,13 +731,30 @@ if [[ "$START_SERVICES" =~ ^[Yy]$ ]]; then
 
     echo ""
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"
-    sleep 10
-
-    if docker compose ps --status running --services 2>/dev/null | grep -qx backend; then
-        echo -e "${GREEN}✓ Services started successfully${NC}"
-        SERVICES_STARTED=true
+    if [ "$PROFILE" = lite ]; then
+        # Healthy once migrations ran and the API serves (first start: a minute
+        # or two). At most 60 tries of up to 5s + 3s: the wait is bounded.
+        for _ in $(seq 1 60); do
+            if curl -fsS --max-time 5 -o /dev/null "http://localhost:${APP_PORT}/health" 2>/dev/null; then
+                SERVICES_STARTED=true
+                break
+            fi
+            sleep 3
+        done
+        if [ "$SERVICES_STARTED" = true ]; then
+            echo -e "${GREEN}✓ Sinas is up on port ${APP_PORT}${NC}"
+        else
+            echo -e "${RED}⚠ Sinas did not answer on http://localhost:${APP_PORT}/health. Check: docker compose ps; docker compose logs sinas${NC}"
+        fi
     else
-        echo -e "${RED}⚠ The backend is not running. Check: docker compose ps; docker compose logs backend${NC}"
+        sleep 10
+
+        if docker compose ps --status running --services 2>/dev/null | grep -qx backend; then
+            echo -e "${GREEN}✓ Services started successfully${NC}"
+            SERVICES_STARTED=true
+        else
+            echo -e "${RED}⚠ The backend is not running. Check: docker compose ps; docker compose logs backend${NC}"
+        fi
     fi
 fi
 
@@ -492,7 +763,7 @@ fi
 # superadmin (it retries while the backend migrates and boots). Printed to
 # this terminal only; nothing is written to disk or logs.
 SETUP_LINK=""
-SETUP_LINK_CMD="docker compose exec backend python -m app.cli setup-link"
+SETUP_LINK_CMD="docker compose exec ${APP_SERVICE} python -m app.cli setup-link"
 # The backend has no setup-link command (versions before 0.5.0 log the link)
 SETUP_LINK_UNSUPPORTED=false
 WANTS_SETUP_LINK=false
@@ -504,7 +775,7 @@ if [ "$WANTS_SETUP_LINK" = true ] && [ "$STARTED" = true ]; then
     for _ in $(seq 1 36); do
         # 0: the command exists; 3: it does not; anything else: backend not up yet
         CLI_STATUS=0
-        docker compose exec -T backend python -c \
+        docker compose exec -T "$APP_SERVICE" python -c \
             "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('app.cli') else 3)" \
             >/dev/null 2>&1 || CLI_STATUS=$?
         if [ "$CLI_STATUS" -eq 3 ]; then
@@ -512,7 +783,7 @@ if [ "$WANTS_SETUP_LINK" = true ] && [ "$STARTED" = true ]; then
             break
         fi
         if [ "$CLI_STATUS" -eq 0 ]; then
-            SETUP_LINK=$(docker compose exec -T backend python -m app.cli setup-link 2>/dev/null | tail -n 1) && [ -n "$SETUP_LINK" ] && break
+            SETUP_LINK=$(docker compose exec -T "$APP_SERVICE" python -m app.cli setup-link 2>/dev/null | tail -n 1) && [ -n "$SETUP_LINK" ] && break
         fi
         SETUP_LINK=""
         sleep 5
@@ -529,46 +800,77 @@ echo -e "${NC}"
 echo ""
 echo -e "${BLUE}Next steps:${NC}"
 echo ""
-echo "1. Point your DNS:"
-echo "   ${DOMAIN} → $(curl -s ifconfig.me 2>/dev/null || echo '<your-server-ip>')"
-echo ""
-echo "2. SSL is automatic (Caddy + Let's Encrypt)"
-echo ""
-echo "3. Verify:"
-echo "   curl https://${DOMAIN}/health"
-echo ""
-echo "4. Login:"
-echo "   Console:    https://${DOMAIN}:51245/ui/"
-echo "   Superadmin: ${SUPERADMIN_EMAIL}"
-echo "   Auth mode:  ${AUTH_MODE}"
-if [ -n "$SETUP_LINK" ]; then
+
+# The superadmin's first sign-in, under the login step
+print_setup_link() {
+    if [ -n "$SETUP_LINK" ]; then
+        echo ""
+        echo -e "   ${YELLOW}Open this one-time link to set the superadmin's password and sign in"
+        echo -e "   (single use, valid 24h; shown only here):${NC}"
+        echo ""
+        echo "   ${SETUP_LINK}"
+        echo ""
+        echo "   Lost or expired? Get a new one (the old one stops working):"
+        echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
+    elif [ "$SETUP_LINK_UNSUPPORTED" = true ]; then
+        echo ""
+        echo -e "   ${RED}This backend (images: ${IMAGE_TAG:-latest}) has no setup-link command"
+        echo -e "   (python -m app.cli setup-link arrived in 0.5.0). Its one-time setup link is"
+        echo -e "   in the ${APP_SERVICE} logs instead:${NC}"
+        echo "   cd ${INSTALL_DIR} && docker compose logs ${APP_SERVICE} | grep -A8 'SUPERADMIN SETUP'"
+        echo "   Or set SUPERADMIN_PASSWORD in .env and run: docker compose up -d"
+    elif [ "$WANTS_SETUP_LINK" = true ] && [ "$STARTED" = true ]; then
+        echo ""
+        echo -e "   ${RED}No setup link: the backend did not become ready. See why with:${NC}"
+        echo "   cd ${INSTALL_DIR} && docker compose ps && docker compose logs --tail 100 ${APP_SERVICE}"
+        echo "   curl -s http://localhost:${APP_PORT:-${BACKEND_PORT:-8000}}/health"
+        echo "   Once it is healthy, get the link with:"
+        echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
+    elif [ "$WANTS_SETUP_LINK" = true ]; then
+        echo ""
+        echo -e "   ${YELLOW}Set the superadmin's password with a one-time setup link. Once the"
+        echo -e "   backend is up, run:${NC}"
+        echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
+    fi
+}
+
+if [ "$PROFILE" = lite ]; then
+    echo "1. Open the console (plain HTTP on port ${APP_PORT}):"
+    echo "   http://localhost:${APP_PORT}/ui/"
+    echo "   From another machine: http://<this-host>:${APP_PORT}/ui/"
     echo ""
-    echo -e "   ${YELLOW}Open this one-time link to set the superadmin's password and sign in"
-    echo -e "   (single use, valid 24h; shown only here):${NC}"
+    echo "2. TLS: Sinas lite serves plain HTTP. Before real use, put a TLS proxy in"
+    echo "   front of port ${APP_PORT}, set DOMAIN (and FORWARDED_ALLOW_IPS) in .env, then"
+    echo "   docker compose up -d. Links Sinas sends now use: ${PUBLIC_URL}"
+    echo "   See https://docs.sinas.co/getting-started/lite#tls-and-the-public-url"
     echo ""
-    echo "   ${SETUP_LINK}"
+    echo "3. Verify:"
+    echo "   curl http://localhost:${APP_PORT}/health"
     echo ""
-    echo "   Lost or expired? Get a new one (the old one stops working):"
-    echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
-elif [ "$SETUP_LINK_UNSUPPORTED" = true ]; then
+    echo "4. Login:"
+    echo "   Console:    ${PUBLIC_URL}/ui/"
+    echo "   Superadmin: ${SUPERADMIN_EMAIL}"
+    echo "   Auth mode:  ${AUTH_MODE}"
+    if [ "$CODE_EXECUTION" = y ]; then
+        echo "   Code execution: on (turn off: re-run the installer with SINAS_CODE_EXECUTION=n)"
+    else
+        echo "   Code execution: off (turn on: re-run the installer with SINAS_CODE_EXECUTION=y)"
+    fi
+    print_setup_link
+else
+    echo "1. Point your DNS:"
+    echo "   ${DOMAIN} → $(curl -s ifconfig.me 2>/dev/null || echo '<your-server-ip>')"
     echo ""
-    echo -e "   ${RED}This backend (images: ${IMAGE_TAG:-latest}) has no setup-link command"
-    echo -e "   (python -m app.cli setup-link arrived in 0.5.0). Its one-time setup link is"
-    echo -e "   in the backend logs instead:${NC}"
-    echo "   cd ${INSTALL_DIR} && docker compose logs backend | grep -A8 'SUPERADMIN SETUP'"
-    echo "   Or set SUPERADMIN_PASSWORD in .env and run: docker compose up -d"
-elif [ "$WANTS_SETUP_LINK" = true ] && [ "$STARTED" = true ]; then
+    echo "2. SSL is automatic (Caddy + Let's Encrypt)"
     echo ""
-    echo -e "   ${RED}No setup link: the backend did not become ready. See why with:${NC}"
-    echo "   cd ${INSTALL_DIR} && docker compose ps && docker compose logs --tail 100 backend"
-    echo "   curl -s http://localhost:${BACKEND_PORT:-8000}/health"
-    echo "   Once it is healthy, get the link with:"
-    echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
-elif [ "$WANTS_SETUP_LINK" = true ]; then
+    echo "3. Verify:"
+    echo "   curl https://${DOMAIN}/health"
     echo ""
-    echo -e "   ${YELLOW}Set the superadmin's password with a one-time setup link. Once the"
-    echo -e "   backend is up, run:${NC}"
-    echo "   cd ${INSTALL_DIR} && ${SETUP_LINK_CMD}"
+    echo "4. Login:"
+    echo "   Console:    https://${DOMAIN}:51245/ui/"
+    echo "   Superadmin: ${SUPERADMIN_EMAIL}"
+    echo "   Auth mode:  ${AUTH_MODE}"
+    print_setup_link
 fi
 echo ""
 echo "5. Update (same source: ${SOURCE}, images: ${IMAGE_TAG:-latest}):"
@@ -586,8 +888,12 @@ echo ""
 # Say so in the exit status too (CI, agents) when the install did not
 # finish: services were to start and did not, or a password-mode
 # superadmin got no setup link. SINAS_START=n (configuration only) succeeds.
-if [ "$STARTED" = true ] && ! docker compose ps --status running --services 2>/dev/null | grep -qx backend; then
-    echo -e "${RED}The backend is not running. Check: cd ${INSTALL_DIR} && docker compose ps && docker compose logs --tail 100 backend${NC}" >&2
+if [ "$PROFILE" = lite ] && [ "$STARTED" = true ] && [ "$SERVICES_STARTED" != true ]; then
+    echo -e "${RED}Sinas is not answering on port ${APP_PORT}. Check: cd ${INSTALL_DIR} && docker compose ps && docker compose logs --tail 100 sinas${NC}" >&2
+    exit 1
+fi
+if [ "$STARTED" = true ] && ! docker compose ps --status running --services 2>/dev/null | grep -qx "$APP_SERVICE"; then
+    echo -e "${RED}The ${APP_SERVICE} service is not running. Check: cd ${INSTALL_DIR} && docker compose ps && docker compose logs --tail 100 ${APP_SERVICE}${NC}" >&2
     exit 1
 fi
 if [ "$WANTS_SETUP_LINK" = true ] && [ "$STARTED" = true ] && [ -z "$SETUP_LINK" ]; then

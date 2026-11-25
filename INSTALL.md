@@ -1,6 +1,6 @@
 # Development Environment Setup
 
-This guide is for **contributors and developers** working on the Sinas codebase. For production deployment, see the [documentation](https://docs.sinas.co).
+This guide is for **contributors and developers** working on the Sinas codebase. For production deployment, see the [documentation](https://docs.sinas.co). To try Sinas without a development setup, install [Sinas lite](https://docs.sinas.co/getting-started/lite): PostgreSQL, Redis and one Sinas container, set up by the same installer.
 
 ## Prerequisites
 

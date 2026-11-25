@@ -18,6 +18,7 @@
             "pages": [
               "index",
               "getting-started/deployment",
+              "getting-started/lite",
               "getting-started/kubernetes",
               "getting-started/concepts",
               "getting-started/environment-variables"
