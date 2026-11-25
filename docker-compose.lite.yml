@@ -15,7 +15,10 @@
 #   docker compose -f docker-compose.lite.yml up -d                                # no code execution
 #   docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d  # with code execution
 #
-# Requires the same .env as the full profile (SECRET_KEY, ENCRYPTION_KEY).
+# Requires a .env with DATABASE_PASSWORD, SECRET_KEY and ENCRYPTION_KEY (not
+# a full-profile .env as is: its CLICKHOUSE_HOST=clickhouse is a host this
+# profile lacks). The installer sets it up with SINAS_PROFILE=lite; see
+# https://docs.sinas.co/getting-started/lite
 
 services:
   postgres:

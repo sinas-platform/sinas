@@ -42,6 +42,8 @@ The installer will:
 
 Once running, open the console at `https://yourdomain.com:51245` and log in with your admin email.
 
+**Sinas lite:** to evaluate Sinas or run it on one small host, pick the lite profile when the installer asks (or set `SINAS_PROFILE=lite`). It runs PostgreSQL, Redis and one Sinas container serving the API and console over plain HTTP (`http://localhost:8000/ui/`), without TLS, request logs or, unless you enable it, code execution. See [docs-mint/getting-started/lite.mdx](docs-mint/getting-started/lite.mdx).
+
 **Update:** re-run the installer for the version you want. The compose files, `Caddyfile` and images change together between versions, and the installer updates all of them:
 ```bash
 V=0.5.0

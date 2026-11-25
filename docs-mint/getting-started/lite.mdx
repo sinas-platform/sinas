@@ -1,0 +1,184 @@
+---
+title: "Sinas lite"
+description: "The all-in-one profile: three containers, one host, plain HTTP"
+---
+
+Sinas lite runs the whole platform in three containers: PostgreSQL, Redis, and one `sinas` container that runs the API, the queue workers, the scheduler and the CDC poller in one process and serves the console at `/ui`. The [full profile](/getting-started/deployment) runs the same work in separate containers, behind Caddy.
+
+Use lite for evaluation, demos, small single-host installs and edge deployments. Use the full profile for production: it brings TLS, request logs, connection pooling and workers that scale separately.
+
+## What lite leaves out
+
+| | Full profile | Lite |
+|---|---|---|
+| TLS | Caddy, with Let's Encrypt certificates for your domain | None: plain HTTP on one port. [Bring your own TLS proxy](#tls-and-the-public-url) |
+| Console | Its own container, at `https://<domain>:51245/ui/` | Served by the `sinas` container at `/ui/` on the same port as the API |
+| Request logs | ClickHouse | Off. See [Running without ClickHouse](/getting-started/kubernetes#running-without-clickhouse) for what that removes; set `CLICKHOUSE_HOST` to a ClickHouse server to turn them on |
+| Connection pooling | PgBouncer | None (one process needs none) |
+| Workers, scheduler, CDC | Separate containers | Inside the `sinas` process, with lower concurrency (`QUEUE_FUNCTION_CONCURRENCY` 5, `QUEUE_AGENT_CONCURRENCY` 3, `QUEUE_AGENT_SUB_CONCURRENCY` 3, `QUEUE_PIPELINE_CONCURRENCY` 5) |
+| Code execution | On | Off unless you add [`docker-compose.lite.exec.yml`](#code-execution) |
+| Memory | Backend `APP_MEMORY_LIMIT` 2G, Redis `REDIS_MAXMEMORY` 256mb | `sinas` container `APP_MEMORY_LIMIT` 1G, Redis `REDIS_MAXMEMORY` 128mb |
+
+Everything else is the same platform: agents, functions, pipelines, files, schedules, connectors, the System page.
+
+## Install with the installer
+
+The [installer](/getting-started/deployment#install) asks which profile to install. Choose **Lite**:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/install.sh -o /tmp/sinas-install.sh \
+  && sudo bash /tmp/sinas-install.sh
+```
+
+For a lite install it asks whether to enable [code execution](#code-execution) (default no), then for the superadmin's email, the port to serve Sinas on (default `8000`), an optional public hostname (see [TLS](#tls-and-the-public-url)) and the authentication mode. The default mode for lite is `password`, which needs no SMTP. It writes `.env` in `/opt/sinas` (`SINAS_DIR` to change it), downloads `docker-compose.lite.yml`, starts Sinas, waits until it answers on `http://localhost:<port>/health`, and prints a [setup link](#first-login) for the superadmin.
+
+`SINAS_VERSION` picks a release or release candidate, as for the full profile ([A specific version](/getting-started/deployment#a-specific-version-or-release-candidate)).
+
+The installer saves the profile as `SINAS_PROFILE=lite` in `.env`, and the compose files as `COMPOSE_FILE`, so plain `docker compose` commands work in the install directory (`docker compose ps`, `docker compose logs -f sinas`). A later run keeps the profile; it does not switch an install between profiles.
+
+### Non-interactive
+
+Set `SINAS_NONINTERACTIVE=1` and `SINAS_PROFILE=lite`, and pass the answers as variables:
+
+| Variable | Required | Description |
+|---|---|---|
+| `SINAS_PROFILE` | yes | `lite` (the default is `full`) |
+| `SINAS_SUPERADMIN_EMAIL` | yes | Superadmin email |
+| `SINAS_PORT` | no | Port to serve Sinas on, written to `.env` as `BACKEND_PORT` (default `8000`) |
+| `SINAS_DOMAIN` | no | Hostname a TLS proxy serves Sinas at; links Sinas sends then use `https://<hostname>`. Empty: `http://localhost:<port>` |
+| `SINAS_CODE_EXECUTION` | no | `y` to enable [code execution](#code-execution) (default `n`) |
+| `SINAS_AUTH_MODE` | no | `password` (the default for lite), `otp` or `password+otp` |
+| `SINAS_SUPERADMIN_PASSWORD` | no | Password modes only, at least 8 characters. Empty: a one-time setup link is printed at the end |
+| `SINAS_SMTP_HOST`, `SINAS_SMTP_USER`, `SINAS_SMTP_PASSWORD` | with `otp` or `password+otp` | SMTP server for login codes |
+| `SINAS_SMTP_PORT`, `SINAS_SMTP_DOMAIN` | no | SMTP port (default `587`) and from-domain |
+| `SINAS_CONFIGURE_FIREWALL` | no | `y` to configure UFW on Linux (default `n`) |
+| `SINAS_START` | no | `n` to write the configuration without starting Sinas (default `y`) |
+
+```bash
+sudo SINAS_NONINTERACTIVE=1 SINAS_PROFILE=lite SINAS_VERSION=0.5.0 \
+  SINAS_SUPERADMIN_EMAIL=admin@example.com SINAS_PORT=8000 \
+  bash /tmp/sinas-install.sh
+```
+
+The installer exits non-zero when Sinas was to start and does not answer on its port, or when a password-mode superadmin got no setup link.
+
+## Install by hand
+
+Each release attaches the lite compose file, with that release's image tag filled in, as `docker-compose-lite-<version>.yml`, and the code-execution override as `docker-compose.lite.exec.yml`. Download the compose file under the name the rest of this page uses:
+
+```bash
+V=0.5.0
+mkdir -p /opt/sinas && cd /opt/sinas
+curl -fsSL https://github.com/sinas-platform/sinas/releases/download/$V/docker-compose-lite-$V.yml -o docker-compose.lite.yml
+# only for code execution (see below):
+# curl -fsSL https://github.com/sinas-platform/sinas/releases/download/$V/docker-compose.lite.exec.yml -o docker-compose.lite.exec.yml
+```
+
+Write a `.env` next to it. `SECRET_KEY`, `ENCRYPTION_KEY` and `DATABASE_PASSWORD` are required (Compose refuses to start without them); generate them the way the installer does:
+
+```bash
+(umask 077; cat > .env <<EOF
+SECRET_KEY=$(openssl rand -hex 32)
+ENCRYPTION_KEY=$(openssl rand -base64 32 | tr '+/' '-_')
+DATABASE_PASSWORD=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-32)
+SUPERADMIN_EMAIL=admin@example.com
+AUTH_MODE=password
+BACKEND_PORT=8000
+EOF
+)
+```
+
+`ENCRYPTION_KEY` is a Fernet key (32 random bytes, URL-safe base64) and encrypts stored credentials: keep it with your backups, and never change it on an existing install. `SUPERADMIN_EMAIL` is the admin created on first start. `AUTH_MODE` defaults to `otp`, which needs the `SMTP_*` variables; see [Environment variables](/getting-started/environment-variables). The whole `.env` is passed to the `sinas` container. Don't reuse a full-profile `.env` as is: its `CLICKHOUSE_HOST=clickhouse` names a host lite doesn't have.
+
+Start it:
+
+```bash
+docker compose -f docker-compose.lite.yml up -d
+```
+
+The first start runs the database migrations; Sinas answers on `http://localhost:8000/health` once they are done.
+
+## Code execution
+
+Code execution (functions, and the agent code-execution tool) is off in the base file, and the `sinas` container has no host privileges. `docker-compose.lite.exec.yml` turns it on: it mounts the host Docker socket (`/var/run/docker.sock`) into the `sinas` container and sets `CODE_EXECUTION_ENABLED=true`, `SANDBOX_EXECUTOR=docker_ephemeral` (an ephemeral sandbox container per execution) and `TRUSTED_EXECUTOR=docker_shared` (shared trusted worker containers, started on demand).
+
+Access to the Docker socket is root-equivalent on the host: whatever controls the `sinas` container can start any container there. Only enable it on a host you dedicate to Sinas.
+
+- **Installer:** answer yes to the code-execution question, or set `SINAS_CODE_EXECUTION=y`. On an existing install, re-run the installer with `SINAS_CODE_EXECUTION=y` (or `n` to turn it off again); it updates `COMPOSE_FILE` in `.env` and recreates the `sinas` container.
+- **By hand:** download `docker-compose.lite.exec.yml` and add it to every command:
+
+  ```bash
+  docker compose -f docker-compose.lite.yml -f docker-compose.lite.exec.yml up -d
+  ```
+
+Sandbox containers run outside the `sinas` container and its memory limit. Size the host for up to (`QUEUE_FUNCTION_CONCURRENCY` + `QUEUE_AGENT_CONCURRENCY` + `QUEUE_AGENT_SUB_CONCURRENCY`) × `MAX_FUNCTION_MEMORY` MB of them at once (11 × 512 MB with the defaults).
+
+## First login
+
+Open the console at `http://localhost:8000/ui/` (or your own port; `/` redirects there). With a password mode and no `SUPERADMIN_PASSWORD`, the superadmin sets a password through a one-time setup link. The installer prints one at the end of a fresh install. To mint a new one (the previous one stops working):
+
+```bash
+# installed with the installer (in /opt/sinas)
+docker compose exec sinas python -m app.cli setup-link
+
+# installed by hand
+docker compose -f docker-compose.lite.yml exec sinas python -m app.cli setup-link
+```
+
+See [First admin access](/getting-started/deployment#first-admin-access-with-a-setup-link) for how the link works.
+
+## TLS and the public URL
+
+The `sinas` container serves plain HTTP on `BACKEND_PORT` (default `8000`), published on all of the host's interfaces. For anything beyond a trial on your own machine, put a TLS proxy in front of it and keep that port closed to the outside. For example, Caddy on the host:
+
+```
+sinas.example.com {
+    reverse_proxy localhost:8000
+}
+```
+
+Then set in `.env`, and apply with `docker compose up -d` (add the same `-f` options you started with):
+
+- `DOMAIN=sinas.example.com`. Links Sinas sends (setup links, OAuth callbacks) use `https://<DOMAIN>`; without `DOMAIN` they use `http://localhost:<BACKEND_PORT>`.
+- `FORWARDED_ALLOW_IPS`: the proxy's address as the `sinas` container sees it, so login rate limits count real client IPs. With the proxy on the host, that's the gateway of the Compose network, for example `docker network inspect sinas_default --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}'` for an install in `/opt/sinas`. Never `*`. See [Client IP behind a reverse proxy](/getting-started/environment-variables#client-ip-behind-a-reverse-proxy).
+
+## Update
+
+As with the full profile, update the compose files and the images together ([Update](/getting-started/deployment#update)):
+
+- **Installer:** re-run it for the version you want. It keeps the profile and the code-execution choice:
+
+  ```bash
+  V=0.5.0
+  curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/$V/install.sh -o /tmp/sinas-install.sh \
+    && sudo SINAS_VERSION=$V bash /tmp/sinas-install.sh
+  ```
+
+- **By hand:** download the new version's `docker-compose-lite-<version>.yml` over `docker-compose.lite.yml` (and `docker-compose.lite.exec.yml`, if you use it), then pull and restart:
+
+  ```bash
+  docker compose -f docker-compose.lite.yml pull
+  docker compose -f docker-compose.lite.yml up -d
+  ```
+
+  The release file names its image tag itself; `IMAGE_TAG` in `.env` doesn't change it.
+
+Migrations run when the `sinas` container starts. Read the upgrade notes of the version you move to on the [Deployment](/getting-started/deployment) page (for 0.5.0: *Upgrading to 0.5.0*); they cover the lite profile too.
+
+## Moving to the full profile
+
+There is no tested path from lite to the full profile, and the installer refuses to switch an existing install. If you expect to need the full profile, start with it. A move by hand means carrying over the PostgreSQL database and the `file_storage` volume, and keeping `SECRET_KEY` and `ENCRYPTION_KEY` (credentials stored in the database are encrypted with `ENCRYPTION_KEY`). Take a backup before you try.
+
+## Kubernetes
+
+The Helm chart has the same profile: `allInOne: true`, preset in `charts/sinas/values-lite.yaml` (one `sinas` pod with the console at `/ui`, no ClickHouse). Unlike Compose lite it keeps PgBouncer and runs sandbox code in ephemeral pods, and without a `fileStorage.storageClass` its files live in an `emptyDir`. See [Deploy on Kubernetes](/getting-started/kubernetes), in particular [File storage](/getting-started/kubernetes#file-storage) and [Running without ClickHouse](/getting-started/kubernetes#running-without-clickhouse).
+
+```bash
+helm install sinas ./charts/sinas -f ./charts/sinas/values-lite.yaml \
+  --namespace sinas --create-namespace \
+  --set domain=sinas.example.com \
+  --set secrets.secretKey=$(openssl rand -hex 32) \
+  --set secrets.encryptionKey=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())") \
+  --set postgres.password=$(openssl rand -hex 16) \
+  --set superadminEmail=you@example.com
+```

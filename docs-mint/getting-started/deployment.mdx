@@ -3,6 +3,8 @@ title: "Deployment"
 description: "Install, update, and configure Sinas"
 ---
 
+This page installs the full profile. For evaluation, demos or a small single-host install, [Sinas lite](/getting-started/lite) runs everything in three containers and serves plain HTTP; the same installer sets it up.
+
 ## Prerequisites
 
 - A VPS or server with 2+ CPU cores, 4GB+ RAM, 50GB+ storage
@@ -17,6 +19,7 @@ sudo curl -fsSL https://raw.githubusercontent.com/sinas-platform/sinas/main/inst
 
 The installer will:
 - Install Docker if needed
+- Ask which profile to install: full (default, this page) or [lite](/getting-started/lite)
 - Generate secure keys (`SECRET_KEY`, `ENCRYPTION_KEY`, `DATABASE_PASSWORD`)
 - Prompt for your domain, admin email, and authentication mode (and SMTP and/or admin password depending on the mode you pick)
 - Create `.env` in `/opt/sinas/`
@@ -45,6 +48,7 @@ For CI, provisioning scripts or agents, set `SINAS_NONINTERACTIVE=1` and pass th
 
 | Variable | Required | Description |
 |---|---|---|
+| `SINAS_PROFILE` | no | `full` (default) or `lite`. Lite takes other answers; see [Sinas lite](/getting-started/lite#non-interactive) |
 | `SINAS_DOMAIN` | yes | Domain name |
 | `SINAS_ACME_EMAIL` | yes | Email for SSL certificates |
 | `SINAS_SUPERADMIN_EMAIL` | no | Superadmin email (default: `SINAS_ACME_EMAIL`) |
@@ -196,7 +200,7 @@ The installer prints the link once at the end of a fresh install. To get one you
 # docker compose (run in /opt/sinas)
 docker compose exec backend python -m app.cli setup-link
 
-# all-in-one compose profile
+# Sinas lite (installed by hand; with the installer, plain docker compose exec sinas ... works)
 docker compose -f docker-compose.lite.yml exec sinas python -m app.cli setup-link
 
 # Kubernetes (Helm)
